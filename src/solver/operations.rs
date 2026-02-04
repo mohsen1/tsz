@@ -479,6 +479,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let placeholder_atom = self.interner.intern_string(&placeholder_name);
             infer_ctx.register_type_param(placeholder_atom, var);
             let placeholder_key = TypeKey::TypeParameter(TypeParamInfo {
+                is_const: false,
                 name: placeholder_atom,
                 constraint: tp.constraint,
                 default: None,

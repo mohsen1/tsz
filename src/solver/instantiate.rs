@@ -195,6 +195,7 @@ impl<'a> TypeInstantiator<'a> {
             .type_params
             .iter()
             .map(|tp| TypeParamInfo {
+                is_const: false,
                 name: tp.name,
                 constraint: tp.constraint.map(|c| self.instantiate(c)),
                 default: tp.default.map(|d| self.instantiate(d)),
@@ -392,6 +393,7 @@ impl<'a> TypeInstantiator<'a> {
                     .type_params
                     .iter()
                     .map(|tp| TypeParamInfo {
+                        is_const: false,
                         name: tp.name,
                         constraint: tp.constraint.map(|c| self.instantiate(c)),
                         default: tp.default.map(|d| self.instantiate(d)),
@@ -526,6 +528,7 @@ impl<'a> TypeInstantiator<'a> {
 
                 let instantiated = MappedType {
                     type_param: TypeParamInfo {
+                        is_const: false,
                         name: mapped.type_param.name,
                         constraint: mapped.type_param.constraint.map(|c| self.instantiate(c)),
                         default: mapped.type_param.default.map(|d| self.instantiate(d)),
