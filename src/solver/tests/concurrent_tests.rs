@@ -114,7 +114,7 @@ fn test_concurrent_function_creation() {
                     constraint: None,
                     is_const: false,
                     default: None,
-            is_const: false,
+                    
                 }],
                 params: vec![
                     ParamInfo {

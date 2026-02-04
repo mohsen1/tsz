@@ -630,7 +630,7 @@ fn test_generic_overload_simple() {
         constraint: None,
         is_const: false,
         default: None,
-            is_const: false,
+        
     }));
 
     let generic_sig = CallSignature {
@@ -640,7 +640,7 @@ fn test_generic_overload_simple() {
             constraint: None,
             is_const: false,
             default: None,
-            is_const: false,
+            
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -688,7 +688,7 @@ fn test_generic_overload_with_constraint() {
         name: t_name,
         constraint: Some(TypeId::OBJECT),
         default: None,
-            is_const: false,
+        is_const: false,
     }));
 
     let keyof_t = interner.intern(TypeKey::KeyOf(t_param));
@@ -746,7 +746,7 @@ fn test_generic_overload_multiple_type_params() {
         constraint: None,
         is_const: false,
         default: None,
-            is_const: false,
+        
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         is_const: false,
@@ -754,7 +754,7 @@ fn test_generic_overload_multiple_type_params() {
         constraint: None,
         is_const: false,
         default: None,
-            is_const: false,
+        
     }));
 
     let tuple_return = interner.tuple(vec![
@@ -780,7 +780,7 @@ fn test_generic_overload_multiple_type_params() {
                 constraint: None,
                 is_const: false,
                 default: None,
-            is_const: false,
+                
             },
             TypeParamInfo {
                 is_const: false,
@@ -788,7 +788,7 @@ fn test_generic_overload_multiple_type_params() {
                 constraint: None,
                 is_const: false,
                 default: None,
-            is_const: false,
+                
             },
         ],
         params: vec![
