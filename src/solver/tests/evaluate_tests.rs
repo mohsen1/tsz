@@ -45501,3 +45501,44 @@ fn test_tail_recursive_conditional() {
     // Without tail-recursion elimination, this would hit MAX_EVALUATE_DEPTH (50)
     assert_eq!(result, TypeId::STRING);
 }
+
+/// Test intersection reduction for disjoint primitive types.
+#[test]
+fn test_intersection_reduction_disjoint_primitives() {
+    let interner = TypeInterner::new();
+    let intersection = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate(intersection);
+    assert_eq!(result, TypeId::NEVER);
+}
+
+/// Test intersection reduction with any.
+#[test]
+fn test_intersection_reduction_any() {
+    let interner = TypeInterner::new();
+    let intersection = interner.intersection(vec![TypeId::STRING, TypeId::ANY]);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate(intersection);
+    assert_eq!(result, TypeId::ANY);
+}
+
+/// Test union reduction for duplicate types.
+#[test]
+fn test_union_reduction_duplicates() {
+    let interner = TypeInterner::new();
+    let union = interner.union(vec![TypeId::STRING, TypeId::STRING]);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate(union);
+    assert_eq!(result, TypeId::STRING);
+}
+
+/// Test union reduction for literal and base type.
+#[test]
+fn test_union_reduction_literal_into_base() {
+    let interner = TypeInterner::new();
+    let hello = interner.literal_string("hello");
+    let union = interner.union(vec![hello, TypeId::STRING]);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate(union);
+    assert_eq!(result, TypeId::STRING);
+}

@@ -367,6 +367,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.cache.insert(type_id, result);
                 result
             }
+            TypeKey::Intersection(list_id) => {
+                let result = self.evaluate_intersection(*list_id);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
+                result
+            }
+            TypeKey::Union(list_id) => {
+                let result = self.evaluate_union(*list_id);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
+                result
+            }
             // Other types pass through unchanged
             _ => {
                 self.visiting.remove(&type_id);
@@ -600,6 +612,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => arg,
         }
+    }
+
+    /// Evaluate an intersection type by recursively evaluating members and re-interning.
+    /// This enables "deferred reduction" where intersections containing meta-types
+    /// (e.g., `string & T[K]`) are reduced after the meta-types are evaluated.
+    ///
+    /// Example: `string & T[K]` where `T[K]` evaluates to `number` will become
+    /// `string & number`, which then reduces to `never` via the interner's normalization.
+    fn evaluate_intersection(&mut self, list_id: TypeListId) -> TypeId {
+        let members = self.interner.type_list(list_id);
+        let mut evaluated_members = Vec::with_capacity(members.len());
+
+        for &member in members.iter() {
+            evaluated_members.push(self.evaluate(member));
+        }
+
+        self.interner.intersection(evaluated_members)
+    }
+
+    /// Evaluate a union type by recursively evaluating members and re-interning.
+    /// This enables "deferred reduction" where unions containing meta-types
+    /// (e.g., `string | T[K]`) are reduced after the meta-types are evaluated.
+    ///
+    /// Example: `string | T[K]` where `T[K]` evaluates to `string` will become
+    /// `string | string`, which then reduces to `string` via the interner's normalization.
+    fn evaluate_union(&mut self, list_id: TypeListId) -> TypeId {
+        let members = self.interner.type_list(list_id);
+        let mut evaluated_members = Vec::with_capacity(members.len());
+
+        for &member in members.iter() {
+            evaluated_members.push(self.evaluate(member));
+        }
+
+        self.interner.union(evaluated_members)
     }
 }
 
