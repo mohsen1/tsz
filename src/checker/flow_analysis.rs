@@ -1317,10 +1317,20 @@ impl<'a> CheckerState<'a> {
     /// in the outer scope but the closure captures the variable and might execute
     /// after the variable has been reassigned to a different type.
     pub(crate) fn apply_flow_narrowing(&self, idx: NodeIndex, declared_type: TypeId) -> TypeId {
+        eprintln!(
+            "DEBUG apply_flow_narrowing: idx={}, declared_type={}",
+            idx.0, declared_type.0
+        );
         // Get the symbol for this identifier
         let sym_id = match self.get_symbol_for_identifier(idx) {
-            Some(sym) => sym,
-            None => return declared_type,
+            Some(sym) => {
+                eprintln!("DEBUG apply_flow_narrowing: sym_id={}", sym.0);
+                sym
+            }
+            None => {
+                eprintln!("DEBUG apply_flow_narrowing: no symbol");
+                return declared_type;
+            }
         };
 
         // Bug #1.2: Check if this is a captured mutable variable
@@ -1331,21 +1341,34 @@ impl<'a> CheckerState<'a> {
         {
             // Rule #42: Reset narrowing for captured mutable bindings in closures
             // (const variables preserve narrowing, let/var reset to declared type)
+            eprintln!("DEBUG apply_flow_narrowing: captured mutable var");
             return declared_type;
         }
 
         // Get the flow node for this identifier usage
         let flow_node = match self.ctx.binder.get_node_flow(idx) {
-            Some(flow) => flow,
-            None => return declared_type, // No flow info - use declared type
+            Some(flow) => {
+                eprintln!("DEBUG apply_flow_narrowing: flow_node={}", flow.0);
+                flow
+            }
+            None => {
+                eprintln!("DEBUG apply_flow_narrowing: no flow node");
+                return declared_type; // No flow info - use declared type
+            }
         };
 
         // Skip narrowing for non-union types (nothing to narrow)
         // Also skip for primitives that can't be narrowed further
         if !self.is_narrowable_type(declared_type) {
+            eprintln!(
+                "DEBUG apply_flow_narrowing: type {} not narrowable, key={:?}",
+                declared_type.0,
+                self.ctx.types.lookup(declared_type)
+            );
             return declared_type;
         }
 
+        eprintln!("DEBUG apply_flow_narrowing: calling get_flow_type");
         // Create a flow analyzer and apply narrowing
         let analyzer = FlowAnalyzer::with_node_types(
             self.ctx.arena,
@@ -1355,7 +1378,9 @@ impl<'a> CheckerState<'a> {
         )
         .with_flow_cache(&self.ctx.flow_analysis_cache);
 
-        analyzer.get_flow_type(idx, declared_type, flow_node)
+        let result = analyzer.get_flow_type(idx, declared_type, flow_node);
+        eprintln!("DEBUG apply_flow_narrowing: result={}", result.0);
+        result
     }
 
     /// Get the symbol for an identifier node.
