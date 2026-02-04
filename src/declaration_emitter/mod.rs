@@ -2363,8 +2363,25 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         };
 
-        // Check if the specifier's symbol is used
-        if let Some(&sym_id) = binder.node_symbols.get(&specifier_idx.0) {
+        // Get the specifier node to extract its name
+        let Some(spec_node) = self.arena.get(specifier_idx) else {
+            return true;
+        };
+
+        // Only ImportSpecifier/ExportSpecifier nodes have symbols (on their name field)
+        // For other node types, emit conservatively
+        if spec_node.kind != crate::parser::syntax_kind_ext::IMPORT_SPECIFIER
+            && spec_node.kind != crate::parser::syntax_kind_ext::EXPORT_SPECIFIER
+        {
+            return true;
+        }
+
+        let Some(specifier) = self.arena.get_specifier(spec_node) else {
+            return true;
+        };
+
+        // Check if the specifier's NAME symbol is used
+        if let Some(&sym_id) = binder.node_symbols.get(&specifier.name.0) {
             used.contains(&sym_id)
         } else {
             // No symbol found - emit conservatively
@@ -2402,10 +2419,17 @@ impl<'a> DeclarationEmitter<'a> {
                                 if let Some(bindings) = self.arena.get_named_imports(bindings_node)
                                 {
                                     for &spec_idx in &bindings.elements.nodes {
-                                        if let Some(&sym_id) = binder.node_symbols.get(&spec_idx.0)
+                                        // Get the specifier's name to check its symbol
+                                        if let Some(spec_node) = self.arena.get(spec_idx)
+                                            && let Some(specifier) =
+                                                self.arena.get_specifier(spec_node)
                                         {
-                                            if used.contains(&sym_id) {
-                                                named_count += 1;
+                                            if let Some(&sym_id) =
+                                                binder.node_symbols.get(&specifier.name.0)
+                                            {
+                                                if used.contains(&sym_id) {
+                                                    named_count += 1;
+                                                }
                                             }
                                         }
                                     }
