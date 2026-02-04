@@ -183,12 +183,12 @@ Use the provided cleanup script for safe automatic cleanup:
 - **New code has corresponding tests**
 - **No new `#[ignore]` annotations added**
 
-## Git
+## CRITICAL: Git Workflow
 
+- Make sure pre-commit hooks are installed (`./scripts/install-git-hooks.sh`)
 - Commit frequently with clear messages
-- Push branches to remote regularly and rebase from main before and after each comm`
+- Push branches to remote regularly and rebase from main before and after each commit
 - Only add files you touched, do not `git add -A`
-- There is a chance another AI session is working on the same codebase. do not revert/delete
 - Make semantic and short commit headers
 - Important: When syncing, also push to remote
 
