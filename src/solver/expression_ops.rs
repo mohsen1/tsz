@@ -191,8 +191,10 @@ fn collect_type_hierarchy(
     hierarchy.push(ty);
 
     // Get base type from resolver (for class/interface types)
-    if let Some(base) = resolver.get_base_type(ty, interner) {
-        collect_type_hierarchy(interner, resolver, base, hierarchy);
+    let base = resolver.get_base_type(ty, interner);
+
+    if let Some(base_type) = base {
+        collect_type_hierarchy(interner, resolver, base_type, hierarchy);
     }
 }
 

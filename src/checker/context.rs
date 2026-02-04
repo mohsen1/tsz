@@ -1772,38 +1772,80 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
     fn get_base_type(
         &self,
         type_id: crate::solver::TypeId,
-        _interner: &dyn crate::solver::TypeDatabase,
+        interner: &dyn crate::solver::TypeDatabase,
     ) -> Option<crate::solver::TypeId> {
         use crate::binder::symbol_flags;
         use crate::solver::type_queries;
+        use crate::solver::visitor::{
+            callable_shape_id, object_shape_id, object_with_index_shape_id,
+        };
 
-        // 1. Get DefId from TypeId (must be a Lazy type)
-        let def_id = type_queries::get_lazy_def_id(self.types, type_id)?;
+        // 1. First try Lazy types (type aliases, some class references)
+        if let Some(def_id) = type_queries::get_lazy_def_id(self.types, type_id) {
+            // 2. Convert DefId to SymbolId
+            let sym_id = self.def_to_symbol_id(def_id)?;
 
-        // 2. Convert DefId to SymbolId
-        let sym_id = self.def_to_symbol_id(def_id)?;
+            // 3. Verify this is a class (not an interface - interfaces don't have base classes)
+            let symbol = self.binder.symbols.get(sym_id)?;
+            if (symbol.flags & symbol_flags::CLASS) == 0 {
+                return None;
+            }
 
-        // 3. Verify this is a class (not an interface - interfaces don't have base classes)
-        let symbol = self.binder.symbols.get(sym_id)?;
-        if (symbol.flags & symbol_flags::CLASS) == 0 {
+            // 4. Get parents from InheritanceGraph (populated during class binding)
+            let parents = self.inheritance_graph.get_parents(sym_id);
+
+            // 5. Return the first parent's type (the immediate base class)
+            if let Some(parent_sym_id) = parents.first() {
+                // Look up the cached type for the parent symbol
+                // For classes, we need the instance type, not constructor type
+                if let Some(instance_type) = self.symbol_instance_types.get(parent_sym_id) {
+                    return Some(*instance_type);
+                }
+                // Fallback to symbol_types (constructor type) if instance type not available
+                return self.symbol_types.get(parent_sym_id).copied();
+            }
             return None;
         }
 
-        // 4. Get parents from InheritanceGraph (populated during class binding)
-        let parents = self.inheritance_graph.get_parents(sym_id);
-
-        // 5. Return the first parent's type (the immediate base class)
-        // For classes, there's at most one extends clause (unlike interfaces which can extend multiple)
-        if let Some(parent_sym_id) = parents.first() {
-            // Look up the cached type for the parent symbol
-            // For classes, we need the instance type, not constructor type
-            if let Some(instance_type) = self.symbol_instance_types.get(parent_sym_id) {
-                return Some(*instance_type);
+        // 2. For class instance types (ObjectWithIndex types), check the ObjectShape symbol
+        if let Some(shape_id) = object_shape_id(interner, type_id)
+            .or_else(|| object_with_index_shape_id(interner, type_id))
+        {
+            let shape = interner.object_shape(shape_id);
+            if let Some(sym_id) = shape.symbol {
+                // Use InheritanceGraph to get parent
+                let parents = self.inheritance_graph.get_parents(sym_id);
+                if let Some(&parent_sym_id) = parents.first() {
+                    // For classes, try instance_types first; for interfaces, use symbol_types
+                    if let Some(instance_type) = self.symbol_instance_types.get(&parent_sym_id) {
+                        return Some(*instance_type);
+                    }
+                    // Fallback to symbol_types (for interfaces)
+                    return self.symbol_types.get(&parent_sym_id).copied();
+                }
             }
-            // Fallback to symbol_types (constructor type) if instance type not available
-            self.symbol_types.get(parent_sym_id).copied()
-        } else {
-            None
         }
+
+        // 3. For class instance types (Callable types), get the class declaration and check InheritanceGraph
+        if let Some(_shape_id) = callable_shape_id(interner, type_id) {
+            // Step 1: TypeId -> NodeIndex (Class Declaration)
+            if let Some(&decl_idx) = self.class_instance_type_to_decl.get(&type_id) {
+                // Step 2: NodeIndex -> SymbolId (Class Symbol)
+                // This is the correct way to get the symbol without scope/name lookup issues
+                if let Some(sym_id) = self.binder.get_node_symbol(decl_idx) {
+                    // Step 3: SymbolId -> Parent SymbolId (via InheritanceGraph)
+                    let parents = self.inheritance_graph.get_parents(sym_id);
+                    if let Some(&parent_sym_id) = parents.first() {
+                        // Step 4: Parent SymbolId -> Parent TypeId (Instance Type)
+                        if let Some(instance_type) = self.symbol_instance_types.get(&parent_sym_id)
+                        {
+                            return Some(*instance_type);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 }
