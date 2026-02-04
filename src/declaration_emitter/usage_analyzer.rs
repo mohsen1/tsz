@@ -618,6 +618,29 @@ impl<'a> UsageAnalyzer<'a> {
                 }
             }
 
+            // Import type (import("./module").Type)
+            // Note: Handler added but commented out until parser exposes ImportType data
+            // k if k == syntax_kind_ext::IMPORT_TYPE => {
+            //     if let Some(import_type) = self.arena.get_import_type(type_node) {
+            //         // Handle qualifier (e.g., the ".Bar" in import("./foo").Bar)
+            //         if !import_type.qualifier.is_none() {
+            //             self.analyze_entity_name(import_type.qualifier);
+            //         } else {
+            //             // If no qualifier, the node itself is the module reference
+            //             if let Some(&sym_id) = self.binder.node_symbols.get(&type_idx.0) {
+            //                 self.mark_symbol_used(sym_id);
+            //             }
+            //         }
+            //
+            //         // Handle type arguments: import("./foo").Bar<T>
+            //         if let Some(ref type_args) = import_type.type_arguments {
+            //             for &arg_idx in &type_args.nodes {
+            //                 self.analyze_type_node(arg_idx);
+            //             }
+            //         }
+            //     }
+            // }
+
             // Type operator (keyof, readonly, etc.)
             k if k == syntax_kind_ext::TYPE_OPERATOR => {
                 if let Some(type_op) = self.arena.get_type_operator(type_node) {
@@ -771,6 +794,26 @@ impl<'a> UsageAnalyzer<'a> {
             if let Some(type_key) = self.type_interner.lookup(other_type_id) {
                 if let crate::solver::TypeKey::ModuleNamespace(sym_ref) = type_key {
                     let sym_id = crate::binder::SymbolId(sym_ref.0);
+                    self.mark_symbol_used(sym_id);
+                }
+            }
+
+            // Extract Object nominal symbols (Class instances)
+            // This handles cases like x: MyClass where the type is an ObjectShape
+            if let Some(shape_id) = visitor::object_shape_id(self.type_interner, other_type_id)
+                .or_else(|| visitor::object_with_index_shape_id(self.type_interner, other_type_id))
+            {
+                let shape = self.type_interner.object_shape(shape_id);
+                if let Some(sym_id) = shape.symbol {
+                    self.mark_symbol_used(sym_id);
+                }
+            }
+
+            // Extract Callable nominal symbols (Class constructors/statics)
+            // This handles cases like typeof MyClass, constructor signatures
+            if let Some(shape_id) = visitor::callable_shape_id(self.type_interner, other_type_id) {
+                let shape = self.type_interner.callable_shape(shape_id);
+                if let Some(sym_id) = shape.symbol {
                     self.mark_symbol_used(sym_id);
                 }
             }
