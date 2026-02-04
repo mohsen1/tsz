@@ -1,152 +1,131 @@
-# Session tsz-3: Narrowing Logic Correctness
+# Session tsz-3: CFA Orchestration - Switch Exhaustiveness & Narrowing
 
 **Started**: 2026-02-04
 **Status**: ACTIVE
-**Focus**: Implement robust, tsc-compliant narrowing logic to fix 8+ critical bugs
+**Focus**: Ensure switch statements correctly narrow types and identify exhausted unions
 
 ## Context
 
-Transitioning from **review phase** (COMPLETE) to **implementation phase**.
-Review findings archived in `docs/sessions/history/tsz-3-review-20260204.md`.
+Previous session completed all 8 narrowing bug fixes (discriminant, instanceof, in operator). This session builds on that work by focusing on the orchestration layer - how the checker applies narrowing primitives in control flow analysis.
 
 ## Problem Statement
 
-The narrowing logic in `src/solver/narrowing.rs` has 8+ critical bugs that cause incorrect type narrowing in control flow analysis. These bugs affect discriminant narrowing, instanceof, and the `in` operator.
+While the solver's narrowing primitives are now correct, the checker's orchestration of switch statement narrowing has gaps:
+1. **Exhaustiveness**: Not detecting when all union members are covered
+2. **Fall-through**: Not handling narrowing across fall-through cases
+3. **Default narrowing**: Not narrowing to `never` when union is exhausted
+4. **Flow cache**: May not be updating flow-sensitive type cache correctly during switch traversal
+
+## Impact
+
+Correct exhaustiveness checking is critical for:
+- Redux-style action patterns
+- Algebraic data types
+- Type-safe state machines
+- Modern TypeScript discriminated union patterns
 
 ## Tasks
 
-### Task 1: Discriminant Narrowing Fix ✅ COMPLETE
-**Function**: `narrow_by_discriminant`, `narrow_by_excluding_discriminant`
-**Bugs**: 3 (reversed check, no resolution, optional props)
+### Task 1: Switch Narrowing Verification
+**File**: `src/checker/flow_analysis.rs`
 
-**Implementation** (commit 781d4b119):
-1. Filtering approach - checks each union member individually
-2. Fixed reversed subtype check - uses `is_subtype_of(literal_value, property_type)`
-3. Handle any/unknown correctly - always kept in true branch
-4. Correct exclusion logic - reverse of inclusion check
+Verify that `switch(expr)` correctly narrows `expr` in each `case` block:
+- Each case should narrow to the specific discriminant value
+- Narrowing should reset between branches (unless fall-through)
+- Default case should handle remaining union members
 
-**Reference**: Gemini Question 1 response
-
-**Status**: ✅ Complete
+**Status**: ⏸️ Not started
 
 ---
 
-### Task 2: `in` Operator Narrowing Fix ✅ COMPLETE
-**Function**: `narrow_by_property_presence`, `type_has_property`
-**Bugs**: 4+ (unknown, optional, open objects, intersection)
+### Task 2: Exhaustiveness Detection
+**File**: `src/checker/flow_analysis.rs`
 
-**Completed** ✅ (commit c2d734d7f):
-1. **unknown handling**: Narrows to `object & { prop: unknown }` in true branch
-2. **Intersection support**: Checks all intersection members, returns true if ANY has property
-3. **Optional property promotion**: Intersects with synthetic object that has property as required
-4. **Open object handling**: When property not found (or Lazy type), intersect with `{ prop: unknown }` instead of returning NEVER
+Implement logic to detect when a union is fully covered:
+- Collect all case discriminant values
+- Check if they cover all union members
+- When covered, narrow variable to `never` in default/after switch
 
-**Critical Bug Found During Review**:
-- Was returning NEVER for properties not in type definition
-- Broke `in` checks for interfaces/classes (Lazy types)
-- Fixed by using intersection approach for all cases
+**Example**:
+```typescript
+type Action = { type: "add" } | { type: "remove" };
+function handle(action: Action) {
+  switch (action.type) {
+    case "add": /* action is { type: "add" } */
+    case "remove": /* action is { type: "remove" } */
+    default: /* action should be never here */
+  }
+  // action should be never here
+}
+```
 
-**Refactoring**:
-- Created `get_property_type` helper that returns `Option<TypeId>`
-- Changed union handling from `filter_map` to `map` (transforms all members)
-
-**Gemini Pro Review**: "CORRECT and robust"
-
-**Status**: ✅ Complete - All 4 bugs fixed, 112 narrowing tests pass
-
----
-
-### Task 3: instanceof Narrowing Fix ✅ COMPLETE
-**Function**: `narrow_by_instanceof`
-**Bugs**: 1 (interface vs class)
-
-**Implementation** (commit c884dc200):
-- After `narrow_to_type`, if result is NEVER, create intersection
-- This correctly handles interface vs class cases
-- Preserves normal narrowing for assignable cases
-
-**Status**: ✅ Complete - All tests pass
+**Status**: ⏸️ Not started
 
 ---
 
-### Task 4: Regression Testing
-**File**: `src/solver/tests/narrowing_regression_tests.rs`
+### Task 3: Fall-through Narrowing
+**File**: `src/checker/flow_analysis.rs`
 
-**Test Cases**:
-- Discriminant narrowing with shared values
-- Optional properties in discriminants
-- instanceof with interfaces vs classes
-- `in` operator with unknown
-- `in` operator with optional properties
-- `in` operator with intersections
-- All 8+ identified bug scenarios
+Handle narrowing when cases fall through:
+```typescript
+switch (x) {
+  case 'a':
+  case 'b':
+    // x should be narrowed to 'a' | 'b'
+    break;
+}
+```
 
-**Status**: Not started
+**Status**: ⏸️ Not started
+
+---
+
+### Task 4: Flow Cache Validation
+**File**: `src/checker/flow_analysis.rs`
+
+Ensure the checker correctly updates flow-sensitive type cache:
+- Each case block should have narrowed type
+- Fall-through should accumulate narrowing
+- After switch, variable should be correctly narrowed (or never)
+
+**Status**: ⏸️ Not started
 
 ---
 
 ## Success Criteria
 
-- [x] instanceof narrowing fixed (Task 3)
-- [x] Discriminant narrowing fixed (Task 1)
-- [x] in operator narrowing fixed (Task 2)
-- [x] Unit tests pass (112 narrowing tests)
-- [x] No regressions in existing narrowing tests
-- [ ] Conformance tests match tsc exactly
-- [x] All 8 critical bugs fixed!
+- [ ] Switch statements correctly narrow in each case
+- [ ] Exhausted unions narrow to `never` in default/after switch
+- [ ] Fall-through cases accumulate narrowing correctly
+- [ ] Flow cache is properly updated during switch traversal
+- [ ] All conformance tests for switch statements pass
 
 ---
 
-## Complexity: HIGH
+## Complexity: MEDIUM-HIGH
 
-**Why High**:
-- `src/solver/narrowing.rs` is high-traffic, high-impact
-- Errors in union filtering → unsoundness or infinite recursion
-- `Lazy` type resolution is tricky
-- Must handle 25+ TypeKey variants correctly
+**Why Medium-High**:
+- `flow_analysis.rs` is complex orchestration code
+- Requires understanding FlowNode graph and flow-sensitive typing
+- Must coordinate with solver's narrowing primitives
+- Edge cases: breaks, returns, throws in switch
 
 **Implementation Principles**:
-1. Use visitor pattern from `visitor.rs`
-2. Always resolve `Lazy` types before inspection
-3. Respect `strictNullChecks` setting
-4. Follow Two-Question Rule (AGENTS.md)
-
----
-
-## Next Step
-
-**Task 1** (discriminant narrowing):
-- Requires new Question 1 per Two-Question Rule
-- Most complex task
-- Must not repeat revert mistakes
-- Uses filtering approach (already validated by Gemini)
-
-**Task 2** (in operator fix):
-- 2 of 4 fixes complete
-- Remaining fixes need architectural changes
-- Can be deferred or tackled in follow-up session
+1. Use the fixed narrowing primitives from solver
+2. Respect FlowNode graph structure
+3. Follow Two-Question Rule (AGENTS.md)
+4. Test with Redux-style patterns
 
 ---
 
 ## Session History
 
-- 2026-02-04: Completed review phase (8+ bugs found)
-- 2026-02-04: Redefined as implementation session
-- 2026-02-04: Task 3 complete (instanceof fix, commit c884dc200)
-- 2026-02-04: Task 1 complete (discriminant fix, commit 781d4b119)
-- 2026-02-04: Task 2 complete (in operator fix, commit c2d734d7f)
-- 2026-02-04: **Session complete - all 8 bugs fixed!**
+- 2026-02-04: Previous session completed - all 8 narrowing bugs fixed
+- 2026-02-04: Session redefined - focus on switch exhaustiveness and CFA orchestration
 
-## Session Complete ✅
+## Previous Achievements (Archived)
 
-All critical narrowing bugs have been fixed. The narrowing logic now correctly handles:
-- Discriminant narrowing with filtering approach
-- instanceof with interface vs class
-- `in` operator with unknown, intersections, optional properties
-
-**Commits**:
-- c884dc200: instanceof narrowing fix
-- c2d734d7f: in operator full fix (by tsz-1)
-- 781d4b119: discriminant narrowing re-implementation
-
-**Status**: READY FOR NEW SESSION
+All narrowing bug fixes completed:
+- instanceof narrowing (interface vs class)
+- in operator narrowing (unknown, optional, open objects, intersection)
+- discriminant narrowing (filtering approach with proper resolution)
