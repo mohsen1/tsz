@@ -20250,6 +20250,8 @@ fn test_variance_method_bivariant_params() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -20280,6 +20282,8 @@ fn test_variance_method_bivariant_params() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -20319,6 +20323,8 @@ fn test_variance_function_property_contravariant() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Object with function property taking wide param
@@ -20342,6 +20348,8 @@ fn test_variance_function_property_contravariant() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Wide param function <: narrow param function (contravariant)
@@ -24898,6 +24906,8 @@ fn test_constructor_with_static_properties() {
                 type_predicate: None,
                 is_constructor: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }),
             write_type: TypeId::NEVER,
             optional: false,
@@ -28849,6 +28859,8 @@ fn test_overload_constructor_overloads() {
                 type_predicate: None,
                 is_constructor: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }),
             write_type: TypeId::NEVER,
             optional: false,
@@ -28865,6 +28877,8 @@ fn test_overload_constructor_overloads() {
                 type_predicate: None,
                 is_constructor: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }),
             write_type: TypeId::NEVER,
             optional: false,

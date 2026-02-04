@@ -2,7 +2,7 @@
 //!
 //! Tests Rule #41: Key remapping to Never should skip that property.
 
-use crate::solver::types::*;
+use crate::solver::types::{Visibility, *};
 use crate::solver::{evaluate::evaluate_type, intern::TypeInterner};
 
 #[test]

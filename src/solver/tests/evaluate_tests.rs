@@ -1,6 +1,6 @@
 use super::*;
 use crate::solver::def::DefId;
-use crate::solver::{SubtypeChecker, TypeSubstitution, Visibility, instantiate_type};
+use crate::solver::{SubtypeChecker, TypeSubstitution, instantiate_type};
 
 #[test]
 fn test_conditional_true_branch() {
@@ -17535,7 +17535,9 @@ fn test_application_ref_expansion_with_method() {
         write_type: method_type,
         optional: false,
         readonly: false,
-        is_method: true, // method        visibility: Visibility::Public,        parent_id: None,
+        is_method: true, // method
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Create Ref(1) for WithMethod type alias
