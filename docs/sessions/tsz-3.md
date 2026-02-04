@@ -14,26 +14,27 @@ Work is never done until all tests pass. This includes:
 1. **ClassDeclaration26.ts** (commit 8e21d5d71) - Fixed var constructor() pattern in class bodies
 2. **abstractPropertyNegative.ts** (commit 8a034be71) - Fixed getter/setter without body check
 
-**Next Focus**: TS2300 (10 missing, 1 extra) - Duplicate Identifier
+**Next Focus**: TS2300 - Duplicate Identifier Errors
 
-**Root Cause Analysis** (from Gemini):
-The binder's `declare_symbol` function (src/binder/state.rs ~line 1365) has "The Overwrite Problem":
-1. When duplicate is found, `can_merge_flags` correctly returns `false`
-2. But `declare_symbol` creates a NEW symbol and overwrites the old one in scope
-3. Result: Checker only sees the last declaration, doesn't detect collision
-4. SymbolTable is HashMap<String, SymbolId> - can only hold one ID per name
+**Investigation Status**:
+Read and analyzed the binder's `declare_symbol` function (src/binder/state.rs:3139) and `can_merge_flags` (src/binder/state.rs:3232).
 
-**Test to Start With**: `tests/cases/conformance/es6/variableDeclarations/letConstDuplicate.ts`
-```bash
-./scripts/conformance.sh run --test letConstDuplicate.ts
-```
+**Finding**: TS2300 errors are coming from the CHECKER, not the binder!
+- `src/checker/type_checking.rs` function `check_duplicate_identifiers` (line 2754)
+- It iterates over symbols and checks if declarations conflict
+- Lines 2927-2934: Has logic to allow namespace + class merging
+- BUT: It's still emitting TS2300 for namespace/class merges
 
-**Investigation Plan**:
-1. Read `src/binder/state.rs` function `declare_symbol` (~line 1365)
-2. Read `can_merge_flags` (~line 1439) to understand merge rules
-3. Determine fix strategy:
-   - Option A: Allow merging for invalid combos, let checker flag duplicate declarations
-   - Option B: Track collision errors explicitly on the symbol
+**Test Case**: `cloduleTest2.ts`
+- Expected: [TS2339, TS2554, TS2576]
+- Actual: [TS2300, TS2300, TS2300, TS2300, TS2300, TS2554]
+- tsc emits NO TS2300 for this file (namespace/class merging is allowed)
+- tsz emits 5 TS2300 errors (one for each `declare class m3d`)
+
+**Problem**: The checker's duplicate detection logic is correctly checking for namespace/class merging (lines 2927-2934), but something is preventing it from working. Need to investigate:
+1. Are symbols being merged properly in the binder?
+2. Is the checker seeing the correct symbol flags?
+3. Is there a different code path emitting these TS2300 errors?
 
 
 **Conformance Status**: 97/200 passed (48.5%)
