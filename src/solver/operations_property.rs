@@ -1009,6 +1009,21 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
             // Conditional types need evaluation to their resolved form
             TypeKey::Conditional(_) => {
+                // Add recursion guard for consistency with other recursive type resolutions
+                let _guard = match self.enter_property_access_guard(obj_type) {
+                    Some(guard) => guard,
+                    None => {
+                        let prop_atom =
+                            prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                        return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
+                            PropertyAccessResult::PropertyNotFound {
+                                type_id: obj_type,
+                                property_name: prop_atom,
+                            },
+                        );
+                    }
+                };
+
                 let evaluated = evaluate_type(self.interner, obj_type);
                 if evaluated != obj_type {
                     // Successfully evaluated - resolve property on the concrete type
@@ -1031,6 +1046,21 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
             // Index access types need evaluation
             TypeKey::IndexAccess(_, _) => {
+                // Add recursion guard for consistency with other recursive type resolutions
+                let _guard = match self.enter_property_access_guard(obj_type) {
+                    Some(guard) => guard,
+                    None => {
+                        let prop_atom =
+                            prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                        return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
+                            PropertyAccessResult::PropertyNotFound {
+                                type_id: obj_type,
+                                property_name: prop_atom,
+                            },
+                        );
+                    }
+                };
+
                 let evaluated = evaluate_type(self.interner, obj_type);
                 if evaluated != obj_type {
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
@@ -1078,6 +1108,22 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
             // Lazy types (interfaces, classes, type aliases) need resolution
             TypeKey::Lazy(def_id) => {
+                // CRITICAL: Add recursion guard for type aliases
+                // Type aliases can form cycles: type A = B; type B = A;
+                let _guard = match self.enter_property_access_guard(obj_type) {
+                    Some(guard) => guard,
+                    None => {
+                        let prop_atom =
+                            prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                        return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
+                            PropertyAccessResult::PropertyNotFound {
+                                type_id: obj_type,
+                                property_name: prop_atom,
+                            },
+                        );
+                    }
+                };
+
                 // Resolve the lazy type using the resolver
                 if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
                     // Successfully resolved - resolve property on the concrete type
