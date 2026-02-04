@@ -8,10 +8,19 @@ Work is never done until all tests pass. This includes:
 - No cleanup work left undone
 - No large files (>3000 lines) left unaddressed
 
-## Status: ACTIVE - Assignability (TS2322) Conformance Fixes
+## Status: ACTIVE - Excess Property Checks (TS2345/TS2322)
 
 **Date**: 2025-02-04
-**Focus**: TS2322 (Type 'X' is not assignable to type 'Y') and related solver issues
+**Focus**: Fix remaining "extra" errors from overly strict excess property checks
+
+## Context
+
+After fixing TS2741 (index signature assignability), reduced TS2322 errors by 84%.
+Now pivoting to fix remaining "extra" errors (TS2345: 31 extra, TS2322: 31 extra).
+
+**Hypothesis**: Excess property checks are incorrectly flagging valid object literals when the target has an index signature that should allow extra properties.
+
+**Rule**: If target has `[key: string]: T`, then ANY extra property in source is valid as long as it matches `T`. It is NOT an excess property error.
 
 ### Current Conformance Stats (1k samples - AFTER INDEX SIG FIX)
 
@@ -256,20 +265,33 @@ if !target_prop.optional {
 
 ## Next Steps
 
-Continue systematic TS2322 fixes using the "Golden Loop":
+### Focus: Excess Property Checks with Index Signatures
 
-1. [x] ~~Run conformance to find specific TS2322 failing tests~~ ✅ Done (31 extra errors remaining)
-2. [ ] Pick ONE simple "extra error" test case from the remaining 31
-3. [ ] Run with `TSZ_LOG=debug` to trace failure
-4. [ ] Identify if `compat.rs` or `subtype.rs` rejected it
-5. [ ] Fix the root cause
-6. [ ] Verify fix with unit tests and conformance
-7. [ ] Repeat until TS2322 extra errors are minimized
+**Immediate Priority**: Fix TS2345 extra errors (31) and remaining TS2322 extra errors (31)
 
-**High-priority areas** (based on current error counts):
-- TS2345 (extra=31): Object literal excess property checks
-- TS2322 (extra=31): Remaining assignability issues
-- TS2304 (extra=29): Cannot find name (symbol resolution)
+1. [ ] Analyze TS2345 "extra" errors for patterns
+   - Look for object literals passed to functions with index signature targets
+   - Identify where excess property checks incorrectly reject valid properties
+
+2. [ ] Locate excess property check logic
+   - File: `src/checker/state_checking.rs` function: `check_object_literal_excess_properties`
+   - Ensure it correctly checks for target index signatures
+
+3. [ ] Verify the fix respects index signatures
+   - Rule: Target with `[key: string]: T` should accept ANY properties matching type T
+   - Rule: Target with `[key: number]: T` should accept ANY numeric properties matching type T
+
+4. [ ] Run conformance to measure impact
+   - Expected: Significant reduction in both TS2345 and TS2322 extra errors
+
+### Blocked Issues (Deferred)
+
+**Enum Computed Properties** (WIP - moved to blocked)
+- Test: `objectLiteralEnumPropertyNames.ts`
+- Issue: Object literals with computed enum properties inferred as {}
+- Status: Complex lowering/evaluation problem, requires deeper investigation
+- Code: Added Enum handling to 6 functions (commit ae4735947) but issue persists
+- Decision: Defer in favor of higher-impact excess property checks
 
 ## Commands
 
