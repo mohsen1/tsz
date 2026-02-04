@@ -2,9 +2,26 @@
 
 ## Current Work
 
-**Investigating missing TS2304 for undefined type references in function return types**
+**Testing TS1005 parse error handling**
 
-Working on fixing issue where type references in function return types don't emit TS2304 "Cannot find name" errors.
+Testing parse error TS1005 "'{0}' expected" to verify parser correctly handles missing delimiters.
+
+### Test Case: missingCloseParenStatements.ts
+```typescript
+} while (i < 5 && (a1 > 5);
+```
+
+**TSC errors at line 12:**
+- TS1005: ')' expected. (position 35)
+
+**tsz errors at line 12:**
+- TS2304: Cannot find name 'i'. (position 18) - WRONG
+
+**Analysis**: This is NOT a missing TS1005 issue. tsz is incorrectly emitting TS2304 for variable `i` which should be in scope from the `do` block. This is a symbol resolution issue, not a parse error issue.
+
+**Other TS1005 cases in same file** (lines 3, 5, 9) - All emit TS1005 correctly ✅
+
+This suggests TS1005 is working correctly for most cases. The missing TS1005 instances from conformance (13 missing) may be different edge cases.
 
 ### Test Case
 ```typescript
