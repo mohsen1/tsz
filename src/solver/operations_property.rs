@@ -56,22 +56,19 @@ pub struct PropertyAccessEvaluator<'a, R: TypeResolver = NoopResolver> {
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
     no_unchecked_indexed_access: bool,
-    mapped_access_visiting: RefCell<FxHashSet<TypeId>>,
-    mapped_access_depth: RefCell<u32>,
+    visiting: RefCell<FxHashSet<TypeId>>,
+    depth: RefCell<u32>,
 }
 
-struct MappedAccessGuard<'a, R: TypeResolver> {
+struct PropertyAccessGuard<'a, R: TypeResolver> {
     evaluator: &'a PropertyAccessEvaluator<'a, R>,
     obj_type: TypeId,
 }
 
-impl<'a, R: TypeResolver> Drop for MappedAccessGuard<'a, R> {
+impl<'a, R: TypeResolver> Drop for PropertyAccessGuard<'a, R> {
     fn drop(&mut self) {
-        self.evaluator
-            .mapped_access_visiting
-            .borrow_mut()
-            .remove(&self.obj_type);
-        *self.evaluator.mapped_access_depth.borrow_mut() -= 1;
+        self.evaluator.visiting.borrow_mut().remove(&self.obj_type);
+        *self.evaluator.depth.borrow_mut() -= 1;
     }
 }
 
@@ -81,8 +78,8 @@ impl<'a> PropertyAccessEvaluator<'a, NoopResolver> {
             interner,
             resolver: &NoopResolver,
             no_unchecked_indexed_access: false,
-            mapped_access_visiting: RefCell::new(FxHashSet::default()),
-            mapped_access_depth: RefCell::new(0),
+            visiting: RefCell::new(FxHashSet::default()),
+            depth: RefCell::new(0),
         }
     }
 }
@@ -93,8 +90,8 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             interner,
             resolver,
             no_unchecked_indexed_access: false,
-            mapped_access_visiting: RefCell::new(FxHashSet::default()),
-            mapped_access_depth: RefCell::new(0),
+            visiting: RefCell::new(FxHashSet::default()),
+            depth: RefCell::new(0),
         }
     }
 
@@ -111,24 +108,24 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         self.resolve_property_access_inner(obj_type, prop_name, None)
     }
 
-    fn enter_mapped_access_guard(&self, obj_type: TypeId) -> Option<MappedAccessGuard<'_, R>> {
-        const MAX_MAPPED_ACCESS_DEPTH: u32 = 50;
+    fn enter_property_access_guard(&self, obj_type: TypeId) -> Option<PropertyAccessGuard<'_, R>> {
+        const MAX_PROPERTY_ACCESS_DEPTH: u32 = 50;
 
-        let mut depth = self.mapped_access_depth.borrow_mut();
-        if *depth >= MAX_MAPPED_ACCESS_DEPTH {
+        let mut depth = self.depth.borrow_mut();
+        if *depth >= MAX_PROPERTY_ACCESS_DEPTH {
             return None;
         }
         *depth += 1;
         drop(depth);
 
-        let mut visiting = self.mapped_access_visiting.borrow_mut();
+        let mut visiting = self.visiting.borrow_mut();
         if !visiting.insert(obj_type) {
             drop(visiting);
-            *self.mapped_access_depth.borrow_mut() -= 1;
+            *self.depth.borrow_mut() -= 1;
             return None;
         }
 
-        Some(MappedAccessGuard {
+        Some(PropertyAccessGuard {
             evaluator: self,
             obj_type,
         })
@@ -927,7 +924,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
             // Application: handle nominally (preserve class/interface identity)
             TypeKey::Application(app_id) => {
-                let _guard = match self.enter_mapped_access_guard(obj_type) {
+                let _guard = match self.enter_property_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
                         let prop_atom =
@@ -958,7 +955,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 }
 
                 // Lazy resolution failed (complex constraint) - fall back to eager expansion
-                let _guard = match self.enter_mapped_access_guard(obj_type) {
+                let _guard = match self.enter_property_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
                         return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
@@ -1673,7 +1670,6 @@ pub fn is_readonly_index_signature(
     wants_string: bool,
     wants_number: bool,
 ) -> bool {
-    
     use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
 
     let resolver = IndexSignatureResolver::new(interner);
