@@ -18,41 +18,37 @@
   - Added `resolve_lazy_type()` call in `class_type.rs` for interface merging
 - ✅ **Fixed narrowing test expectation** (19 → 18 failing tests, **-1 test**)
   - Corrected test for `narrow_by_discriminant_no_match`
+- ✅ **Fixed Application expansion for type aliases** (18 → 17 failing tests, **-1 test**)
+  - Modified `lower_type_alias_declaration` to return type parameters
+  - Added parameter caching in `compute_type_of_symbol` for user-defined type aliases
+  - Added parameter caching in `type_checking_queries` for library type aliases
+  - Enables `ExtractState<NumberReducer>` to properly expand to `number`
 
 ### Total Progress
-- **51 → 35 failing tests (-16 tests total)**
+- **51 → 34 failing tests (-17 tests total)**
 
 ## Updated Priorities (Pivoted from test-fixing to infrastructure)
 
-### Priority 1: Fix Type Alias Application Expansion (BLOCKER)
+### ✅ Priority 1: Fix Type Alias Application Expansion (COMPLETE)
 **Problem**: `Application` expansion fails for type aliases, blocking conditional type evaluation
 - `ExtractState<NumberReducer>` fails to expand
 - `get_lazy_type_params` returns `None` for type aliases
 - `evaluate_conditional` is never called
 
-**Files**: `src/solver/evaluate.rs`, `src/solver/intern.rs`
+**Solution Implemented** (2026-02-04):
+1. Modified `lower_type_alias_declaration` to return type parameters
+2. Added parameter caching in `compute_type_of_symbol` for user-defined type aliases
+3. Added parameter caching in `type_checking_queries` for library type aliases
 
-**Task**:
-1. Locate `get_lazy_type_params` implementation
-2. Ensure it handles `SymbolFlags::TYPE_ALIAS`
-3. In `evaluate_application`, fetch alias type parameters and create substitution map
+**Files Modified**:
+- `src/solver/lower.rs`: Changed return type to `(TypeId, Vec<TypeParamInfo>)`
+- `src/checker/state_type_analysis.rs`: Cache parameters for user type aliases
+- `src/checker/type_checking_queries.rs`: Cache parameters for library type aliases
 
-**Gemini Question 1 (Approach - PRE-implementation)**:
-> "I'm fixing `Application` expansion for type aliases in `src/solver/evaluate.rs`.
-> Currently, `get_lazy_type_params` returns `None` for aliases.
->
-> Should I modify the `TypeResolver` to store type parameters for aliases during
-> the binding/lowering phase, or should the Solver look them up from the `Symbol`'s
-> declarations?
->
-> What is the Phase 4.3 way to get type parameters from a `DefId` representing
-> a `type T<...> = ...`?
->
-> Please provide: 1) File paths, 2) Function names, 3) Edge cases, 4) Potential pitfalls"
+**Tests Fixed**:
+- ✅ test_redux_pattern_extract_state_with_infer
 
-**Tests affected** (once fixed):
-- test_redux_pattern_extract_state_with_infer
-- Likely many other conditional type tests
+**Gemini Consultation**: Followed Two-Question Rule for implementation validation
 
 ### Priority 2: Generic Inference with Index Signatures (4 tests)
 **Problem**: Generic type inference fails when target has index signatures
@@ -80,10 +76,9 @@
 - test_readonly_index_signature_variable_access_assignment_2540
 - test_readonly_method_signature_assignment_2540
 
-## Remaining 35 Failing Tests - Categorized
+## Remaining 34 Failing Tests - Categorized
 
-**Core Infrastructure** (Priority 1-3 above):
-- 1x Redux pattern (Application expansion - BLOCKER)
+**Core Infrastructure** (Priority 2-3):
 - 4x Generic inference with index signatures
 - 4x Readonly TS2540 (architectural)
 
@@ -97,7 +92,7 @@
 
 ## Investigation: Redux Pattern (test_redux_pattern_extract_state_with_infer)
 
-**Status**: ROOT CAUSE IDENTIFIED - Application expansion failure
+**Status**: ✅ FIXED - Application expansion now works
 
 **Problem**: Redux pattern test fails - `ExtractedState` is not being inferred as `number`
 
@@ -113,13 +108,13 @@ type ExtractedState = ExtractState<NumberReducer>; // Should be number
 - `Application` type `ExtractState<NumberReducer>` fails to expand in `src/solver/evaluate.rs`
 - `TypeResolver::get_lazy_type_params(def_id)` returns `None`
 - `evaluate_conditional` is NEVER called because Application expansion fails first
-- Solver treats type as opaque `Application`, SubtypeChecker compares nominally (fails)
 
-**Infrastructure improvements made** (ready for when root cause is fixed):
-1. ✅ Added Application expansion to `match_infer_pattern`
-2. ✅ Removed overly-strict final subtype checks
+**Solution Implemented**:
+1. Modified `lower_type_alias_declaration` to return `(TypeId, Vec<TypeParamInfo>)`
+2. Added parameter caching in `compute_type_of_symbol` for user type aliases
+3. Added parameter caching in `type_checking_queries` for library type aliases
 
-**Next Step**: Fix Application expansion in `src/solver/evaluate.rs` (see Priority 1 above)
+**Result**: `ExtractState<NumberReducer>` now correctly expands to `number`
 
 ## Why This Path (from Gemini)
 
@@ -132,4 +127,6 @@ type ExtractedState = ExtractState<NumberReducer>; // Should be number
 - Numeric enum assignability (bidirectional with number)
 - Mixin pattern with generic functions and nested classes
 
-## Status: Pivot to infrastructure focus - 35 failing tests remain
+## Status: Priority 1 complete - 34 failing tests remain
+
+**Next**: Priority 2 - Generic inference with index signatures (4 tests)
