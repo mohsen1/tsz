@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟢 Phase 5 Active - CFA Robustness & Completeness (Task 10: Array.isArray Narrowing - COMPLETE)
+**Status**: 🟢 Phase 5 Active - CFA Robustness & Completeness (Task 15: Nested Discriminants - NEXT)
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -89,6 +89,66 @@ From **AGENTS.md**: Recent discriminant narrowing implementation had **3 critica
 **Files to modify**:
 - `src/solver/narrowing.rs`: Add truthiness narrowing logic
 - `src/checker/flow_analysis.rs`: Apply truthiness narrowing
+
+### Task 15: Nested Discriminants (MEDIUM PRIORITY - Feature)
+
+**Goal**: Support narrowing on nested property paths (e.g., `x.payload.type === "success"`).
+
+**Implementation**:
+- Checker: Extract property paths from PropertyAccessExpression
+- Solver: Apply narrowing to specific paths within types
+- Handle optional chaining in paths (`x.a?.b === "val"`)
+
+**Why Medium Priority**: Fundamental requirement for complex state management patterns (Redux, AST processing).
+
+**Files to modify**:
+- `src/checker/control_flow_narrowing.rs`: Extract property paths
+- `src/solver/narrowing.rs`: Apply narrowing to nested paths
+- `src/checker/flow_analysis.rs`: Track narrowed symbols for property paths
+
+### Task 16: Discriminated Tuples (MEDIUM PRIORITY - Feature)
+
+**Goal**: Support narrowing unions of tuples based on literal index.
+
+**Example**:
+```typescript
+type Entry = ["error", string] | ["success", number];
+function handle(e: Entry) {
+  if (e[0] === "error") { e[1]; // narrows to string }
+}
+```
+
+**Implementation**:
+- Checker: Detect numeric literal access on tuple types
+- Solver: Narrow tuple unions based on discriminant at index 0
+
+**Why Medium Priority**: Common in functional-style TypeScript and hooks patterns.
+
+**Files to modify**:
+- `src/checker/control_flow_narrowing.rs`: Detect tuple discriminant access
+- `src/solver/narrowing.rs`: Narrow tuple unions
+
+### Task 17: switch(true) Narrowing (LOW PRIORITY - Feature)
+
+**Goal**: Support narrowing in `switch(true)` with complex case conditions.
+
+**Example**:
+```typescript
+switch (true) {
+  case typeof x === "string": // x should narrow to string
+  case x instanceof Date:    // x should narrow to Date
+}
+```
+
+**Implementation**:
+- Checker: Detect switch(true) pattern
+- Apply case-specific narrowing to the switch expression
+
+**Why Low Priority**: Useful but less common than other narrowing patterns.
+
+**Files to modify**:
+- `src/checker/flow_analysis.rs`: Handle switch(true) pattern
+- `src/checker/control_flow_narrowing.rs`: Extract guards from case expressions
 
 ## Coordination Notes
 
