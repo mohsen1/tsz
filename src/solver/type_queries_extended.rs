@@ -939,9 +939,13 @@ pub fn classify_for_constructor_check(
 
 /// Check if a type is narrowable (union or type parameter).
 pub fn is_narrowable_type_key(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // CRITICAL FIX: Lazy types are also narrowable!
+    // Lazy types are DefId references that need to be resolved, but they represent
+    // types that can be narrowed (unions, type parameters, etc.)
+    // Without this, discriminant narrowing fails for types stored as lazy references
     matches!(
         db.lookup(type_id),
-        Some(TypeKey::Union(_) | TypeKey::TypeParameter(_) | TypeKey::Infer(_))
+        Some(TypeKey::Union(_) | TypeKey::TypeParameter(_) | TypeKey::Infer(_) | TypeKey::Lazy(_))
     )
 }
 

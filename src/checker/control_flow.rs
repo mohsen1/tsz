@@ -1483,14 +1483,20 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         is_true_branch: bool,
     ) -> TypeId {
+        eprintln!(
+            "DEBUG narrow_type_by_condition: type_id={}, condition={}, target={}, is_true_branch={}",
+            type_id.0, condition_idx.0, target.0, is_true_branch
+        );
         let mut visited_aliases = Vec::new();
-        self.narrow_type_by_condition_inner(
+        let result = self.narrow_type_by_condition_inner(
             type_id,
             condition_idx,
             target,
             is_true_branch,
             &mut visited_aliases,
-        )
+        );
+        eprintln!("DEBUG narrow_type_by_condition: result={}", result.0);
+        result
     }
 
     pub(crate) fn narrow_type_by_condition_inner(
@@ -1501,11 +1507,20 @@ impl<'a> FlowAnalyzer<'a> {
         is_true_branch: bool,
         visited_aliases: &mut Vec<SymbolId>,
     ) -> TypeId {
+        eprintln!(
+            "DEBUG narrow_type_by_condition_inner: type_id={}, condition={}, target={}",
+            type_id.0, condition_idx.0, target.0
+        );
         let condition_idx = self.skip_parenthesized(condition_idx);
         let Some(cond_node) = self.arena.get(condition_idx) else {
+            eprintln!("DEBUG narrow_type_by_condition_inner: no cond_node");
             return type_id;
         };
 
+        eprintln!(
+            "DEBUG narrow_type_by_condition_inner: cond kind={}",
+            cond_node.kind
+        );
         let narrowing = NarrowingContext::new(self.interner);
 
         if cond_node.kind == SyntaxKind::Identifier as u16
@@ -1527,7 +1542,12 @@ impl<'a> FlowAnalyzer<'a> {
         match cond_node.kind {
             // typeof x === "string"
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                eprintln!("DEBUG narrow_type_by_condition_inner: is binary expression");
                 if let Some(bin) = self.arena.get_binary_expr(cond_node) {
+                    eprintln!(
+                        "DEBUG narrow_type_by_condition_inner: operator={}",
+                        bin.operator_token
+                    );
                     if let Some(narrowed) = self.narrow_by_logical_expr(
                         type_id,
                         bin,
@@ -1535,8 +1555,15 @@ impl<'a> FlowAnalyzer<'a> {
                         is_true_branch,
                         visited_aliases,
                     ) {
+                        eprintln!(
+                            "DEBUG narrow_type_by_condition_inner: logical_expr returned {}",
+                            narrowed.0
+                        );
                         return narrowed;
                     }
+                    eprintln!(
+                        "DEBUG narrow_type_by_condition_inner: calling narrow_by_binary_expr"
+                    );
                     return self.narrow_by_binary_expr(
                         type_id,
                         bin,
