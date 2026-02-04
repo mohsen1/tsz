@@ -1944,7 +1944,6 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
         type_id: crate::solver::TypeId,
         interner: &dyn crate::solver::TypeDatabase,
     ) -> Option<crate::solver::TypeId> {
-        
         use crate::solver::type_queries;
         use crate::solver::visitor::{
             callable_shape_id, object_shape_id, object_with_index_shape_id,
