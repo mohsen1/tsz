@@ -235,7 +235,6 @@ impl<'a> DeclarationEmitter<'a> {
                 "[DEBUG] emit: type_interner.is_none()={}",
                 self.type_interner.is_none()
             );
-            eprintln!("[DEBUG] emit: binder.is_none()={}", self.binder.is_none());
             eprintln!(
                 "[DEBUG] emit: current_arena.is_none()={}",
                 self.current_arena.is_none()
@@ -247,7 +246,6 @@ impl<'a> DeclarationEmitter<'a> {
                 self.binder,
                 &self.current_arena,
             ) {
-                eprintln!("[DEBUG] emit: running UsageAnalyzer");
                 let mut analyzer = usage_analyzer::UsageAnalyzer::new(
                     self.arena,
                     binder,
@@ -256,7 +254,6 @@ impl<'a> DeclarationEmitter<'a> {
                     current_arena.clone(),
                 );
                 let used = analyzer.analyze(root_idx).clone();
-                eprintln!("[DEBUG] emit: used_symbols has {} symbols", used.len());
                 let foreign = analyzer.get_foreign_symbols();
                 eprintln!(
                     "[DEBUG] emit: foreign_symbols has {} symbols",
@@ -264,9 +261,7 @@ impl<'a> DeclarationEmitter<'a> {
                 );
                 self.used_symbols = Some(used);
                 self.foreign_symbols = Some(foreign.clone());
-            } else {
-                eprintln!("[DEBUG] emit: skipping UsageAnalyzer - missing components");
-            }
+            } 
         }
 
         // NEW: Prepare aliases before emitting anything
@@ -301,6 +296,12 @@ impl<'a> DeclarationEmitter<'a> {
         self.queue_source_mapping(stmt_node);
 
         let kind = stmt_node.kind;
+        eprintln!(
+            "[DEBUG STATEMENT] kind={}, syntax_kind_ext::EXPORT_ASSIGNMENT={}",
+            kind,
+            syntax_kind_ext::EXPORT_ASSIGNMENT
+        );
+
         match kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.emit_function_declaration(stmt_idx);
@@ -1479,12 +1480,53 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         if assign.is_export_equals {
             self.write("export = ");
+            self.emit_expression(assign.expression);
+            self.write(";");
+            self.write_line();
         } else {
-            self.write("export default ");
+            // export default expression
+            // Check if expression is a declaration (function, class) or a value expression
+            let Some(expr_node) = self.arena.get(assign.expression) else {
+                return;
+            };
+
+            let is_declaration = match expr_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => true,
+                k if k == syntax_kind_ext::CLASS_DECLARATION => true,
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => true,
+                k if k == syntax_kind_ext::ENUM_DECLARATION => true,
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => true,
+                _ => false,
+            };
+
+            if is_declaration {
+                // Direct export of declaration
+                self.write("export default ");
+                self.emit_node(assign.expression);
+                self.write(";");
+                self.write_line();
+            } else {
+                // Value expression - synthesize _default variable
+                // First, emit the synthesized variable with inferred type
+                self.write_indent();
+                self.write("declare const _default: ");
+
+                // Get the type of the expression
+                if let Some(type_id) = self.get_node_type(assign.expression) {
+                    self.write(&self.print_type_id(type_id));
+                } else {
+                    self.write("any");
+                }
+
+                self.write(";");
+                self.write_line();
+
+                // Then, emit export default _default
+                self.write_indent();
+                self.write("export default _default;");
+                self.write_line();
+            }
         }
-        self.emit_expression(assign.expression);
-        self.write(";");
-        self.write_line();
     }
 
     fn emit_export_default_function(&mut self, func_idx: NodeIndex) {
@@ -1561,12 +1603,24 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn emit_export_default_expression(&mut self, expr_idx: NodeIndex) {
+        // Synthesize a _default variable for expression exports
+        // First, emit: declare const _default: <type>;
         self.write_indent();
-        self.write("export default ");
-        if !expr_idx.is_none() {
-            self.emit_expression(expr_idx);
+        self.write("declare const _default: ");
+
+        // Get the type of the expression
+        if let Some(type_id) = self.get_node_type(expr_idx) {
+            self.write(&self.print_type_id(type_id));
+        } else {
+            self.write("any");
         }
+
         self.write(";");
+        self.write_line();
+
+        // Then, emit: export default _default;
+        self.write_indent();
+        self.write("export default _default;");
         self.write_line();
     }
 
@@ -3470,12 +3524,9 @@ impl<'a> DeclarationEmitter<'a> {
     /// This should be called before emitting other declarations to ensure
     /// imports appear at the top of the .d.ts file.
     fn emit_auto_imports(&mut self) {
-        eprintln!("[DEBUG] emit_auto_imports: starting");
-
         let binder = match &self.binder {
             Some(b) => b,
             None => {
-                eprintln!("[DEBUG] emit_auto_imports: no binder, returning");
                 return;
             }
         };
