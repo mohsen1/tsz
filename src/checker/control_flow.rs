@@ -463,17 +463,30 @@ impl<'a> FlowAnalyzer<'a> {
                     self.assignment_targets_reference_node(flow.node, reference);
 
                 if targets_reference {
-                    if self.is_direct_assignment_to_reference(flow.node, reference) {
-                        if let Some(assigned_type) = self.get_assigned_type(flow.node, reference) {
-                            assigned_type
-                        } else {
-                            current_type
-                        }
+                    // CRITICAL FIX: Try to get assigned type for ALL assignments, including destructuring
+                    // Previously: Only direct assignments (x = ...) worked
+                    // Now: Destructuring ([x] = ...) also works because get_assigned_type handles it
+                    if let Some(assigned_type) = self.get_assigned_type(flow.node, reference) {
+                        // Killing definition: replace type with RHS type and stop traversal
+                        assigned_type
                     } else {
+                        // If we can't resolve the RHS type, conservatively return declared type
+                        // The value HAS changed, so we can't continue to antecedent
                         current_type
                     }
                 } else if self.assignment_affects_reference_node(flow.node, reference) {
-                    current_type
+                    // CRITICAL FIX: Mutations (x.prop = ...) should NOT reset narrowing
+                    // Previously: Stopped traversal and lost all previous narrowing
+                    // Now: Continue to antecedent to preserve existing narrowing
+                    if let Some(&ant) = flow.antecedent.first() {
+                        if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                            worklist.push_back((ant, current_type));
+                            in_worklist.insert(ant);
+                        }
+                        *results.get(&ant).unwrap_or(&current_type)
+                    } else {
+                        current_type
+                    }
                 } else if let Some(&ant) = flow.antecedent.first() {
                     // Continue to antecedent
                     if !in_worklist.contains(&ant) && !visited.contains(&ant) {
