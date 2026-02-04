@@ -117,11 +117,18 @@ This is a **high-complexity architectural issue**:
 - Involves the binder, type resolution, and solver integration
 - Affects all readonly property checks on interfaces, not just element access
 
-## Status: BLOCKED - Needs Architecture Expertise
-This issue is too complex for a quick diagnostic fix. Requires:
-1. Deep understanding of type system architecture
-2. Knowledge of how readonly modifiers flow from AST to PropertyInfo
-3. Potential changes to interface type construction
+## Status: WORKING ON ARCHITECTURAL FIX
 
-## Recommendation
-Defer this issue and work on a simpler task, or escalate to architecture expert.
+Gemini recommends tackling this as a medium-complexity architectural issue rather than hunting for more simple fixes. This aligns with NORTH_STAR goals.
+
+### Implementation Plan
+1. **Triage**: Check if readonly issue is isolated or part of a cluster (15 min timebox)
+2. **Binder Check**: Verify readonly modifiers are set on interface property symbols
+3. **Solver Check**: Verify Solver exposes readonly info via PropertyInfo
+4. **Checker Fix**: Ensure Checker queries Solver correctly (no manual TypeKey inspection)
+5. **Test**: Verify fix works for both dot and element access
+
+### Architectural Principles
+- Checker should NOT inspect TypeKey manually (NORTH_STAR anti-pattern)
+- Checker should query Solver for property readonly status
+- Proper separation of concerns: Binder→Solver→Checker
