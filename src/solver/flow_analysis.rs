@@ -12,7 +12,7 @@
 
 use crate::interner::Atom;
 use crate::solver::narrowing::NarrowingContext;
-use crate::solver::{TypeDatabase, TypeId};
+use crate::solver::{QueryDatabase, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Flow facts that represent the state of variables at a specific program point.
@@ -109,13 +109,13 @@ impl FlowFacts {
 /// based on flow facts gathered during control flow analysis.
 pub struct FlowTypeEvaluator<'a> {
     #[allow(dead_code)]
-    db: &'a dyn TypeDatabase,
+    db: &'a dyn QueryDatabase,
     narrowing_context: NarrowingContext<'a>,
 }
 
 impl<'a> FlowTypeEvaluator<'a> {
     /// Create a new flow type evaluator
-    pub fn new(db: &'a dyn TypeDatabase) -> Self {
+    pub fn new(db: &'a dyn QueryDatabase) -> Self {
         let narrowing_context = NarrowingContext::new(db);
         Self {
             db,
