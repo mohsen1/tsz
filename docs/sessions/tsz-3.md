@@ -32,21 +32,36 @@ Gemini's analysis suggests the issue is likely in **Checker Integration**:
    - Add targeted tracing to understand the flow from AST node → flow node → narrowing
    - Identify where the connection breaks
 
-4. **Test and Verify**:
-   - Once fixed, verify discriminant narrowing works end-to-end
-   - Run conformance tests to ensure no regressions
+**Location**: `src/solver/narrowing.rs` lines ~268-297 (narrow_by_discriminant function)
 
-## Test Case
+### Test Cases
 
 ```typescript
-type D = { done: true, value: 1 } | { done: false, value: 2 };
-function test(o: D) {
-    if (o.done === true) {
-        const y: 1 = o.value; // Should work - currently gets TS2322
+// Case 1: Shared discriminant values
+type A = { kind: "group1", value: number };
+type B = { kind: "group1", name: string };
+type C = { kind: "group2", active: boolean };
+type U1 = A | B | C;
+
+function f1(x: U1) {
+    if (x.kind === "group1") {
+        // Should narrow to A | B
+    }
+}
+
+// Case 2: Mixed with null
+type U2 = { type: "ok", data: string } | { type: "error", code: number } | null;
+
+function f2(x: U2) {
+    if (x && x.type === "ok") {
+        // Should narrow to { type: "ok", data: string }
     }
 }
 ```
 
-## Priority
+### Implementation Plan
 
-**CRITICAL**: This is feature completeness work. The narrowing rewrite is "dead code" until it's triggered by the type checking pipeline. This aligns with the North Star goal of matching tsc behavior exactly.
+1. Read current `narrow_by_discriminant` implementation
+2. Rewrite to filter union members based on property value matching
+3. Test with simple cases
+4. Run conformance tests to verify improvement

@@ -29,7 +29,6 @@
 
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
-use crate::solver::subtype::is_subtype_of;
 use crate::solver::types::*;
 use crate::solver::visitor::{
     intersection_list_id, is_function_type_db, is_literal_type_db, is_object_like_type_db,
@@ -245,60 +244,21 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        let members = match union_list_id(self.interner, union_type) {
-            Some(members_id) => self.interner.type_list(members_id),
-            None => return union_type,
-        };
+        let discriminants = self.find_discriminants(union_type);
 
-        let mut matching: Vec<TypeId> = Vec::new();
-
-        for &member in members.iter() {
-            if let Some(shape_id) = object_shape_id(self.interner, member) {
-                let shape = self.interner.object_shape(shape_id);
-                let prop_type = shape
-                    .properties
-                    .iter()
-                    .find(|p| p.name == property_name)
-                    .map(|p| p.type_id);
-
-                match prop_type {
-                    Some(ty) => {
-                        // Check if property type matches the literal value
-                        // Use subtype check to handle cases where property type is wider than literal
-                        if is_subtype_of(self.interner, ty, literal_value) {
-                            matching.push(member);
-                        }
-                        // If property type doesn't match, exclude this member
-                    }
-                    None => {
-                        // Property doesn't exist on this member - exclude it
-                        // (x.prop === value implies prop must exist)
+        for disc in &discriminants {
+            if disc.property_name == property_name {
+                // Find the variant matching this literal
+                for (lit, member) in &disc.variants {
+                    if *lit == literal_value {
+                        return *member;
                     }
                 }
-            } else {
-                // Not an object type - can't match
             }
         }
 
-        if matching.is_empty() {
-            trace!("No members matched discriminant check, returning never type");
-            return TypeId::NEVER;
-        }
-
-        if matching.len() == members.len() {
-            trace!("All members matched, returning original type");
-            union_type
-        } else if matching.len() == 1 {
-            trace!("Narrowed to single member");
-            matching[0]
-        } else {
-            trace!(
-                "Narrowed to {} of {} members",
-                matching.len(),
-                members.len()
-            );
-            self.interner.union(matching)
-        }
+        // No narrowing possible - return original
+        union_type
     }
 
     /// Narrow a union type by excluding variants with a specific discriminant value.
