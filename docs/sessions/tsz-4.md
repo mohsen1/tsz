@@ -10,17 +10,18 @@ Completed 6 tasks successfully:
 3. Type Predicates and Assertion Functions
 4. Module System Fidelity (ambient modules, import equals, namespace exports)
 5. **Function Overload Normalization** (functions, constructors, methods)
-6. **Class Member Synthesis** (property inference, accessors, parameter props)
+6. **Class Member Synthesis and Default Export Synthesis** (property inference, accessors, parameter props, default exports)
 
-### Class Member Synthesis ✅ COMPLETE (2026-02-04)
+### Class Member Synthesis and Default Export Synthesis ✅ COMPLETE (2026-02-04)
 
-**Investigation Result:** All features already implemented!
+**Investigation Result:** Class member features already implemented! Default export synthesis was missing and has been added.
 
 **Completed:**
 - ✅ Property Synthesis (lines 546-553) - Uses `get_node_type()` to infer types from initializers
 - ✅ Accessor Normalization - Get/set methods emit with return types, no bodies
 - ✅ Parameter Properties (lines 667+) - Dual emission as properties and constructor parameters
 - ✅ Visibility & Modifiers - Preserved correctly (public, private, protected, readonly, static)
+- ✅ **Default Export Synthesis** (NEW) - `export default expr` → `_default` variable synthesis
 
 **Test Results:**
 ```typescript
@@ -54,8 +55,22 @@ export declare class Example {
 - Parameter properties in `emit_parameter_properties()` - extracts and emits as class properties
 - Accessor emission automatically strips bodies and keeps signatures
 - Private properties correctly omit type annotations
+- Default export synthesis in `emit_export_default_expression()` - creates `_default` variable
 
-**Discovery:** Task was already complete - no implementation work needed!
+**Default Export Synthesis (NEW):**
+```typescript
+// Input
+export default 42;
+
+// Output ✅ (matches tsc)
+declare const _default: number;
+export default _default;
+```
+
+**Discovery:** Class member features were already complete. Default export synthesis was missing and has now been implemented.
+
+**Commits:**
+- e5d51af10 (feat: default export synthesis)
 
 ---
 
