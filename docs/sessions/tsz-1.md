@@ -1,55 +1,42 @@
-# Session tsz-1: COMPLETED (2026-02-04)
+# Session tsz-1: TS2318 Core Global Type Checking Fix
 
-## Session Achievement: Parser Error Detection
+**Started**: 2026-02-04 (Continued after parser fixes completion)
+**Goal**: Fix TS2318 "Cannot find global type" error reporting to match tsc behavior
 
-### Final Metrics
-- **Conformance**: 38% → 50% (+12 percentage points)
-- **Parser Fixes**: 6 completed
-- **Unit Tests**: 363/365 passing (2 pre-existing abstract class failures)
-- **Parser Tests**: 287/287 passing
-- **All Work**: Tested, committed, and synced
+## Problem Statement
 
-## Completed Parser Fixes
+Currently, tsz only checks for core global types (Array, Boolean, String, etc.) when no libs are loaded. However, tsc checks for these types even when libraries are loaded, emitting TS2318 if a loaded library is missing core types.
 
-1. **ClassDeclaration26** (commit 3c0332859)
-   - Look-ahead logic for var/let as class member modifiers
-   - Distinguishes property names from invalid modifiers
+**Current Behavior**:
+```rust
+if !has_lib {
+    // Only check when no libs loaded
+    for &type_name in CORE_GLOBAL_TYPES { ... }
+}
+```
 
-2. **TS1109 throw statement** (commit 679cf3ad8)
-   - Emit "Expression expected" for `throw;`
+**Expected Behavior**: Always check core global types, even when libs are loaded
 
-3. **TS1005 arrow functions** (commit 969968b8c)
-   - Emit "'{' expected" for `() => var x`
+## Implementation
 
-4. **TS1005 argument lists** (commit 14b077780)
-   - Emit "',' expected" for `foo(1 2 3)`
+### Task: Fix check_missing_global_types in state_checking.rs
 
-5. **TS1005 array/object literals** (commit 3e29d20e3)
-   - Emit "',' expected" for `[1 2 3]` and `{a:1 b:2}`
+**File**: `src/checker/state_checking.rs`
+**Function**: `check_missing_global_types`
 
-6. **TS1005 variable declarations** (commit 3e453bc0f)
-   - Emit "',' expected" for `var x = 1 y = 2`
+**Changes Required**:
+1. Remove `if !has_lib` guard
+2. Check core types in all loaded lib contexts
+3. Use `has_name_in_lib` or similar to check global availability
 
-## Infrastructure Success
-- ✅ Resolved conformance-rust directory mystery
-- ✅ TS1202 false positives eliminated
-- ✅ Conformance tests working correctly (50/200 passing)
+**Success Criteria**:
+- TS2318 emitted for missing core types even when libs are loaded
+- No false positive TS2318 when types exist in libs
+- Matches tsc behavior exactly
 
-## Deferred: Abstract Constructor Bug
-- **Issue**: Class identifiers in value position resolve to instance type instead of constructor type
-- **Location**: src/checker/state_type_resolution.rs:727-738
-- **Complexity**: Requires threading "ResolutionContext" through type system
-- **Action**: Documented as architectural TODO for future dedicated session
+## Progress
 
-## Next Steps for Continuation
-1. Continue Task 2: Crush remaining TS1005 errors (~12 missing)
-2. Timebox fixes to 15 minutes each
-3. Defer architectural changes immediately
-4. Focus on high-impact, low-risk parser fixes
-
-## Session Deliverables
-- ✅ 6 parser fixes committed and pushed
-- ✅ Session file refactored to "Parser Error Detection" focus
-- ✅ All work documented in docs/sessions/tsz-1.md
-- ✅ No regressions introduced
-- ✅ Clean baseline for future work
+### 2026-02-04: Implementation Started
+- Analyzed current implementation in `state_checking.rs`
+- Identified `has_name_in_lib` method to check global symbols
+- Ready to implement fix
