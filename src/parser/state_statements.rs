@@ -2320,9 +2320,25 @@ impl ParserState {
                 }
                 // Handle 'export' - not valid as class member modifier
                 SyntaxKind::ExportKeyword => {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Unexpected modifier.",
+                        diagnostic_codes::UNEXPECTED_TOKEN,
+                    );
                     self.next_token();
                     self.arena
                         .create_modifier(SyntaxKind::ExportKeyword, start_pos)
+                }
+                // Handle 'let' and 'var' - not valid as class member modifiers
+                SyntaxKind::LetKeyword | SyntaxKind::VarKeyword => {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Unexpected modifier.",
+                        diagnostic_codes::UNEXPECTED_TOKEN,
+                    );
+                    self.next_token();
+                    // Don't add to modifiers list - not a valid modifier
+                    continue;
                 }
                 _ => break,
             };
