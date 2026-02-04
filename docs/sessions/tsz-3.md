@@ -2,14 +2,35 @@
 
 ## Current Work
 
-**Status**: Pulled latest changes, ready for next task
+**Status**: Investigating abstract class test failures
+
+**Current Task**: Debugging 2 failing tests related to abstract class constructor types
+
+**Failing Tests**:
+1. `test_abstract_constructor_assignability` - TS2322 error on `const animal = createAnimal(Animal);`
+2. `test_abstract_mixin_intersection_ts2339` - TS2339 errors for missing properties
+
+**Analysis**:
+Both errors show types with Object.prototype properties (`isPrototypeOf`, `propertyIsEnumerable`) mixed with instance methods. This suggests the instance prototype type is being used instead of:
+- The proper instance type (for instance properties)
+- The constructor type (for static properties and construct signatures)
+
+Example error type:
+```
+'{ isPrototypeOf: { (v: Object): boolean };
+   propertyIsEnumerable: { (v: PropertyKey): boolean };
+   constructor: Function;
+   speak: { (): void }; ... }'
+```
+
+This type incorrectly combines:
+- Object.prototype properties (should not be in the type)
+- Instance methods like `speak` (correct for instance type)
+- `constructor: Function` (correct for constructor type)
+
+**Next Step**: Need to trace through type resolution for `typeof Animal` and understand why instance prototype properties are being included in the type.
 
 **Last completed**: Const Type Parameters (TS 5.0) Implementation (2025-02-04)
-
-**Latest Changes (2025-02-04)**:
-- Pulled latest: Significant test cleanup (1501 deletions, 336 insertions)
-- Build: ✅ Succeeds (only warnings)
-- Tests: 2 failing (abstract class related)
 
 ### Other Sessions Active
 - **tsz-1**: Conformance test analysis (error mismatches: TS2705, TS1109, etc.)
