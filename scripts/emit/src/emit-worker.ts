@@ -12,11 +12,13 @@ interface TranspileJob {
   source: string;
   target: number;
   module: number;
+  declaration?: boolean;
 }
 
 interface TranspileResult {
   id: number;
   output?: string;
+  declaration?: string | null;
   error?: string;
 }
 
@@ -40,12 +42,23 @@ process.on('uncaughtException', (err) => {
 // Process transpile jobs
 parentPort?.on('message', (job: TranspileJob) => {
   try {
-    const output = wasm.transpile(job.source, job.target, job.module);
-    parentPort?.postMessage({ id: job.id, output } as TranspileResult);
+    const options = {
+      target: job.target,
+      module: job.module,
+      declaration: job.declaration || false,
+    };
+    const optionsJson = JSON.stringify(options);
+    const result = JSON.parse(wasm.transpileModule(job.source, optionsJson));
+
+    parentPort?.postMessage({
+      id: job.id,
+      output: result.output_text,
+      declaration: result.declarationText || null
+    } as TranspileResult);
   } catch (e) {
-    parentPort?.postMessage({ 
-      id: job.id, 
-      error: e instanceof Error ? e.message : String(e) 
+    parentPort?.postMessage({
+      id: job.id,
+      error: e instanceof Error ? e.message : String(e)
     } as TranspileResult);
   }
 });

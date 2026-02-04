@@ -320,19 +320,19 @@ class TranspileWorker {
           if (msg.error) {
             pending.reject(new Error(msg.error));
           } else {
-            pending.resolve(msg.output);
+            pending.resolve({ js: msg.output, dts: msg.declaration });
           }
         }
       }
     });
   }
 
-  async transpile(source: string, target: number, module: number): Promise<string> {
+  async transpile(source: string, target: number, module: number, declaration = false): Promise<{js: string, dts?: string | null}> {
     await this.ensureWorker();
     this.testsRun++;
 
     const id = this.jobId++;
-    
+
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingJobs.delete(id);
@@ -346,7 +346,7 @@ class TranspileWorker {
       }, TEST_TIMEOUT_MS);
 
       this.pendingJobs.set(id, { resolve, reject, timer });
-      this.worker!.postMessage({ id, source, target, module });
+      this.worker!.postMessage({ id, source, target, module, declaration });
     });
   }
 
@@ -381,16 +381,20 @@ async function runTest(worker: TranspileWorker, testCase: TestCase, config: Conf
     loadCache();
     const cacheKey = getCacheKey(testCase.source, testCase.target, testCase.module);
     let tszJs: string;
-    
+    let tszDts: string | null = null;
+
     const cached = cache.get(cacheKey);
     const sourceHash = hashString(testCase.source);
-    
+
     if (cached && cached.hash === sourceHash) {
       tszJs = cached.jsOutput;
+      tszDts = cached.dtsOutput;
     } else {
       // Run tsz transpile via worker
-      tszJs = await worker.transpile(testCase.source, testCase.target, testCase.module);
-      cache.set(cacheKey, { hash: sourceHash, jsOutput: tszJs, dtsOutput: null });
+      const transpileResult = await worker.transpile(testCase.source, testCase.target, testCase.module, config.dtsOnly);
+      tszJs = transpileResult.js;
+      tszDts = transpileResult.dts || null;
+      cache.set(cacheKey, { hash: sourceHash, jsOutput: tszJs, dtsOutput: tszDts });
     }
 
     // Prepend "use strict" prologue when source has @strict or @alwaysStrict directive
@@ -413,9 +417,15 @@ async function runTest(worker: TranspileWorker, testCase: TestCase, config: Conf
       }
     }
 
-    // DTS comparison (when implemented)
+    // DTS comparison
     if (!config.jsOnly && testCase.expectedDts) {
-      result.dtsMatch = null;
+      if (tszDts !== null) {
+        const expected = testCase.expectedDts.replace(/\r\n/g, '\n').trim();
+        const actual = tszDts.replace(/\r\n/g, '\n').trim();
+        result.dtsMatch = expected === actual;
+      } else {
+        result.dtsMatch = null; // No DTS output generated
+      }
     }
 
     result.elapsed = Date.now() - start;

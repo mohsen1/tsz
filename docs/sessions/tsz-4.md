@@ -357,12 +357,23 @@ impl<'a> DeclarationEmitter<'a> {
 
 ### 🚧 In Progress
 
-**Phase 1.4: Testing and Bug Fixes**
-- Run `./scripts/emit/run.sh --dts-only` to verify against TypeScript baselines
-- Fix any output mismatches
-- Handle edge cases (lazy types, enums, conditionals, etc.)
+**Phase 1.4: Testing via CLI**
+- Note: WASM module doesn't currently expose declaration emit API
+- Test infrastructure (`scripts/emit/`) uses WASM and can't test DTS yet
+- Use CLI testing instead: `tsz --declaration file.ts`
+- Test with various TypeScript constructs to verify output
+
+**Testing Results:**
+- Basic functions and variables: ✅ Working
+- Interfaces: ✅ Working
+- Need to test: complex types, generics, enums, etc.
 
 ### 📋 TODO
+
+**WASM Integration (Optional):**
+- Add `emitDeclaration()` function to `src/wasm.rs`
+- Update `scripts/emit/src/emit-worker.ts` to call DTS emit
+- Update test runner to compare DTS output
 
 **Remaining TypePrinter Work:**
 - Lazy type resolution (DefId → Symbol name)
