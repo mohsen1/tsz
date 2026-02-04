@@ -2400,9 +2400,16 @@ impl ParserState {
                             diagnostic_codes::VAR_DECLARATION_NOT_ALLOWED,
                         );
                     }
-                    // Consume var/let and break - done with modifiers
+                    // Consume var/let and add to modifiers list
+                    // This prevents parse_constructor_with_modifiers from being called
+                    let var_token = self.token();
                     self.next_token();
-                    break;
+
+                    // Add var/let to modifiers and return early
+                    // Don't continue parsing modifiers (e.g., don't process 'export' in 'var export foo')
+                    let var_modifier = self.arena.create_modifier(var_token, start_pos);
+                    modifiers.push(var_modifier);
+                    return Some(self.make_node_list(modifiers));
                 }
                 _ => break,
             };
@@ -2753,7 +2760,17 @@ impl ParserState {
         }
 
         // Handle constructor
-        if self.is_token(SyntaxKind::ConstructorKeyword) {
+        // But not if var/let is in modifiers - that's an invalid pattern
+        let has_var_let_modifier = modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                self.arena.nodes.get(idx.0 as usize).is_some_and(|node| {
+                    node.kind == SyntaxKind::VarKeyword as u16
+                        || node.kind == SyntaxKind::LetKeyword as u16
+                })
+            })
+        });
+
+        if self.is_token(SyntaxKind::ConstructorKeyword) && !has_var_let_modifier {
             return self.parse_constructor_with_modifiers(modifiers);
         }
 
@@ -2847,7 +2864,10 @@ impl ParserState {
 
         // Check if it's a method or property
         // Method: foo() or foo<T>()
-        if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::LessThanToken) {
+        // But not if var/let is in modifiers - that's an invalid pattern
+        if (self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::LessThanToken))
+            && !has_var_let_modifier
+        {
             // Parse optional type parameters: foo<T, U>()
             let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
                 Some(self.parse_type_parameters())
@@ -2912,6 +2932,52 @@ impl ParserState {
                     body,
                 },
             )
+        } else if has_var_let_modifier
+            && (self.is_token(SyntaxKind::OpenParenToken)
+                || self.is_token(SyntaxKind::LessThanToken))
+        {
+            // var/let modifier followed by () - emit errors and attempt recovery
+            use crate::checker::types::diagnostics::diagnostic_codes;
+
+            // Emit error for '('
+            if self.is_token(SyntaxKind::OpenParenToken) {
+                self.parse_error_at_current_token(
+                    "',' expected.",
+                    diagnostic_codes::TOKEN_EXPECTED,
+                );
+                // Consume '(' for recovery
+                self.next_token();
+
+                // Parse parameters (may be empty)
+                let _ = self.parse_parameter_list();
+
+                // Consume ')' without emitting an error
+                self.parse_expected(SyntaxKind::CloseParenToken);
+            }
+
+            // Skip optional type parameters and return type for recovery
+            if self.is_token(SyntaxKind::LessThanToken) {
+                let _ = self.parse_type_parameters();
+            }
+            if self.parse_optional(SyntaxKind::ColonToken) {
+                let _ = self.parse_return_type();
+            }
+
+            // Emit error for '{' - "'=>' expected"
+            if self.is_token(SyntaxKind::OpenBraceToken) {
+                self.parse_error_at_current_token(
+                    "'=>' expected.",
+                    diagnostic_codes::TOKEN_EXPECTED,
+                );
+                self.next_token(); // Consume '{'
+            }
+
+            // Parse a statement to balance braces
+            // This consumes '{ }' so the class members loop doesn't see them
+            let _ = self.parse_statement();
+
+            // Return NONE to indicate this is not a valid member
+            return NodeIndex::NONE;
         } else {
             // Property - parse optional type and initializer
             let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
