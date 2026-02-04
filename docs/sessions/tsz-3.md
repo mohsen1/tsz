@@ -8,7 +8,32 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**Status**: Completed array mutation detection. Ready for next task.
+**Status**: Implementing Short-Circuiting Control Flow in Flow Graph Builder
+
+**Task**: Port short-circuit expression logic from state_binding.rs into FlowGraphBuilder
+
+**Problem**: FlowGraphBuilder currently treats `x && x.prop` as linear code. The type narrowing from `x` (truthy) is not applied to `x.prop` because there's no control flow branching.
+
+**Example**:
+```typescript
+function test(x: string | null) {
+    if (x && x.toUpperCase) { // Should narrow x to string in right operand
+        console.log(x.toUpperCase()); // Should work
+    }
+}
+```
+
+**Implementation Plan** (from Gemini):
+1. Check for short-circuit operators in BinaryExpression handling: `&&`, `||`, `??`
+2. For `&&`: Create TRUE_CONDITION flow for right operand, FALSE_CONDITION for merge
+3. For `||`/`??`: Create FALSE_CONDITION flow for right operand, TRUE_CONDITION for merge
+4. Create BRANCH_LABEL merge point combining both branches
+
+**Reference**: `BinderState::bind_short_circuit_expression` in `src/binder/state_binding.rs` (lines 1156-1205)
+
+**Expected Impact**: Fix many Extra TS2339 (Property does not exist) and TS2532 (Object is possibly undefined) errors.
+
+**File**: `src/checker/flow_graph_builder.rs`
 
 **Completed** (commit 77521fff2):
 - Implemented array mutation detection in FlowGraphBuilder
