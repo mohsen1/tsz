@@ -1813,13 +1813,9 @@ pub(crate) fn emit_outputs(
                     let used_symbols = analyzer.analyze(file.source_file).clone();
                     let foreign_symbols = analyzer.get_foreign_symbols().clone();
 
-                    // Calculate required imports from foreign symbols
-                    let required_imports =
-                        calculate_required_imports(&binder, &foreign_symbols, file_idx, program);
-
-                    // Set used symbols and required imports on emitter
+                    // Set used symbols and foreign symbols on emitter
                     emitter.set_used_symbols(used_symbols);
-                    emitter.set_required_imports(required_imports);
+                    emitter.set_foreign_symbols(foreign_symbols);
                 }
 
                 let mut contents = emitter.emit(file.source_file);
@@ -2050,8 +2046,6 @@ pub(crate) fn canonicalize_or_owned(path: &Path) -> PathBuf {
 /// It determines the common prefix, calculates how many ".." segments are needed
 /// to get out of `base`, and then appends the remaining segments of `path`.
 fn diff_paths(path: &Path, base: &Path) -> PathBuf {
-    
-
     let path_comps: Vec<_> = path.components().collect();
     let base_comps: Vec<_> = base.components().collect();
 

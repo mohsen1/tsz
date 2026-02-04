@@ -70,6 +70,13 @@ pub struct DeclarationEmitter<'a> {
     /// Map of module → symbol names to auto-generate imports for
     /// Pre-calculated in driver where MergedProgram is available
     required_imports: FxHashMap<String, Vec<String>>,
+    /// Tracks names that are taken in the top-level scope of the file
+    /// (includes local declarations and imported names)
+    reserved_names: FxHashSet<String>,
+    /// Maps (ModulePath, ExportName) -> AliasName for string-based imports
+    import_string_aliases: FxHashMap<(String, String), String>,
+    /// Maps SymbolId -> AliasName for SymbolId-based imports
+    symbol_aliases: FxHashMap<SymbolId, String>,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
     inside_declare_namespace: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
@@ -99,6 +106,9 @@ impl<'a> DeclarationEmitter<'a> {
             current_file_path: None,
             arena_to_path: FxHashMap::default(),
             required_imports: FxHashMap::default(),
+            reserved_names: FxHashSet::default(),
+            import_string_aliases: FxHashMap::default(),
+            symbol_aliases: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
         }
@@ -126,6 +136,9 @@ impl<'a> DeclarationEmitter<'a> {
             current_file_path: None,
             arena_to_path: FxHashMap::default(),
             required_imports: FxHashMap::default(),
+            reserved_names: FxHashSet::default(),
+            import_string_aliases: FxHashMap::default(),
+            symbol_aliases: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
         }
@@ -152,6 +165,13 @@ impl<'a> DeclarationEmitter<'a> {
     /// referenced in the exported API surface.
     pub fn set_used_symbols(&mut self, symbols: FxHashSet<SymbolId>) {
         self.used_symbols = Some(symbols);
+    }
+
+    /// Set the set of foreign symbols for auto-generation.
+    ///
+    /// This enables automatic import generation for symbols from other modules.
+    pub fn set_foreign_symbols(&mut self, symbols: FxHashSet<SymbolId>) {
+        self.foreign_symbols = Some(symbols);
     }
 
     /// Set the binder state for symbol resolution.
@@ -232,6 +252,9 @@ impl<'a> DeclarationEmitter<'a> {
                 eprintln!("[DEBUG] emit: skipping UsageAnalyzer - missing components");
             }
         }
+
+        // NEW: Prepare aliases before emitting anything
+        self.prepare_import_aliases(root_idx);
 
         let Some(root_node) = self.arena.get(root_idx) else {
             return String::new();
@@ -2564,6 +2587,178 @@ impl<'a> DeclarationEmitter<'a> {
         (default_count, named_count)
     }
 
+    /// Phase 4: Prepare import aliases before emitting anything.
+    ///
+    /// This detects name collisions and generates aliases for conflicting imports.
+    fn prepare_import_aliases(&mut self, root_idx: NodeIndex) {
+        // 1. Collect all top-level local declarations into reserved_names
+        self.collect_local_declarations(root_idx);
+
+        // 2. Process required_imports (String-based)
+        // We clone keys to avoid borrow checker issues during iteration
+        let modules: Vec<String> = self.required_imports.keys().cloned().collect();
+        for module in modules {
+            // Collect names into a separate vector to release the borrow
+            let names: Vec<String> = self
+                .required_imports
+                .get(&module)
+                .map(|v| v.iter().cloned().collect())
+                .unwrap_or_default();
+            for name in names {
+                self.resolve_import_name(&module, &name);
+            }
+        }
+
+        // 3. Process foreign_symbols (SymbolId-based) - skip for now
+        // This requires grouping by module which needs arena_to_path mapping
+    }
+
+    /// Collect local top-level names into reserved_names.
+    fn collect_local_declarations(&mut self, root_idx: NodeIndex) {
+        let Some(root_node) = self.arena.get(root_idx) else {
+            return;
+        };
+        let Some(source_file) = self.arena.get_source_file(root_node) else {
+            return;
+        };
+
+        // If we have a binder, use it to get top-level symbols
+        if let Some(binder) = self.binder {
+            // Get the root scope (scopes is a Vec, not a HashMap)
+            if let Some(root_scope) = binder.scopes.get(0) {
+                // Iterate through all symbols in root scope table
+                for (name, _sym_id) in root_scope.table.iter() {
+                    self.reserved_names.insert(name.clone());
+                }
+            }
+        } else {
+            // Fallback: Walk AST statements for top-level declarations
+            for &stmt_idx in &source_file.statements.nodes {
+                if stmt_idx.is_none() {
+                    continue;
+                }
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    continue;
+                };
+
+                let kind = stmt_node.kind;
+                // Collect names from various declaration types
+                if kind == crate::parser::syntax_kind_ext::FUNCTION_DECLARATION
+                    || kind == crate::parser::syntax_kind_ext::CLASS_DECLARATION
+                    || kind == crate::parser::syntax_kind_ext::INTERFACE_DECLARATION
+                    || kind == crate::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || kind == crate::parser::syntax_kind_ext::ENUM_DECLARATION
+                {
+                    // Try to get the name
+                    if let Some(name) = self.extract_declaration_name(stmt_idx) {
+                        self.reserved_names.insert(name);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Extract the name from a declaration node.
+    fn extract_declaration_name(&self, decl_idx: NodeIndex) -> Option<String> {
+        let decl_node = self.arena.get(decl_idx)?;
+
+        // Try identifier first
+        if let Some(ident) = self.arena.get_identifier(decl_node) {
+            return Some(ident.escaped_text.clone());
+        }
+
+        // For class/function/interface, the name is in a specific field
+        if let Some(func) = self.arena.get_function(decl_node) {
+            if let Some(name_node) = self.arena.get(func.name) {
+                if let Some(ident) = self.arena.get_identifier(name_node) {
+                    return Some(ident.escaped_text.clone());
+                }
+                if let Some(lit) = self.arena.get_literal(name_node) {
+                    return Some(lit.text.clone());
+                }
+            }
+        }
+        if let Some(class) = self.arena.get_class(decl_node) {
+            if let Some(name_node) = self.arena.get(class.name) {
+                if let Some(ident) = self.arena.get_identifier(name_node) {
+                    return Some(ident.escaped_text.clone());
+                }
+                if let Some(lit) = self.arena.get_literal(name_node) {
+                    return Some(lit.text.clone());
+                }
+            }
+        }
+        if let Some(iface) = self.arena.get_interface(decl_node) {
+            if let Some(name_node) = self.arena.get(iface.name) {
+                if let Some(ident) = self.arena.get_identifier(name_node) {
+                    return Some(ident.escaped_text.clone());
+                }
+                if let Some(lit) = self.arena.get_literal(name_node) {
+                    return Some(lit.text.clone());
+                }
+            }
+        }
+        if let Some(alias) = self.arena.get_type_alias(decl_node) {
+            if let Some(name_node) = self.arena.get(alias.name) {
+                if let Some(ident) = self.arena.get_identifier(name_node) {
+                    return Some(ident.escaped_text.clone());
+                }
+                if let Some(lit) = self.arena.get_literal(name_node) {
+                    return Some(lit.text.clone());
+                }
+            }
+        }
+        if let Some(enum_data) = self.arena.get_enum(decl_node) {
+            if let Some(name_node) = self.arena.get(enum_data.name) {
+                if let Some(ident) = self.arena.get_identifier(name_node) {
+                    return Some(ident.escaped_text.clone());
+                }
+                if let Some(lit) = self.arena.get_literal(name_node) {
+                    return Some(lit.text.clone());
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Resolve name for string imports, generating alias if needed.
+    fn resolve_import_name(&mut self, module: &str, name: &str) {
+        if self.reserved_names.contains(name) {
+            // Collision! Generate alias
+            let alias = self.generate_unique_name(name);
+            self.import_string_aliases
+                .insert((module.to_string(), name.to_string()), alias.clone());
+            self.reserved_names.insert(alias);
+        } else {
+            // No collision, reserve the name
+            self.reserved_names.insert(name.to_string());
+        }
+    }
+
+    /// Resolve name for SymbolId imports, generating alias if needed.
+    fn resolve_import_name_for_symbol(&mut self, _module: &str, name: &str, _sym_id: SymbolId) {
+        if self.reserved_names.contains(name) {
+            let alias = self.generate_unique_name(name);
+            // TODO: Store symbol alias when we implement symbol-based tracking
+            self.reserved_names.insert(alias);
+        } else {
+            self.reserved_names.insert(name.to_string());
+        }
+    }
+
+    /// Generate unique name (e.g., "TypeA_1").
+    fn generate_unique_name(&self, base: &str) -> String {
+        let mut i = 1;
+        loop {
+            let candidate = format!("{}_{}", base, i);
+            if !self.reserved_names.contains(&candidate) {
+                return candidate;
+            }
+            i += 1;
+        }
+    }
+
     fn reset_writer(&mut self) {
         self.writer = SourceWriter::with_capacity(4096);
         self.pending_source_pos = None;
@@ -2941,7 +3136,17 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(", ");
                 }
                 first = false;
-                self.write(name);
+
+                // Check for alias and emit "name as alias" if collision detected
+                let key = (module.clone(), (*name).to_string());
+                if let Some(alias) = self.import_string_aliases.get(&key) {
+                    let alias_str = alias.clone();
+                    self.write(name);
+                    self.write(" as ");
+                    self.write(&alias_str);
+                } else {
+                    self.write(name);
+                }
             }
 
             self.write(" } from \"");
