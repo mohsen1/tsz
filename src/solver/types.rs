@@ -229,12 +229,17 @@ pub struct RelationCacheKey {
 }
 
 impl RelationCacheKey {
+    /// Relation type constants to prevent magic number errors.
+    pub const SUBTYPE: u8 = 0;
+    pub const ASSIGNABLE: u8 = 1;
+    pub const IDENTICAL: u8 = 2;
+
     /// Create a new cache key for subtype checking.
     pub fn subtype(source: TypeId, target: TypeId, flags: u8, any_mode: u8) -> Self {
         Self {
             source,
             target,
-            relation: 0,
+            relation: Self::SUBTYPE,
             flags,
             any_mode,
         }
@@ -245,7 +250,7 @@ impl RelationCacheKey {
         Self {
             source,
             target,
-            relation: 1,
+            relation: Self::ASSIGNABLE,
             flags,
             any_mode,
         }
