@@ -91,3 +91,37 @@ const ctor1: AnimalCtor = Dog; // Position 609 - ERROR
 **Next Steps**:
 - Use tsz-tracing skill to debug the resolution path
 - Or continue with Task 2 (TS1005 parser fixes) which have been very productive
+
+## Task 1 Status: Complex Type Resolution Bug (2026-02-04)
+
+### Issue Summary
+**Bug Location**: `src/checker/state_type_resolution.rs:727-738`
+
+In `type_reference_symbol_type_with_params`, when handling CLASS symbols:
+```rust
+if symbol.flags & symbol_flags::CLASS != 0 {
+    if let Some((instance_type, params)) =
+        self.class_instance_type_with_params_from_symbol(sym_id)
+    {
+        return (instance_type, params);  // ❌ BUG: Returns instance type
+    }
+}
+```
+
+**Problem**: This function returns the **instance type** for class symbols, regardless of whether the class is used in a type position (`a: Dog`) or value position (`const x = Dog`).
+
+**Expected Behavior**:
+- Type position: `a: Dog` → instance type ✅
+- Value position: `const x = Dog` → constructor type ❌ (currently returns instance type)
+
+**Root Cause**: The type resolution doesn't distinguish between type context and value context when resolving class symbols.
+
+**Complexity**: This requires understanding the type resolution flow:
+1. `get_type_of_identifier` (state_type_analysis.rs)
+2. → `get_type_of_symbol` (state_type_resolution.rs:707)
+3. → `compute_type_of_symbol` (state_type_resolution.rs:???)  
+4. → Returns instance type unconditionally
+
+**Recommendation**: This fix requires significant refactoring of the symbol-to-type resolution system to track resolution context. Beyond the scope of current session.
+
+**Alternative**: Continue with Task 2 (TS1005 parser fixes) which have been very productive and less risky.
