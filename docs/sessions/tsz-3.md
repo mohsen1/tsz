@@ -1,8 +1,8 @@
 # Session tsz-3: Generic Inference & Nominal Hierarchy Integration
 
 **Started**: 2026-02-04
-**Status**: 🟢 ACTIVE (Phase 4 starting)
-**Latest Update**: 2026-02-04 - Redefined focus to Generic Inference & Nominal Hierarchy
+**Status**: 🟢 ACTIVE (Phase 4 in progress)
+**Latest Update**: 2026-02-04 - Task 1 (Nominal BCT) complete, working on remaining tasks
 **Focus**: Best Common Type, Homomorphic Mapped Types, Inter-Parameter Constraints
 
 ---
@@ -10,7 +10,7 @@
 ## Current Phase: Generic Inference & Nominal Hierarchy Integration (IN PROGRESS)
 
 **Started**: 2026-02-04
-**Status**: Ready to begin Task 1
+**Status**: Task 1 complete, Task 2 ready to begin
 
 ### Problem Statement
 
@@ -23,19 +23,24 @@ The current generic inference and type system has several gaps that cause `any` 
 
 ### Prioritized Tasks
 
-#### Task 1: Nominal BCT Bridge (Binder-Solver Link) (HIGH)
-**Files**: `src/solver/expression_ops.rs`, `src/solver/infer.rs`, `src/solver/subtype.rs`, `src/checker/context.rs`
+#### Task 1: Nominal BCT Bridge (Binder-Solver Link) (HIGH) ✅ COMPLETE
+**Commits**: `bfcf9a683`, `d5d951612`
 
-**Goal**: Enable `compute_best_common_type` to find common base classes using the inheritance graph.
+**Files**: `src/solver/expression_ops.rs`, `src/solver/subtype.rs`, `src/checker/context.rs`
 
-**Implementation**:
-1. Implement `get_base_type` method in `TypeResolver` trait (defined in `src/solver/subtype.rs`)
-2. Update implementation in `src/checker/context.rs` to query `InheritanceGraph`
-3. Update `compute_best_common_type` to use resolver for most specific common supertype
+**Completed Implementation**:
+1. ✅ Fixed `compute_best_common_type` to match TypeScript behavior:
+   - BCT must be one of the input types (NOT synthesized from hierarchy)
+   - `[Dog, Cat]` -> `Dog | Cat` (NOT `Animal` even if both extend Animal)
+   - `[Dog, Animal]` -> `Animal` (Animal is in the set and is a supertype)
+2. ✅ Removed `get_type_hierarchy` approach (was incorrectly finding ancestors not in the set)
+3. ✅ Removed CLASS flag restriction in `get_base_type` (now supports interfaces)
+4. ✅ Fixed narrowing bug: removed duplicate `narrow_to_falsy` implementation
 
-**Example**: `[Dog, Cat]` should infer `Animal` (common base), not `Dog | Cat` (union)
-
-**Coordination**: Follow Two-Question Rule - touches sensitive Binder/Solver boundary
+**Known Limitations**:
+- Uses `is_subtype_of` without resolver (SubtypeChecker requires `Sized` but `dyn TypeResolver` is unsized)
+- Nominal inheritance checks may fail for class hierarchies without structural similarity
+- Future work: Add `?Sized` support to `SubtypeChecker` or use QueryDatabase-based checking
 
 #### Task 2: Homomorphic Mapped Type Preservation (MEDIUM)
 **File**: `src/solver/evaluate_rules/mapped.rs`
