@@ -1,8 +1,8 @@
-# Session tsz-3 - Narrowing Implementation Complete
+# Session tsz-3 - Falsy Narrowing Implementation
 
 **Started**: 2026-02-04
 **Status**: ACTIVE
-**Focus**: Control Flow Analysis - Type Narrowing Features
+**Focus**: Control Flow Analysis - Truthiness/Falsy Type Narrowing
 
 ## Completed Work
 
@@ -27,23 +27,63 @@
 - Test `test_in_operator_narrows_required_property` passes
 - Commit: `9d6da2af7`
 
-## Next Steps
+## Current Task: Implement Falsy Narrowing & Improve Truthiness
 
-All major narrowing features for this session are complete:
-- ✅ instanceof narrowing
-- ✅ in operator narrowing
-- ✅ typeof narrowing (already implemented)
-- ✅ discriminant narrowing (already implemented)
+### Problem Statement
+Currently, `narrow_by_truthiness` only removes `null` and `undefined` but ignores:
+1. **Falsy branch** (`else` block): When `sense` is false, returns source type unchanged
+2. **Literal falsy values**: Doesn't exclude `false`, `0`, `""`, `0n` from unions in positive branch
 
-Remaining narrowing gaps in the codebase:
-- `narrow_by_truthiness` has a TODO for proper falsy narrowing (false, 0, "", NaN)
+**Example**:
+```typescript
+function f(x: string | number | boolean | null) {
+    if (x) {
+        // x should be narrowed to exclude "" | 0 | false | null
+        // But currently only excludes null/undefined
+    } else {
+        // x should be narrowed to "" | 0 | false | null
+        // Currently returns source type unchanged (BUG!)
+    }
+}
+```
+
+### Implementation Plan
+
+**File**: `src/solver/narrowing.rs`
+
+**Objectives**:
+1. **Add `narrow_to_falsy` method**: Narrows to intersection with all falsy types
+2. **Improve `narrow_by_truthiness`**: Exclude ALL falsy literals (false, 0, "", 0n)
+3. **Update `TypeGuard::Truthy` match arm**: Handle negative (sense = false) case
+
+**Falsy types to handle**:
+- `null`, `undefined`, `void`
+- `false` (boolean literal)
+- `0`, `0n` (numeric literals)
+- `""` (string literal)
+
+**Test Case**:
+```typescript
+function f(x: string | number | boolean | null) {
+    if (x) {
+        // x: string | number | true (literals excluded)
+    } else {
+        // x: "" | 0 | false | null | undefined
+    }
+}
+```
+
+### Key Files
+- `src/solver/narrowing.rs` - Main implementation
+- `src/solver/tests/` - Add truthiness_narrowing_tests.rs
 
 ### Context
 **Previous Sessions**:
 1. Completed error formatting and module validation cleanup
 2. Fixed TS2304 poisoning issue
+3. Implemented instanceof and in operator narrowing
 
-**Key Insight**: This session has successfully implemented two major narrowing features (instanceof and in operator), significantly improving tsz's control flow analysis capabilities.
+**Key Insight**: This completes the narrowing feature set. Truthiness/falsy narrowing is fundamental to control flow analysis and affects many type checking scenarios.
 
 Fix the "poisoning" effect where missing global symbols (TS2304) cause types to default to `any`, which:
 - Suppresses subsequent type errors
