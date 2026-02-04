@@ -688,11 +688,10 @@ impl<'a> CheckerState<'a> {
                         let atom = self.ctx.types.intern_string(param_name);
                         let type_id = self.ctx.types.intern(crate::solver::TypeKey::TypeParameter(
                             crate::solver::TypeParamInfo {
-                                is_const: false,
                                 name: atom,
                                 constraint: None,
                                 default: None,
-                                is_const: false,
+        is_const: false,
                             },
                         ));
                         let previous = self
@@ -747,11 +746,10 @@ impl<'a> CheckerState<'a> {
                         let atom = self.ctx.types.intern_string(&name);
                         let type_id = self.ctx.types.intern(crate::solver::TypeKey::TypeParameter(
                             crate::solver::TypeParamInfo {
-                                is_const: false,
                                 name: atom,
                                 constraint: None,
                                 default: None,
-                                is_const: false,
+        is_const: false,
                             },
                         ));
                         let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
@@ -828,11 +826,10 @@ impl<'a> CheckerState<'a> {
             let name = ident.escaped_text.clone();
             let atom = self.ctx.types.intern_string(&name);
             let type_id = self.ctx.types.intern(TypeKey::TypeParameter(TypeParamInfo {
-                is_const: false,
                 name: atom,
                 constraint: None,
                 default: None,
-                is_const: false,
+        is_const: false,
             }));
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous));

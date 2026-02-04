@@ -588,11 +588,10 @@ impl<'a> CheckerState<'a> {
 
             // Create unconstrained type parameter initially
             let info = crate::solver::TypeParamInfo {
-                is_const: false,
                 name: atom,
                 constraint: None,
                 default: None,
-                is_const: false,
+        is_const: false,
             };
             let type_id = self.ctx.types.intern(TypeKey::TypeParameter(info));
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
@@ -674,7 +673,6 @@ impl<'a> CheckerState<'a> {
             };
 
             let info = crate::solver::TypeParamInfo {
-                is_const: false,
                 name: atom,
                 constraint,
                 default,

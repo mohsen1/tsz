@@ -36,10 +36,10 @@ fn test_mapped_type_as_never_skips_property() {
     let keyof_t = interner.keyof(source_type);
 
     // Create the type parameter for K
-    let type_param_k = TypeParamInfo { is_const: false,
+    let type_param_k = TypeParamInfo {
         name: interner.intern_string("K"),
         default: None,
-            is_const: false,
+        is_const: false,
     };
 
     // Create the conditional: P extends K ? never : P
@@ -92,10 +92,10 @@ fn test_mapped_type_key_remap_to_never_filters_property() {
     ]);
 
     // Create type parameter K
-    let type_param_k = TypeParamInfo { is_const: false,
+    let type_param_k = TypeParamInfo {
         name: interner.intern_string("K"),
         default: None,
-            is_const: false,
+        is_const: false,
     };
 
     // Create conditional: K extends 'a' ? never : K
