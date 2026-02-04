@@ -29,6 +29,24 @@ Testing parse error TS1005 "'{0}' expected" to verify parser correctly handles m
 
 This suggests TS1005 is working correctly for most cases. The missing TS1005 instances from conformance (13 missing) may be different edge cases.
 
+---
+
+## Current Investigation: TS1202 False Positive
+
+**Issue**: TS1202 emitted 30 extra times in conformance tests
+
+**Test Case**: APILibCheck.ts with `// @module: commonjs`
+
+**Expected**: No TS1202 errors (CommonJS allows import assignments like `import x = require('y')`)
+
+**Actual**: tsz emits TS1202 for all import assignments
+
+**Root Cause**: tsz not respecting `// @module: commonjs` test directive
+
+**Status**: This is a test infrastructure issue - the `// @module` directive changes the module kind for testing, but tsz may not be parsing this directive correctly.
+
+**Note**: This requires understanding how test directives are processed and applied to the CompilerOptions. More investigation needed.
+
 ### Test Case
 ```typescript
 function A(): (public B) => C {}
