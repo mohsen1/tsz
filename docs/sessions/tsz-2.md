@@ -1,10 +1,10 @@
 # Session tsz-2: Type Metaprogramming & Solver Completion
 
 **Started**: 2026-02-04
-**Status**: 🟢 Active (Phase 2: Type Metaprogramming Triad)
+**Status**: 🟡 Investigation Complete (TypeEnvironment Registration Issue)
 **Previous**: Nominal Subtyping (COMPLETED 2026-02-04)
 
-## Session Redefinition #2 (2026-02-04)
+## Session Redefinition #3 (2026-02-04)
 
 ### COMPLETED WORK: Nominal Subtyping ✅
 
@@ -113,6 +113,60 @@ type Pick<T, K extends keyof T> = { [P in K]: T[P] };
 2. Run `./scripts/conformance.sh --filter=mapped`
 3. Fix failures with Solver improvements
 4. Measure conformance pass rate improvement
+
+---
+
+## Investigation: TypeEnvironment Registration Issue (2026-02-04)
+
+### Problem Discovery
+Conformance audit revealed mapped types at 32.1% pass rate (18/56 tests).
+
+**Root Cause**: Type aliases from lib.d.ts (like `Partial<T>`) are not being properly registered in TypeEnvironment, causing mapped type evaluation to fail.
+
+**Trace Evidence**: `Partial<Foo>` resolves to `TypeId(3)` (Unknown) instead of the mapped type structure.
+
+### Investigation Process
+
+1. **Verified evaluate_mapped exists** - Found 442-line implementation in `src/solver/evaluate_rules/mapped.rs`
+2. **Traced test failure** - Found that `resolve_lazy()` returns `None` for type alias DefIds
+3. **Identified missing link** - Type alias bodies not stored in DefinitionInfo.body field
+
+### Implementation Attempt
+
+**Changes Made** to `src/checker/state_type_analysis.rs`:
+1. Added `definition_store.set_body(def_id, alias_type)` after computing type alias body
+2. Added Lazy type return for recursive type aliases to prevent infinite recursion
+
+**Result**: No conformance improvement - still 32.1% pass rate
+
+**Gemini Pro Analysis**:
+- Issue is deeper than expected - possibly in circular dependency handling
+- Type alias lowering pipeline requires comprehensive understanding
+- Multiple code paths may be overwriting or clearing the body
+
+### Technical Details Discovered
+
+**Correct Registration Sequence** (from Gemini):
+1. Create DefId: `get_or_create_def_id(sym_id)`
+2. Register type params: `insert_def_type_params(def_id, params)`
+3. Store body: `definition_store.set_body(def_id, alias_type)`
+4. Return Lazy type for recursive aliases
+5. Register in TypeEnvironment: `insert_def_with_params(def_id, result, params)`
+
+**Key Files**:
+- `src/checker/state_type_analysis.rs` - `compute_type_of_symbol` (line 1336)
+- `src/solver/lower.rs` - TypeLowering bridge
+- `src/solver/db.rs` - TypeResolver implementation
+- `src/solver/subtype.rs` - TypeEnvironment (line 357: `insert_def_with_params`)
+
+### Status
+**Investigation complete** but **fix insufficient**. This is a **deep architectural issue** requiring extensive archaeology of:
+- Binder → Checker → Solver data flow
+- Type alias lowering pipeline integration
+- Lazy type evaluation chain
+- Circular dependency resolution
+
+**Recommendation**: This issue is well-documented but requires significant investment to resolve. Consider session priorities before continuing.
 
 ---
 
