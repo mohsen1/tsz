@@ -1082,18 +1082,21 @@ impl<'a> TypeLowering<'a> {
         (self.finish_interface_parts(parts), collected_params)
     }
 
-    pub fn lower_type_alias_declaration(&self, alias: &TypeAliasData) -> TypeId {
+    pub fn lower_type_alias_declaration(
+        &self,
+        alias: &TypeAliasData,
+    ) -> (TypeId, Vec<crate::solver::TypeParamInfo>) {
         if let Some(params) = alias.type_parameters.as_ref()
             && !params.nodes.is_empty()
         {
             self.push_type_param_scope();
-            let _ = self.collect_type_parameters(params);
+            let collected_params = self.collect_type_parameters(params);
             let result = self.lower_type(alias.type_node);
             self.pop_type_param_scope();
-            return result;
+            return (result, collected_params);
         }
 
-        self.lower_type(alias.type_node)
+        (self.lower_type(alias.type_node), Vec::new())
     }
 
     fn collect_interface_members(&self, members: &NodeList, parts: &mut InterfaceParts) {
