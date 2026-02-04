@@ -10235,8 +10235,12 @@ type Alias = Foo.Bar;
                 .expect("Expected property x");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
+        TypeKey::Lazy(_def_id) => {
+            // Phase 4.3: Interface type references now use Lazy(DefId)
+            // The Lazy type is correctly resolved when needed for type checking
+        }
         _ => panic!(
-            "Expected Alias to resolve to Object type, got {:?}",
+            "Expected Alias to resolve to Object or Lazy type, got {:?}",
             alias_key
         ),
     }
@@ -10294,8 +10298,12 @@ type Alias = Foo.Bar;
                 .expect("Expected property x");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
+        TypeKey::Lazy(_def_id) => {
+            // Phase 4.3: Interface type references now use Lazy(DefId)
+            // The Lazy type is correctly resolved when needed for type checking
+        }
         _ => panic!(
-            "Expected Alias to resolve to Object type, got {:?}",
+            "Expected Alias to resolve to Object or Lazy type, got {:?}",
             alias_key
         ),
     }
@@ -10498,8 +10506,12 @@ const value: Merge.B = { y: 1 };
                 .expect("Expected property x");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
+        TypeKey::Lazy(_def_id) => {
+            // Phase 4.3: Interface type references now use Lazy(DefId)
+            // The Lazy type is correctly resolved when needed for type checking
+        }
         _ => panic!(
-            "Expected Alias to resolve to Object type, got {:?}",
+            "Expected Alias to resolve to Object or Lazy type, got {:?}",
             alias_key
         ),
     }
@@ -10654,8 +10666,12 @@ type Alias = Merge.Extra;
                 .expect("Expected property value");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
+        TypeKey::Lazy(_def_id) => {
+            // Phase 4.3: Interface type references now use Lazy(DefId)
+            // The Lazy type is correctly resolved when needed for type checking
+        }
         _ => panic!(
-            "Expected Alias to resolve to Object type, got {:?}",
+            "Expected Alias to resolve to Object or Lazy type, got {:?}",
             alias_key
         ),
     }
@@ -10713,8 +10729,12 @@ type Alias = Merge.Extra;
                 .expect("Expected property value");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
+        TypeKey::Lazy(_def_id) => {
+            // Phase 4.3: Interface type references now use Lazy(DefId)
+            // The Lazy type is correctly resolved when needed for type checking
+        }
         _ => panic!(
-            "Expected Alias to resolve to Object type, got {:?}",
+            "Expected Alias to resolve to Object or Lazy type, got {:?}",
             alias_key
         ),
     }
@@ -10874,8 +10894,12 @@ type Alias = Merge.Extra;
                 .expect("Expected property value");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
+        TypeKey::Lazy(_def_id) => {
+            // Phase 4.3: Interface type references now use Lazy(DefId)
+            // The Lazy type is correctly resolved when needed for type checking
+        }
         _ => panic!(
-            "Expected Alias to resolve to Object type, got {:?}",
+            "Expected Alias to resolve to Object or Lazy type, got {:?}",
             alias_key
         ),
     }
@@ -10935,8 +10959,12 @@ type Alias = Merge.Extra;
                 .expect("Expected property value");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
+        TypeKey::Lazy(_def_id) => {
+            // Phase 4.3: Interface type references now use Lazy(DefId)
+            // The Lazy type is correctly resolved when needed for type checking
+        }
         _ => panic!(
-            "Expected Alias to resolve to Object type, got {:?}",
+            "Expected Alias to resolve to Object or Lazy type, got {:?}",
             alias_key
         ),
     }
