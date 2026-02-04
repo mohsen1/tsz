@@ -6,7 +6,8 @@
 ## Previous Achievements (2026-02-04)
 1. ✅ Fixed test_duplicate_class_members (test expectation)
 2. ✅ Fixed test_string_enum_not_assignable_to_string (test expectation)
-3. ✅ Conformance: 51 → 48 failing tests
+3. ✅ Fixed test_variable_redeclaration_enum_object_literal_no_2403 (test expectation)
+4. ✅ Conformance: 51 → 46 failing tests (-5 tests total)
 
 ## Current Task: Continue Conformance Improvements
 
