@@ -151,11 +151,13 @@ impl<'a> CheckerState<'a> {
             impl_signatures: Vec<CallSignature>,
             overload_optional: bool,
             impl_optional: bool,
+            visibility: Visibility,
         }
 
         struct AccessorAggregate {
             getter: Option<TypeId>,
             setter: Option<TypeId>,
+            visibility: Visibility,
         }
 
         let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
@@ -194,6 +196,8 @@ impl<'a> CheckerState<'a> {
                         TypeId::UNKNOWN
                     };
 
+                    let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
+
                     properties.insert(
                         name_atom,
                         PropertyInfo {
@@ -203,8 +207,8 @@ impl<'a> CheckerState<'a> {
                             optional: prop.question_token,
                             readonly: self.has_readonly_modifier(&prop.modifiers),
                             is_method: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
+                            visibility,
+                            parent_id: current_sym,
                         },
                     );
                 }
@@ -223,11 +227,13 @@ impl<'a> CheckerState<'a> {
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
                     let signature = self.call_signature_from_method(method);
+                    let visibility = self.get_visibility_from_modifiers(&method.modifiers);
                     let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                         overload_signatures: Vec::new(),
                         impl_signatures: Vec::new(),
                         overload_optional: false,
                         impl_optional: false,
+                        visibility,
                     });
                     if method.body.is_none() {
                         entry.overload_signatures.push(signature);
@@ -251,9 +257,11 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
+                    let visibility = self.get_visibility_from_modifiers(&accessor.modifiers);
                     let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
                         getter: None,
                         setter: None,
+                        visibility,
                     });
 
                     if k == syntax_kind_ext::GET_ACCESSOR {
@@ -318,6 +326,8 @@ impl<'a> CheckerState<'a> {
                         } else {
                             TypeId::ANY
                         };
+
+                        let visibility = self.get_visibility_from_modifiers(&param.modifiers);
                         properties.insert(
                             name_atom,
                             PropertyInfo {
@@ -327,8 +337,8 @@ impl<'a> CheckerState<'a> {
                                 optional: param.question_token,
                                 readonly: self.has_readonly_modifier(&param.modifiers),
                                 is_method: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
+                                visibility,
+                                parent_id: current_sym,
                             },
                         );
                     }
@@ -402,8 +412,8 @@ impl<'a> CheckerState<'a> {
                     optional: false,
                     readonly,
                     is_method: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
+                    visibility: accessor.visibility,
+                    parent_id: current_sym,
                 },
             );
         }
@@ -435,8 +445,8 @@ impl<'a> CheckerState<'a> {
                     optional,
                     readonly: false,
                     is_method: true,
-                    visibility: Visibility::Public,
-                    parent_id: None,
+                    visibility: method.visibility,
+                    parent_id: current_sym,
                 },
             );
         }
@@ -1023,16 +1033,21 @@ impl<'a> CheckerState<'a> {
             self.push_type_parameters(&class.type_parameters);
         let instance_type = self.get_class_instance_type(class_idx, class);
 
+        // Get the class symbol for nominal identity
+        let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+
         struct MethodAggregate {
             overload_signatures: Vec<CallSignature>,
             impl_signatures: Vec<CallSignature>,
             overload_optional: bool,
             impl_optional: bool,
+            visibility: Visibility,
         }
 
         struct AccessorAggregate {
             getter: Option<TypeId>,
             setter: Option<TypeId>,
+            visibility: Visibility,
         }
 
         let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
@@ -1079,6 +1094,8 @@ impl<'a> CheckerState<'a> {
                         TypeId::UNKNOWN
                     };
 
+                    let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
+
                     properties.insert(
                         name_atom,
                         PropertyInfo {
@@ -1088,8 +1105,8 @@ impl<'a> CheckerState<'a> {
                             optional: prop.question_token,
                             readonly: self.has_readonly_modifier(&prop.modifiers),
                             is_method: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
+                            visibility,
+                            parent_id: current_sym,
                         },
                     );
                 }
@@ -1107,6 +1124,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
+                    let visibility = self.get_visibility_from_modifiers(&method.modifiers);
                     // For static methods, `this` refers to the constructor type
                     // Get it from the symbol if available
                     let static_this_type = self
@@ -1121,6 +1139,7 @@ impl<'a> CheckerState<'a> {
                         impl_signatures: Vec::new(),
                         overload_optional: false,
                         impl_optional: false,
+                        visibility,
                     });
                     if method.body.is_none() {
                         entry.overload_signatures.push(signature);
@@ -1144,9 +1163,11 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
+                    let visibility = self.get_visibility_from_modifiers(&accessor.modifiers);
                     let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
                         getter: None,
                         setter: None,
+                        visibility,
                     });
 
                     if k == syntax_kind_ext::GET_ACCESSOR {
@@ -1240,8 +1261,8 @@ impl<'a> CheckerState<'a> {
                     optional: false,
                     readonly,
                     is_method: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
+                    visibility: accessor.visibility,
+                    parent_id: current_sym,
                 },
             );
         }
@@ -1273,8 +1294,8 @@ impl<'a> CheckerState<'a> {
                     optional,
                     readonly: false,
                     is_method: true,
-                    visibility: Visibility::Public,
-                    parent_id: None,
+                    visibility: method.visibility,
+                    parent_id: current_sym,
                 },
             );
         }
