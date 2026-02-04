@@ -187,16 +187,38 @@ Building on TSZ-5's UsageAnalyzer infrastructure:
 **Gemini Consultation (2026-02-04):**
 
 Gemini identified critical issues preventing Phase 4 completion:
-1. **Broken Relative Paths** - Full paths used instead of proper `../` segments
+1. **Broken Relative Paths** - Full paths used instead of proper `../` segments ✅ COMPLETE
 2. **Name Collisions** - No aliasing when same symbol from multiple modules
 3. **Logic Duplication** - Two separate import emission mechanisms
 4. **Type-Only Imports** - Need `import type { ... }` for type-only usage
 
 **Task List:**
-1. Fix broken relative path calculation
+1. ✅ Fix broken relative path calculation
 2. Implement name collision handling
 3. Consolidate import emission logic
 4. Track type-only vs value symbol usage
+
+**Phase 4 Task 1 Implementation (COMPLETE):**
+
+Added `diff_paths()` helper function to `src/cli/driver_resolution.rs`:
+- Implements common-ancestor algorithm using `std::path::Component`
+- Finds common prefix between paths
+- Adds "../" segments to navigate up from base path
+- Appends remaining components from target path
+- Handles edge cases: same directory, parent, nested, complex nesting
+
+Updated `calculate_required_imports()`:
+- Uses `diff_paths()` instead of simplified logic
+- Improved extension stripping (handles .d.ts, .d.mts, .d.cts, .tsx, .ts, .mts, .cts)
+- Fixed ./ prefix logic to handle all cases
+
+Results:
+- Same directory: `./module` ✅
+- Parent directory: `../module` ✅
+- Nested directory: `./utils/module` ✅
+- Complex nesting: `../../utils/module` ✅
+
+**Commit:** feat(tsz-7): implement proper relative path calculation for imports
 
 **Phase 3: Import Synthesis** ✅ COMPLETE
 - ✅ Add `required_imports: FxHashMap<String, Vec<String>>` field
@@ -212,16 +234,38 @@ Gemini identified critical issues preventing Phase 4 completion:
 **Gemini Consultation (2026-02-04):**
 
 Gemini identified critical issues preventing Phase 4 completion:
-1. **Broken Relative Paths** - Full paths used instead of proper `../` segments
+1. **Broken Relative Paths** - Full paths used instead of proper `../` segments ✅ COMPLETE
 2. **Name Collisions** - No aliasing when same symbol from multiple modules
 3. **Logic Duplication** - Two separate import emission mechanisms
 4. **Type-Only Imports** - Need `import type { ... }` for type-only usage
 
 **Task List:**
-1. Fix broken relative path calculation
+1. ✅ Fix broken relative path calculation
 2. Implement name collision handling
 3. Consolidate import emission logic
 4. Track type-only vs value symbol usage
+
+**Phase 4 Task 1 Implementation (COMPLETE):**
+
+Added `diff_paths()` helper function to `src/cli/driver_resolution.rs`:
+- Implements common-ancestor algorithm using `std::path::Component`
+- Finds common prefix between paths
+- Adds "../" segments to navigate up from base path
+- Appends remaining components from target path
+- Handles edge cases: same directory, parent, nested, complex nesting
+
+Updated `calculate_required_imports()`:
+- Uses `diff_paths()` instead of simplified logic
+- Improved extension stripping (handles .d.ts, .d.mts, .d.cts, .tsx, .ts, .mts, .cts)
+- Fixed ./ prefix logic to handle all cases
+
+Results:
+- Same directory: `./module` ✅
+- Parent directory: `../module` ✅
+- Nested directory: `./utils/module` ✅
+- Complex nesting: `../../utils/module` ✅
+
+**Commit:** feat(tsz-7): implement proper relative path calculation for imports
 
 ### Dependencies
 
