@@ -4,7 +4,7 @@
 **Status**: Active (Redefined 2026-02-04)
 **Goal**: Restore test suite, implement nominal subtyping, fix intersection reduction
 
-**Latest Update**: 2026-02-04 - Priority 2 (Nominal Subtyping) COMPLETE ✅, starting Priority 3 (Intersection Reduction)
+**Latest Update**: 2026-02-04 - Priority 3 (Intersection Reduction) COMPLETE ✅
 
 ## Session Redefinition (2026-02-04 - Updated)
 
@@ -67,16 +67,36 @@ Need manual fix or improved regex.
 
 **Commit**: `e5db19cc8` - "feat(tsz-1): implement nominal subtyping for private/protected properties"
 
-### Priority 3: Intersection Reduction (Rule #21)
+### ✅ Priority 3: Intersection Reduction (Rule #21) (COMPLETE 2026-02-04)
 **Problem**: Complex intersections like `string & number` or `{ kind: "a" } & { kind: "b" }` are not reducing to `never`, causing "black hole" types in conformance tests.
 
-**File to modify**: `src/solver/intern.rs`
+**Solution Implemented**:
+Fixed 4 critical bugs discovered by Gemini Pro review:
 
-**Function**: `normalize_intersection`
+1. **Removed Branded Types Bug** (line ~1325)
+   - Removed check that incorrectly reduced `string & { __brand: "X" }` to `never`
+   - TypeScript allows branded primitives for nominal typing patterns
 
-**Task**: Implement logic to detect disjoint types (primitives, or object literals with the same non-optional property having disjoint types).
+2. **Added Lazy Type Check** (line ~1004)
+   - Added check for `TypeKey::Lazy` in `normalize_intersection`
+   - Aborts reduction if any member is unresolved (type alias)
+   - Interner cannot resolve symbols, so defers to Checker/Solver
 
-**Reference**: TypeScript Spec Rule #21.
+3. **Fixed Optional Properties Logic** (line ~1399)
+   - Changed from: skip if either property is optional
+   - Changed to: skip only if BOTH are optional
+   - Correctly handles `{ kind: "a" } & { kind?: "b" }` => never
+
+4. **Propagate FRESH_LITERAL Flag** (line ~1196)
+   - Added `merged_flags |= obj.flags & ObjectFlags::FRESH_LITERAL`
+   - Preserves excess property checking through intersections
+
+**Files Modified**:
+- `src/solver/intern.rs`: Fixed 4 bugs in intersection reduction logic
+
+**Gemini Pro Review**: ✅ All fixes are correct and match TypeScript behavior
+
+**Commit**: `9934dfcf2` - "fix(tsz-1): fix 4 critical bugs in intersection reduction (Rule #21)"
 
 **Rationale**: These priorities provide maximum leverage:
 - Test restoration enables verification of all other work
