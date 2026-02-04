@@ -1820,12 +1820,23 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                 TypeId::NEVER
             }
             _ => {
-                // For other intrinsics, check if assignable to narrower
-                // The type_id is constructed from the IntrinsicKind
+                // For other intrinsics, we need to handle the overlap case
+                // Narrowing primitive by primitive is effectively intersection
                 let type_id = TypeId(kind as u32);
-                if is_subtype_of(self.db, type_id, self.narrower) {
+
+                // Case 1: narrower is subtype of type_id (e.g., narrow(string, "foo"))
+                // Result: narrower
+                if is_subtype_of(self.db, self.narrower, type_id) {
+                    self.narrower
+                }
+                // Case 2: type_id is subtype of narrower (e.g., narrow("foo", string))
+                // Result: type_id (the original)
+                else if is_subtype_of(self.db, type_id, self.narrower) {
                     type_id
-                } else {
+                }
+                // Case 3: Disjoint types (e.g., narrow(string, number))
+                // Result: never
+                else {
                     TypeId::NEVER
                 }
             }
@@ -1842,18 +1853,25 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
         let members = self.db.type_list(TypeListId(list_id));
 
-        // Filter union members to those assignable to narrower
+        // CRITICAL: Recursively narrow each union member, don't just check subtype
+        // This handles cases like: string narrowed by "foo" -> "foo"
+        // where "foo" is NOT a subtype of string, but string contains "foo"
         let filtered: Vec<TypeId> = members
             .iter()
-            .filter(|&&member| is_subtype_of(self.db, member, self.narrower))
-            .copied()
+            .filter_map(|&member| {
+                let narrowed = self.visit_type(self.db, member);
+                if narrowed == TypeId::NEVER {
+                    None
+                } else {
+                    Some(narrowed)
+                }
+            })
             .collect();
 
         if filtered.is_empty() {
             TypeId::NEVER
         } else if filtered.len() == members.len() {
-            // All members match - return original (will be reconstructed as union)
-            // We need to reconstruct the union type
+            // All members matched - reconstruct the union
             self.db.union(filtered)
         } else if filtered.len() == 1 {
             filtered[0]
@@ -1894,21 +1912,24 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
     }
 
     fn visit_lazy(&mut self, _def_id: u32) -> Self::Output {
-        // Resolve lazy type and recurse
-        // The current type should be a lazy type - resolve and visit
-        // We'll get the current type from context
-        Self::default_output()
+        // CRITICAL: Must resolve lazy types before narrowing
+        // For now, conservatively return narrower (may over-narrow but safe)
+        // TODO: Track current type_id to resolve and recurse properly
+        // The def_id corresponds to the lazy type being visited
+        self.narrower
     }
 
     fn visit_ref(&mut self, _symbol_ref: u32) -> Self::Output {
-        // Resolve ref type and recurse
-        // For now, default output (will check subtype in default_output)
-        Self::default_output()
+        // CRITICAL: Must resolve ref types before narrowing
+        // For now, conservatively return narrower (may over-narrow but safe)
+        // TODO: Track current type_id to resolve and recurse properly
+        self.narrower
     }
 
     fn visit_application(&mut self, _app_id: u32) -> Self::Output {
-        // Resolve application type and recurse
-        // For generic types, conservatively keep the narrower
+        // CRITICAL: Must resolve application types before narrowing
+        // For now, conservatively return narrower (may over-narrow but safe)
+        // TODO: Track current type_id to resolve and recurse properly
         self.narrower
     }
 
