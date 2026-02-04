@@ -30,6 +30,7 @@ use crate::solver::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::rc::Rc;
 
 // =============================================================================
 // FlowGraph
@@ -110,6 +111,8 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) flow_graph: Option<FlowGraph<'a>>,
     /// Optional cache for flow analysis results to avoid redundant graph traversals
     pub(crate) flow_cache: Option<&'a RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>>,
+    /// Optional TypeEnvironment for resolving Lazy types during narrowing
+    pub(crate) type_environment: Option<Rc<RefCell<crate::solver::TypeEnvironment>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +150,7 @@ impl<'a> FlowAnalyzer<'a> {
             node_types: None,
             flow_graph,
             flow_cache: None,
+            type_environment: None,
         }
     }
 
@@ -164,6 +168,7 @@ impl<'a> FlowAnalyzer<'a> {
             node_types: Some(node_types),
             flow_graph,
             flow_cache: None,
+            type_environment: None,
         }
     }
 
@@ -173,6 +178,15 @@ impl<'a> FlowAnalyzer<'a> {
         cache: &'a RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>,
     ) -> Self {
         self.flow_cache = Some(cache);
+        self
+    }
+
+    /// Set the TypeEnvironment for resolving Lazy types during narrowing.
+    pub fn with_type_environment(
+        mut self,
+        type_env: Rc<RefCell<crate::solver::TypeEnvironment>>,
+    ) -> Self {
+        self.type_environment = Some(type_env);
         self
     }
 
