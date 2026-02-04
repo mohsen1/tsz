@@ -1567,6 +1567,9 @@ impl<'a> CheckerContext<'a> {
         // Set the query database for memoization/interning
         checker.set_query_db(self.types);
 
+        // Set the inheritance graph for nominal class subtype checking
+        checker.set_inheritance_graph(Some(&self.inheritance_graph));
+
         // Configure strict subtype checking if Sound Mode is enabled
         if self.compiler_options.sound_mode {
             checker.set_strict_subtype_checking(true);

@@ -168,6 +168,22 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.query_db = Some(db);
     }
 
+    /// Set the inheritance graph for nominal class subtype checking.
+    /// Propagates to the internal SubtypeChecker.
+    pub fn set_inheritance_graph(
+        &mut self,
+        graph: Option<&crate::solver::inheritance::InheritanceGraph>,
+    ) {
+        // Need to transmute the lifetime because the SubtypeChecker expects &'a but we only have &.
+        // This is safe because the InheritanceGraph is owned by CheckerContext which outlives the CompatChecker.
+        self.subtype.inheritance_graph = graph.map(|g| unsafe {
+            std::mem::transmute::<
+                &crate::solver::inheritance::InheritanceGraph,
+                &'a crate::solver::inheritance::InheritanceGraph,
+            >(g)
+        });
+    }
+
     /// Configure strict function parameter checking.
     /// See https://github.com/microsoft/TypeScript/issues/18654.
     pub fn set_strict_function_types(&mut self, strict: bool) {
