@@ -224,3 +224,20 @@ Implemented shared cache infrastructure (planned in previous session phase).
 
 **Next**: Task 2 - CheckerState Refactoring
 
+---
+
+### Task 2 Complete ✅
+
+**Commit**: `5f4072f36` - "feat(tsz-2): implement CheckerState Refactoring (Task 2)"
+
+**Changes Made**:
+1. Expanded TypeCache with specialized caches (application_eval_cache, mapped_eval_cache, object_spread_property_cache, element_access_type_cache, flow_analysis_cache, class_instance_type_to_decl, class_instance_type_cache)
+2. Fixed `with_cache` and `with_cache_and_options` to use specialized caches from TypeCache instead of creating fresh empty HashMaps
+3. Added `CheckerContext::with_parent_cache` method to create child contexts that share parent's caches through RefCell cloning
+4. Added `CheckerState::with_parent_cache` method for convenience
+5. Updated temporary checker creation in `state_type_analysis.rs` and `state_type_environment.rs` to use `with_parent_cache` instead of `new`
+
+**Correctness Impact**: Fixes Cache Isolation Bug where temporary checkers created for cross-file symbol resolution were discarding their caches, preventing lib.d.ts type aliases like `Partial<T>` and `Pick<T,K>` from resolving correctly.
+
+**Next**: Task 3 - Thread-Safe Cache Access
+
