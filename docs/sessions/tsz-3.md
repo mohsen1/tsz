@@ -29,20 +29,26 @@ Type '{ isPrototypeOf: { (v: Object): boolean }; propertyIsEnumerable: { (v: Pro
 TypeScript shows no errors for this test, confirming it should work.
 
 **Investigation**:
-Traced through the code:
-1. `get_type_of_node` for identifier → `get_type_of_identifier` (type_computation_complex.rs:1413)
-2. `get_type_of_identifier` resolves symbol via `resolve_identifier_symbol` (line 1436)
-3. Then calls `get_type_of_symbol(sym_id)` to get the type (line 1525)
-4. `get_type_of_symbol` for classes calls `get_class_constructor_type` (state_type_analysis.rs:1052)
+Added debug logging and traced the issue:
+1. `get_type_of_node` → `get_type_of_identifier` → `get_type_of_symbol` → `get_class_constructor_type`
+2. For Animal class, we return `TypeId(144)` as the constructor type
+3. But `TypeId(144)` contains instance properties like `speak` and Object.prototype methods
 
-The error shows we're getting a type with Object.prototype properties when passing `Animal` to a function expecting `typeof Animal`.
+**Root Cause Found**:
+The constructor type `TypeId(144)` contains INSTANCE properties instead of just STATIC properties!
 
-This could mean:
-- `get_type_of_symbol(Animal)` is returning the wrong type (instance instead of constructor), OR
-- There's an issue with how `typeof Animal` type query is resolved, OR
-- The assignability check is incorrectly comparing instance type to constructor type
+The error shows:
+- `isPrototypeOf`, `propertyIsEnumerable`, etc. (Object.prototype methods)
+- `constructor: Function`
+- `speak: { (): void }` (Animal's instance method - should NOT be in constructor type!)
 
-Next: Need to add debug logging to trace what type `get_type_of_symbol` returns for the Animal class symbol.
+The `get_class_constructor_type_inner` function builds a callable type with:
+- `construct_signatures` (correct)
+- `properties` (should only contain static members, but contains instance properties)
+
+This means somewhere in the constructor type building logic, instance properties are being added to the `properties` HashMap.
+
+Next: Find where instance properties are being added to the constructor type's properties HashMap.
 
 **Failing Tests**:
 1. `test_abstract_constructor_assignability` - TS2322 error: Type for `Animal` includes Object.prototype properties
