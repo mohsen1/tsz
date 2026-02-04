@@ -288,6 +288,29 @@ Implementation details:
 
 **Commit:** feat(tsz-7): implement name collision handling for imports
 
+**Gemini Consultation (2026-02-04 - Post Task 2):**
+
+Gemini's recommended priority order for remaining Phase 4 work:
+
+1. **Run conformance tests** - Verify Tasks 1 & 2 work correctly
+2. **Task 4: Track type-only vs value usage** - Required for correctness
+3. **Task 3: Consolidate import logic** - Architectural cleanup (should be last)
+
+**Rationale:**
+- Testing now validates the risky path/collision logic before building more on top
+- Type-only vs value tracking is required BEFORE consolidation (otherwise consolidation needs rewrite)
+- Consolidation is final orchestration that depends on having complete data
+
+**Conformance Results (2026-02-04):**
+- Overall: 37.9% (5090/13446) - lower than 42.1% baseline
+- Note: This is ALL tests, not just declaration emit
+- Need to run declaration-specific tests for accurate baseline
+
+**Next Steps:**
+1. Run specific declarationEmit tests for accurate baseline
+2. Implement Task 4 (type-only vs value tracking)
+3. Implement Task 3 (consolidation)
+
 ### Dependencies
 
 - TSZ-5 (UsageAnalyzer) - ✅ Complete
