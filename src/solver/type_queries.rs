@@ -2032,6 +2032,8 @@ pub enum PredicateSignatureKind {
     Callable(crate::solver::types::CallableShapeId),
     /// Union - search members for predicate
     Union(Vec<TypeId>),
+    /// Intersection - search members for predicate
+    Intersection(Vec<TypeId>),
     /// No predicate available
     None,
 }
@@ -2051,6 +2053,10 @@ pub fn classify_for_predicate_signature(
         TypeKey::Union(members_id) => {
             let members = db.type_list(members_id);
             PredicateSignatureKind::Union(members.to_vec())
+        }
+        TypeKey::Intersection(members_id) => {
+            let members = db.type_list(members_id);
+            PredicateSignatureKind::Intersection(members.to_vec())
         }
         _ => PredicateSignatureKind::None,
     }
