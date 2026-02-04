@@ -1862,6 +1862,32 @@ impl<'a> FlowAnalyzer<'a> {
         let cond_node = self.arena.get(condition)?;
         let bin = self.arena.get_binary_expr(cond_node)?;
 
+        // Check for instanceof operator: x instanceof MyClass
+        if let Some(operator_node) = self.arena.get(bin.operator_token)
+            && operator_node.kind == SyntaxKind::InstanceOfKeyword as u16
+        {
+            // Target is the left side
+            let target = bin.left;
+            // Get the constructor type from the right side
+            if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
+                return Some((TypeGuard::Instanceof(instance_type), target));
+            }
+            // If we can't get the instance type, still return a guard with OBJECT as fallback
+            return Some((TypeGuard::Instanceof(TypeId::OBJECT), target));
+        }
+
+        // Check for in operator: "prop" in x
+        if let Some(operator_node) = self.arena.get(bin.operator_token)
+            && operator_node.kind == SyntaxKind::InKeyword as u16
+        {
+            // Target is the right side (the object being checked)
+            let target = bin.right;
+            // Get the property name from the left side
+            if let Some((prop_name, _is_number)) = self.in_property_name(bin.left) {
+                return Some((TypeGuard::InProperty(prop_name), target));
+            }
+        }
+
         // Extract the target (left or right side of the comparison)
         let target = self.get_comparison_target(condition)?;
 
