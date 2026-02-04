@@ -2,21 +2,43 @@
 
 ## Date: 2026-02-04
 
-## Status: ACTIVE - Implementing Enum Declaration Emit
+## Status: ACTIVE - Implementing Enum Declaration Emit (Primary Focus)
 
-### Current Task: Fix Abstract Property Type Caching (Quick Win)
+### Session Redefined (Gemini Recommendation)
 
-**Issue**: Abstract properties with initializers are missing type annotations in .d.ts output.
-- Test: `abstract prop = 1` emits `abstract prop;` instead of `abstract prop: number;`
-- Root cause: `get_node_type` returns None - checker doesn't cache types for invalid constructs
-- Fix needed: Ensure type is computed even for invalid TS (abstract + initializer violates TS1245)
+**Decision**: Pivot to Enum declaration emit (primary user-facing feature) instead of debugging abstract property caching issue.
 
-**Next Task: Implement Enum Declaration Emit**
-- TypeKey::Enum(DefId, TypeId) infrastructure exists
-- Need to implement:
-  1. Enum assignability rules (Rules #7, #24, #34 from unsoundness_audit.rs)
-  2. Enum member resolution (`MyEnum.Member` lookups)
-  3. Enum declaration emit in TypePrinter
+**Reasoning**: Abstract properties with initializers (`abstract prop = 1`) are **invalid TypeScript** (violates TS1245). While tsc handles this gracefully, fixing it is low-value compared to implementing Enums - a core TypeScript feature.
+
+**Strategy**: "Solver-First" approach to avoid similar caching issues
+1. Verify Solver creates TypeKey::Enum correctly
+2. Ensure Checker populates symbol_types cache
+3. Implement TypePrinter enum formatting
+4. Use TDD with working CLI test infrastructure
+
+### Current Task: Implement Enum Declaration Emit
+
+**Infrastructure**:
+- `TypeKey::Enum(DefId, TypeId)` exists in solver
+- `DefinitionStore` has enum members in `DefinitionInfo`
+- TypePrinter needs enum handling
+
+**Implementation Plan** (Solver-First):
+1. **Solver**: Check `TypeFormatter` handles `TypeKey::Enum` (src/solver/format.rs)
+2. **Checker**: Ensure `check_enum_declaration` populates cache (src/checker/declarations.rs)
+3. **Emitter**: Implement enum emit in TypePrinter (src/emitter/type_printer.rs)
+4. **Test**: Use CLI test runner to verify
+
+**TDD Approach**:
+```bash
+# Create test case
+enum Direction { Up, Down, Left, Right }
+const enum Color { Red, Green, Blue }
+
+# Test it
+tsz --declaration test.ts
+cat test.d.ts
+```
 
 ### Completed Task: Migrate Test Runner to Native CLI ✅
 
@@ -50,15 +72,28 @@ Match TypeScript's declaration output exactly using **test-driven development**.
 - **Test runner migrated to CLI-based testing** ✅ NEW
 
 **⏳ In Progress:**
-- Fixing abstract property type caching issue
-- Implementing Enum declaration emit
+- Implementing Enum declaration emit (Solver-First approach)
+- Test infrastructure validation
 
-**📋 TODO (Prioritized Order - based on Gemini recommendation):**
-1. **[CURRENT] Fix Abstract Property Type Caching** (1-2 hours) - Quick win to validate new test infrastructure
-2. **Implement Enum Assignability** (Primary Focus) - Rules #7 (open numeric), #24 (nominal), #34 (string enums)
-3. **Implement Enum Member Resolution** - Enable `MyEnum.Member` lookups returning correct literal types
-4. **Implement Lazy Types** - Handle `TypeKey::Lazy(DefId)` for circular references (internal refactor)
-5. **Fix remaining declaration emit issues** - Use test runner to identify and fix
+**📋 TODO (Prioritized Order - based on Gemini redefinition):**
+
+1. **[CURRENT] Implement Enum Declaration Emit** (Primary Focus)
+   - Solver: Verify TypeFormatter handles TypeKey::Enum
+   - Checker: Ensure enum types are cached correctly
+   - Emitter: Implement enum formatting in TypePrinter
+   - Test: Use CLI test runner for verification
+
+2. **[DEFERRED] Abstract Property Type Inference** (Low Priority)
+   - Only valid syntax issue (`abstract prop = 1` violates TS1245)
+   - Re-frame as "Inferred Property Type Persistence"
+   - Return to this ONLY if regular properties also lose types
+
+3. **Implement Namespace/Module Emit** (Medium Priority)
+   - Handle `declare namespace` and `export module`
+   - Recursive block emission for namespaces
+
+4. **Implement Lazy Types** (Internal Refactor)
+   - Handle `TypeKey::Lazy(DefId)` for circular references
 
 ## Testing Infrastructure
 
