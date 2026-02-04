@@ -14,6 +14,9 @@
 12. ✅ **Array/object literal in default parameters** (0254ea7e8)
 13. ✅ **Parameter properties in class constructors** (b1e8c49c2)
 14. ✅ **Class member visibility and abstract keywords** (d0d803bdc)
+15. ✅ **Literal initializers for primitive consts** (c055d716c)
+    - Extended to emit_variable_declaration()
+    - Conformance: 42.1% → 42.3% (+1 test)
 
 **Latest Achievement: Parameter Properties ✅**
 
