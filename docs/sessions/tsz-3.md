@@ -14,10 +14,27 @@ Work is never done until all tests pass. This includes:
 1. **ClassDeclaration26.ts** (commit 8e21d5d71) - Fixed var constructor() pattern in class bodies
 2. **abstractPropertyNegative.ts** (commit 8a034be71) - Fixed getter/setter without body check
 
-**Next Focus**: TS2300 (10 missing errors) - Duplicate Identifier
-- **Why**: Binder's symbol table integrity is foundational. Missing duplicate checks corrupt the environment and cause downstream issues (including TS2304).
-- **Impact**: 10 missing errors suggest binder isn't checking current scope for existing symbols before adding new ones
-- **Plan**: Investigate binder's symbol registration logic to ensure duplicate detection works correctly
+**Next Focus**: TS2300 (10 missing, 1 extra) - Duplicate Identifier
+
+**Root Cause Analysis** (from Gemini):
+The binder's `declare_symbol` function (src/binder/state.rs ~line 1365) has "The Overwrite Problem":
+1. When duplicate is found, `can_merge_flags` correctly returns `false`
+2. But `declare_symbol` creates a NEW symbol and overwrites the old one in scope
+3. Result: Checker only sees the last declaration, doesn't detect collision
+4. SymbolTable is HashMap<String, SymbolId> - can only hold one ID per name
+
+**Test to Start With**: `tests/cases/conformance/es6/variableDeclarations/letConstDuplicate.ts`
+```bash
+./scripts/conformance.sh run --test letConstDuplicate.ts
+```
+
+**Investigation Plan**:
+1. Read `src/binder/state.rs` function `declare_symbol` (~line 1365)
+2. Read `can_merge_flags` (~line 1439) to understand merge rules
+3. Determine fix strategy:
+   - Option A: Allow merging for invalid combos, let checker flag duplicate declarations
+   - Option B: Track collision errors explicitly on the symbol
+
 
 **Conformance Status**: 97/200 passed (48.5%)
 Top error mismatches:
