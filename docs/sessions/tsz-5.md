@@ -30,10 +30,26 @@
 - Eliminates majority of "Module not found" errors in .d.ts files
 - Single largest blocker to declaration emit correctness
 
-**Corrected Architecture:**
+**Current Status (2026-02-04): Awaiting Gemini Consultation**
+
+Rate limited on API - Question 1 (Approach Validation) queued for when rate limit clears.
+
+**Planned Implementation (Based on Gemini Guidance):**
+1. Add checker_context field to DeclarationEmitter
+2. Add used_symbols: FxHashSet<SymbolId> tracking
+3. Implement SymbolUsageVisitor (TypeVisitor-based)
+4. Hybrid AST/Semantic walk for exported declarations
+5. Import filtering in emit_import_declaration()
+
+**Key Questions for Gemini:**
+1. How to access TypeResolver from TypeInterner? Need TypeEnvironment?
+2. Is get_symbol_of_node() in CheckerContext? Exact implementation?
+3. Do recent 'f2d4ae5d5' DefId stability refactors affect approach?
+
+**Corrected Architecture (From Previous Review):**
 1. **Hybrid AST/Semantic Walk** - Not just AST nodes
 2. **SymbolUsageVisitor** - New TypeVisitor implementation
-3. **DefId→SymbolId Mapping** - Via BinderTypeDatabase
+3. **DefId→SymbolId Mapping** - Via TypeResolver trait
 4. **Type-Only vs Value Usage** - Critical distinction for elision
 
 ### Gemini Critical Review - 2026-02-04
