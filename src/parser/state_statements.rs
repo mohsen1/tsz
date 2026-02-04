@@ -955,8 +955,20 @@ impl ParserState {
         // Check for generator asterisk
         let asterisk_token = self.parse_optional(SyntaxKind::AsteriskToken);
 
+        // Set context flags BEFORE parsing name and parameters so that
+        // reserved keywords (await/yield) are properly detected in function declarations
+        // For async function * await() {}, the function name 'await' should error
+        // For async function * (await) {}, the parameter name 'await' should error
+        let saved_flags = self.context_flags;
+        if is_async {
+            self.context_flags |= CONTEXT_FLAG_ASYNC;
+        }
+        if asterisk_token {
+            self.context_flags |= CONTEXT_FLAG_GENERATOR;
+        }
+
         // Parse name - keywords like 'abstract' can be used as function names
-        // Check for illegal binding identifiers (e.g., 'await' in static blocks)
+        // Check for illegal binding identifiers (e.g., 'await' in static blocks, async/generator contexts)
         self.check_illegal_binding_identifier();
 
         let name = if self.is_identifier_or_keyword() {
@@ -978,6 +990,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         // Parse optional return type (may be a type predicate: param is T)
+        // Note: Type annotations are not in async/generator context
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_return_type()
         } else {
@@ -985,15 +998,7 @@ impl ParserState {
         };
 
         // Parse body - may be missing for overload signatures (just a semicolon)
-        // Set context flags for async/generator to properly parse await/yield
-        let saved_flags = self.context_flags;
-        if is_async {
-            self.context_flags |= CONTEXT_FLAG_ASYNC;
-        }
-        if asterisk_token {
-            self.context_flags |= CONTEXT_FLAG_GENERATOR;
-        }
-
+        // Context flags remain set for await/yield expressions in body
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
@@ -1128,6 +1133,21 @@ impl ParserState {
         // Check for generator asterisk
         let asterisk_token = self.parse_optional(SyntaxKind::AsteriskToken);
 
+        // Set context flags BEFORE parsing name and parameters so that
+        // reserved keywords (await/yield) are properly detected in function expressions
+        // For async function * await() {}, the function name 'await' should error
+        // For async function * (await) {}, the parameter name 'await' should error
+        let saved_flags = self.context_flags;
+        if is_async {
+            self.context_flags |= CONTEXT_FLAG_ASYNC;
+        }
+        if asterisk_token {
+            self.context_flags |= CONTEXT_FLAG_GENERATOR;
+        }
+
+        // Check for illegal binding identifiers (e.g., 'await' in async contexts, 'yield' in generator contexts)
+        self.check_illegal_binding_identifier();
+
         // Parse optional name (function expressions can be anonymous)
         let name = if self.is_identifier_or_keyword() {
             self.parse_identifier_name()
@@ -1148,21 +1168,14 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         // Parse optional return type (may be a type predicate: param is T)
+        // Note: Type annotations are not in async/generator context
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_return_type()
         } else {
             NodeIndex::NONE
         };
 
-        // Parse body with context flags for async/generator
-        let saved_flags = self.context_flags;
-        if is_async {
-            self.context_flags |= CONTEXT_FLAG_ASYNC;
-        }
-        if asterisk_token {
-            self.context_flags |= CONTEXT_FLAG_GENERATOR;
-        }
-
+        // Parse body (context flags remain set for await/yield expressions in body)
         let body = self.parse_block();
 
         // Restore context flags
@@ -1343,6 +1356,10 @@ impl ParserState {
 
         // Parse rest parameter (...)
         let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
+
+        // Check for illegal binding identifiers (e.g., 'await' in async contexts, 'yield' in generator contexts)
+        // This must be called BEFORE parsing the parameter name to catch reserved words
+        self.check_illegal_binding_identifier();
 
         // Parse parameter name - can be an identifier, keyword, or binding pattern
         let name = if self.is_token(SyntaxKind::OpenBraceToken) {

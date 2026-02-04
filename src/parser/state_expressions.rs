@@ -889,6 +889,18 @@ impl ParserState {
                 }
 
                 let start_pos = self.token_pos();
+
+                // Check if 'yield' is used in a parameter default context
+                // TS2523: 'yield' expressions cannot be used in a parameter initializer
+                if self.in_generator_context() && self.in_parameter_default_context() {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'yield' expressions cannot be used in a parameter initializer.",
+                        diagnostic_codes::YIELD_IN_PARAMETER_DEFAULT,
+                    );
+                    // Fall through to parse as yield expression
+                }
+
                 self.next_token();
 
                 // Check for yield* (delegate yield)
