@@ -3381,9 +3381,8 @@ fn test_type_parameter_constraint_assignability() {
     let unconstrained = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
     assert!(!checker.is_subtype_of(unconstrained, TypeId::STRING));
 }
@@ -3462,9 +3461,8 @@ fn test_deferred_conditional_source_subtyping() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let conditional = interner.conditional(ConditionalType {
@@ -3489,9 +3487,8 @@ fn test_deferred_conditional_target_subtyping() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let conditional = interner.conditional(ConditionalType {
@@ -3513,9 +3510,8 @@ fn test_deferred_conditional_structural_subtyping() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let source = interner.conditional(ConditionalType {
@@ -3556,9 +3552,8 @@ fn test_conditional_tuple_wrapper_no_distribution_subtyping() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let tuple_check = interner.tuple(vec![TupleElement {
@@ -5730,9 +5725,8 @@ fn test_keyof_deferred_not_subtype_of_string() {
     let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
     let keyof_param = interner.intern(TypeKey::KeyOf(type_param));
 
@@ -5747,9 +5741,8 @@ fn test_keyof_deferred_subtype_of_string_number_symbol_union() {
     let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
     let keyof_param = interner.intern(TypeKey::KeyOf(type_param));
 
@@ -5765,9 +5758,8 @@ fn test_keyof_deferred_not_subtype_of_string_number_union() {
     let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
     let keyof_param = interner.intern(TypeKey::KeyOf(type_param));
 
@@ -5837,9 +5829,8 @@ fn test_mapped_type_over_number_keys_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -5891,9 +5882,8 @@ fn test_mapped_type_over_number_keys_optional_readonly_add_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -5943,9 +5933,8 @@ fn test_mapped_type_over_string_keys_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -5987,9 +5976,8 @@ fn test_mapped_type_over_string_keys_number_index_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -6034,9 +6022,8 @@ fn test_mapped_type_over_string_keys_key_remap_omit_length() {
     let key_param = TypeParamInfo {
         name: interner.intern_string("K"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     };
     let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
     let length_key = interner.literal_string("length");
@@ -6089,9 +6076,8 @@ fn test_mapped_type_over_boolean_keys_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -6133,9 +6119,8 @@ fn test_mapped_type_over_symbol_keys_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -6177,9 +6162,8 @@ fn test_mapped_type_over_bigint_keys_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -6234,9 +6218,8 @@ fn test_mapped_type_optional_modifier_add_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint: keys,
         name_type: None,
@@ -6301,9 +6284,8 @@ fn test_mapped_type_readonly_modifier_add_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint: keys,
         name_type: None,
@@ -6368,9 +6350,8 @@ fn test_mapped_type_optional_readonly_add_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint: keys,
         name_type: None,
@@ -6434,9 +6415,8 @@ fn test_mapped_type_optional_readonly_remove_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint: keys,
         name_type: None,
@@ -6480,9 +6460,8 @@ fn test_mapped_type_optional_modifier_remove_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint: keys,
         name_type: None,
@@ -6534,9 +6513,8 @@ fn test_mapped_type_optional_remove_from_optional_keyof() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint: keys,
         name_type: None,
@@ -6587,9 +6565,8 @@ fn test_mapped_type_readonly_remove_from_readonly_keyof() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint: keys,
         name_type: None,
@@ -6632,9 +6609,8 @@ fn test_mapped_type_readonly_modifier_remove_subtyping() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint: keys,
         name_type: None,
@@ -23443,9 +23419,8 @@ fn test_constructor_generic_type_param() {
     let t_param = TypeParamInfo {
         name: t_name,
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
@@ -24069,7 +24044,7 @@ fn test_this_type_with_this_constraint() {
             name: interner.intern_string("T"),
             constraint: Some(interner.lazy(DefId(1))),
             default: None,
-        is_const: false,
+            is_const: false,
         }],
         params: vec![],
         this_type: Some(t_param),
@@ -24170,9 +24145,8 @@ fn test_this_type_with_generic_method() {
         type_params: vec![TypeParamInfo {
             name: interner.intern_string("T"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("value")),
@@ -24375,9 +24349,8 @@ fn test_this_type_map_method() {
         type_params: vec![TypeParamInfo {
             name: interner.intern_string("U"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("fn")),
@@ -25900,9 +25873,8 @@ fn test_overload_generic_identity() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let callable = interner.callable(CallableShape {
@@ -25912,9 +25884,8 @@ fn test_overload_generic_identity() {
                 type_params: vec![TypeParamInfo {
                     name: interner.intern_string("T"),
                     constraint: None,
-                    is_const: false,
                     default: None,
-                    
+                    is_const: false,
                 }],
                 params: vec![ParamInfo {
                     name: Some(interner.intern_string("x")),
@@ -25980,7 +25951,7 @@ fn test_overload_generic_with_constraint() {
                     name: interner.intern_string("T"),
                     constraint: Some(TypeId::STRING),
                     default: None,
-        is_const: false,
+                    is_const: false,
                 }],
                 params: vec![ParamInfo {
                     name: Some(interner.intern_string("x")),
@@ -25998,7 +25969,7 @@ fn test_overload_generic_with_constraint() {
                     name: interner.intern_string("T"),
                     constraint: Some(TypeId::NUMBER),
                     default: None,
-        is_const: false,
+                    is_const: false,
                 }],
                 params: vec![ParamInfo {
                     name: Some(interner.intern_string("x")),
@@ -26330,17 +26301,15 @@ fn test_overload_generic_multiple_type_params() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let tuple_t_u = interner.tuple(vec![
@@ -26366,16 +26335,14 @@ fn test_overload_generic_multiple_type_params() {
                     TypeParamInfo {
                         name: interner.intern_string("T"),
                         constraint: None,
-                        is_const: false,
                         default: None,
-                        
+                        is_const: false,
                     },
                     TypeParamInfo {
                         name: interner.intern_string("U"),
                         constraint: None,
-                        is_const: false,
                         default: None,
-                        
+                        is_const: false,
                     },
                 ],
                 params: vec![
@@ -26401,9 +26368,8 @@ fn test_overload_generic_multiple_type_params() {
                 type_params: vec![TypeParamInfo {
                     name: interner.intern_string("T"),
                     constraint: None,
-                    is_const: false,
                     default: None,
-                    
+                    is_const: false,
                 }],
                 params: vec![ParamInfo {
                     name: Some(interner.intern_string("x")),
@@ -26798,8 +26764,8 @@ fn test_overload_generic_default_type() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: Some(TypeId::STRING),
+        is_const: false,
     }));
 
     let callable = interner.callable(CallableShape {
@@ -26808,8 +26774,8 @@ fn test_overload_generic_default_type() {
             type_params: vec![TypeParamInfo {
                 name: interner.intern_string("T"),
                 constraint: None,
-                is_const: false,
                 default: Some(TypeId::STRING),
+                is_const: false,
             }],
             params: vec![ParamInfo {
                 name: Some(interner.intern_string("x")),
@@ -26844,17 +26810,15 @@ fn test_overload_array_methods_pattern() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     // (x: T) => U
@@ -26921,9 +26885,8 @@ fn test_overload_array_methods_pattern() {
         type_params: vec![TypeParamInfo {
             name: interner.intern_string("U"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("fn")),
@@ -26959,9 +26922,8 @@ fn test_overload_array_methods_pattern() {
         type_params: vec![TypeParamInfo {
             name: interner.intern_string("U"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         }],
         params: vec![
             ParamInfo {
@@ -27236,25 +27198,22 @@ fn test_overload_promise_then_pattern() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let v_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     // (value: T) => U
@@ -27299,9 +27258,8 @@ fn test_overload_promise_then_pattern() {
                 type_params: vec![TypeParamInfo {
                     name: interner.intern_string("U"),
                     constraint: None,
-                    is_const: false,
                     default: None,
-                    
+                    is_const: false,
                 }],
                 params: vec![ParamInfo {
                     name: Some(interner.intern_string("onFulfilled")),
@@ -27321,16 +27279,14 @@ fn test_overload_promise_then_pattern() {
                     TypeParamInfo {
                         name: interner.intern_string("U"),
                         constraint: None,
-                        is_const: false,
                         default: None,
-                        
+                        is_const: false,
                     },
                     TypeParamInfo {
                         name: interner.intern_string("V"),
                         constraint: None,
-                        is_const: false,
                         default: None,
-                        
+                        is_const: false,
                     },
                 ],
                 params: vec![
@@ -29071,16 +29027,14 @@ fn test_this_type_with_generics_in_class() {
     let _t_param = TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     };
     let _u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     };
 
     // filter method returning this (polymorphic return)

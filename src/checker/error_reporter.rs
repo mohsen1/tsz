@@ -792,6 +792,42 @@ impl<'a> CheckerState<'a> {
     pub fn error_cannot_find_name_at(&mut self, name: &str, idx: NodeIndex) {
         use crate::lib_loader;
 
+        // Skip TS2304 for identifiers that are clearly not valid names.
+        // These are likely parse errors (e.g., ",", ";", "(") that were
+        // added to the AST for error recovery. The parse error should have
+        // already been emitted (e.g., TS1136 "Property assignment expected").
+        let is_obviously_invalid = name.len() == 1
+            && matches!(
+                name.chars().next(),
+                Some(
+                    ',' | ';'
+                        | ':'
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '+'
+                        | '-'
+                        | '*'
+                        | '/'
+                        | '%'
+                        | '&'
+                        | '|'
+                        | '^'
+                        | '!'
+                        | '~'
+                        | '<'
+                        | '>'
+                        | '='
+                        | '.'
+                )
+            );
+        if is_obviously_invalid {
+            return;
+        }
+
         // Check if this is an ES2015+ type that requires a specific lib
         // If so, emit TS2583 with a suggestion to change the lib
         if lib_loader::is_es2015_plus_type(name) {
@@ -916,6 +952,40 @@ impl<'a> CheckerState<'a> {
         suggestions: &[String],
         idx: NodeIndex,
     ) {
+        // Skip TS2304 for identifiers that are clearly not valid names.
+        // These are likely parse errors that were added to the AST for error recovery.
+        let is_obviously_invalid = name.len() == 1
+            && matches!(
+                name.chars().next(),
+                Some(
+                    ',' | ';'
+                        | ':'
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '+'
+                        | '-'
+                        | '*'
+                        | '/'
+                        | '%'
+                        | '&'
+                        | '|'
+                        | '^'
+                        | '!'
+                        | '~'
+                        | '<'
+                        | '>'
+                        | '='
+                        | '.'
+                )
+            );
+        if is_obviously_invalid {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             // Format the suggestions list
             let suggestions_text = if suggestions.len() == 1 {

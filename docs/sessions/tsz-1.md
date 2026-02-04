@@ -2,7 +2,19 @@
 
 ## Current Work
 
-**Completed conformance analysis (500 test sample, 12.8% pass rate)** - Identified top issues and investigated key bugs.
+**Investigating TS1136 parse error for double comma in object literal**
+
+Working on fixing the parser to emit TS1136 "Property assignment expected" for invalid property names like comma instead of TS2304 "Cannot find name ','."
+
+### Progress
+- Added `is_identifier_or_keyword()` check in `parse_property_name()` to emit TS1136 for invalid tokens
+- Parser now correctly emits TS1136 (test passes)
+- Binary still shows TS2304 - error is coming from solver type resolution, not error_reporter
+- Need to find where in the solver the TS2304 is actually being created
+
+---
+
+## Conformance Results Summary
 
 ---
 

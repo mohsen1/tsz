@@ -337,7 +337,7 @@ impl<'a> CheckerState<'a> {
                         if type_ref
                             .type_arguments
                             .as_ref()
-                            .map_or(true, |args| args.nodes.is_empty())
+                            .is_none_or(|args| args.nodes.is_empty())
                         {
                             // No explicit type arguments provided
                             let has_defaults = type_params.iter().any(|p| p.default.is_some());

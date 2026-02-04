@@ -3079,9 +3079,8 @@ fn test_mapped_type_over_number_keys_assignable() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -3123,9 +3122,8 @@ fn test_mapped_type_over_string_keys_assignable() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -3167,9 +3165,8 @@ fn test_mapped_type_over_boolean_keys_assignable() {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -3271,9 +3268,8 @@ fn test_conditional_tuple_wrapper_no_distribution_assignable() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let tuple_check = interner.tuple(vec![TupleElement {

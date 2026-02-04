@@ -2710,12 +2710,23 @@ impl ParserState {
             }
             _ => {
                 // Identifier or keyword used as property name
+                // But first check if it's actually a valid identifier/keyword
                 let start_pos = self.token_pos();
+                let is_identifier_or_keyword = self.is_identifier_or_keyword();
+
+                if !is_identifier_or_keyword {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Property assignment expected.",
+                        diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+                    );
+                }
+
                 // OPTIMIZATION: Capture atom for O(1) comparison
                 let atom = self.scanner.get_token_atom();
                 // Use zero-copy accessor
                 let text = self.scanner.get_token_value_ref().to_string();
-                self.next_token(); // Accept any token as property name
+                self.next_token(); // Accept any token as property name (error recovery)
                 let end_pos = self.token_end();
 
                 self.arena.add_identifier(

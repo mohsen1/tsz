@@ -38,7 +38,7 @@ mod generic_strictness_tests {
             name: interner.intern_string("T"),
             constraint: Some(identifiable_constraint),
             default: None,
-        is_const: false,
+            is_const: false,
         }));
 
         // Create an instance with the constraint satisfied
@@ -84,7 +84,7 @@ mod generic_strictness_tests {
             name: interner.intern_string("T"),
             constraint: Some(identifiable_constraint),
             default: None,
-        is_const: false,
+            is_const: false,
         }));
 
         // Create an instance WITHOUT the required property
@@ -115,9 +115,8 @@ mod generic_strictness_tests {
         let t_param_unconstrained = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
             name: interner.intern_string("T"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         }));
 
         // When checking against unconstrained generic, use Unknown (not Any)
@@ -164,14 +163,14 @@ mod generic_strictness_tests {
             name: interner.intern_string("T"),
             constraint: Some(length_constraint),
             default: None,
-        is_const: false,
+            is_const: false,
         }));
 
         let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
             name: interner.intern_string("U"),
             constraint: Some(name_constraint),
             default: None,
-        is_const: false,
+            is_const: false,
         }));
 
         // Object satisfying both constraints
@@ -218,7 +217,7 @@ mod generic_strictness_tests {
             name: interner.intern_string("T"),
             constraint: Some(identifiable_constraint),
             default: None,
-        is_const: false,
+            is_const: false,
         }));
 
         let obj_param = interner.object(vec![PropertyInfo {
@@ -954,7 +953,7 @@ mod function_variance_tests {
             name: interner.intern_string("T"),
             constraint: None,
             default: None,
-        is_const: false,
+            is_const: false,
         }));
 
         let generic_func = interner.function(FunctionShape {
@@ -978,7 +977,7 @@ mod function_variance_tests {
             name: interner.intern_string("T"),
             constraint: Some(number_constraint),
             default: None,
-        is_const: false,
+            is_const: false,
         }));
 
         let constrained_func = interner.function(FunctionShape {
@@ -1614,7 +1613,7 @@ mod unknown_fallback_tests {
             name: interner.intern_string("T"),
             constraint: None, // No constraint - should use Unknown
             default: None,
-        is_const: false,
+            is_const: false,
         }));
 
         // Create an object with number type

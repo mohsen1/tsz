@@ -21,7 +21,7 @@ use crate::solver::types::*;
 use crate::solver::utils;
 use crate::solver::visitor::{
     application_id, array_element_type, callable_shape_id, conditional_type_id, enum_components,
-    function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind, is_enum_type,
+    function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind,
     is_this_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
     tuple_list_id, type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
@@ -1217,7 +1217,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // - MemberType: For structural assignability to primitives (E1 <: number)
         // =======================================================================
 
-        if let (Some((s_def_id, s_members)), Some((t_def_id, t_members))) = (
+        if let (Some((s_def_id, _s_members)), Some((t_def_id, _t_members))) = (
             enum_components(self.interner, source),
             enum_components(self.interner, target),
         ) {
@@ -1230,12 +1230,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Source is Enum, Target is not - check structural member type
-        if let Some((s_def_id, s_members)) = enum_components(self.interner, source) {
+        if let Some((_s_def_id, s_members)) = enum_components(self.interner, source) {
             return self.check_subtype(s_members, target);
         }
 
         // Target is Enum, Source is not - check structural member type
-        if let Some((t_def_id, t_members)) = enum_components(self.interner, target) {
+        if let Some((_t_def_id, t_members)) = enum_components(self.interner, target) {
             return self.check_subtype(source, t_members);
         }
 
