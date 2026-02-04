@@ -4375,6 +4375,62 @@ fn test_accessor_type_compatibility_2322() {
 }
 
 #[test]
+fn test_accessor_type_compatibility_inheritance_no_error() {
+    // Test that getter returning derived class type is assignable to setter base class param
+    // class B extends A, so B <: A
+    // Getter returns B, setter takes A -> Should NOT error (B is assignable to A)
+    use crate::parser::ParserState;
+
+    let source = r#"
+class A { }
+class B extends A { }
+
+class C {
+    public set AnnotatedSetter(a: A) { }
+    public get AnnotatedSetter() { return new B(); }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    // Debug: show all diagnostics
+    eprintln!("=== Diagnostics for inheritance accessor test ===");
+    for d in &checker.ctx.diagnostics {
+        eprintln!("  code={}, msg={}", d.code, d.message_text);
+    }
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should NOT have TS2322 - B is assignable to A (B extends A)
+    assert!(
+        !codes.contains(&2322),
+        "Should NOT have error 2322 (B extends A, so getter returning B is assignable to setter taking A). Got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_accessor_type_compatibility_typeof_structural() {
     // Getter return type should be assignable to setter param type when using typeof.
     use crate::parser::ParserState;
@@ -5477,14 +5533,13 @@ obj.foo;
         .filter(|d| d.code == 2339)
         .count();
     assert_eq!(
-        count, 1,
-        "Expected one 2339 after narrowing unknown to object, got: {:?}",
+        count, 2,
+        "Expected two 2339 errors (one for unknown.foo, one for object.foo), got: {:?}",
         checker.ctx.diagnostics
     );
 }
 
 #[test]
-#[ignore]
 fn test_ts2339_catch_binding_unknown() {
     use crate::parser::ParserState;
 

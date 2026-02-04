@@ -822,7 +822,10 @@ impl<'a> TypeLowering<'a> {
             None
         };
 
+        let is_const = self.has_const_modifier(&data.modifiers);
+
         Some(TypeParamInfo {
+            is_const,
             name,
             constraint,
             default,
@@ -1540,6 +1543,22 @@ impl<'a> TypeLowering<'a> {
         false
     }
 
+    /// Check if a modifiers list contains a const keyword (for const type parameters)
+    fn has_const_modifier(&self, modifiers: &Option<NodeList>) -> bool {
+        use crate::scanner::SyntaxKind;
+
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::ConstKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Lower a conditional type (T extends U ? X : Y)
     fn lower_conditional_type(&self, node_idx: NodeIndex) -> TypeId {
         let node = match self.arena.get(node_idx) {
@@ -1834,6 +1853,7 @@ impl<'a> TypeLowering<'a> {
                 let name = self.interner.intern_string("K");
                 return (
                     TypeParamInfo {
+                        is_const: false,
                         name,
                         constraint: None,
                         default: None,
@@ -1870,6 +1890,7 @@ impl<'a> TypeLowering<'a> {
 
             (
                 TypeParamInfo {
+                    is_const: false,
                     name,
                     constraint,
                     default,
@@ -1880,6 +1901,7 @@ impl<'a> TypeLowering<'a> {
             let name = self.interner.intern_string("K");
             (
                 TypeParamInfo {
+                    is_const: false,
                     name,
                     constraint: None,
                     default: None,
@@ -2501,6 +2523,7 @@ impl<'a> TypeLowering<'a> {
             };
 
             self.interner.intern(TypeKey::Infer(TypeParamInfo {
+                is_const: false,
                 name,
                 constraint: None,
                 default: None,

@@ -11,6 +11,11 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::super::evaluate::TypeEvaluator;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// Maximum depth for tail-recursive conditional evaluation.
+    /// This allows patterns like `type Loop<T> = T extends [...infer R] ? Loop<R> : never`
+    /// to work with up to 1000 recursive calls instead of being limited to MAX_EVALUATE_DEPTH.
+    const MAX_TAIL_RECURSION_DEPTH: usize = 1000;
+
     /// Evaluate a conditional type: T extends U ? X : Y
     ///
     /// Algorithm:
@@ -19,145 +24,186 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// 3. If true -> return true_type
     /// 4. If false (disjoint) -> return false_type
     /// 5. If ambiguous (unresolved type param) -> return deferred conditional
-    pub fn evaluate_conditional(&mut self, cond: &ConditionalType) -> TypeId {
-        let check_type = self.evaluate(cond.check_type);
-        let extends_type = self.evaluate(cond.extends_type);
+    ///
+    /// ## Tail-Recursion Elimination
+    /// If the chosen branch (true/false) evaluates to another ConditionalType,
+    /// we immediately evaluate it in the current stack frame instead of recursing.
+    /// This allows tail-recursive patterns to work with up to MAX_TAIL_RECURSION_DEPTH
+    /// iterations instead of being limited by MAX_EVALUATE_DEPTH.
+    pub fn evaluate_conditional(&mut self, initial_cond: &ConditionalType) -> TypeId {
+        // Setup loop state for tail-recursion elimination
+        let mut current_cond = initial_cond.clone();
+        let mut tail_recursion_count = 0;
 
-        if cond.is_distributive && check_type == TypeId::NEVER {
-            return TypeId::NEVER;
-        }
+        loop {
+            let cond = &current_cond;
+            let check_type = self.evaluate(cond.check_type);
+            let extends_type = self.evaluate(cond.extends_type);
 
-        if check_type == TypeId::ANY {
-            // For distributive `any extends X ? T : F`:
-            // - Distributive: return union of both branches (any distributes over the conditional)
-            // - Non-distributive: return union of both branches (any poisons the result)
-            // In both cases, we evaluate and union the branches to handle infer types correctly
-            let true_eval = self.evaluate(cond.true_type);
-            let false_eval = self.evaluate(cond.false_type);
-            return self.interner().union2(true_eval, false_eval);
-        }
-
-        // Step 1: Check for distributivity
-        // Only distribute for naked type parameters (recorded at lowering time).
-        if cond.is_distributive
-            && let Some(TypeKey::Union(members)) = self.interner().lookup(check_type)
-        {
-            let members = self.interner().type_list(members);
-            return self.distribute_conditional(
-                members.as_ref(),
-                check_type, // Pass original check_type for substitution
-                extends_type,
-                cond.true_type,
-                cond.false_type,
-            );
-        }
-
-        if let Some(TypeKey::Infer(info)) = self.interner().lookup(extends_type) {
-            if matches!(
-                self.interner().lookup(check_type),
-                Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
-            ) {
-                return self.interner().conditional(cond.clone());
+            if cond.is_distributive && check_type == TypeId::NEVER {
+                return TypeId::NEVER;
             }
 
             if check_type == TypeId::ANY {
-                let mut subst = TypeSubstitution::new();
-                subst.insert(info.name, check_type);
-                let true_eval = self.evaluate(instantiate_type_with_infer(
-                    self.interner(),
-                    cond.true_type,
-                    &subst,
-                ));
-                let false_eval = self.evaluate(instantiate_type_with_infer(
-                    self.interner(),
-                    cond.false_type,
-                    &subst,
-                ));
+                // For distributive `any extends X ? T : F`:
+                // - Distributive: return union of both branches (any distributes over the conditional)
+                // - Non-distributive: return union of both branches (any poisons the result)
+                // In both cases, we evaluate and union the branches to handle infer types correctly
+                let true_eval = self.evaluate(cond.true_type);
+                let false_eval = self.evaluate(cond.false_type);
                 return self.interner().union2(true_eval, false_eval);
             }
 
-            let mut subst = TypeSubstitution::new();
-            subst.insert(info.name, check_type);
-            let mut inferred = check_type;
-            if let Some(constraint) = info.constraint {
-                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
-                checker.allow_bivariant_rest = true;
-                let Some(filtered) =
-                    self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
-                else {
-                    let false_inst =
-                        instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
-                    return self.evaluate(false_inst);
-                };
-                inferred = filtered;
-            }
-
-            subst.insert(info.name, inferred);
-
-            let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
-            return self.evaluate(true_inst);
-        }
-
-        let extends_unwrapped = match self.interner().lookup(extends_type) {
-            Some(TypeKey::ReadonlyType(inner)) => inner,
-            _ => extends_type,
-        };
-        let check_unwrapped = match self.interner().lookup(check_type) {
-            Some(TypeKey::ReadonlyType(inner)) => inner,
-            _ => check_type,
-        };
-
-        // Handle array extends pattern with infer
-        if let Some(TypeKey::Array(ext_elem)) = self.interner().lookup(extends_unwrapped)
-            && let Some(TypeKey::Infer(info)) = self.interner().lookup(ext_elem)
-        {
-            return self.eval_conditional_array_infer(cond, check_unwrapped, info);
-        }
-
-        // Handle tuple extends pattern with infer
-        if let Some(TypeKey::Tuple(extends_elements)) = self.interner().lookup(extends_unwrapped) {
-            let extends_elements = self.interner().tuple_list(extends_elements);
-            if extends_elements.len() == 1
-                && !extends_elements[0].rest
-                && let Some(TypeKey::Infer(info)) =
-                    self.interner().lookup(extends_elements[0].type_id)
+            // Step 1: Check for distributivity
+            // Only distribute for naked type parameters (recorded at lowering time).
+            if cond.is_distributive
+                && let Some(TypeKey::Union(members)) = self.interner().lookup(check_type)
             {
-                return self.eval_conditional_tuple_infer(
-                    cond,
-                    check_unwrapped,
-                    &extends_elements[0],
-                    info,
+                let members = self.interner().type_list(members);
+                return self.distribute_conditional(
+                    members.as_ref(),
+                    check_type, // Pass original check_type for substitution
+                    extends_type,
+                    cond.true_type,
+                    cond.false_type,
                 );
             }
-        }
 
-        // Handle object extends pattern with infer
-        if let Some(extends_shape_id) = match self.interner().lookup(extends_unwrapped) {
-            Some(TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id)) => Some(shape_id),
-            _ => None,
-        } {
-            if let Some(result) =
-                self.eval_conditional_object_infer(cond, check_unwrapped, extends_shape_id)
-            {
-                return result;
+            if let Some(TypeKey::Infer(info)) = self.interner().lookup(extends_type) {
+                if matches!(
+                    self.interner().lookup(check_type),
+                    Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
+                ) {
+                    return self.interner().conditional(cond.clone());
+                }
+
+                if check_type == TypeId::ANY {
+                    let mut subst = TypeSubstitution::new();
+                    subst.insert(info.name, check_type);
+                    let true_eval = self.evaluate(instantiate_type_with_infer(
+                        self.interner(),
+                        cond.true_type,
+                        &subst,
+                    ));
+                    let false_eval = self.evaluate(instantiate_type_with_infer(
+                        self.interner(),
+                        cond.false_type,
+                        &subst,
+                    ));
+                    return self.interner().union2(true_eval, false_eval);
+                }
+
+                let mut subst = TypeSubstitution::new();
+                subst.insert(info.name, check_type);
+                let mut inferred = check_type;
+                if let Some(constraint) = info.constraint {
+                    let mut checker =
+                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    checker.allow_bivariant_rest = true;
+                    let Some(filtered) =
+                        self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
+                    else {
+                        let false_inst =
+                            instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
+                        return self.evaluate(false_inst);
+                    };
+                    inferred = filtered;
+                }
+
+                subst.insert(info.name, inferred);
+
+                let true_inst =
+                    instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
+                return self.evaluate(true_inst);
             }
-        }
 
-        // Step 2: Check for naked type parameter
-        if let Some(TypeKey::TypeParameter(param)) = self.interner().lookup(check_type) {
-            // If extends_type contains infer patterns and the type parameter has a constraint,
-            // try to infer from the constraint. This handles cases like:
-            // R extends Reducer<infer S, any> ? S : never
-            // where R is constrained to Reducer<any, any>
-            if self.type_contains_infer(extends_type)
-                && let Some(constraint) = param.constraint
+            let extends_unwrapped = match self.interner().lookup(extends_type) {
+                Some(TypeKey::ReadonlyType(inner)) => inner,
+                _ => extends_type,
+            };
+            let check_unwrapped = match self.interner().lookup(check_type) {
+                Some(TypeKey::ReadonlyType(inner)) => inner,
+                _ => check_type,
+            };
+
+            // Handle array extends pattern with infer
+            if let Some(TypeKey::Array(ext_elem)) = self.interner().lookup(extends_unwrapped)
+                && let Some(TypeKey::Infer(info)) = self.interner().lookup(ext_elem)
             {
-                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
-                checker.allow_bivariant_rest = true;
+                return self.eval_conditional_array_infer(cond, check_unwrapped, info);
+            }
+
+            // Handle tuple extends pattern with infer
+            if let Some(TypeKey::Tuple(extends_elements)) =
+                self.interner().lookup(extends_unwrapped)
+            {
+                let extends_elements = self.interner().tuple_list(extends_elements);
+                if extends_elements.len() == 1
+                    && !extends_elements[0].rest
+                    && let Some(TypeKey::Infer(info)) =
+                        self.interner().lookup(extends_elements[0].type_id)
+                {
+                    return self.eval_conditional_tuple_infer(
+                        cond,
+                        check_unwrapped,
+                        &extends_elements[0],
+                        info,
+                    );
+                }
+            }
+
+            // Handle object extends pattern with infer
+            if let Some(extends_shape_id) = match self.interner().lookup(extends_unwrapped) {
+                Some(TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id)) => {
+                    Some(shape_id)
+                }
+                _ => None,
+            } {
+                if let Some(result) =
+                    self.eval_conditional_object_infer(cond, check_unwrapped, extends_shape_id)
+                {
+                    return result;
+                }
+            }
+
+            // Step 2: Check for naked type parameter
+            if let Some(TypeKey::TypeParameter(param)) = self.interner().lookup(check_type) {
+                // If extends_type contains infer patterns and the type parameter has a constraint,
+                // try to infer from the constraint. This handles cases like:
+                // R extends Reducer<infer S, any> ? S : never
+                // where R is constrained to Reducer<any, any>
+                if self.type_contains_infer(extends_type)
+                    && let Some(constraint) = param.constraint
+                {
+                    let mut checker =
+                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    checker.allow_bivariant_rest = true;
+                    let mut bindings = FxHashMap::default();
+                    let mut visited = FxHashSet::default();
+                    if self.match_infer_pattern(
+                        constraint,
+                        extends_type,
+                        &mut bindings,
+                        &mut visited,
+                        &mut checker,
+                    ) {
+                        let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                        return self.evaluate(substituted_true);
+                    }
+                }
+                // Type parameter hasn't been substituted - defer evaluation
+                return self.interner().conditional(cond.clone());
+            }
+
+            // Step 3: Perform subtype check or infer pattern matching
+            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            checker.allow_bivariant_rest = true;
+
+            if self.type_contains_infer(extends_type) {
                 let mut bindings = FxHashMap::default();
                 let mut visited = FxHashSet::default();
                 if self.match_infer_pattern(
-                    constraint,
+                    check_type,
                     extends_type,
                     &mut bindings,
                     &mut visited,
@@ -166,40 +212,51 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let substituted_true = self.substitute_infer(cond.true_type, &bindings);
                     return self.evaluate(substituted_true);
                 }
-            }
-            // Type parameter hasn't been substituted - defer evaluation
-            return self.interner().conditional(cond.clone());
-        }
 
-        // Step 3: Perform subtype check or infer pattern matching
-        let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
-        checker.allow_bivariant_rest = true;
+                // Evaluate the result (could be a tail-recursive call)
+                let result_id = self.evaluate(cond.false_type);
 
-        if self.type_contains_infer(extends_type) {
-            let mut bindings = FxHashMap::default();
-            let mut visited = FxHashSet::default();
-            if self.match_infer_pattern(
-                check_type,
-                extends_type,
-                &mut bindings,
-                &mut visited,
-                &mut checker,
-            ) {
-                let substituted_true = self.substitute_infer(cond.true_type, &bindings);
-                return self.evaluate(substituted_true);
+                // Check if result is a conditional - tail recurse if so
+                if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
+                    if let Some(TypeKey::Conditional(next_cond_id)) =
+                        self.interner().lookup(result_id)
+                    {
+                        let next_cond = self.interner().conditional_type(next_cond_id);
+                        current_cond = (*next_cond).clone();
+                        tail_recursion_count += 1;
+                        continue;
+                    }
+                }
+
+                return result_id;
             }
 
-            return self.evaluate(cond.false_type);
-        }
+            // Subtype check path
+            let result_branch = if checker.is_subtype_of(check_type, extends_type) {
+                // T <: U -> true branch
+                cond.true_type
+            } else {
+                // Check if types are definitely disjoint
+                // For now, we use a simple heuristic: if not subtype, assume disjoint
+                // More sophisticated: check if intersection is never
+                cond.false_type
+            };
 
-        if checker.is_subtype_of(check_type, extends_type) {
-            // T <: U -> true branch
-            self.evaluate(cond.true_type)
-        } else {
-            // Check if types are definitely disjoint
-            // For now, we use a simple heuristic: if not subtype, assume disjoint
-            // More sophisticated: check if intersection is never
-            self.evaluate(cond.false_type)
+            // Evaluate the result (could be a tail-recursive call)
+            let result_id = self.evaluate(result_branch);
+
+            // Check if result is a conditional - tail recurse if so
+            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
+                if let Some(TypeKey::Conditional(next_cond_id)) = self.interner().lookup(result_id)
+                {
+                    let next_cond = self.interner().conditional_type(next_cond_id);
+                    current_cond = (*next_cond).clone();
+                    tail_recursion_count += 1;
+                    continue;
+                }
+            }
+
+            return result_id;
         }
     }
 

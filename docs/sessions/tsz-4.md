@@ -6,7 +6,78 @@
 
 ---
 
-## History (Last 20)
+## Session Status
+
+**Latest ignored test count**: 7875 passing, 191 failing (up from 7874 passing, 192 failing)
+
+Most remaining ignored tests require:
+- Complex feature implementation (e.g., weak type detection - TS2559)
+- Control flow analysis fixes
+- Symbol resolution improvements
+
+The easy configuration/flag fixes have been addressed.
+
+---
+
+## Session Summary
+
+**Total tests fixed/unignored: 17**
+- 14 TS2304 (Cannot find name) tests - fixed missing `report_unresolved_imports` flag
+- 2 TS2339 (Property not exist) tests - fixed unknown type error suppression
+- 1 Type inference test - fixed Object vs Object comparison and optional property bounds checking
+
+---
+
+### 2025-02-04: Fixed type inference for optional properties in object bounds
+
+Fixed two issues in the type inference system in `src/solver/infer.rs`:
+
+**Issue 1: Object vs Object comparison**
+- The `is_subtype` method didn't handle `TypeKey::Object` vs `TypeKey::Object` comparison
+- Objects created with `interner.object()` would fall through the match and return false
+- Added a new case to handle Object vs Object comparison using `object_subtype_of`
+
+**Issue 2: Optional property write type checking**
+- When source property is non-optional and target is optional, the write type check was failing
+- The check `union(STRING, UNDEFINED) <: STRING` was incorrectly required
+- Fixed by skipping write type check when source is non-optional and target is optional
+
+**Tests fixed** (1 test):
+- test_resolve_bounds_optional_property_compatible (no longer ignored)
+
+---
+
+### 2025-02-03: Fixed another TS2304 test (test_ts2304_emitted_for_undefined_name)
+
+Added `report_unresolved_imports = true` to the `check_without_lib` helper function
+in `src/checker/tests/ts2304_tests.rs`.
+
+**Root cause**: Same issue as previous TS2304 tests - the helper function wasn't
+setting the flag needed to report TS2304 errors for unresolved identifiers.
+
+**Tests fixed** (1 test):
+- test_ts2304_emitted_for_undefined_name (no longer ignored)
+
+---
+
+### 2025-02-03: Fixed TS2339 property access on unknown types
+
+Fixed error reporting for property access on `unknown` types to match TypeScript behavior. Previously, tsz was suppressing TS2339 errors when accessing properties on `unknown` types, but TypeScript correctly reports these errors.
+
+**Root cause**: `error_property_not_exist_at` in `src/checker/error_reporter.rs` was suppressing errors on `TypeId::UNKNOWN`. The suppression was intended to prevent cascading errors from unresolved types, but `unknown` is a valid type that should error on arbitrary property access.
+
+**Changes made**:
+- `src/checker/error_reporter.rs`: Removed `TypeId::UNKNOWN` from the error suppression list in `error_property_not_exist_at`
+- `src/tests/checker_state_tests.rs`: Fixed and unignored `test_ts2339_catch_binding_unknown` (destructuring catch variables with `useUnknownInCatchVariables=true`)
+- `src/tests/checker_state_tests.rs`: Fixed expectation in `test_ts2339_unknown_property_access_after_narrowing` (from 1 to 2 errors to match tsc)
+
+**Tests fixed** (2 tests):
+- test_ts2339_catch_binding_unknown (no longer ignored)
+- test_ts2339_unknown_property_access_after_narrowing (fixed test expectation)
+
+**Impact**: +2 tests passing (510 passed vs 508 before)
+
+---
 
 ### 2025-02-03: Fixed 13 TS2304 (Cannot find name) ignored tests
 

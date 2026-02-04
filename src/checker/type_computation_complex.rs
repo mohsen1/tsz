@@ -7,6 +7,7 @@
 use crate::binder::SymbolId;
 use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
+use crate::solver::types::TypeKey;
 use crate::solver::{ContextualTypeContext, TypeId};
 
 impl<'a> CheckerState<'a> {

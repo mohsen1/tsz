@@ -2,7 +2,74 @@
 
 ## Current Work
 
-**Understanding conformance testing infrastructure and identifying improvement opportunities.**
+**Completed**: TS2322 (Type not assignable) - Accessor Type Compatibility False Positives ✅
+
+**Specific Issue**: `accessors_spec_section-4.5_inference.ts`
+- TSC expects: NO errors (empty array)
+- tsz was reporting: 4 TS2322 errors (false positives)
+- **Now FIXED**: tsz correctly reports 0 errors
+
+**Test Case**:
+```typescript
+class A { }
+class B extends A { }
+
+class LanguageSpec_section_4_5_inference {
+    public set InferredGetterFromSetterAnnotation(a: A) { }
+    public get InferredGetterFromSetterAnnotation() { return new B(); }
+}
+```
+
+## Resolution Summary
+
+### Root Causes Identified and Fixed:
+
+**1. Missing Nominal Typing for Empty Classes**
+- Empty classes A and B were both getting `Object(ObjectShapeId(0))` - the same type
+- This broke nominal typing where each class should have a distinct type
+- **Fix**: Set `symbol` field in `ObjectShape` for ALL class instance types (src/checker/class_type.rs:888-918)
+- Now each class gets a distinct `ObjectWithIndex` type with its unique symbol
+
+**2. Type Annotations Resolving to Constructor Types**
+- When processing `a: A` where A is a class, the type was resolving to the constructor type (Callable) instead of instance type (Object)
+- In type position, class references should return instance types
+- `typeof A` should return constructor types
+- **Fix**: Added `resolve_type_annotation` helper (src/checker/type_checking_queries.rs:21-65)
+- Detects direct class Lazy references and extracts instance type from construct signatures
+
+### Changes Made:
+
+1. **src/checker/class_type.rs**:
+   - Changed instance type construction to use `object_with_index` with symbol set for all classes
+   - Both branches (with/without index signatures) now set `symbol: current_sym`
+
+2. **src/checker/type_checking_queries.rs**:
+   - Added `resolve_type_annotation()` helper function
+   - Checks if type annotation is a direct Lazy reference to a CLASS symbol
+   - Extracts instance type from constructor type's construct signatures
+   - Preserves constructor types for `typeof` expressions and type aliases
+
+### Test Results:
+- ✅ `test_accessor_type_compatibility_inheritance_no_error` - PASSES
+- The getter returning `new B()` (B extends A) is now correctly assignable to setter taking `A`
+
+### Known Issues (Pre-existing, not introduced by this fix):
+- `test_abstract_constructor_assignability` - Shows Object prototype type in error messages
+- `test_abstract_mixin_intersection_ts2339` - Similar issues with property access
+- These appear to be pre-existing issues related to type formatting/error messages
+
+
+
+The issue is likely in how `new B()` gets the instance type:
+1. `get_type_of_new_expression()` (line 23 in type_computation_complex.rs)
+2. Should call `get_construct_signature_return_type()` to get B's instance type
+3. Something is going wrong - returning Object prototype instead of B
+
+**Next Steps**:
+1. Debug `new B()` expression resolution
+2. Check if construct signature return type is correct for class B
+3. Verify that `get_class_instance_type()` is being called correctly
+4. May need to trace through Lazy type resolution for class symbols
 
 ### What I've Learned
 
@@ -68,11 +135,79 @@ Based on the gaps and error frequencies, here are the highest-impact areas:
 - Files: `src/solver/`, `src/checker/type_checking.rs`
 - Issue: Property access, type narrowing, `unknown` type handling
 
+### Gemini Recommendation
+
+**Priority: Module Resolution (TS2307) and Lib Loading (TS2318)**
+
+While TS2322 has the highest count (11,773), it's a "symptom" error. The root causes are often upstream: if the compiler cannot find a module or a global type (like `Promise` or `Array`), the resulting types become `error` or `any`, causing cascading assignability failures.
+
+**Focus on False Negatives first:**
+- TS2307 (Cannot find module) - 2,139x
+- TS2318 (Cannot find global type) - 3,386x
+
+These are "Environment" errors. If tsz fails to load the standard library or imports, it lacks the definitions required to perform accurate type checking. Fixing these False Negatives will likely reduce the count of False Positives (like TS2304 and TS2322).
+
+**Files to Read (in order):**
+1. `src/binder/state.rs` - Look for `resolve_import_with_reexports()`, depends on pre-populated `module_exports`
+2. `src/checker/state.rs` - Check how the checker initializes the global scope
+3. `src/binder/mod.rs` - Review the `Symbol` struct to see how exports are stored
+
+**Dependencies:**
+- TS2322 (Assignability) depends on TS2318/TS2307
+- TS2694 (Namespace exports) depends on TS2307
+- TS2304 (Cannot find name) depends on TS2318
+
+**Action Plan:**
+1. Create a reproduction test case that imports a file and fails with TS2307
+2. Investigate `src/binder/state.rs` to implement basic module resolution logic
+3. Verify if `lib.d.ts` symbols are being loaded into the root scope
+
 ---
 
 ## History (Last 20)
 
-*No work history yet*
+### 2025-02-04: FIXED TS2322 accessor false positive with class inheritance
+
+**Root Causes Fixed**:
+1. **Nominal typing for empty classes**: Empty classes A and B were both getting `Object(ObjectShapeId(0))` - the same type. Fixed by setting `symbol` field in `ObjectShape` for ALL class instance types.
+
+2. **Type annotation resolution**: Class references in type position (e.g., `a: A`) were resolving to constructor types instead of instance types. Fixed by adding `resolve_type_annotation()` helper that detects direct class Lazy references and extracts instance type from construct signatures.
+
+**Files Modified**:
+- `src/checker/class_type.rs`: Set symbol in ObjectShape for all class instance types
+- `src/checker/type_checking_queries.rs`: Added resolve_type_annotation helper for accessor type checking
+
+**Test Results**:
+- ✅ `test_accessor_type_compatibility_inheritance_no_error` now PASSES
+- `new B()` where `B extends A` now correctly returns B's instance type
+- Getter returning B is correctly assignable to setter taking A
+
+**Technical Details**:
+- Used Gemini to understand TypeScript's nominal typing system
+- Learned that ObjectShape.symbol field exists for this exact purpose
+- Discovered distinction between type position (`a: A`) and type query (`typeof A`)
+- Created targeted fix that only affects direct class Lazy references, not type aliases
+
+### 2025-02-03: Investigated TS2322 accessor false positive with class inheritance
+
+**Test Added**: `test_accessor_type_compatibility_inheritance_no_error`
+- Confirms bug: `new B()` where `B extends A` returns Object prototype type instead of B
+- Error message shows getter returns `{ isPrototypeOf, propertyIsEnumerable, ... }` (Object)
+
+**Investigation Deep Dive**:
+1. Found `classify_for_new_expression()` missing Lazy type case
+2. Added fix to handle `TypeKey::Lazy(def_id)`
+3. Fix didn't work - reverted
+4. Verified construct signatures correctly use `instance_type` as return type
+5. Verified `compute_type_of_symbol()` returns constructor type for CLASS symbols
+
+**Root Cause**: Still unknown - bug is deep in type resolution chain for `new` expressions with class inheritance. Requires tracing through Lazy type resolution and CallEvaluator.
+
+**Files Investigated**:
+- `src/solver/type_queries_extended.rs` - classify_for_new_expression
+- `src/checker/type_computation_complex.rs` - get_type_of_new_expression
+- `src/checker/class_type.rs` - get_class_instance_type, get_class_constructor_type
+- `src/checker/state_type_analysis.rs` - get_type_of_symbol, compute_type_of_symbol
 
 ---
 

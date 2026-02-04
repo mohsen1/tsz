@@ -2330,6 +2330,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 self.bind_infer(
                     &TypeParamInfo {
+                        is_const: false,
                         name: infer_name,
                         constraint: infer_constraint,
                         default: None,
@@ -2348,6 +2349,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // Source is exactly a non-infer member, so infer gets never
                         return self.bind_infer(
                             &TypeParamInfo {
+                                is_const: false,
                                 name: infer_name,
                                 constraint: infer_constraint,
                                 default: None,
@@ -2361,6 +2363,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Source doesn't match non-infer members, so infer = source
                 self.bind_infer(
                     &TypeParamInfo {
+                        is_const: false,
                         name: infer_name,
                         constraint: infer_constraint,
                         default: None,

@@ -59,6 +59,7 @@ fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
         checker.ctx.set_lib_contexts(lib_contexts);
     }
 
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
     checker.ctx.diagnostics.clone()
 }
@@ -102,7 +103,6 @@ fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_emitted_for_undefined_name() {
     let diagnostics = check_without_lib(r#"const x = undefinedName;"#);
 

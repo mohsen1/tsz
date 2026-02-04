@@ -44693,3 +44693,38 @@ fn test_template_literal_conditional_same_pattern() {
     // Should match and return true branch
     assert_eq!(result, TypeId::STRING);
 }
+
+/// Test tail-recursion elimination for conditional types.
+///
+/// This test verifies that tail-recursive conditional types can recurse
+/// up to MAX_TAIL_RECURSION_DEPTH (1000) instead of being limited by
+/// MAX_EVALUATE_DEPTH (50).
+#[test]
+fn test_tail_recursive_conditional() {
+    let interner = TypeInterner::new();
+
+    // Build a chain of 60 nested conditionals
+    // Each conditional: `string extends number ? never : string`
+    // This will take the false branch each time
+
+    let mut current_type = TypeId::STRING;
+
+    for _ in 0..60 {
+        let cond = ConditionalType {
+            check_type: TypeId::STRING,
+            extends_type: TypeId::NUMBER,
+            true_type: TypeId::NEVER,
+            false_type: current_type,
+            is_distributive: false,
+        };
+
+        current_type = interner.conditional(cond);
+    }
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate(current_type);
+
+    // The result should be STRING (the false branch all the way down)
+    // Without tail-recursion elimination, this would hit MAX_EVALUATE_DEPTH (50)
+    assert_eq!(result, TypeId::STRING);
+}
