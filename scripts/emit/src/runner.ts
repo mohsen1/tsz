@@ -398,7 +398,8 @@ async function runTest(worker: TranspileWorker, testCase: TestCase, config: Conf
     }
 
     // Prepend "use strict" prologue when source has @strict or @alwaysStrict directive
-    if (testCase.alwaysStrict && !tszJs.trimStart().startsWith('"use strict"')) {
+    // Only do this for JS emit, not DTS
+    if (!config.dtsOnly && testCase.alwaysStrict && tszJs && !tszJs.trimStart().startsWith('"use strict"')) {
       tszJs = '"use strict";\n' + tszJs;
     }
 
@@ -407,7 +408,7 @@ async function runTest(worker: TranspileWorker, testCase: TestCase, config: Conf
       const expected = testCase.expectedJs.replace(/\r\n/g, '\n').trim();
       const actual = tszJs.replace(/\r\n/g, '\n').trim();
       result.jsMatch = expected === actual;
-      
+
       if (!result.jsMatch) {
         if (config.verbose) {
           result.jsError = getEmitDiff(expected, actual);
@@ -423,6 +424,14 @@ async function runTest(worker: TranspileWorker, testCase: TestCase, config: Conf
         const expected = testCase.expectedDts.replace(/\r\n/g, '\n').trim();
         const actual = tszDts.replace(/\r\n/g, '\n').trim();
         result.dtsMatch = expected === actual;
+
+        if (!result.dtsMatch) {
+          if (config.verbose) {
+            result.dtsError = getEmitDiff(expected, actual);
+          } else {
+            result.dtsError = getEmitDiffSummary(expected, actual);
+          }
+        }
       } else {
         result.dtsMatch = null; // No DTS output generated
       }
@@ -575,12 +584,20 @@ async function main() {
     if (!config.verbose) {
       printProgress(i + 1);
     } else {
-      const jsStatus = result.timeout ? `${colors.yellow}T${colors.reset}` :
-                       result.skipped ? `${colors.dim}S${colors.reset}` :
-                       result.jsMatch === true ? `${colors.green}✓${colors.reset}` :
-                       result.jsMatch === false ? `${colors.red}✗${colors.reset}` : `${colors.dim}-${colors.reset}`;
-      console.log(`  [${jsStatus}] ${result.name} (${result.elapsed}ms)`);
-      if (result.jsError && result.jsMatch === false) {
+      // In DTS-only mode, show DTS status; otherwise show JS status
+      const status = result.timeout ? `${colors.yellow}T${colors.reset}` :
+                   result.skipped ? `${colors.dim}S${colors.reset}` :
+                   config.dtsOnly ? (
+                     result.dtsMatch === true ? `${colors.green}✓${colors.reset}` :
+                     result.dtsMatch === false ? `${colors.red}✗${colors.reset}` : `${colors.dim}-${colors.reset}`
+                   ) : (
+                     result.jsMatch === true ? `${colors.green}✓${colors.reset}` :
+                     result.jsMatch === false ? `${colors.red}✗${colors.reset}` : `${colors.dim}-${colors.reset}`
+                   );
+      console.log(`  [${status}] ${result.name} (${result.elapsed}ms)`);
+      if (config.dtsOnly && result.dtsError && result.dtsMatch === false) {
+        console.log(result.dtsError);
+      } else if (result.jsError && result.jsMatch === false) {
         console.log(result.jsError);
       }
     }
