@@ -4,7 +4,7 @@
 **Status**: Active (Redefined 2026-02-04)
 **Goal**: Restore test suite, implement nominal subtyping, fix intersection reduction
 
-**Latest Update**: 2026-02-04 - All initial priorities complete ✅, starting new Priority 1 (Contextual Type Inference)
+**Latest Update**: 2026-02-04 - New Priority 1 (Contextual Type Inference) COMPLETE ✅
 
 **Session Redefined (2026-02-04)**:
 After completing Test Suite Restoration, Nominal Subtyping, and Intersection Reduction,
@@ -106,20 +106,26 @@ Fixed 4 critical bugs discovered by Gemini Pro review:
 
 ## New Priorities (2026-02-04 - Redefinition)
 
-### 🔄 Priority 1: Refined Type Inference & Contextual Constraints (Rule #32)
+### ✅ Priority 1: Refined Type Inference & Contextual Constraints (COMPLETE 2026-02-04)
 **Goal**: Improve accuracy of generic function calls by implementing bidirectional type inference where the expected return type constrains inference variables.
 
-**Files**:
-- `src/solver/operations.rs` - `CallEvaluator::resolve_generic_call`
-- `src/solver/infer.rs` - `InferenceContext::infer_from_context`
+**Solution Implemented**:
+Fixed critical bug in `src/solver/operations.rs` `resolve_generic_call_inner`:
+- Reversed constraint direction from `ctx_type <: return_type` to `return_type <: ctx_type`
+- In assignment `let x: Target = Source`, the relation is `Source <: Target`
+- Return value must be assignable to expected type
 
-**Task**: Update to apply `self.contextual_type` to function's return type *before* resolving inference variables.
+**Files Modified**:
+- `src/solver/operations.rs`: Line ~570 - Fixed constraint direction
 
-**Impact**: Highest-leverage fix for conformance. Fixes cases like:
-- `let x: string = identity(42)` (should fail)
-- `let x: string = pickProperty(obj, "name")` (should infer string)
+**Impact**:
+- Fixes `let x: string = identity(42)` (now correctly errors)
+- Fixes `let x: string = pickProperty(obj, "name")` (now correctly infers string)
+- Contravariant function argument inference works correctly
 
-**Risk**: HIGH - Requires Gemini validation on constraint collection order
+**Gemini Pro Review**: ✅ APPROVED - Fix matches TypeScript Rule #32
+
+**Commit**: `1d735dacc` - "fix(tsz-1): reverse contextual type constraint direction (Rule #32)"
 
 ### Priority 2: Homomorphic Mapped Types & Modifier Preservation (Rule #27)
 **Goal**: Ensure mapped types like `{ [K in keyof T]: T[K] }` correctly preserve `readonly` and `optional` modifiers from source type.
