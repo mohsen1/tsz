@@ -2,15 +2,23 @@
 
 ## Date: 2026-02-04
 
-## Status: ACTIVE - CLI-Based Testing & TypePrinter Features
+## Status: ACTIVE - Fixing Test Infrastructure
 
-### Executive Summary
+### Current Task: Migrate Test Runner to Native CLI ✅ (COMPLETED)
 
-**Approach**: Test infrastructure will use native CLI binary instead of WASM API to enable proper type checking validation.
+**What was done:**
+1. Created `scripts/emit/src/cli-transpiler.ts` - CLI-based transpiler using native tsz binary
+2. Modified `scripts/emit/src/runner.ts` to use CliTranspiler instead of WASM workers
+3. Updated `scripts/emit/run.sh` to remove WASM build requirement
+4. Verified tests run correctly with full type checking enabled
 
-**Why**: WASM API (`transpileModule`) is designed for syntactic transforms and lacks semantic analysis. Declaration emit with type inference requires the Checker. Implementing full type checking in WASM is out of scope for this session.
+**Test Results:**
+```bash
+cd scripts/emit && ./run.sh --dts-only --verbose
+# Working! Detects differences in DTS output
+```
 
-**Verification**: CLI declaration emit works correctly with type inference. Test runner needs to invoke `tsz` binary instead of WASM workers.
+**Why Critical**: Can now use TDD for remaining features (Enums, Lazy Types) with working test infrastructure.
 
 ### Goals
 
@@ -25,15 +33,15 @@ Match TypeScript's declaration output exactly using **test-driven development**.
 - TypePrinter handles: primitives, unions, intersections, tuples, objects, functions, generics
 - DeclarationEmitter uses inferred types from type cache
 - Test infrastructure can compare DTS output (status display fixed)
+- **Test runner migrated to CLI-based testing** ✅ NEW
 
 **⏳ In Progress:**
-- Test runner migration to CLI-based testing
 - Implementing missing TypePrinter features
 
-**📋 TODO (High Priority):**
-1. **Fix Test Infrastructure** - Modify runner to invoke native CLI instead of WASM
-2. **Implement Lazy Types** - Handle `TypeKey::Lazy(DefId)` for circular references
-3. **Implement Enums** - Numeric, string, and const enum declaration emit
+**📋 TODO (Prioritized Order):**
+1. **[IN PROGRESS] Implement Enums** - Numeric, string, and const enum declaration emit (user-facing feature)
+2. **Implement Lazy Types** - Handle `TypeKey::Lazy(DefId)` for circular references (internal refactor)
+3. **Fix failing tests** - Use test runner to identify and fix declaration emit issues
 
 ## Testing Infrastructure
 

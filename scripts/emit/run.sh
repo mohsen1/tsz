@@ -43,15 +43,14 @@ die() { log_error "$@"; exit 2; }
 
 # Check for required tools
 command -v node &>/dev/null || die "Node.js is required"
-command -v wasm-pack &>/dev/null || die "wasm-pack is required (cargo install wasm-pack)"
 
-# Build WASM if needed
-build_wasm() {
-    local pkg_dir="$ROOT_DIR/pkg"
-    if [[ ! -f "$pkg_dir/wasm.js" ]]; then
-        log_step "Building WASM module..."
-        (cd "$ROOT_DIR" && wasm-pack build --target nodejs --out-dir pkg --release)
-        log_success "WASM module built"
+# Check for tsz binary
+check_tsz_binary() {
+    local tsz_bin="$ROOT_DIR/target/release/tsz"
+    if [[ ! -f "$tsz_bin" ]]; then
+        log_error "tsz binary not found at $tsz_bin"
+        log_info "Build it with: cargo build --release"
+        exit 1
     fi
 }
 
@@ -76,7 +75,7 @@ main() {
         die "TypeScript baselines not found. Run: ./scripts/setup-ts-submodule.sh"
     fi
 
-    build_wasm
+    check_tsz_binary
     build_runner
 
     log_step "Running emit tests..."
