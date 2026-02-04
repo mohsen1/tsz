@@ -1574,6 +1574,95 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
     }
 }
 
+/// Calculate required imports for a file's .d.ts output.
+///
+/// Analyzes used symbols and determines which need import statements
+/// because they're from other modules.
+fn calculate_required_imports(
+    binder: &crate::binder::BinderState,
+    used_symbols: &rustc_hash::FxHashSet<crate::binder::SymbolId>,
+    file_idx: usize,
+    program: &MergedProgram,
+) -> rustc_hash::FxHashMap<String, Vec<String>> {
+    use rustc_hash::FxHashMap;
+
+    let mut imports: FxHashMap<String, Vec<String>> = FxHashMap::default();
+
+    for &sym_id in used_symbols {
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            continue;
+        };
+
+        // Skip if already imported
+        if symbol.import_module.is_some() {
+            continue;
+        }
+
+        // Skip if declared in current file
+        if symbol.decl_file_idx == file_idx as u32 {
+            continue;
+        }
+
+        // Skip if decl_file_idx is MAX (single-file mode, lib symbol, etc.)
+        if symbol.decl_file_idx == u32::MAX {
+            continue;
+        }
+
+        // Find which file declared this symbol
+        let decl_file_idx = symbol.decl_file_idx as usize;
+        if decl_file_idx >= program.files.len() {
+            continue;
+        }
+
+        let decl_file = &program.files[decl_file_idx];
+
+        // Calculate relative path from current file to declaration file
+        let current_path = std::path::Path::new(&program.files[file_idx].file_name);
+        let decl_path = std::path::Path::new(&decl_file.file_name);
+
+        // Get the parent directories
+        let current_dir = current_path.parent().unwrap_or(current_path);
+        let decl_dir = decl_path.parent().unwrap_or(decl_path);
+
+        // Calculate relative path (simplified - handles same directory case)
+        let relative_path = if decl_dir == current_dir {
+            decl_file.file_name.clone()
+        } else {
+            // Different directory - for now use full path
+            // TODO: Implement proper relative path calculation
+            decl_file.file_name.clone()
+        };
+
+        // Convert to module specifier (remove extension, use / separators)
+        let module_specifier = relative_path.replace('\\', "/");
+
+        // Remove .ts or .d.ts extension if present
+        let module_specifier = if let Some(stem) = module_specifier.strip_suffix(".ts") {
+            stem.to_string()
+        } else if let Some(stem) = module_specifier.strip_suffix(".d.ts") {
+            stem.to_string()
+        } else {
+            module_specifier
+        };
+
+        // Add ./ prefix if not a node_module path
+        let module_specifier =
+            if !module_specifier.starts_with('.') && !module_specifier.starts_with('@') {
+                format!("./{}", module_specifier)
+            } else {
+                module_specifier
+            };
+
+        // Add symbol name to imports
+        imports
+            .entry(module_specifier)
+            .or_default()
+            .push(symbol.escaped_name.clone());
+    }
+
+    imports
+}
+
 pub(crate) fn emit_outputs(
     program: &MergedProgram,
     options: &ResolvedCompilerOptions,
@@ -1657,12 +1746,15 @@ pub(crate) fn emit_outputs(
 
                 // Create emitter with type information and binder
                 let mut emitter = if let Some(cache) = type_cache {
-                    DeclarationEmitter::with_type_info(
+                    let mut emitter = DeclarationEmitter::with_type_info(
                         &file.arena,
                         cache,
                         &program.type_interner,
                         &binder,
-                    )
+                    );
+                    // Set current arena for foreign symbol tracking
+                    emitter.set_current_arena(file.arena.clone());
+                    emitter
                 } else {
                     let mut emitter = DeclarationEmitter::new(&file.arena);
                     // Still set binder even without cache for consistency
