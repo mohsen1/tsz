@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Continue' >&2; exit 2"
+            "command": "echo 'See AGENTS.md. If it is a good time, test, commit, pull/push to origin and continue on your session.' >&2; exit 2"
           }
         ]
       }
