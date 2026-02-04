@@ -643,7 +643,7 @@ impl<'a> CheckerState<'a> {
                     name: atom,
                     constraint: None,
                     default: None,
-        is_const: false,
+                    is_const: false,
                 };
                 let type_id = self.ctx.types.intern(TypeKey::TypeParameter(info));
 
