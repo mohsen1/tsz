@@ -1171,6 +1171,32 @@ impl<'a> NarrowingContext<'a> {
             return narrowed;
         }
 
+        // Task 13: Handle boolean -> literal narrowing
+        // When narrowing boolean to true or false, return the corresponding literal
+        if source_type == TypeId::BOOLEAN {
+            let is_target_true = if let Some(lit) = literal_value(self.db, target_type) {
+                matches!(lit, LiteralValue::Boolean(true))
+            } else {
+                target_type == TypeId::BOOLEAN_TRUE
+            };
+
+            if is_target_true {
+                trace!("Narrowing boolean to true");
+                return TypeId::BOOLEAN_TRUE;
+            }
+
+            let is_target_false = if let Some(lit) = literal_value(self.db, target_type) {
+                matches!(lit, LiteralValue::Boolean(false))
+            } else {
+                target_type == TypeId::BOOLEAN_FALSE
+            };
+
+            if is_target_false {
+                trace!("Narrowing boolean to false");
+                return TypeId::BOOLEAN_FALSE;
+            }
+        }
+
         // Check if source is assignable to target
         if self.is_assignable_to(source_type, target_type) {
             trace!("Source type is assignable to target, returning source");
@@ -1242,6 +1268,56 @@ impl<'a> NarrowingContext<'a> {
 
         if let Some(narrowed) = self.narrow_type_param_excluding(source_type, excluded_type) {
             return narrowed;
+        }
+
+        // Special case: boolean type (treat as true | false union)
+        // Task 13: Fix Boolean Narrowing Logic
+        // When excluding true or false from boolean, return the other literal
+        // When excluding both true and false from boolean, return never
+        if source_type == TypeId::BOOLEAN
+            || source_type == TypeId::BOOLEAN_TRUE
+            || source_type == TypeId::BOOLEAN_FALSE
+        {
+            // Check if excluded_type is a boolean literal
+            let is_excluding_true = if let Some(lit) = literal_value(self.db, excluded_type) {
+                matches!(lit, LiteralValue::Boolean(true))
+            } else {
+                excluded_type == TypeId::BOOLEAN_TRUE
+            };
+
+            let is_excluding_false = if let Some(lit) = literal_value(self.db, excluded_type) {
+                matches!(lit, LiteralValue::Boolean(false))
+            } else {
+                excluded_type == TypeId::BOOLEAN_FALSE
+            };
+
+            // Handle exclusion from boolean, true, or false
+            if source_type == TypeId::BOOLEAN {
+                if is_excluding_true {
+                    // Excluding true from boolean -> return false
+                    return TypeId::BOOLEAN_FALSE;
+                } else if is_excluding_false {
+                    // Excluding false from boolean -> return true
+                    return TypeId::BOOLEAN_TRUE;
+                }
+                // If excluding BOOLEAN, let the final is_assignable_to check handle it below
+            } else if source_type == TypeId::BOOLEAN_TRUE {
+                if is_excluding_true {
+                    // Excluding true from true -> return never
+                    return TypeId::NEVER;
+                }
+                // For other cases (e.g., excluding BOOLEAN from TRUE),
+                // let the final is_assignable_to check handle it below
+            } else if source_type == TypeId::BOOLEAN_FALSE {
+                if is_excluding_false {
+                    // Excluding false from false -> return never
+                    return TypeId::NEVER;
+                }
+                // For other cases, let the final is_assignable_to check handle it below
+            }
+            // CRITICAL: Do NOT return source_type here.
+            // Fall through to the standard is_assignable_to check below.
+            // This handles edge cases like narrow_excluding_type(TRUE, BOOLEAN) -> NEVER
         }
 
         // If source is assignable to excluded, return never
