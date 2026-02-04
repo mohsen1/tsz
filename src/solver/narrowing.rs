@@ -488,7 +488,15 @@ impl<'a> NarrowingContext<'a> {
         // Now narrow based on the sense (positive or negative)
         if sense {
             // Positive: x instanceof Constructor - narrow to the instance type
-            self.narrow_to_type(source_type, instance_type)
+            // For interface vs class, create intersection since they're not assignable
+            // but the instanceof check proves the value is both
+            let narrowed = self.narrow_to_type(source_type, instance_type);
+            if narrowed == TypeId::NEVER {
+                // If not assignable, create intersection (e.g., interface & class)
+                self.interner.intersection2(source_type, instance_type)
+            } else {
+                narrowed
+            }
         } else {
             // Negative: !(x instanceof Constructor) - exclude the instance type
             self.narrow_excluding_type(source_type, instance_type)
@@ -529,7 +537,6 @@ impl<'a> NarrowingContext<'a> {
             // This matches TypeScript's behavior where "prop" in x narrows x to have that property
             if present {
                 // Create an object type with the property
-                let prop_name_str = self.interner.resolve_atom_ref(property_name);
                 let prop = PropertyInfo {
                     name: property_name,
                     type_id: TypeId::UNKNOWN,
