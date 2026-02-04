@@ -1188,6 +1188,16 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .types
                 .intern(TypeKey::Enum(def_id, structural_type));
+
+            // CRITICAL: Merge namespace exports for enum+namespace merging
+            // When an enum and namespace with the same name are merged, the namespace's
+            // exports become accessible as properties on the enum object.
+            if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
+                // Create an object type that includes both enum members and namespace exports
+                let merged_type = self.merge_namespace_exports_into_object(sym_id, enum_type);
+                return (merged_type, Vec::new());
+            }
+
             return (enum_type, Vec::new());
         }
 
