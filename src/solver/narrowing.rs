@@ -495,6 +495,152 @@ impl<'a> NarrowingContext<'a> {
         }
     }
 
+    /// Narrow a type based on an `in` operator check.
+    ///
+    /// Example: `"a" in x` narrows `A | B` to include only types that have property `a`
+    pub fn narrow_by_property_presence(
+        &self,
+        source_type: TypeId,
+        property_name: Atom,
+        present: bool,
+    ) -> TypeId {
+        let _span = span!(
+            Level::TRACE,
+            "narrow_by_property_presence",
+            source_type = source_type.0,
+            ?property_name,
+            present
+        )
+        .entered();
+
+        // Handle special cases
+        if source_type == TypeId::ANY {
+            trace!("Source type is ANY, returning unchanged");
+            return TypeId::ANY;
+        }
+
+        if source_type == TypeId::NEVER {
+            trace!("Source type is NEVER, returning unchanged");
+            return TypeId::NEVER;
+        }
+
+        if source_type == TypeId::UNKNOWN {
+            // For unknown, we don't know what properties it has
+            // If checking for property presence, we can't narrow
+            trace!("Source type is UNKNOWN, returning unchanged");
+            return source_type;
+        }
+
+        // If source is a union, filter members based on property presence
+        if let Some(members_id) = union_list_id(self.interner, source_type) {
+            let members = self.interner.type_list(members_id);
+            trace!(
+                "Checking property {} in union with {} members",
+                self.interner.resolve_atom_ref(property_name),
+                members.len()
+            );
+
+            let matching: Vec<TypeId> = members
+                .iter()
+                .filter(|&&member| {
+                    let has_property = self.type_has_property(member, property_name);
+                    present == has_property
+                })
+                .copied()
+                .collect();
+
+            if matching.is_empty() {
+                trace!("No matching members found, returning NEVER");
+                return TypeId::NEVER;
+            } else if matching.len() == 1 {
+                trace!("Found single matching member, returning {}", matching[0].0);
+                return matching[0];
+            } else if matching.len() == members.len() {
+                trace!("All members match, returning unchanged");
+                return source_type;
+            } else {
+                trace!(
+                    "Found {} matching members, creating new union",
+                    matching.len()
+                );
+                return self.interner.union(matching);
+            }
+        }
+
+        // For non-union types, check if the property exists
+        let has_property = self.type_has_property(source_type, property_name);
+        if present == has_property {
+            source_type
+        } else {
+            trace!(
+                "Property {} mismatch, returning NEVER",
+                self.interner.resolve_atom_ref(property_name)
+            );
+            TypeId::NEVER
+        }
+    }
+
+    /// Check if a type has a specific property.
+    ///
+    /// Returns true if the type has the property (required or optional),
+    /// or has an index signature that would match the property.
+    fn type_has_property(&self, type_id: TypeId, property_name: Atom) -> bool {
+        // Check object shape
+        if let Some(shape_id) = object_shape_id(self.interner, type_id) {
+            let shape = self.interner.object_shape(shape_id);
+
+            // Check if the property exists in the object's properties
+            if shape.properties.iter().any(|p| p.name == property_name) {
+                return true;
+            }
+
+            // Check index signatures
+            // If the object has a string index signature, it has any string property
+            if let Some(ref string_idx) = shape.string_index {
+                // String index signature matches any string property
+                return true;
+            }
+
+            // If the object has a number index signature and the property name is numeric
+            if let Some(ref number_idx) = shape.number_index {
+                let prop_str = self.interner.resolve_atom_ref(property_name);
+                if prop_str.chars().all(|c| c.is_ascii_digit()) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Check object with index signature
+        if let Some(shape_id) = object_with_index_shape_id(self.interner, type_id) {
+            let shape = self.interner.object_shape(shape_id);
+
+            // Check properties first
+            if shape.properties.iter().any(|p| p.name == property_name) {
+                return true;
+            }
+
+            // Check index signatures
+            if shape.string_index.is_some() {
+                return true;
+            }
+
+            if shape.number_index.is_some() {
+                let prop_str = self.interner.resolve_atom_ref(property_name);
+                if prop_str.chars().all(|c| c.is_ascii_digit()) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // For other types (functions, classes, arrays, etc.), assume they don't have arbitrary properties
+        // unless they have been handled above (object shapes, etc.)
+        false
+    }
+
     /// Narrow a type to include only members assignable to target.
     pub fn narrow_to_type(&self, source_type: TypeId, target_type: TypeId) -> TypeId {
         let _span = span!(
@@ -1000,10 +1146,14 @@ impl<'a> NarrowingContext<'a> {
                 }
             }
 
-            TypeGuard::InProperty(_property_name) => {
-                // TODO: Implement `in` operator narrowing
-                // For now, return the source type unchanged
-                source_type
+            TypeGuard::InProperty(property_name) => {
+                if sense {
+                    // Positive: "prop" in x - narrow to types that have the property
+                    self.narrow_by_property_presence(source_type, *property_name, true)
+                } else {
+                    // Negative: !("prop" in x) - narrow to types that don't have the property
+                    self.narrow_by_property_presence(source_type, *property_name, false)
+                }
             }
         }
     }
