@@ -11,6 +11,7 @@
 11. ✅ **Public keyword omission** (2eed3a1c5)
 12. ✅ **Array/object literal in default parameters** (0254ea7e8)
 13. ✅ **Parameter properties in class constructors** (b1e8c49c2)
+14. ✅ **Class member visibility and abstract keywords** (d0d803bdc)
 
 **Latest Achievement: Parameter Properties ✅**
 
@@ -35,23 +36,48 @@ export declare class Point {
 - Emits properties before other class members
 - Added `in_constructor_params` flag to track context
 
-**Next Priority Decision Point:** ✅ Parameter Properties Complete - Awaiting Direction
+**Latest Achievement: Class Member Visibility & Abstract ✅**
 
-Gemini consultation recommended **Import/Export Elision** as next priority:
-- Remove unused imports to prevent "Module not found" errors
-- Requires implementing UsageAnalyzer with DefId → SymbolId mapping
-- Complex implementation: needs type visitor integration
-- See consultation notes in session file for detailed guidance
+```typescript
+// Input
+export class Visibility {
+    private privateProp: string;
+    protected protectedProp: number;
+    public publicProp: boolean;
+    private privateMethod(): void {}
+}
 
-**Alternative Options:**
-- Continue with other declaration emit features (simpler wins)
-- Switch to JavaScript emit or type checking components
-- Run full conformance to measure actual impact of completed work
+// Output (matches TypeScript exactly ✅)
+export declare class Visibility {
+    private privateProp;  // No type annotation
+    protected protectedProp: number;
+    publicProp: boolean;
+    private privateMethod();  // No return type
+}
+```
 
-**Status:** Awaiting decision on whether to:
-1. Implement complex import elision (high impact, high complexity)
-2. Continue with simpler declaration features (medium impact, low complexity)
-3. Switch components (unclear impact/benefit)
+**Implementation:**
+- Private properties: omit type annotation
+- Private methods: omit return type annotation
+- Abstract classes/methods: emit `abstract` keyword
+- Protected/public members: keep full type information
+
+**Session Decision Point:**
+
+Gemini consultation provided two paths forward:
+
+**Option A: Import/Export Elision** (High impact, high complexity)
+- Remove unused imports to fix "Module not found" errors
+- Requires UsageAnalyzer with type visitor integration
+- Estimated: 2-3 days
+- Implementation guidance available from Gemini
+
+**Option B: Continue Declaration Features** (Medium impact, low complexity)
+- More class features (extends, implements, decorators)
+- Other declaration types (namespaces, enums edge cases)
+- Quick wins, continues momentum
+
+**Status:** Completed all core class emission features. Ready for next decision.
 
 **Previous Session Accomplishments:**
 1. ✅ Test runner migrated to CLI (major milestone)
