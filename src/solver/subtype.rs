@@ -1143,6 +1143,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_object_with_index_subtype(&s_shape, Some(s_shape_id), &t_shape);
         }
 
+        // Nominal type checking for class instances
+        // Before structural checks, verify that classes with different symbols have proper inheritance relationship
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_with_index_shape_id(self.interner, source),
+            object_with_index_shape_id(self.interner, target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+
+            // If both have nominal identity (class symbols), check inheritance relationship
+            if let (Some(_s_sym), Some(_t_sym)) = (s_shape.symbol, t_shape.symbol) {
+                // Both have symbols - they're both class instances
+                // Check if source extends target through nominal inheritance
+                let source_extends_target = self.check_nominal_inheritance(source, target);
+                if !source_extends_target {
+                    return SubtypeResult::False;
+                }
+                // Valid inheritance - continue to structural check below
+            }
+        }
+
         if let (Some(s_shape_id), Some(t_shape_id)) = (
             object_with_index_shape_id(self.interner, source),
             object_shape_id(self.interner, target),
@@ -1529,6 +1550,63 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
         has_string && has_number && has_symbol
+    }
+
+    /// Check if source type extends target type through nominal class inheritance.
+    ///
+    /// This implements nominal type checking for class instances. If two class instances
+    /// have different nominal identities, they are only compatible if one extends the
+    /// other through the class hierarchy (not just structural similarity).
+    ///
+    /// # Arguments
+    /// * `source` - TypeId of the source class instance
+    /// * `target` - TypeId of the target class instance
+    ///
+    /// # Returns
+    /// * `true` if source extends target (directly or through inheritance chain)
+    /// * `false` if source does not extend target
+    fn check_nominal_inheritance(&self, source: TypeId, target: TypeId) -> bool {
+        use crate::solver::visitor::object_with_index_shape_id;
+
+        // Check if target has nominal identity (is a class instance)
+        let target_has_symbol =
+            if let Some(target_shape_id) = object_with_index_shape_id(self.interner, target) {
+                let target_shape = self.interner.object_shape(target_shape_id);
+                target_shape.symbol.is_some()
+            } else {
+                false
+            };
+
+        // If target doesn't have nominal identity, use structural typing
+        if !target_has_symbol {
+            return true;
+        }
+
+        // Target has nominal identity - walk source's inheritance chain to see if we reach target
+        let mut current_type = source;
+        let mut visited = vec![current_type];
+
+        loop {
+            // Check if we've reached the target
+            if current_type == target {
+                return true;
+            }
+
+            // Get base class using TypeResolver's get_base_type
+            if let Some(base_type) = self.resolver.get_base_type(current_type, self.interner) {
+                // Prevent infinite loops in case of circular inheritance
+                if visited.contains(&base_type) {
+                    break;
+                }
+                visited.push(base_type);
+                current_type = base_type;
+            } else {
+                // No more base classes in the chain
+                break;
+            }
+        }
+
+        false
     }
 }
 
