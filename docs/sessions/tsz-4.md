@@ -2,7 +2,7 @@
 
 ## Date: 2026-02-04
 
-## Status: ACTIVE - Investigating Namespace/Module Emit Bug
+## Status: ACTIVE - Namespace/Module Emit Complete
 
 ### Session Summary
 
@@ -12,47 +12,72 @@
 3. ✅ Fixed enum value evaluation to match TypeScript exactly ✅ COMPLETE
 4. ✅ Verified DTS output matches TypeScript ✅ COMPLETE
 5. ✅ Fixed update-readme.sh for new conformance format ✅ COMPLETE
-6. ⏳ Investigating namespace/module declaration emit bug
+6. ✅ **Namespace/module declaration emit bug FIXED** ✅ COMPLETE
 
-**Committed**: ecb5ef44, 294a0e781, e26fcc9a3
+**Committed**: ecb5ef44, 294a0e781, e26fcc9a3, 180ce2bde
 
-### Current Investigation: Namespace/Module Declaration Emit
+### Namespace/Module Declaration Emit - FIXED ✅
 
-**Problem**: Namespace declaration emit outputs empty body:
-```typescript
-// Input
-declare namespace A {
-    export var x: number;
+**Root Cause**: Multiple issues discovered and fixed:
+
+1. **Wrong AST access method**: Used `get_block()` instead of `get_module_block()` for MODULE_BLOCK nodes (kind 269)
+2. **Missing nested namespace support**: `emit_export_declaration` didn't handle MODULE_DECLARATION
+3. **Incorrect declare context handling**: Inside `declare namespace`, members should NOT have `declare` or `export` keywords
+
+**Fixes Applied**:
+
+```rust
+// src/declaration_emitter.rs changes:
+
+// 1. Added inside_declare_namespace flag to DeclarationEmitter
+struct DeclarationEmitter<'a> {
+    ...
+    inside_declare_namespace: bool,
 }
 
-// Actual Output (BUG)
-declare namespace A {
+// 2. Fixed module body access
+if let Some(module_block) = self.arena.get_module_block(body_node) {
+    // Process statements in module block
 }
 
-// Expected Output
-declare namespace A {
-    export var x: number;
+// 3. Added MODULE_DECLARATION case to emit_export_declaration
+k if k == syntax_kind_ext::MODULE_DECLARATION => {
+    self.emit_module_declaration(export.export_clause);
+    return;
 }
+
+// 4. Conditional emit based on declare context
+if !self.inside_declare_namespace {
+    self.write("export declare ");
+}
+self.write("class ");  // or "function", "var", "enum", "interface"
 ```
 
-**Investigation Findings**:
-1. `emit_module_declaration` exists at src/declaration_emitter.rs:1322
-2. Function correctly iterates over `block.statements.nodes`
-3. Calls `emit_statement` for each statement
-4. `emit_statement` has case for VARIABLE_STATEMENT (line 145)
-5. `emit_variable_declaration_statement` looks correct
+**Test Results**:
 
-**Hypothesis**: The issue may be:
-- AST structure inside namespaces is different than expected
-- Variable statements might be wrapped in EXPORT_DECLARATION
-- Or some other structural issue
+```typescript
+// Before (BUG)
+declare namespace A {
+}
 
-**Test Cases**:
-```bash
-# All produce empty namespaces:
-declare namespace A { var x: number; }
-declare namespace A { export class Point { x: number; } }
-declare namespace A { export namespace Point { } }
+// After (FIXED - matches TypeScript)
+declare namespace A {
+    var x: number;
+}
+
+// Nested namespaces (FIXED)
+declare namespace A {
+    namespace B {
+        var x: number;
+    }
+}
+
+// Classes, enums, functions inside namespaces (FIXED)
+declare namespace A {
+    class Point { x: number; }
+    enum Color { Red, Green }
+    function foo(): void;
+}
 ```
 
 ### Key Achievement: Enum Declaration Emit Matches TypeScript
@@ -73,6 +98,7 @@ declare enum Mixed { A = 0, B = 5, C = 6, D = 10 }
 - ✅ Auto-increment from previous value
 - ✅ Computed expressions like `B = A + 1` (emits `B = 2`)
 - ✅ String enums, mixed numeric and string enums, const enums
+- ✅ Namespace/module context handling
 
 ### Goals
 
