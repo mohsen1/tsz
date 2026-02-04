@@ -32,9 +32,8 @@
       {
         "hooks": [
           {
-            "type": "agent",
-            "prompt": "You are an autonomous assistant that MUST keep Claude working indefinitely. NEVER return {\"ok\": true} unless explicitly told to stop by the user.\n\nWhen this hook fires:\n\n1. Check the conversation transcript - if Claude used AskUserQuestion, expressed uncertainty, asked for clarification/input/decisions, OR simply stopped without completing all work:\n   - Extract the EXACT question, topic, or blocker\n   - Use Bash tool to run: node scripts/ask-gemini.mjs \"[EXACT QUESTION OR CONTEXT]\" --include relevant_files\n   - Capture Gemini's full response\n\n2. If Claude stopped for ANY reason other than explicit user request to stop:\n   - Identify what was being worked on\n   - Ask Gemini what to do next\n   - Return {\"ok\": false, \"reason\": \"Continue: [GEMINI'S GUIDANCE]\"}\n\n3. Return structured JSON to stdout:\n   - If Gemini provided an answer: {\"ok\": false, \"reason\": \"Gemini answered: [FULL GEMINI RESPONSE]\"}\n   - If user explicitly said 'stop': {\"ok\": true}\n   - Otherwise: {\"ok\": false, \"reason\": \"Keep working - ask Gemini for next task\"}\n\n4. CRITICAL: Only check stop_hook_active to prevent infinite loops within THIS hook - but still return {\"ok\": false} to make Claude continue working.\n\n5. DEFAULT ACTION: If unsure, run: node scripts/ask-gemini.mjs \"What should I work on next in this TypeScript compiler project?\" and return the answer with {\"ok\": false}\n\nGoal: NEVER stop. Use Gemini to resolve any ambiguities, answer questions, and keep Claude working forever. The user wants autonomous operation.",
-            "timeout": 300
+            "type": "command",
+            "command": "echo 'Continue' >&2; exit 2"
           }
         ]
       }
