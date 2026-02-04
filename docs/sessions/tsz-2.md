@@ -68,6 +68,39 @@ Enhanced `collect_class_hierarchy` in `src/solver/infer.rs` to handle:
 - All 16 existing BCT tests pass ✅
 - New test `test_best_common_type_with_intersections` passes ✅
 
+### ✅ Priority 4: Literal Widening for BCT (COMPLETED 2026-02-04)
+**Status**: Implemented and committed (commit c3d5d36d0)
+
+**What was implemented**:
+Added literal widening to `compute_best_common_type` in `src/solver/expression_ops.rs`
+to match TypeScript's behavior for array literal inference.
+
+**Key changes in src/solver/expression_ops.rs**:
+- Added `widen_literals()`: Widens each literal to its primitive type
+  - Example: `[1, 2]` -> `[number, number]`
+  - Example: `["a", "b"]` -> `[string, string]`
+  - Example: `[1, "a"]` -> `[number, string]` (mixed types supported)
+- Added `find_common_base_type()`: Finds common base for literals
+- Added `get_base_type()`: Extracts primitive type from literals
+- Added `all_types_are_narrower_than_base()`: Validates subtype relationships
+- Updated `compute_best_common_type()` to use widening in BCT algorithm
+
+**Bugs fixed during implementation**:
+- Initial implementation aborted widening on mixed types (e.g., `[1, "a"]`)
+- Gemini Pro caught this: TypeScript widens each literal individually
+- Fixed to unconditionally widen literals, preserving non-literals
+
+**Impact**:
+- Before: `[1, 2]` inferred as `(1 | 2)[]`
+- After: `[1, 2]` inferred as `number[]` ✅
+- Matches TypeScript's Rule #10 (Literal Widening)
+
+**Tests**:
+- All 18 BCT tests pass ✅
+- Including `test_best_common_type_literal_widening` ✅
+
+**Gemini Pro Review**: Confirmed correct after fixing mixed-type widening bug ✅
+
 ---
 
 ## Summary
@@ -294,3 +327,11 @@ The chain: `InferenceContext` → `TypeResolver` → `CheckerContext` → `Binde
   - Commit 7dfee5155 pushed to origin/main
   - Gemini Pro confirmed implementation correct for BCT use case
   - Documented intersection sorting issue in intern.rs as separate concern
+- 2026-02-04: **Literal Widening for BCT COMPLETED**
+  - Followed Two-Question Rule (asked Gemini Flash for approach, Gemini Pro for review)
+  - Implemented widen_literals in compute_best_common_type
+  - Fixed critical bug: widened each literal individually (not just homogeneous sets)
+  - All 18 BCT tests pass
+  - Commit c3d5d36d0 pushed to origin/main
+  - Gemini Pro confirmed correct after bug fix
+  - Impact: [1, 2] now correctly infers as number[] instead of (1 | 2)[]
