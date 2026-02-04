@@ -23,28 +23,63 @@ console.log("hello");  // Should error but doesn't because console is 'any'
 console.nonExistent(); // Should error TS2339 but doesn't
 ```
 
-## Tasks
+## Task 1: Diagnose Global Resolution Gaps ✅ COMPLETE
 
-### Task 1: Diagnose Global Resolution Gaps
-Create a minimal reproduction case and investigate how lib_contexts are used:
+### Test Case
+```typescript
+console.nonExistentProperty;
+```
 
-**Files to investigate**:
-- `src/checker/symbol_resolver.rs` - Symbol resolution logic
-- `src/checker/context.rs` - Type context with lib_contexts
-- `src/binder/mod.rs` - Binder with lib file loading
+**Results**:
+- **tsc**: TS2339 (Property doesn't exist on type 'Console') ✅
+- **tsz**: No errors - console is `any` (POISONING!) ❌
 
-**Actions**:
-1. Create test case using standard globals (console, Promise, Array)
-2. Trace through resolution to find where lib symbols aren't being found
-3. Check if lib_contexts are being queried correctly
+### Root Cause Found
+**Location**: `src/binder/state.rs` lines 721-729
 
-### Task 2: Fix Lib Context Merging
-Ensure lib.d.ts symbols are correctly merged into scope chain:
+```rust
+if !self.lib_symbols_merged {
+    for lib_binder in lib_binders {
+        if let Some(sym_id) = lib_binder.file_locals.get(name) {
+            // ...
+        }
+    }
+}
+```
 
-**Actions**:
-1. Verify `resolve_identifier_symbol` in symbol_resolver.rs
-2. Check fallback to lib binders when symbol not in local scope
-3. Ensure lib_contexts from CLI driver are passed through to checker
+**The Bug**: Lib binders are only queried when `lib_symbols_merged` is FALSE. When it's TRUE (after merging), the code skips lib binder lookup entirely.
+
+**Why this is wrong**: The checker's context has `lib_contexts` available (see `src/checker/generators.rs:925-926`), but `resolve_identifier_with_filter` doesn't check them - it only checks lib_binders conditionally.
+
+**Evidence**:
+- Checker can access lib_contexts directly: `self.ctx.lib_contexts.iter().map(|lc| &lc.binder)`
+- Generators.rs successfully queries lib_contexts.file_locals
+- But symbol_resolver.rs conditionally checks lib_binders based on lib_symbols_merged
+
+### Task 2: Fix Lib Context Merging (IN PROGRESS)
+
+**Solution**: Modify `src/checker/symbol_resolver.rs` to always query lib_contexts
+
+**Current Code** (symbol_resolver.rs):
+```rust
+pub(crate) fn get_lib_binders(&self) -> Vec<Arc<crate::binder::BinderState>> {
+    self.ctx.lib_contexts.iter().map(|lc| Arc::clone(&lc.binder)).collect()
+}
+```
+
+**Problem**: This is passed to `resolve_identifier_with_filter`, but the binder only checks lib_binders when `lib_symbols_merged` is FALSE.
+
+**Fix Options**:
+
+**Option A**: Modify symbol_resolver to check lib_contexts.file_locals directly
+- Similar to how generators.rs does it (line 926: `lib_ctx.binder.file_locals.get(name)`)
+- More direct, bypasses the lib_symbols_merged check
+
+**Option B**: Always query lib_binders regardless of lib_symbols_merged
+- Change the binder's `resolve_identifier_with_filter` to always check lib_binders
+- Remove or modify the `if !self.lib_symbols_merged` check
+
+**Preferred**: Option A - check lib_contexts directly like other parts of the codebase
 
 ### Task 3: Verify Conformance Improvement
 Run tests to verify the fix:
