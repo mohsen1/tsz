@@ -66,6 +66,11 @@ This suggests TS1005 is working correctly for most cases. The missing TS1005 ins
 
 **Status**: Parser needs to validate class member modifiers more strictly. This is a separate issue from TS1136.
 
+### Unit Test Results
+- Ran 369 tests (quick profile)
+- 367 passed, 2 failed (pre-existing abstract class test failures, unrelated to session work)
+- No regressions from TS1136 fix
+
 ### Test Case
 ```typescript
 function A(): (public B) => C {}
