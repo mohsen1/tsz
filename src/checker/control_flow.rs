@@ -2051,6 +2051,31 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
+    /// Check if a type is a unit type (literal, null, undefined, or unique symbol).
+    ///
+    /// Unit types are types that represent exactly one value.
+    /// This is important for !== narrowing: we can only narrow by !== if
+    /// the other side is a unit type.
+    ///
+    /// Examples of unit types:
+    /// - Literals: "foo", 42, true, false, 0n
+    /// - Nullish: null, undefined
+    /// - Unique symbols (though rare in practice)
+    ///
+    /// Non-unit types:
+    /// - string, number, boolean, bigint (primitives with multiple values)
+    /// - Objects, arrays, etc.
+    fn is_unit_type(&self, type_id: TypeId) -> bool {
+        // Check for intrinsics that are unit types
+        if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+            return true;
+        }
+
+        // Use the solver's visitor to check if it's a literal type
+        use crate::solver::visitor::is_literal_type_db;
+        is_literal_type_db(self.interner, type_id)
+    }
+
     /// Narrow type based on a binary expression (===, !==, typeof checks, etc.)
     pub(crate) fn narrow_by_binary_expr(
         &self,
@@ -2138,6 +2163,58 @@ impl<'a> FlowAnalyzer<'a> {
                     return TypeId::NEVER;
                 }
                 return narrowing.narrow_excluding_type(type_id, literal_type);
+            }
+        }
+
+        // Bidirectional narrowing: x === y where both are references
+        // This handles cases like: if (x === y) { ... }
+        // where both x and y are variables (not just literals)
+        if is_strict {
+            // Check if target is on the left side
+            if self.is_matching_reference(bin.left, target) {
+                if let Some(node_types) = self.node_types {
+                    if let Some(&right_type) = node_types.get(&bin.right.0) {
+                        // For === (effective_truth = true): always narrow
+                        // For !== (effective_truth = false): only narrow if right_type is a unit type
+                        if effective_truth {
+                            return narrowing.narrow_type(
+                                type_id,
+                                &TypeGuard::LiteralEquality(right_type),
+                                true,
+                            );
+                        } else if self.is_unit_type(right_type) {
+                            // For !==, only narrow if other side is a unit type
+                            // Example: if (x !== "foo") narrows x to exclude "foo"
+                            // But: if (x !== y) where both are strings, does NOT narrow
+                            return narrowing.narrow_type(
+                                type_id,
+                                &TypeGuard::LiteralEquality(right_type),
+                                false,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Check if target is on the right side
+            if self.is_matching_reference(bin.right, target) {
+                if let Some(node_types) = self.node_types {
+                    if let Some(&left_type) = node_types.get(&bin.left.0) {
+                        if effective_truth {
+                            return narrowing.narrow_type(
+                                type_id,
+                                &TypeGuard::LiteralEquality(left_type),
+                                true,
+                            );
+                        } else if self.is_unit_type(left_type) {
+                            return narrowing.narrow_type(
+                                type_id,
+                                &TypeGuard::LiteralEquality(left_type),
+                                false,
+                            );
+                        }
+                    }
+                }
             }
         }
 
