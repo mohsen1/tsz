@@ -1,123 +1,176 @@
-# Session tsz-4 - COMPLETE ✅
+# Session tsz-4 - Declaration Emit (.d.ts file generation)
 
 ## Date: 2025-02-04
 
-## Status: SESSION COMPLETE - Three Major Conformance Fixes Delivered
+## Status: ACTIVE - Declaration Emit Implementation
 
 ### Executive Summary
-Session tsz-4 successfully delivered three significant TypeScript compiler compatibility fixes, resolving conformance failures for TS1359, TS2300, and TS1202. All fixes have been tested, committed, and pushed to main.
 
-## Fixes Delivered
+Session tsz-4 is focused entirely on implementing declaration file generation (`tsc --declaration` or `-d`). This feature generates `.d.ts` definition files from TypeScript source files, enabling library authors to publish type definitions for their consumers.
 
-### 1. TS1359 Reserved Word Detection ✅
-**Problem**: Reserved words like `break`, `class`, `if` were not rejected when used as identifiers
+### What is Declaration Emit?
 
-**Root Cause**: 
-- `is_reserved_word()` only checked for 3 keywords (null, true, false)
-- Variable declaration parsing called `parse_identifier_name()` instead of `parse_identifier()`
+Declaration emit generates `.d.ts` files containing only type information:
 
-**Solution**:
-- Expanded `is_reserved_word()` to check full range [BreakKeyword..=WithKeyword] (83-118)
-- Added `current_keyword_text()` helper for specific error messages
-- Fixed `parse_variable_declaration_with_flags()` to use `parse_identifier()`
+**Input** (`mylib.ts`):
+```typescript
+export function add(a: number, b: number): number {
+    return a + b;
+}
+export class Calculator {
+    private value: number;
+    add(n: number): this { ... }
+}
+```
 
-**Files Modified**:
-- `src/parser/state.rs` - Expanded reserved word check, added helper
-- `src/parser/state_statements.rs` - Fixed variable declaration parsing
-- `src/tests/parser_state_tests.rs` - Added test coverage
+**Output** (`mylib.d.ts`):
+```typescript
+export declare function add(a: number, b: number): number;
+export declare class Calculator {
+    private value: number;
+    add(n: number): this;
+}
+```
 
-**Impact**: TS1359 completely fixed in conformance
+## Current State
+
+### ✅ Already Implemented
+- `src/declaration_emitter.rs` - Basic declaration emitter exists
+- Handles: functions, classes, interfaces, type aliases, enums, imports, exports
+- Modifiers: public, private, protected, static, readonly, abstract
+- Type parameters and constraints
+- Heritage clauses (extends, implements)
+
+### ❌ Missing Features (from Gemini analysis)
+
+1. **Type Reification (TypeId → AST)** - CRITICAL
+   - Need to convert Solver's `TypeId` back into printable AST nodes
+   - Required for inferred types in declarations
+   - Example: `function add(a, b) { return a + b; }` → `declare function add(a: any, b: any): any;`
+   - Implementation location: `src/emitter/types.rs` or new type reification module
+
+2. **Export Filtering**
+   - Use Binder's `is_exported` flag to filter output
+   - Only emit exported symbols (not private/internal ones)
+   - Binder already has this info in `src/binder/state_binding.rs`
+
+3. **Visibility Stripping (TS4023)**
+   - Detect when exported symbols reference non-exported types
+   - Example: Exporting a function that returns a private type should error
+   - Error code: TS4023 "Exported variable X has or is using name Y from external module..."
+
+4. **Import Rewriting**
+   - Generate correct `import` statements in `.d.ts` files
+   - Handle type-only imports: `import type { Foo } from './foo'`
+   - Rewrite relative paths for declaration context
+
+5. **Alias Resolution**
+   - Decide when to emit full type structure vs just alias name
+   - Example: `type X = { a: string }` vs `type X = MyInterface`
+
+6. **Shadowing Handling**
+   - Ensure generated type parameter names don't conflict with global names
+
+## Architecture
+
+### Data Flow
+```
+Parser → Binder (marks is_exported) → Checker/Solver (infers TypeId)
+                                                      ↓
+DeclarationEmitter ← TypeReifier ← TypeId
+    ↓
+.d.ts output
+```
+
+### Key Components
+
+**Binder** (`src/binder/`)
+- Provides `is_exported` flag on symbols
+- Already fully implemented and working
+
+**Solver** (`src/solver/`)
+- Provides type inference and `TypeId` for expressions
+- Returns inferred types for functions/variables without annotations
+
+**DeclarationEmitter** (`src/declaration_emitter.rs`)
+- Current implementation: ~1800 lines
+- Handles AST-based emission (when type annotations exist)
+- Missing: integration with Solver for inferred types
+
+**Type Reifier** (NEEDS IMPLEMENTATION)
+- Convert `TypeId` → synthetic AST node
+- Should handle primitives, arrays, unions, intersections, functions, classes, generics
+- Location: Could extend `src/emitter/types.rs` or create new module
+
+## Priority Tasks
+
+### Phase 1: Type Reification (HIGH PRIORITY)
+1. Implement basic type reification for primitives
+   - `TypeId::STRING` → `"string"`
+   - `TypeId::NUMBER` → `"number"`
+   - `TypeId::BOOLEAN` → `"boolean"`
+
+2. Implement array type reification
+   - Detect `TypeKey::Array(elem_id)`
+   - Recursively reify element type
+   - Output: `string[]` or `Array<string>`
+
+3. Implement function type reification
+   - Extract parameters and return type
+   - Output: `(a: T, b: U) => R`
+
+4. Create unit tests for type reification
+   - Mock solver with known TypeIds
+   - Assert string output matches TypeScript syntax
+
+### Phase 2: Solver Integration
+1. Add Checker/Solver context to DeclarationEmitter
+2. Query solver for inferred types when AST annotation missing
+3. Test with functions/variables that have inferred types
+
+### Phase 3: Export Filtering
+1. Integrate with Binder's `is_exported` flag
+2. Filter statement stream to only emit exported symbols
+3. Handle re-exports correctly
+
+### Phase 4: Import Rewriting
+1. Detect when types reference imported symbols
+2. Generate correct import statements in .d.ts output
+3. Handle type-only imports
+
+## Session Coordination
+
+**Other Sessions** (no conflicts):
+- **tsz-1**: Parse errors (TS1005, TS1109, etc.)
+- **tsz-2**: Module resolution (TS2307, TS2664, TS2322)
+- **tsz-3**: Const type parameters, type system issues
+
+**Declaration emit is independent** - doesn't overlap with other session work
+
+## Commits
+
+*(Session starting - no commits yet)*
+
+## Resources
+
+- Gemini conversation 2026-02-04: Declaration emit architecture and requirements
+- File: `src/declaration_emitter.rs` - Current implementation
+- File: `src/emitter/types.rs` - Type emission helpers
+- File: `docs/architecture/NORTH_STAR.md` - Architecture reference
+
+## Next Steps
+
+1. ✅ Reviewed existing DeclarationEmitter implementation
+2. ✅ Identified gaps via Gemini analysis
+3. **TODO**: Implement TypeReifier for basic types
+4. **TODO**: Add solver integration to DeclarationEmitter
+5. **TODO**: Create comprehensive test suite
 
 ---
 
-### 2. TS2300 Duplicate Identifier Detection ✅
-**Problem**: Type aliases with duplicate names emitted TS2304 "Cannot find name" instead of TS2300 "Duplicate identifier"
+## Notes
 
-**Root Cause**:
-- Code incorrectly allowed type aliases to merge (like interfaces do)
-- Lines 2898-2903 in `src/checker/type_checking.rs` had `continue` that skipped duplicate check for type aliases
-
-**Solution**:
-- Removed the incorrect type alias merging logic
-- Type aliases now correctly emit TS2300 when duplicated
-
-**Files Modified**:
-- `src/checker/type_checking.rs` - Removed 6 lines of incorrect merging logic
-
-**Impact**: Fixed 9 conformance issues
-
----
-
-### 3. TS1202 Import Assignment in CommonJS ✅
-**Problem**: 19 extra TS1202 errors in CommonJS modules with imports
-
-**Root Cause**:
-- Code checked both `module.is_es_module()` AND `is_external_module()`
-- This caused TS1202 to be emitted in CommonJS files that had imports/exports
-
-**Solution**:
-- Removed `|| self.ctx.binder.is_external_module()` check
-- TS1202 now only depends on target module system, not file structure
-
-**Files Modified**:
-- `src/checker/import_checker.rs` - Removed incorrect external module check
-
-**Impact**: TS1202 completely removed from conformance mismatches
-
----
-
-## Conformance Impact Summary
-
-### Error Codes Fixed
-| Error Code | Before | After | Status |
-|------------|--------|-------|--------|
-| TS1359 | Missing | Fixed | ✅ Complete |
-| TS2300 | Extra | Fixed | ✅ Complete |
-| TS1202 | 19 extra | Fixed | ✅ Complete |
-| TS2304 | 9 extra | Removed | ✅ Improved |
-
-### Overall Statistics
-- **Started Session**: 1000+ compilation errors from previous session
-- **Ended Session**: 365 passing tests (2 pre-existing failures)
-- **Conformance Tests**: 3 error codes completely resolved
-- **Commits**: 6 total (3 fixes + 3 documentation)
-
-## All Commits
-1. `e29b469fa` - fix: expand is_reserved_word() to catch all reserved words (TS1359)
-2. `cbdbfdb20` - docs: update tsz-4 session with TS1359 work
-3. `f1c74822e` - fix: remove incorrect type alias merging that prevented TS2300
-4. `d5e0c1f81` - fix: TS1202 should only check module kind, not external module status
-5. `239ed1ab4` - docs: update tsz-4 with TS1202 fix
-6. `30b0a512a` - docs: summarize tsz-4 session - three major fixes delivered
-
-## Remaining Work (For Future Sessions)
-
-### High Priority Conformance Issues
-- TS2322: 8 extra errors (type assignability false positives)
-- TS2304: 9 extra errors (symbol resolution issues)
-- TS1005: 12 missing (parse errors - tsz-1 working on this)
-- TS2695: 10 missing (comma operator unused check)
-
-### Known Architectural Issues
-- **test_abstract_constructor_assignability**: Constructor type incorrectly includes Object.prototype properties
-- **test_abstract_mixin_intersection_ts2339**: Heritage clause type computation needs fixes
-
-## Lessons Learned
-
-### Success Factors
-1. **Used Gemini effectively** - Asked targeted questions about specific error codes
-2. **Focused on low-hanging fruit** - Picked issues with clear root causes
-3. **Verified with conformance tests** - Each fix showed immediate improvement
-4. **Proper git workflow** - Frequent commits with clear messages, regular syncs
-
-### Techniques That Worked
-- Analyzing error code mismatches to identify patterns
-- Using Gemini to explain complex code logic
-- Testing with both TSC and tsz to understand expected behavior
-- Incremental fixes with immediate verification
-
-## Session Complete ✅
-
-All primary objectives achieved. Three significant conformance fixes delivered and verified.
-Test suite: 365 passing, 156 skipped, 2 pre-existing failures.
-All changes committed, tested, and pushed to origin/main.
+- Declaration emit depends on type inference from Solver
+- Key challenge: Converting internal TypeId back to TypeScript syntax
+- Should preserve all type information visible in the public API
+- Must strip all implementation details (function bodies, initializers)
