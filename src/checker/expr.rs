@@ -64,6 +64,22 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     /// This is the main entry point for expression type checking.
     /// It handles caching and dispatches to specific expression handlers.
     pub fn check(&mut self, idx: NodeIndex) -> TypeId {
+        self.check_with_context(idx, None)
+    }
+
+    /// Check an expression with a contextual type hint.
+    ///
+    /// Contextual types enable downward inference where the expected type
+    /// influences the inferred type. For example:
+    /// - `const x: string = expr` - `expr` is checked with context `string`
+    /// - `const f: (x: number) => void = (x) => {}` - `x` is inferred as `number`
+    ///
+    /// # Caching Behavior
+    ///
+    /// When `context_type` is `Some`, the cache is **bypassed** to avoid
+    /// incorrect results. The same expression can have different types
+    /// depending on the context, so caching by NodeIndex alone is unsound.
+    pub fn check_with_context(&mut self, idx: NodeIndex, context_type: Option<TypeId>) -> TypeId {
         // Stack overflow protection
         let current_depth = self.depth.get();
         if current_depth >= MAX_EXPR_CHECK_DEPTH {
@@ -71,15 +87,22 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
         }
         self.depth.set(current_depth + 1);
 
-        // Check cache first
-        if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-            self.depth.set(current_depth);
-            return cached;
-        }
+        let result = if let Some(ctx_type) = context_type {
+            // Bypass cache when contextual type is provided
+            // Contextual types can produce different results for the same node
+            self.compute_type_with_context(idx, ctx_type)
+        } else {
+            // Check cache first for non-contextual checks
+            if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                self.depth.set(current_depth);
+                return cached;
+            }
 
-        // Compute and cache
-        let result = self.compute_type(idx);
-        self.ctx.node_types.insert(idx.0, result);
+            // Compute and cache
+            let result = self.compute_type(idx);
+            self.ctx.node_types.insert(idx.0, result);
+            result
+        };
 
         self.depth.set(current_depth);
         result
@@ -94,18 +117,31 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     /// Simple expressions that don't need contextual typing or symbol resolution
     /// are handled directly here. Complex expressions delegate to CheckerState.
     pub fn compute_type_uncached(&mut self, idx: NodeIndex) -> TypeId {
-        self.compute_type_impl(idx)
+        self.compute_type_impl(idx, None)
+    }
+
+    /// Compute the type of an expression with contextual typing (no caching).
+    ///
+    /// This is called when a contextual type is available (e.g., from variable
+    /// declarations, assignments, function parameters). The contextual type
+    /// influences how the expression is inferred.
+    fn compute_type_with_context(&mut self, idx: NodeIndex, context_type: TypeId) -> TypeId {
+        self.compute_type_impl(idx, Some(context_type))
     }
 
     /// Compute the type of an expression (internal, not cached).
     fn compute_type(&mut self, idx: NodeIndex) -> TypeId {
-        self.compute_type_impl(idx)
+        self.compute_type_impl(idx, None)
     }
 
     /// Core implementation for computing expression types.
     ///
     /// Returns `TypeId::DELEGATE` for complex expressions that need CheckerState.
-    fn compute_type_impl(&mut self, idx: NodeIndex) -> TypeId {
+    ///
+    /// # Parameters
+    /// - `idx`: The node index to check
+    /// - `context_type`: Optional contextual type hint for downward inference
+    fn compute_type_impl(&mut self, idx: NodeIndex, context_type: Option<TypeId>) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             // Return UNKNOWN instead of ANY to expose missing nodes as errors
             return TypeId::UNKNOWN;
@@ -116,20 +152,20 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
             // Simple expressions handled directly
             // =====================================================================
 
-            // Null literal - always TypeId::NULL
+            // Null literal - always TypeId::NULL (context doesn't affect null)
             k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
 
-            // typeof expression always returns string
+            // typeof expression always returns string (context doesn't affect typeof)
             k if k == syntax_kind_ext::TYPE_OF_EXPRESSION => TypeId::STRING,
 
-            // void expression always returns undefined
+            // void expression always returns undefined (context doesn't affect void)
             k if k == syntax_kind_ext::VOID_EXPRESSION => TypeId::UNDEFINED,
 
-            // Parenthesized expression - pass through to inner expression
+            // Parenthesized expression - pass through context to inner expression
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                    // Recursively check inner expression
-                    self.compute_type_impl(paren.expression)
+                    // Recursively check inner expression with same context
+                    self.compute_type_impl(paren.expression, context_type)
                 } else {
                     // Return DELEGATE to let CheckerState handle malformed nodes
                     TypeId::DELEGATE
