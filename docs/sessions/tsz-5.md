@@ -44,10 +44,10 @@
    - Usage analysis now fully functional in multi-file mode
 
 **Priority 2:** ✅ **COMPLETED** - Conformance Testing
-   - **Result:** 268/639 (41.9%)
-   - UsageAnalyzer is active and working
-   - Minor regression from baseline (42.1% → 41.9%)
-   - Regression likely due to real issues being caught by usage analysis
+   - **Result:** 269/639 (42.1%)
+   - Bug fix: Check specifier.name instead of specifier node (commit `4e96878e9`)
+   - No regression - back to baseline after bug fix
+   - Note: Most conformance tests are single-file, so import/export elision impact is minimal
 
 **Resolution of BinderState Blocker:**
 
