@@ -2,7 +2,9 @@
 
 ## Date: 2026-02-04
 
-## Status: ACTIVE - Next Priorities Identified
+## Status: ACTIVE - Type Inference Progress
+
+**Committed**: ecb5ef44, 294a0e781, e26fcc9a3, 180ce2bde, be0bd43f1, de8b72d5c
 
 ### Session Summary
 
@@ -113,6 +115,43 @@ declare enum Mixed { A = 0, B = 5, C = 6, D = 10 }
 - ✅ Computed expressions like `B = A + 1` (emits `B = 2`)
 - ✅ String enums, mixed numeric and string enums, const enums
 - ✅ Namespace/module context handling
+
+### Latest Work: Const Type Inference (Partial Implementation)
+
+**Commit**: de8b72d5c
+
+Added inferred type emission for exported const declarations:
+```typescript
+// Input
+export const x = 42;
+
+// Before
+export declare const x;
+
+// After (better)
+export declare const x: number;
+
+// TypeScript (ideal)
+export declare const x = 42;
+```
+
+**Test Results**:
+```typescript
+export const num = 42;         // → : number  ✓ (tsc: = 42)
+export const str = "hello";     // → : string  ✓ (tsc: = "hello")
+export const arr = [1, 2, 3];   // → : number[] ✓ (matches!)
+export const obj = { a: 1 };    // → : { <atom:116>: number } ✗ broken
+```
+
+**Limitations identified**:
+1. **Object literal types**: Type printer outputs broken atom names instead of property names
+2. **Function return types**: Still missing inferred return types (needs extracting return_type from function TypeId)
+3. **Primitive format**: TypeScript emits initializer (`= 42`) not type (`: number`) for primitives
+
+**Next Steps**:
+1. Fix object literal type printing (investigate TypePrinter)
+2. Add function return type inference (requires consulting Gemini for proper TypeId extraction)
+3. Consider emitting initializers for primitive consts
 
 ### Next Priorities (from Gemini consultation)
 
