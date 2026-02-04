@@ -605,8 +605,6 @@ impl<'a> CheckerState<'a> {
                 type_predicate,
                 is_constructor: false,
                 is_method: true,
-                visibility: Visibility::Public,
-                parent_id: None,
             };
             self.pop_type_parameters(type_param_updates);
             return self.ctx.types.function(shape);
@@ -663,8 +661,6 @@ impl<'a> CheckerState<'a> {
                     type_predicate,
                     is_constructor: false,
                     is_method: true,
-                    visibility: Visibility::Public,
-                    parent_id: None,
                 };
                 self.pop_type_parameters(type_param_updates);
                 let method_type = self.ctx.types.function(shape);

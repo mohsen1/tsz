@@ -607,8 +607,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             return_type,
                             type_predicate: None,
                             is_method: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
                         });
                     }
                     CONSTRUCT_SIGNATURE => {
@@ -625,8 +623,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             return_type,
                             type_predicate: None,
                             is_method: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
                         });
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {
@@ -650,8 +646,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 type_predicate: None,
                                 is_constructor: false,
                                 is_method: true,
-                                visibility: Visibility::Public,
-                                parent_id: None,
                             };
                             let method_type = self.ctx.types.function(shape);
                             properties.push(PropertyInfo {

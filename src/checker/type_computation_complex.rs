@@ -919,8 +919,6 @@ impl<'a> CheckerState<'a> {
             return_type: TypeId::SYMBOL,
             type_predicate: None,
             is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
         };
 
         let well_known = [
