@@ -140,13 +140,18 @@ pub fn compute_best_common_type(
         return first;
     }
 
-    // Try to find common base class for nominal types (e.g., Dog + Cat -> Animal)
+    // Step 1: Apply literal widening for array literals
+    // When we have multiple literal types of the same primitive kind, widen to the primitive
+    // Example: [1, 2] -> number[], ["a", "b"] -> string[]
+    let widened = widen_literals(interner, types);
+
+    // Step 2: Try to find a common base class for nominal types (e.g., Dog + Cat -> Animal)
     if let Some(r) = resolver {
         // Collect candidate base types from the first type
-        let mut base_candidates = get_type_hierarchy(interner, r, types[0]);
+        let mut base_candidates = get_type_hierarchy(interner, r, widened[0]);
 
         // Filter candidates by checking if all other types are subtypes
-        for &ty in types.iter().skip(1) {
+        for &ty in widened.iter().skip(1) {
             if base_candidates.is_empty() {
                 break; // No candidates left
             }
@@ -159,8 +164,94 @@ pub fn compute_best_common_type(
         }
     }
 
-    // Phase 1: Default to union of all types
-    interner.union(types.to_vec())
+    // Step 3: Try to find a common base type for primitives/literals
+    // For example, [string, "hello"] -> string
+    if let Some(base) = find_common_base_type(interner, &widened) {
+        // All types share a common base type
+        if all_types_are_narrower_than_base(interner, &widened, base) {
+            return base;
+        }
+    }
+
+    // Step 4: Default to union of all types
+    interner.union(widened.to_vec())
+}
+
+/// Widen literal types to their primitive base types when appropriate.
+///
+/// This implements Rule #10 (Literal Widening) for BCT:
+/// - Fresh literals in arrays are widened to their primitive types
+/// - Example: [1, 2] -> [number, number]
+/// - Example: ["a", "b"] -> [string, string]
+/// - Example: [1, "a"] -> [number, string] (mixed types)
+///
+/// The widening happens for each literal individually, even in mixed arrays.
+/// Non-literal types are preserved as-is.
+fn widen_literals(interner: &dyn TypeDatabase, types: &[TypeId]) -> Vec<TypeId> {
+    // Widen each literal individually, regardless of what else is in the list.
+    // This matches TypeScript's behavior where [1, "a"] infers as (number | string)[]
+    types
+        .iter()
+        .map(|&ty| {
+            if let Some(key) = interner.lookup(ty) {
+                if let crate::solver::types::TypeKey::Literal(ref lit) = key {
+                    return match lit {
+                        crate::solver::types::LiteralValue::String(_) => TypeId::STRING,
+                        crate::solver::types::LiteralValue::Number(_) => TypeId::NUMBER,
+                        crate::solver::types::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
+                        crate::solver::types::LiteralValue::BigInt(_) => TypeId::BIGINT,
+                    };
+                }
+            }
+            ty // Non-literal types are preserved
+        })
+        .collect()
+}
+
+/// Find a common base type for a set of types.
+/// For example, [string, "hello"] -> Some(string)
+fn find_common_base_type(interner: &dyn TypeDatabase, types: &[TypeId]) -> Option<TypeId> {
+    if types.is_empty() {
+        return None;
+    }
+
+    // Get the base type of the first type
+    let first_base = get_base_type(interner, types[0])?;
+
+    // Check if all other types have the same base type
+    for &ty in types.iter().skip(1) {
+        let base = get_base_type(interner, ty)?;
+        if base != first_base {
+            return None;
+        }
+    }
+
+    Some(first_base)
+}
+
+/// Get the base type of a type (for literals, this is the primitive type).
+fn get_base_type(interner: &dyn TypeDatabase, ty: TypeId) -> Option<TypeId> {
+    match interner.lookup(ty) {
+        Some(crate::solver::types::TypeKey::Literal(ref lit)) => {
+            let base = match lit {
+                crate::solver::types::LiteralValue::String(_) => TypeId::STRING,
+                crate::solver::types::LiteralValue::Number(_) => TypeId::NUMBER,
+                crate::solver::types::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
+                crate::solver::types::LiteralValue::BigInt(_) => TypeId::BIGINT,
+            };
+            Some(base)
+        }
+        _ => Some(ty),
+    }
+}
+
+/// Check if all types are narrower than (subtypes of) the given base type.
+fn all_types_are_narrower_than_base(
+    interner: &dyn TypeDatabase,
+    types: &[TypeId],
+    base: TypeId,
+) -> bool {
+    types.iter().all(|&ty| is_subtype_of(interner, ty, base))
 }
 
 /// Get the type hierarchy for a type, from most derived to most base.
