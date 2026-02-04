@@ -117,6 +117,7 @@ mod generic_strictness_tests {
             constraint: None,
             is_const: false,
             default: None,
+            is_const: false,
         }));
 
         // When checking against unconstrained generic, use Unknown (not Any)
@@ -954,6 +955,7 @@ mod function_variance_tests {
             constraint: None,
             is_const: false,
             default: None,
+            is_const: false,
         }));
 
         let generic_func = interner.function(FunctionShape {

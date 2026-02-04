@@ -2,6 +2,20 @@
 
 ## Current Work
 
+**Task**: Module Resolution and Lib Loading (TS2307, TS2318)
+
+**Target Issues**:
+- TS2307 (Cannot find module) - 2,139 false negatives
+- TS2318 (Cannot find global type) - 3,386 false negatives
+
+**Rationale**: These are "Environment" errors. If tsz fails to load the standard library or imports, it lacks the definitions required to perform accurate type checking. Fixing these False Negatives will likely reduce the count of False Positives (like TS2304 and TS2322).
+
+**Starting Point**: Asking Gemini for guidance on module resolution architecture and where to start investigating.
+
+---
+
+## Previous Work
+
 **Completed**: TS2322 (Type not assignable) - Accessor Type Compatibility False Positives ✅
 
 **Specific Issue**: `accessors_spec_section-4.5_inference.ts`

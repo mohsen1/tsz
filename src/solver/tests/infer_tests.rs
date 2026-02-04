@@ -103,6 +103,7 @@ fn test_inference_occurs_check() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let array_t = interner.array(t_type);
 
@@ -122,6 +123,7 @@ fn test_inference_occurs_check_function_this_type() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let func = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -383,6 +385,7 @@ fn test_resolve_circular_upper_bound_defaults_unknown() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let name_next = interner.intern_string("next");
     let upper = interner.object(vec![PropertyInfo {
@@ -412,6 +415,7 @@ fn test_resolve_self_upper_bound_with_concrete() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     ctx.add_upper_bound(var, t_type);
@@ -436,12 +440,14 @@ fn test_resolve_mutual_circular_upper_bounds_unknown() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     ctx.add_upper_bound(var_t, u_type);
@@ -469,12 +475,14 @@ fn test_resolve_mutual_circular_upper_bounds_with_concrete() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     ctx.add_upper_bound(var_t, u_type);
@@ -503,12 +511,14 @@ fn test_resolve_self_recursive_object_bounds_two_params_unknown() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let name_next = interner.intern_string("next");
 
@@ -554,12 +564,14 @@ fn test_resolve_mutual_recursive_object_bounds_unknown() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let name_next = interner.intern_string("next");
 
@@ -4946,6 +4958,7 @@ fn test_infer_union_target_with_placeholder_member() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let param_type = interner.union(vec![t_type, TypeId::STRING]);
 
@@ -4955,6 +4968,7 @@ fn test_infer_union_target_with_placeholder_member() {
             constraint: None,
             is_const: false,
             default: None,
+            is_const: false,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -4984,6 +4998,7 @@ fn test_infer_union_target_with_placeholder_and_never_member() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let param_type = interner.union(vec![t_type, TypeId::NEVER]);
 
@@ -4993,6 +5008,7 @@ fn test_infer_union_target_with_placeholder_and_never_member() {
             constraint: None,
             is_const: false,
             default: None,
+            is_const: false,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -5026,12 +5042,14 @@ fn test_resolve_circular_extends_with_concrete_bound() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Simulate: <T extends U, U extends T, U extends string>
@@ -5061,12 +5079,14 @@ fn test_resolve_circular_extends_bound_order() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Same cycle, but add concrete bound before the cyclic one.
@@ -5096,12 +5116,14 @@ fn test_resolve_usage_based_inference_from_bound_param() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Simulate: <T extends U, U extends T> with usage-based lower bound on U.
@@ -5223,12 +5245,14 @@ fn test_resolve_all_with_circular_extends_unknown() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Simulate: <T extends U, U extends T>
@@ -5264,18 +5288,21 @@ fn test_circular_extends_three_way_cycle() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let v_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends V, V extends T
@@ -5306,6 +5333,7 @@ fn test_circular_extends_self_reference() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends T (self-reference)
@@ -5335,12 +5363,14 @@ fn test_circular_extends_with_lower_bound() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends T
@@ -5375,12 +5405,14 @@ fn test_circular_extends_both_have_lower_bounds() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends T
@@ -5416,12 +5448,14 @@ fn test_circular_extends_unify_propagates() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends T
@@ -5457,12 +5491,14 @@ fn test_circular_extends_conflicting_lower_bounds() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends T
@@ -5502,18 +5538,21 @@ fn test_circular_extends_three_way_with_one_lower_bound() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let v_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends V, V extends T
@@ -5551,12 +5590,14 @@ fn test_circular_extends_with_union_lower_bound() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends T
@@ -5592,12 +5633,14 @@ fn test_circular_extends_with_literal_types() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends T
@@ -5639,24 +5682,28 @@ fn test_circular_extends_four_way_cycle() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let v_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let w_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: w_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends V, V extends W, W extends T
@@ -5691,12 +5738,14 @@ fn test_circular_extends_with_concrete_upper_and_lower() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends T
@@ -5736,12 +5785,14 @@ fn test_circular_extends_chain_with_endpoint_bound() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let v_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends V (chain, not cycle)
@@ -5786,12 +5837,14 @@ fn test_circular_extends_multiple_lower_bounds_same_param() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // T extends U, U extends T
@@ -6484,6 +6537,7 @@ fn test_method_return_type_inference_basic() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Method signature: () => T
@@ -6493,6 +6547,7 @@ fn test_method_return_type_inference_basic() {
             constraint: None,
             is_const: false,
             default: None,
+            is_const: false,
         }],
         params: vec![],
         this_type: None,
@@ -6522,6 +6577,7 @@ fn test_method_parameter_type_inference() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Method signature: (x: T) => void
@@ -6531,6 +6587,7 @@ fn test_method_parameter_type_inference() {
             constraint: None,
             is_const: false,
             default: None,
+            is_const: false,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -6565,6 +6622,7 @@ fn test_method_this_type_inference() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Method signature: (this: This) => This
@@ -6574,6 +6632,7 @@ fn test_method_this_type_inference() {
             constraint: None,
             is_const: false,
             default: None,
+            is_const: false,
         }],
         params: vec![],
         this_type: Some(this_type),
@@ -6613,6 +6672,7 @@ fn test_method_generic_parameter_inference() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Method signature: <T>(x: T) => Array<T>
@@ -6623,6 +6683,7 @@ fn test_method_generic_parameter_inference() {
             constraint: None,
             is_const: false,
             default: None,
+            is_const: false,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -14811,6 +14872,7 @@ fn test_conditional_type_inference_basic() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     let object_t = interner.object(vec![PropertyInfo {
@@ -14853,6 +14915,7 @@ fn test_variance_computation_covariant() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     let box_type = interner.object(vec![PropertyInfo {
@@ -14885,6 +14948,7 @@ fn test_variance_computation_contravariant() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     let func = interner.function(FunctionShape {
@@ -14923,6 +14987,7 @@ fn test_variance_computation_invariant() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     let get_func = interner.function(FunctionShape {
@@ -14989,6 +15054,7 @@ fn test_variance_string() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     let array_type = interner.array(t_type);
@@ -15032,12 +15098,14 @@ fn test_strengthen_constraints() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let _u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Add constraints: T has lower bound string, U extends T
@@ -15109,6 +15177,7 @@ fn test_contains_inference_var() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     let array_t = interner.array(t_type);
@@ -15151,6 +15220,7 @@ fn test_variance_conditional_type() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     let cond = interner.conditional(ConditionalType {
@@ -15189,6 +15259,7 @@ fn test_complex_generic_inference() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // The function parameter (x: T) creates a relationship
@@ -15262,6 +15333,7 @@ fn test_template_literal_contains_inference_var() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Create template literal: `prefix${T}suffix`
@@ -15294,6 +15366,7 @@ fn test_template_literal_does_not_contain_unrelated_var() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Create template literal: `prefix${T}suffix`
@@ -15346,12 +15419,14 @@ fn test_template_literal_multiple_inference_positions() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Create template literal: `${T}-${U}`
@@ -15382,7 +15457,7 @@ fn test_template_literal_infer_from_conditional() {
         name: t_name,
         constraint: Some(TypeId::STRING),
         default: None,
-        is_const: false,
+            is_const: false,
     }));
 
     // Create template literal: `get${T}`
@@ -15426,6 +15501,7 @@ fn test_template_literal_inference_context_integration() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Create template literal pattern: `get${infer K}`
@@ -15460,6 +15536,7 @@ fn test_nested_template_literal_in_conditional() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Create template literal pattern: `get${infer K}`
@@ -15475,6 +15552,7 @@ fn test_nested_template_literal_in_conditional() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Create conditional: T extends `get${infer K}` ? K : never
@@ -15506,6 +15584,7 @@ fn test_template_literal_inference_end_to_end() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Create template literal pattern: `get${infer K}`
@@ -15552,6 +15631,7 @@ fn test_template_literal_inference_no_match() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Create template literal pattern: `get${infer K}`
@@ -15598,6 +15678,7 @@ fn test_template_literal_inference_prefix_suffix() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Create template literal pattern: `prefix-${infer R}-suffix`
@@ -15645,6 +15726,7 @@ fn test_template_literal_inference_multiple_infers() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
     let b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
@@ -15652,6 +15734,7 @@ fn test_template_literal_inference_multiple_infers() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Create template literal pattern: `${infer A}-${infer B}`
@@ -15700,6 +15783,7 @@ fn test_template_literal_inference_distributive() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     // Create template literal pattern: `get${infer K}`

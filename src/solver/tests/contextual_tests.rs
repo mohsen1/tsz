@@ -502,6 +502,7 @@ fn test_contextual_generic_call_union_preserves_literal() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
     let func = FunctionShape {
