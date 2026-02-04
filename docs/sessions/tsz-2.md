@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟢 Active (Redefined 2026-02-04)
+**Status**: 🟡 Phase 1 Complete, Phase 2 Pending
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -366,6 +366,126 @@ Fixed Cache Isolation Bug where lib.d.ts type aliases weren't resolving correctl
 - Question 1 (PRE): Approach validation - use TypeGuard::Truthy, implement narrow_to_falsy
 - Question 2 (POST): Implementation review - found 3 critical issues, all fixed
 
-**Session Status**: 🟢 ALL TASKS COMPLETE
+**Session Status**: 🟡 PHASE 1 COMPLETE
+
+---
+
+## PHASE 2: Advanced Narrowing & Definite Assignment Analysis
+
+**Status**: 🔄 PENDING (Proposed by Gemini consultation)
+
+### Gemini Assessment (2026-02-04)
+
+Phase 1 has successfully completed the core infrastructure for narrowing. The Solver-First architecture is in place and the most common cases are handled (Discriminants, Truthiness, instanceof, in).
+
+However, to achieve the goal of matching `tsc` behavior exactly, additional narrowing features are needed.
+
+### Remaining Narrowing Features (The "Gaps")
+
+1. **User-Defined Type Guards (`is` predicates)**:
+   - Functions with `x is T` return types don't currently narrow in caller's scope
+   - Need to extract `TypePredicate` from function symbols and apply at call sites
+
+2. **Equality Narrowing**:
+   - `if (x === "foo")` or `if (x === y)` need special handling
+   - Requires identity narrowing between variables and literals
+
+3. **Assignment Narrowing**:
+   - `let x: string | number; x = "hello"; x;` should narrow to `string`
+   - CFA needs to track assignments and update flow types
+
+4. **Array.isArray Narrowing**:
+   - Special-casing the built-in `Array.isArray` call
+
+5. **Literal/Template Literal Narrowing**:
+   - Narrowing `string` to specific template literals
+
+### Proposed Phase 2 Tasks
+
+#### Task 5: User-Defined Type Guards (HIGH PRIORITY)
+
+**Goal**: Implement support for `x is T` and `asserts x is T` predicates.
+
+**Implementation**:
+- Recognize calls to functions with `TypePredicate` returns
+- Extract `TypeGuard::Predicate(TypeId)` from function symbol
+- Apply narrowing at call site in caller's scope
+
+**Why High Priority**: Essential for user-defined type guards, a common TypeScript pattern
+
+**Files to modify**:
+- `src/checker/control_flow.rs`: Extract type predicates from call expressions
+- `src/solver/narrowing.rs`: Add `TypeGuard::Predicate` variant
+- `src/binder/`: Track type predicate information
+
+#### Task 6: Equality & Identity Narrowing (HIGH PRIORITY)
+
+**Goal**: Handle `===` and `!==` between variables and literals.
+
+**Implementation**:
+- Extract identity guards from equality expressions
+- Handle `x === y` where both are variables (bidirectional narrowing)
+- Special handling for literal comparisons
+
+**Why High Priority**: Fundamental narrowing mechanism used extensively
+
+**Files to modify**:
+- `src/checker/control_flow_narrowing.rs`: Extract equality guards
+- `src/solver/narrowing.rs`: Add identity narrowing logic
+
+#### Task 7: Assignment Narrowing (MEDIUM PRIORITY)
+
+**Goal**: Update flow types on variable reassignment.
+
+**Implementation**:
+- Track assignments in CFA graph as flow nodes
+- Update current flow type based on assigned expression type
+- Handle block-scoped variables correctly
+
+**Why Medium Priority**: Important for completeness but more complex
+
+**Files to modify**:
+- `src/binder/`: Track assignments in flow graph
+- `src/checker/control_flow.rs`: Query assignment flow nodes
+
+#### Task 8: Definite Assignment Analysis (MEDIUM PRIORITY)
+
+**Goal**: Use CFA graph to detect "Variable used before being assigned" (TS2454).
+
+**Implementation**:
+- Analyze flow graph to detect uninitialized variable usage
+- Report definite assignment errors
+- Handle type guards that imply definite assignment
+
+**Why Medium Priority**: Important for type safety but can be added incrementally
+
+**Files to modify**:
+- `src/checker/`: Add definite assignment checker
+- `src/binder/`: Track initialization state
+
+### Coordination Notes
+
+**With tsz-1 (Core Solver)**:
+- tsz-1 works on core solver correctness
+- tsz-2 Phase 2 will continue working on narrowing features
+- Coordination: Ensure type predicates integrate correctly with solver
+
+**Avoid Conflicts**:
+- tsz-3 (CFA) - COMPLETE, no conflicts
+- tsz-4 (Declaration Emit) - COMPLETE, no conflicts
+- tsz-5 (Import/Export Elision) - ACTIVE, minimal overlap
+
+### Session History
+
+- 2026-02-04: Started as "Intersection Reduction and Advanced Type Operations"
+- 2026-02-04: COMPLETED BCT, Intersection Reduction, Literal Widening
+- 2026-02-04: COMPLETED Phase 1: Nominal Subtyping (all 4 tasks)
+- 2026-02-04: INVESTIGATED Cache Isolation Bug
+- 2026-02-04: COMPLETE Cache Isolation Bug investigation
+- 2026-02-04: REDEFINED to Lawyer-Layer Cache Partitioning & Type Cache Unification
+- 2026-02-04: COMPLETED Task 1-2: Cache Partitioning & CheckerState Refactoring
+- 2026-02-04: **REDEFINED** to Type Narrowing & Control Flow Analysis
+- 2026-02-04: **PHASE 1 COMPLETE** - Tasks 1-4: Discriminant, Solver::narrow, Integration, Truthiness
+- 2026-02-04: **PHASE 2 PROPOSED** - Advanced Narrowing & Definite Assignment Analysis
 
 ---
