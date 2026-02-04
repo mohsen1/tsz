@@ -236,6 +236,29 @@ impl TypeCache {
 
         affected.len()
     }
+
+    /// Merge another TypeCache into this one.
+    /// Used to accumulate type information from multiple file checks for declaration emit.
+    pub fn merge(&mut self, other: TypeCache) {
+        self.symbol_types.extend(other.symbol_types);
+        self.node_types.extend(other.node_types);
+        self.relation_cache.extend(other.relation_cache);
+
+        // Merge symbol dependencies sets
+        for (sym, deps) in other.symbol_dependencies {
+            self.symbol_dependencies
+                .entry(sym)
+                .or_default()
+                .extend(deps);
+        }
+
+        self.abstract_constructor_types
+            .extend(other.abstract_constructor_types);
+        self.protected_constructor_types
+            .extend(other.protected_constructor_types);
+        self.private_constructor_types
+            .extend(other.private_constructor_types);
+    }
 }
 
 /// Shared state for type checking.

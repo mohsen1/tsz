@@ -1582,6 +1582,7 @@ pub(crate) fn emit_outputs(
     out_dir: Option<&Path>,
     declaration_dir: Option<&Path>,
     dirty_paths: Option<&HashSet<PathBuf>>,
+    type_caches: &std::collections::HashMap<std::path::PathBuf, crate::checker::TypeCache>,
 ) -> Result<Vec<OutputFile>> {
     let mut outputs = Vec::new();
     let new_line = new_line_str(options.printer.new_line);
@@ -1646,7 +1647,16 @@ pub(crate) fn emit_outputs(
             if let Some(dts_path) =
                 declaration_output_path(base_dir, root_dir, decl_base, &input_path)
             {
-                let mut emitter = DeclarationEmitter::new(&file.arena);
+                // Get type cache for this file if available
+                let file_path = PathBuf::from(&file.file_name);
+                let type_cache = type_caches.get(&file_path).cloned();
+
+                // Create emitter with type information if available
+                let mut emitter = if let (Some(cache), _) = (type_cache, &program.type_interner) {
+                    DeclarationEmitter::with_type_info(&file.arena, cache, &program.type_interner)
+                } else {
+                    DeclarationEmitter::new(&file.arena)
+                };
                 let map_info = if options.declaration_map {
                     map_output_info(&dts_path)
                 } else {

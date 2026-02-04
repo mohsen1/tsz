@@ -815,6 +815,15 @@ fn compile_inner(
         effective_cache,
         &lib_contexts,
     );
+
+    // Get reference to type caches for declaration emit
+    // Create a longer-lived empty HashMap for the fallback case
+    let empty_type_caches = std::collections::HashMap::new();
+    let type_caches_ref: &std::collections::HashMap<_, _> = local_cache
+        .as_ref()
+        .map(|c| &c.type_caches)
+        .or_else(|| cache.as_ref().map(|c| &c.type_caches))
+        .unwrap_or(&empty_type_caches);
     // Add TS1490 diagnostics for binary files
     diagnostics.extend(binary_file_diagnostics);
     diagnostics.sort_by(|left, right| {
@@ -852,6 +861,7 @@ fn compile_inner(
             out_dir.as_deref(),
             declaration_dir.as_deref(),
             dirty_paths.as_ref(),
+            type_caches_ref,
         )?;
         write_outputs(&outputs)?
     };
