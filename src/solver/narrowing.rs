@@ -1651,7 +1651,7 @@ impl<'a> NarrowingContext<'a> {
                     None => {
                         // Truthiness assertion: asserts x
                         // Behaves like TypeGuard::Truthy (narrows to truthy in true branch)
-                        if asserts {
+                        if *asserts {
                             self.narrow_by_truthiness(source_type)
                         } else {
                             source_type
