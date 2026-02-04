@@ -213,13 +213,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return self.evaluate(substituted_true);
                 }
 
-                // Evaluate the result (could be a tail-recursive call)
-                let result_id = self.evaluate(cond.false_type);
-
-                // Check if result is a conditional - tail recurse if so
+                // Check if the result branch is directly a conditional for tail-recursion
+                // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
                 if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
                     if let Some(TypeKey::Conditional(next_cond_id)) =
-                        self.interner().lookup(result_id)
+                        self.interner().lookup(cond.false_type)
                     {
                         let next_cond = self.interner().conditional_type(next_cond_id);
                         current_cond = (*next_cond).clone();
@@ -228,7 +226,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
 
-                return result_id;
+                // Not a tail-recursive case - evaluate normally
+                return self.evaluate(cond.false_type);
             }
 
             // Subtype check path
@@ -242,12 +241,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 cond.false_type
             };
 
-            // Evaluate the result (could be a tail-recursive call)
-            let result_id = self.evaluate(result_branch);
-
-            // Check if result is a conditional - tail recurse if so
+            // Check if the result branch is directly a conditional for tail-recursion
+            // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
             if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                if let Some(TypeKey::Conditional(next_cond_id)) = self.interner().lookup(result_id)
+                if let Some(TypeKey::Conditional(next_cond_id)) =
+                    self.interner().lookup(result_branch)
                 {
                     let next_cond = self.interner().conditional_type(next_cond_id);
                     current_cond = (*next_cond).clone();
@@ -256,7 +254,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
 
-            return result_id;
+            // Not a tail-recursive case - evaluate normally
+            return self.evaluate(result_branch);
         }
     }
 
