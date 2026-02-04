@@ -704,6 +704,10 @@ Answer questions accurately based on the provided context. Reference specific fi
     generationConfig: {
       temperature: 0.2,
       maxOutputTokens: 8192,
+      // Enable thinking mode with high reasoning depth (Gemini 3 default)
+      thinkingConfig: {
+        thinkingLevel: 'HIGH',
+      },
     }
   };
 
