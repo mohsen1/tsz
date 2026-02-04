@@ -64,7 +64,16 @@ This suggests TS1005 is working correctly for most cases. The missing TS1005 ins
 
 **Issue**: Parser not detecting invalid class member syntax. The parser accepts `public const var export` as a valid class member when it should reject it.
 
-**Status**: Parser needs to validate class member modifiers more strictly. This is a separate issue from TS1136.
+**Status**: Parser needs to validate class member modifiers more strictly. This is separate from TS1136 and requires careful handling of `var`/`let`/`const` - these can be property names (valid) or modifiers (invalid).
+
+### Attempted Fix - REVERTED
+Added error emission for `let`/`var`/`export` as class member modifiers, but this broke the test `test_parser_class_member_named_var` which expects `class Foo { var() { return 1; } }` to parse without errors (valid TypeScript - `var` is a property name here, not a modifier).
+
+**Issue**: The parser needs to distinguish between:
+- `public var foo` - `var` is a modifier (invalid)
+- `var() {}` - `var` is a property name (valid)
+
+This requires look-ahead logic similar to what's already done for `const` (lines 2307-2320 of state_statements.rs). More complex than initially assessed.
 
 ### Unit Test Results
 - Ran 369 tests (quick profile)
