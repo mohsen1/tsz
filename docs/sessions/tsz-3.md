@@ -4,48 +4,56 @@
 **Status**: ACTIVE
 **Focus**: Control Flow Analysis - instanceof Type Narrowing
 
-## Previous Work Completed
+## Completed Work
 
 ✅ **Global Symbol Resolution (TS2304 Poisoning Fix)**
 - Fixed lib_contexts fallback in symbol resolver
 - Array globals now correctly report TS2339 for non-existent properties
 - Commit: `031b39fde`
 
+✅ **instanceof Narrowing Implementation**
+- Implemented `narrow_by_instanceof` method in `src/solver/narrowing.rs`
+- Uses `classify_for_instance_type` to extract instance type from constructor
+- Handles Callable, Function, Intersection, Union, Readonly, TypeParameter
+- Supports both positive and negative narrowing
+- Test `test_instanceof_narrows_to_object_union_members` passes
+- Commit: `bcfb9d6a9`
+
 ## Current Task: Implement instanceof Narrowing
 
 ### Problem Statement
-Currently, `instanceof` checks are parsed but ignored by the solver. Types are not narrowed in `if (x instanceof Class)` blocks, which means:
+**SOLVED**: `instanceof` checks were parsed but ignored by the solver. Types were not narrowed in `if (x instanceof Class)` blocks.
 
+### Solution Implemented
+Added `narrow_by_instanceof(&self, source_type: TypeId, constructor_type: TypeId, sense: bool) -> TypeId` to `NarrowingContext`:
+
+**Logic**:
+1. Extract instance type from constructor using `classify_for_instance_type`
+2. For positive checks (`x instanceof Class`): call `narrow_to_type(source, instance_type)`
+3. For negative checks (`!(x instanceof Class)`): call `narrow_excluding_type(source, instance_type)`
+
+**Example**:
 ```typescript
 class A { methodA() {} }
 class B { methodB() {} }
 function f(x: A | B) {
     if (x instanceof A) {
-        x.methodA(); // Should work but x is still A | B
-    } else {
-        x.methodB(); // Should work but x is still A | B
+        x.methodA(); // ✅ Works - x is narrowed to A
     }
 }
 ```
 
-### Implementation Plan
+### Key Files Modified
+- `src/solver/narrowing.rs` - Main implementation (lines 361-493)
+- `src/solver/type_queries_extended.rs` - Used `classify_for_instance_type`
 
-**File**: `src/solver/narrowing.rs`
-
-1. **Locate** the `TypeGuard::Instanceof` match arm in `narrow_type` (approx line 1250)
-2. **Implement** helper method `narrow_by_instanceof(&self, source: TypeId, constructor: TypeId, sense: bool) -> TypeId`
-3. **Logic**:
-   - Use `classify_for_instance_type` from `type_queries_extended.rs` to extract `instance_type` from constructor
-   - If `sense` is `true`: Call `narrow_to_type(source, instance_type)`
-   - If `sense` is `false`: Call `narrow_excluding_type(source, instance_type)`
-
-### Key Files
-- `src/solver/narrowing.rs` - Main implementation
-- `src/solver/type_queries_extended.rs` - `classify_for_instance_type` helper
-- `src/solver/tests/narrowing_tests.rs` - Tests
+### Next Steps
+Ask Gemini for the next task recommendation.
 
 ### Context
-**Previous Session**: Completed error formatting and module validation cleanup
+**Previous Sessions**:
+1. Completed error formatting and module validation cleanup
+2. Fixed TS2304 poisoning issue
 
 **Key Insight**: This is distinct from tsz-2's "Application Type Expansion" task. This work enables proper control flow analysis for class types.
 
