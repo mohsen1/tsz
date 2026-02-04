@@ -246,17 +246,32 @@ impl<'a> FlowAnalyzer<'a> {
             in_worklist.remove(&current_flow);
 
             // OPTIMIZATION: Check global cache first to avoid redundant traversals
-            if let Some(sym_id) = symbol_id {
-                if let Some(cache) = self.flow_cache {
-                    let key = (current_flow, sym_id, initial_type);
-                    if let Some(&cached_type) = cache.borrow().get(&key) {
-                        // Use cached result and skip processing this node
-                        results.insert(current_flow, cached_type);
-                        visited.insert(current_flow);
-                        continue;
+            // BUG FIX: Skip cache for SWITCH_CLAUSE nodes to ensure proper flow graph traversal
+            // Switch clauses must be processed to schedule antecedents and apply narrowing
+            let is_switch_clause = if let Some(flow) = self.binder.flow_nodes.get(current_flow) {
+                flow.has_any_flags(flow_flags::SWITCH_CLAUSE)
+            } else {
+                false
+            };
+
+            if !is_switch_clause {
+                if let Some(sym_id) = symbol_id {
+                    if let Some(cache) = self.flow_cache {
+                        let key = (current_flow, sym_id, initial_type);
+                        if let Some(&cached_type) = cache.borrow().get(&key) {
+                            // Use cached result and skip processing this node
+                            results.insert(current_flow, cached_type);
+                            visited.insert(current_flow);
+                            continue;
+                        }
                     }
                 }
             }
+
+            eprintln!(
+                "DEBUG check_flow: is_switch_clause={}, checking cache={}",
+                is_switch_clause, !is_switch_clause
+            );
 
             // Skip if we've already finalized this node
             if visited.contains(&current_flow) {
@@ -269,6 +284,13 @@ impl<'a> FlowAnalyzer<'a> {
                 visited.insert(current_flow);
                 continue;
             };
+
+            eprintln!(
+                "DEBUG check_flow: flow_node={}, flags={:#x}, has SWITCH_CLAUSE={}",
+                current_flow.0,
+                flow.flags,
+                flow.has_any_flags(flow_flags::SWITCH_CLAUSE)
+            );
 
             // Check if this is a merge point that needs all antecedents processed first
             let is_switch_fallthrough =
@@ -567,8 +589,14 @@ impl<'a> FlowAnalyzer<'a> {
         in_worklist: &mut FxHashSet<FlowNodeId>,
         visited: FxHashSet<FlowNodeId>,
     ) -> TypeId {
+        eprintln!(
+            "DEBUG handle_switch_clause_iterative: ENTERED - flow.node={}, reference={}",
+            flow.node.0, reference.0
+        );
+
         let clause_idx = flow.node;
         let Some(switch_idx) = self.binder.get_switch_for_clause(clause_idx) else {
+            eprintln!("DEBUG handle_switch_clause_iterative: no switch_idx");
             return current_type;
         };
         let Some(switch_node) = self.arena.get(switch_idx) else {
