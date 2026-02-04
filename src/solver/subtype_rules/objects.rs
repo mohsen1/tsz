@@ -103,6 +103,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let result = match s_prop {
                 Some(sp) => self.check_property_compatibility(sp, t_prop),
                 None => {
+                    // Private/Protected properties cannot be missing, even if optional
+                    if t_prop.visibility != Visibility::Public {
+                        return SubtypeResult::False;
+                    }
+
                     // Property missing - only OK if target property is optional
                     if t_prop.optional {
                         SubtypeResult::True
@@ -194,6 +199,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &PropertyInfo,
         target: &PropertyInfo,
     ) -> SubtypeResult {
+        // Rule: Private and Protected properties are nominal.
+        if target.visibility != Visibility::Public {
+            if source.parent_id != target.parent_id {
+                return SubtypeResult::False;
+            }
+        } else if source.visibility != Visibility::Public {
+            // Cannot assign private/protected source to public target
+            return SubtypeResult::False;
+        }
+
         // Check optional compatibility
         // Optional in source can't satisfy required in target
         if source.optional && !target.optional {
@@ -432,6 +447,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if let Some(sp) =
                 self.lookup_property(&source.properties, Some(source_shape_id), t_prop.name)
             {
+                // Visibility check (Nominal)
+                if t_prop.visibility != Visibility::Public {
+                    if sp.parent_id != t_prop.parent_id {
+                        return SubtypeResult::False;
+                    }
+                } else if sp.visibility != Visibility::Public {
+                    // Cannot assign private/protected source to public target
+                    return SubtypeResult::False;
+                }
+
                 // Check optional compatibility
                 if sp.optional && !t_prop.optional {
                     return SubtypeResult::False;
@@ -485,6 +510,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &ObjectShape,
         target_prop: &PropertyInfo,
     ) -> SubtypeResult {
+        // Private/Protected properties cannot be satisfied by index signatures.
+        // They must be explicitly present in the source and match nominally.
+        if target_prop.visibility != Visibility::Public {
+            return SubtypeResult::False;
+        }
+
         // Check if property name matches index signatures
         // Numeric property names can match number index signatures
         // All property names can match string index signatures (numbers convert to strings)
