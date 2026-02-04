@@ -496,7 +496,10 @@ impl<'a> CheckerState<'a> {
                     if let Some(TypeKey::Lazy(_)) = self.ctx.types.lookup(resolved) {
                         self.evaluate_type_with_resolution(resolved)
                     } else {
-                        resolved
+                        // Further evaluate compound types (IndexAccess, KeyOf, Mapped, etc.)
+                        // that need reduction. E.g., type NameType = Person["name"] resolves
+                        // to IndexAccess(Person, "name") which must be evaluated to "string".
+                        self.evaluate_type_for_assignability(resolved)
                     }
                 } else {
                     type_id

@@ -118,6 +118,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // Type operator (readonly, unique, keyof)
             k if k == syntax_kind_ext::TYPE_OPERATOR => self.get_type_from_type_operator(idx),
 
+            // Indexed access type (T[K], Person["name"])
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                self.get_type_from_indexed_access_type(idx)
+            }
+
             // Function type (e.g., () => number, (x: string) => void)
             k if k == syntax_kind_ext::FUNCTION_TYPE => self.get_type_from_function_type(idx),
 
@@ -460,6 +465,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Unknown operator - return inner type
             inner_type
+        } else {
+            TypeId::ERROR
+        }
+    }
+
+    // =========================================================================
+    // Indexed Access Types
+    // =========================================================================
+
+    /// Handle indexed access type nodes (e.g., `Person["name"]`, `T[K]`).
+    fn get_type_from_indexed_access_type(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+
+        if let Some(indexed_access) = self.ctx.arena.get_indexed_access_type(node) {
+            let object_type = self.check(indexed_access.object_type);
+            let index_type = self.check(indexed_access.index_type);
+            self.ctx
+                .types
+                .intern(crate::solver::TypeKey::IndexAccess(object_type, index_type))
         } else {
             TypeId::ERROR
         }
