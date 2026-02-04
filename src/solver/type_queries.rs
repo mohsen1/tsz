@@ -725,6 +725,19 @@ pub fn get_lazy_def_id(
     }
 }
 
+/// Get the DefId from an Enum type.
+///
+/// Returns None if the type is not an Enum type.
+pub fn get_enum_def_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::solver::def::DefId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Enum(def_id, _)) => Some(def_id),
+        _ => None,
+    }
+}
+
 /// Get the SymbolRef from a Lazy type by converting DefId to SymbolId.
 ///
 /// This is a compatibility helper for code that expects SymbolRef from type references.

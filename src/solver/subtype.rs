@@ -1296,15 +1296,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // assignability with the number type. This is unsound but matches tsc behavior.
         // See docs/specs/TS_UNSOUNDNESS_CATALOG.md Item #7.
 
+        // Helper to extract DefId from Enum or Lazy types
+        let get_enum_def_id = |type_id: TypeId| -> Option<DefId> {
+            match self.interner.lookup(type_id) {
+                Some(TypeKey::Enum(def_id, _)) => Some(def_id),
+                Some(TypeKey::Lazy(def_id)) => Some(def_id),
+                _ => None,
+            }
+        };
+
         // Check: source is numeric enum, target is Number
-        if let Some(s_def) = lazy_def_id(self.interner, source) {
+        if let Some(s_def) = get_enum_def_id(source) {
             if target == TypeId::NUMBER && self.resolver.is_numeric_enum(s_def) {
                 return SubtypeResult::True;
             }
         }
 
         // Check: source is Number, target is numeric enum
-        if let Some(t_def) = lazy_def_id(self.interner, target) {
+        if let Some(t_def) = get_enum_def_id(target) {
             if source == TypeId::NUMBER && self.resolver.is_numeric_enum(t_def) {
                 return SubtypeResult::True;
             }

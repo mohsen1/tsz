@@ -1143,12 +1143,17 @@ impl<'a> CheckerContext<'a> {
     pub fn resolve_type_to_symbol_id(&self, type_id: TypeId) -> Option<SymbolId> {
         use crate::solver::type_queries;
 
-        // 1. Try to get DefId (Lazy type) - Phase 4.2+
+        // 1. Try to get DefId from Lazy type - Phase 4.2+
         if let Some(def_id) = type_queries::get_lazy_def_id(self.types, type_id) {
             return self.def_to_symbol_id(def_id);
         }
 
-        // 2. Fallback for legacy Ref types (if any remain during migration)
+        // 2. Try to get DefId from Enum type
+        if let Some(def_id) = type_queries::get_enum_def_id(self.types, type_id) {
+            return self.def_to_symbol_id(def_id);
+        }
+
+        // 3. Fallback for legacy Ref types (if any remain during migration)
         #[allow(deprecated)]
         if let Some(sym_ref) = type_queries::get_symbol_ref(self.types, type_id) {
             return Some(SymbolId(sym_ref.0));
