@@ -76,11 +76,21 @@ This leads to "type not assignable" errors when the result is passed to function
 
 ---
 
+## Implementation Progress
+
+- ✅ **Step 1 Complete**: Added `get_base_type` to TypeResolver trait (src/solver/subtype.rs:197)
+- ✅ **Step 2 Complete**: Implemented `get_base_type` in CheckerContext (src/checker/context.rs:1772)
+- ✅ **Step 3 Complete**: Updated InferenceContext to hold resolver reference (src/solver/infer.rs:303-327)
+- ✅ **Step 4 Complete**: Implemented `get_class_hierarchy` using TypeResolver (src/solver/infer.rs:1423-1431)
+- ✅ **Fixed merge conflicts** in narrowing.rs
+
 ## Next Steps
 
 1. ✅ Session redefined with this plan
 2. ✅ Gemini Question 1 COMPLETE - got architectural guidance
-3. ⏸️ Implement following Question 1 guidance:
+3. ✅ Implement following Question 1 guidance (COMPLETE)
+4. ⏸️ **Pending**: Test the BCT implementation with conformance tests
+5. ⏸️ **Pending**: Ask Gemini Question 2 (Implementation Review)
 
 ### Key Architectural Decision (from Gemini Pro):
 

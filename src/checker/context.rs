@@ -1753,4 +1753,57 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
         // Phase 4.2.1: Look up type parameters for type aliases
         self.get_def_type_params(def_id)
     }
+
+    /// Get the base class type for a class/interface type.
+    ///
+    /// This implements the TypeResolver trait method for Best Common Type (BCT) algorithm.
+    /// For example, given Dog that extends Animal, this returns the type for Animal.
+    ///
+    /// **Architecture**: Bridges Solver (BCT computation) to Binder (extends clauses) via:
+    /// 1. TypeId -> DefId (from Lazy type)
+    /// 2. DefId -> SymbolId (via def_to_symbol mapping)
+    /// 3. SymbolId -> Parent SymbolId (via InheritanceGraph)
+    /// 4. Parent SymbolId -> TypeId (via symbol_types cache)
+    ///
+    /// Returns None if:
+    /// - The type is not a Lazy type (not a class/interface)
+    /// - The DefId has no corresponding SymbolId
+    /// - The class has no base class (no parents in InheritanceGraph)
+    fn get_base_type(
+        &self,
+        type_id: crate::solver::TypeId,
+        _interner: &dyn crate::solver::TypeDatabase,
+    ) -> Option<crate::solver::TypeId> {
+        use crate::binder::symbol_flags;
+        use crate::solver::type_queries;
+
+        // 1. Get DefId from TypeId (must be a Lazy type)
+        let def_id = type_queries::get_lazy_def_id(self.types, type_id)?;
+
+        // 2. Convert DefId to SymbolId
+        let sym_id = self.def_to_symbol_id(def_id)?;
+
+        // 3. Verify this is a class (not an interface - interfaces don't have base classes)
+        let symbol = self.binder.symbols.get(sym_id)?;
+        if (symbol.flags & symbol_flags::CLASS) == 0 {
+            return None;
+        }
+
+        // 4. Get parents from InheritanceGraph (populated during class binding)
+        let parents = self.inheritance_graph.get_parents(sym_id);
+
+        // 5. Return the first parent's type (the immediate base class)
+        // For classes, there's at most one extends clause (unlike interfaces which can extend multiple)
+        if let Some(parent_sym_id) = parents.first() {
+            // Look up the cached type for the parent symbol
+            // For classes, we need the instance type, not constructor type
+            if let Some(instance_type) = self.symbol_instance_types.get(parent_sym_id) {
+                return Some(*instance_type);
+            }
+            // Fallback to symbol_types (constructor type) if instance type not available
+            self.symbol_types.get(parent_sym_id).copied()
+        } else {
+            None
+        }
+    }
 }

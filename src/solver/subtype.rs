@@ -194,6 +194,18 @@ pub trait TypeResolver {
     fn is_numeric_enum(&self, _def_id: DefId) -> bool {
         false
     }
+
+    /// Get the base class type for a class/interface type.
+    ///
+    /// This is used by the Best Common Type (BCT) algorithm to find common base classes.
+    /// For example, given Dog and Cat that both extend Animal, this returns Animal.
+    ///
+    /// Returns None if the type doesn't have a base class (e.g., interfaces don't extend classes).
+    ///
+    /// **Architecture**: This bridges the Solver (which computes BCT) to the Binder (which stores extends clauses).
+    fn get_base_type(&self, _type_id: TypeId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
 }
 
 /// A no-op resolver that doesn't resolve any references.

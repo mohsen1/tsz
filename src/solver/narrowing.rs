@@ -662,27 +662,22 @@ impl<'a> NarrowingContext<'a> {
         }
 
         if source_type == TypeId::UNKNOWN {
-            // For unknown, narrow to object & { prop: unknown } in the true branch
-            // This matches TypeScript's behavior where "prop" in x narrows x to have that property
-            if present {
-                // Create an object type with the property
-                let prop = PropertyInfo {
-                    name: property_name,
-                    type_id: TypeId::UNKNOWN,
-                    write_type: TypeId::UNKNOWN,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                };
-                let narrowed_object = self.interner.object(vec![prop]);
-                // Return intersection: object & { prop: unknown }
-                return self.interner.intersection2(TypeId::OBJECT, narrowed_object);
-            } else {
-                // False branch: property is not present, which is impossible for unknown
-                // since unknown could have any property. Return NEVER.
-                trace!("UNKNOWN in false branch for in operator, returning NEVER");
-                return TypeId::NEVER;
-            }
+            // For unknown, narrow to object & { [prop]: unknown }
+            // This matches TypeScript's behavior where `in` check on unknown
+            // narrows to object type with the property
+            let prop_type = TypeId::UNKNOWN;
+            let required_prop = PropertyInfo {
+                name: property_name,
+                type_id: prop_type,
+                write_type: prop_type,
+                optional: false, // Property becomes required after `in` check
+                readonly: false,
+                is_method: false,
+            };
+            let filter_obj = self.interner.object(vec![required_prop]);
+            let narrowed = self.interner.intersection2(TypeId::OBJECT, filter_obj);
+            trace!("Narrowing unknown to object & property = {}", narrowed.0);
+            return narrowed;
         }
 
         // If source is a union, filter members based on property presence

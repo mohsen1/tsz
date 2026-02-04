@@ -302,6 +302,8 @@ pub const MAX_TYPE_RECURSION_DEPTH: usize = 100;
 /// Type inference context for a single function call or expression.
 pub struct InferenceContext<'a> {
     interner: &'a dyn TypeDatabase,
+    /// Type resolver for semantic lookups (e.g., base class queries)
+    resolver: Option<&'a dyn crate::solver::TypeResolver>,
     /// Unification table for inference variables
     table: InPlaceUnificationTable<InferenceVar>,
     /// Map from type parameter names to inference variables, with const flag
@@ -312,6 +314,19 @@ impl<'a> InferenceContext<'a> {
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         InferenceContext {
             interner,
+            resolver: None,
+            table: InPlaceUnificationTable::new(),
+            type_params: Vec::new(),
+        }
+    }
+
+    pub fn with_resolver(
+        interner: &'a dyn TypeDatabase,
+        resolver: &'a dyn crate::solver::TypeResolver,
+    ) -> Self {
+        InferenceContext {
+            interner,
+            resolver: Some(resolver),
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
         }
@@ -1397,18 +1412,16 @@ impl<'a> InferenceContext<'a> {
         }
     }
 
-    /// Get the extends clause for a class/interface type.
+    /// Get the extends clause (base class) for a class/interface type.
+    ///
+    /// This uses the TypeResolver to bridge to the Binder's extends clause information.
+    /// For example, given Dog that extends Animal, this returns the Animal type.
     fn get_extends_clause(&self, ty: TypeId) -> Option<TypeId> {
-        // This would need to look at the actual AST or type structure
-        // For now, we'll implement a simplified version that handles common cases
-        // A full implementation would require access to the symbol table
-
-        // Check if this is a Lazy type (class/interface reference)
-        if let Some(TypeKey::Lazy(_)) = self.interner.lookup(ty) {
-            // For Lazy types, we'd need to look up the symbol and check its extends clause
-            // This is a placeholder - the full implementation requires more context
-            None
+        // If we have a resolver, use it to get the base type
+        if let Some(resolver) = self.resolver {
+            resolver.get_base_type(ty, self.interner)
         } else {
+            // No resolver available - can't determine base class
             None
         }
     }
