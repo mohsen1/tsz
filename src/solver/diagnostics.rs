@@ -203,6 +203,14 @@ pub enum SubtypeFailureReason {
     OptionalPropertyRequired { property_name: Atom },
     /// Readonly property cannot satisfy mutable property.
     ReadonlyPropertyMismatch { property_name: Atom },
+    /// Property visibility mismatch (private/protected vs public).
+    PropertyVisibilityMismatch {
+        property_name: Atom,
+        source_visibility: Visibility,
+        target_visibility: Visibility,
+    },
+    /// Property nominal mismatch (separate declarations of private/protected property).
+    PropertyNominalMismatch { property_name: Atom },
     /// Return types are incompatible.
     ReturnTypeMismatch {
         source_return: TypeId,
@@ -486,6 +494,12 @@ pub mod codes {
     /// Cannot assign to '{0}' because it is a read-only property.
     pub const READONLY_PROPERTY: u32 = 2540;
 
+    /// Property '{0}' is private in type '{1}' but not in type '{2}'.
+    pub const PROPERTY_VISIBILITY_MISMATCH: u32 = 2341;
+
+    /// Types have separate declarations of a private property '{0}'.
+    pub const PROPERTY_NOMINAL_MISMATCH: u32 = 2446;
+
     /// Type '{0}' is not assignable to type '{1}'.
     /// '{2}' is assignable to the constraint of type '{3}', but '{3}' could be instantiated with a different subtype.
     pub const CONSTRAINT_NOT_SATISFIED: u32 = 2344;
@@ -567,6 +581,12 @@ pub fn get_message_template(code: u32) -> &'static str {
         codes::PROPERTY_NOT_EXIST => "Property '{0}' does not exist on type '{1}'.",
         codes::NO_COMMON_PROPERTIES => "Type '{0}' has no properties in common with type '{1}'.",
         codes::READONLY_PROPERTY => "Cannot assign to '{0}' because it is a read-only property.",
+        codes::PROPERTY_VISIBILITY_MISMATCH => {
+            "Property '{0}' is private in type '{1}' but not in type '{2}'."
+        }
+        codes::PROPERTY_NOMINAL_MISMATCH => {
+            "Types have separate declarations of a private property '{0}'."
+        }
         codes::CONSTRAINT_NOT_SATISFIED => {
             "Type '{0}' is not assignable to type '{1}'. '{2}' is assignable to the constraint of type '{3}', but '{3}' could be instantiated with a different subtype."
         }
@@ -978,6 +998,38 @@ impl SubtypeFailureReason {
                 )
                 .with_related(PendingDiagnostic::error(
                     codes::READONLY_PROPERTY,
+                    vec![(*property_name).into()],
+                ))
+            }
+
+            SubtypeFailureReason::PropertyVisibilityMismatch {
+                property_name,
+                source_visibility,
+                target_visibility,
+            } => {
+                // TS2341/TS2445: Property 'x' is private in type 'A' but not in type 'B'
+                PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                )
+                .with_related(PendingDiagnostic::error(
+                    codes::PROPERTY_VISIBILITY_MISMATCH,
+                    vec![
+                        (*property_name).into(),
+                        format!("{:?}", source_visibility).into(),
+                        format!("{:?}", target_visibility).into(),
+                    ],
+                ))
+            }
+
+            SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
+                // TS2446: Types have separate declarations of a private property 'x'
+                PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                )
+                .with_related(PendingDiagnostic::error(
+                    codes::PROPERTY_NOMINAL_MISMATCH,
                     vec![(*property_name).into()],
                 ))
             }
