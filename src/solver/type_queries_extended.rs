@@ -55,6 +55,8 @@ pub fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralT
         TypeKey::Literal(crate::solver::LiteralValue::Boolean(value)) => {
             LiteralTypeKind::Boolean(value)
         }
+        // FIX: Recurse into Enum member type to unwrap the underlying literal
+        TypeKey::Enum(_def_id, member_type) => classify_literal_type(db, member_type),
         _ => LiteralTypeKind::NotLiteral,
     }
 }
@@ -610,6 +612,8 @@ pub fn classify_for_string_literal_keys(
             let members = db.type_list(list_id);
             StringLiteralKeyKind::Union(members.to_vec())
         }
+        // FIX: Recurse into Enum member type to unwrap the underlying literal
+        TypeKey::Enum(_def_id, member_type) => classify_for_string_literal_keys(db, member_type),
         _ => StringLiteralKeyKind::NotStringLiteral,
     }
 }
@@ -622,6 +626,8 @@ pub fn get_string_literal_value(
 ) -> Option<crate::interner::Atom> {
     match db.lookup(type_id) {
         Some(TypeKey::Literal(crate::solver::types::LiteralValue::String(name))) => Some(name),
+        // FIX: Recurse into Enum member type to unwrap the underlying literal
+        Some(TypeKey::Enum(_def_id, member_type)) => get_string_literal_value(db, member_type),
         _ => None,
     }
 }
@@ -1026,6 +1032,8 @@ pub fn classify_literal_key(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKe
         Some(TypeKey::Union(members_id)) => {
             LiteralKeyKind::Union(db.type_list(members_id).to_vec())
         }
+        // FIX: Recurse into Enum member type to unwrap the underlying literal
+        Some(TypeKey::Enum(_def_id, member_type)) => classify_literal_key(db, member_type),
         _ => LiteralKeyKind::Other,
     }
 }
@@ -1037,6 +1045,8 @@ pub fn get_literal_value(
 ) -> Option<crate::solver::LiteralValue> {
     match db.lookup(type_id) {
         Some(TypeKey::Literal(value)) => Some(value),
+        // FIX: Recurse into Enum member type to unwrap the underlying literal
+        Some(TypeKey::Enum(_def_id, member_type)) => get_literal_value(db, member_type),
         _ => None,
     }
 }
