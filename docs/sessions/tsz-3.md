@@ -1,105 +1,67 @@
-# Session tsz-3 - Array & Tuple Type Inference
+# Session tsz-3 - Error Formatting & Module Validation Cleanup
 
 **Started**: 2026-02-04
-**Status**: COMPLETE - Investigation Done, Issue Documented
-**Goal**: Improve array and tuple type inference to match TypeScript behavior
+**Status**: ACTIVE
+**Focus**: Fix class instance type formatting and consolidate module validation
 
-## Problem Statement
+## Goal
 
-Array and tuple type inference is fundamental to TypeScript conformance. Correctly distinguishing between `string[]` and `[string, number]` based on context, handling spreads, and computing "Best Common Type" for array elements are high-frequency operations that affect many tests.
+Improve diagnostic readability and clean up technical debt by:
+1. Fixing class instance type formatting in error messages
+2. Consolidating duplicate module validation logic
 
-## Scope
+## Task 1: Fix Class Instance Type Formatting
 
-### 1. Contextual Tuple Inference
-- Ensure array literals infer as Tuples when the contextual type is a Tuple
-- Files: `src/checker/array_literals.rs`, `src/checker/type_computation.rs`
-- Example: `let x: [number, number] = [1, 2]` should infer as tuple, not array
+### Problem
+Class instances are being printed as structural object literals (listing all properties including `toString`, `hasOwnProperty`, etc.) instead of the class name.
 
-### 2. Best Common Type
-- Verify `compute_best_common_type` correctly handles unions and subtypes
-- Example: `let x = [1, "a"]` should infer `(string | number)[]`
-- Example: `let x = [1, null]` should infer `(number | null)[]` (with strictNullChecks)
-
-### 3. Spread Handling
-- Validate spread elements in array literals correctly flatten types
-- Example: `[...string[]]` should result in `string[]`
-- Example: `[...[number, boolean]]` should result in `(number | boolean)[]` or preserve tuple structure
-
-### 4. Readonly/Const
-- Ensure `as const` infers `readonly` tuples/arrays
-- Ensure readonly contexts infer correct types
-
-## Test Cases
-
-```typescript
-// Contextual tuple inference
-let x: [number, number] = [1, 2]; // Should be tuple, not array
-let y: [number, string] = [1, "a"]; // Should work
-
-// Best common type
-let a = [1, "a"]; // Should be (string | number)[]
-let b = [1, null]; // Should be (number | null)[] with strictNullChecks
-
-// Spread
-let arr: string[] = ["a", "b"];
-let spread1 = [...arr]; // Should be string[]
-let spread2 = [...[1, true]]; // Should be (number | boolean)[]
+**Example**:
+```
+Current:  error: '{ isPrototypeOf: { ... }; propertyIsEnumerable: { ... }; name: string }'
+Expected: error: 'Giraffe'
 ```
 
-## Files to Focus On
+### Location
+- `src/solver/format.rs` - TypeFormatter implementation
 
-- `src/checker/array_literals.rs` - Core array literal type checking
-- `src/checker/type_computation.rs` - `get_type_of_array_literal`
-- `src/checker/tuple_type.rs` - Tuple type utilities
-- `src/checker/spread.rs` - Spread expression handling
+### Action
+Modify `TypeFormatter` to prioritize class names:
+1. When formatting a type, check if it corresponds to a class instance (via `DefId` or `SymbolId`)
+2. If it's a class instance with a `symbol` set, print the class name
+3. Ensure this doesn't break mixin pattern formatting where structural details are relevant
 
-## Progress
+### Files
+- `src/solver/format.rs` - Main implementation
+- `src/checker/class_type.rs` - Where class instance types are created (sets `symbol` field)
+- `TypeScript/tests/cases/compiler/arrayLiteralContextualType.ts` - Test case
 
-### Investigation Results
+## Task 2: Consolidate Module Validation
 
-**Tested Cases:**
-- ✅ Basic array inference: `const nums = [1, 2, 3]` → `number[]`
-- ✅ Best common type: `const mixed = [1, "a"]` → `(string | number)[]`
-- ✅ Contextual tuple: `const t1: [number, string] = [1, "a"]`
-- ✅ Tuple destructuring: `const [x, y] = [1, "a"]`
-- ✅ Array literal with context: All working correctly
+### Problem
+`src/checker/module_validation.rs` is disabled (`// mod module_validation`) due to API mismatches, but contains validation logic that overlaps with `src/checker/import_checker.rs`.
 
-**Bug Found: Class Instance Type Formatting**
+### Action
+1. Compare `module_validation.rs` with `import_checker.rs`
+2. Migrate any unique/better validation logic (e.g., specific error codes for TS2305/TS2307)
+3. Delete `src/checker/module_validation.rs`
+4. Remove the commented-out line in `src/checker/mod.rs`
 
-**File**: `TypeScript/tests/cases/compiler/arrayLiteralContextualType.ts`
+### Files
+- `src/checker/module_validation.rs` - Stale file to delete
+- `src/checker/import_checker.rs` - Active implementation
+- `src/checker/mod.rs` - Remove commented module reference
 
-**Issue**: tsz reports errors but tsc passes:
-```
-tsz: error TS2345: Argument of type '{ isPrototypeOf: { (v: Infinity): boolean }; ... }'
-tsc: (no errors)
-```
+## Context from Previous Session
 
-**Root Cause**: Class instance types include Object.prototype methods in their expanded form:
-- The type shows `isPrototypeOf`, `propertyIsEnumerable`, `toLocaleString`, `toString`, `valueOf`
-- These methods should not be visible in the type representation
-- The issue is in how class instance types are created/formatted, not array/tuple inference
+Previous investigation found:
+- Array/tuple inference working correctly
+- Class instance types include Object.prototype members in their structure
+- Attempted fix (removing Object members) broke mixin patterns
+- **Correct approach**: Fix formatting/display, not type structure
 
-**Impact**: This is a type formatting/display issue that affects many class-related type errors, not specific to arrays/tuples.
+## Success Criteria
 
-**Investigation Deeper**: Attempted to fix by removing Object member merging in `src/checker/class_type.rs` (lines 848-869).
-
-**Result**: Fix reverted - broke abstract mixin pattern test (`test_abstract_mixin_intersection_ts2339`).
-
-**Root Cause**: Object members are needed for internal type operations (intersection types, mixin patterns). Removing them breaks legitimate type system features.
-
-**Correct Fix**: The issue is in type **display/formatting**, not type structure. The TypeFormatter should filter out common Object prototype methods when displaying types in error messages, similar to how tsc suppresses these. The TypeFormatter is in `src/solver/format.rs`.
-
-**Status**: Class instance type formatting issue identified and understood, but fix requires careful implementation to avoid breaking existing functionality.
-
-## Conclusion
-
-Array and tuple inference is working correctly. The class instance type formatting issue is real but complex to fix without breaking other features. This is a display/formatting problem, not a type correctness problem.
-
-## Session Coordination
-
-- **tsz-1**: Parser TS1005 errors (and CFA in tsz-4)
-- **tsz-2**: Module resolution
-- **tsz-3**: Array & Tuple inference (ACTIVE)
-- **tsz-4**: Control Flow Analysis (taken by tsz-1)
-
-No conflicts with active sessions.
+- Error messages show class names instead of expanded object literals
+- `arrayLiteralContextualType.ts` test passes with clean error messages
+- Module validation consolidated, no duplicate code
+- All existing tests still pass
