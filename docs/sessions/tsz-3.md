@@ -1,7 +1,7 @@
 # Session tsz-3: CFA - Loop Narrowing & Cache Validation
 
 **Started**: 2026-02-04
-**Status**: ACTIVE (Phase 1 COMPLETE ✅, Phase 2 IN PROGRESS)
+**Status**: ACTIVE (Phase 1 COMPLETE ✅, Phase 2 Task 6 COMPLETE ✅, Task 7 IN PROGRESS)
 **Focus**: Return to CFA orchestration now that Type Environment unification is complete
 
 ## Context
@@ -164,9 +164,25 @@ type_env: Rc::new(RefCell::new(TypeEnvironment::new()))
 **Test**: Create test with `type Action = { type: "add" } | { type: "remove" }`
 **Goal**: Confirm fall-through narrowing works for type aliases
 
-#### Task 6: Complete Loop Narrowing
-**Goal**: Implement narrowing propagation for while/for loops
-**Benefit**: Now that Lazy types work, can test with complex type aliases
+#### Task 6: Complete Loop Narrowing ✅ COMPLETE
+
+**Implementation** (Commit d674ad0ed):
+Implemented conservative loop widening strategy recommended by Gemini Pro.
+
+**Changes**:
+1. Updated `is_merge_point` logic: LOOP_LABEL only requires first antecedent (entry flow) to be ready before processing
+2. Implemented conservative loop widening in LOOP_LABEL case:
+   - For const variables: preserve entry narrowing (constants can't be reassigned)
+   - For mutable variables: widen to `EntryType | InitialType` (accounts for potential mutations in loop body)
+3. Added `is_const_symbol` helper method to check if a symbol is const vs let/var
+
+**Why Conservative Widening?**
+- Back-edge analysis in loops is complex: mutations inside the loop body flow back to the loop header
+- Single-pass backward walk cannot safely handle this circularity
+- TypeScript's behavior: mutations in loops reset narrowing to declared type for mutable variables
+- Const variables preserve narrowing since they cannot be reassigned
+
+**Validation**: All 74 control_flow_tests pass, including `test_loop_label_unions_back_edge_types`
 
 #### Task 7: CFA Cache Validation
 **Goal**: Ensure flow cache is correctly updated during complex CFA traversal
