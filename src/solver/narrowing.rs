@@ -1623,10 +1623,39 @@ impl<'a> NarrowingContext<'a> {
         self.narrow_excluding_type(source_type, excluded)
     }
 
-    /// Narrow a type by removing null and undefined (truthiness check).
+    /// Check if a type is definitely falsy.
     ///
-    /// Note: TypeScript only removes null and undefined in truthiness checks,
-    /// not other falsy values like false, 0, or "". This matches tsc behavior.
+    /// Returns true for: null, undefined, void, false, 0, -0, NaN, "", 0n
+    fn is_definitely_falsy(&self, type_id: TypeId) -> bool {
+        let resolved = self.resolve_type(type_id);
+
+        // 1. Check intrinsics that are always falsy
+        if matches!(resolved, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID) {
+            return true;
+        }
+
+        // 2. Check literals
+        if let Some(lit) = literal_value(self.db, resolved) {
+            return match lit {
+                LiteralValue::Boolean(false) => true,
+                LiteralValue::Number(n) => n.0 == 0.0 || n.0.is_nan(), // Handles 0, -0, and NaN
+                LiteralValue::String(atom) => self.db.resolve_atom_ref(atom).is_empty(), // Handles ""
+                LiteralValue::BigInt(atom) => self.db.resolve_atom_ref(atom).as_ref() == "0", // Handles 0n
+                _ => false,
+            };
+        }
+
+        false
+    }
+
+    /// Narrow a type by removing definitely falsy values (truthiness check).
+    ///
+    /// This matches TypeScript's behavior where `if (x)` narrows out:
+    /// - null, undefined, void
+    /// - false (boolean literal)
+    /// - 0, -0, NaN (number literals)
+    /// - "" (empty string)
+    /// - 0n (bigint literal)
     fn narrow_by_truthiness(&self, source_type: TypeId) -> TypeId {
         let _span = span!(
             Level::TRACE,
@@ -1635,13 +1664,84 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        let mut result = source_type;
+        // Handle special cases
+        if source_type == TypeId::ANY || source_type == TypeId::UNKNOWN {
+            return source_type;
+        }
 
-        // Remove nullish types only (TypeScript doesn't narrow other falsy literals)
-        result = self.narrow_excluding_type(result, TypeId::NULL);
-        result = self.narrow_excluding_type(result, TypeId::UNDEFINED);
+        let resolved = self.resolve_type(source_type);
 
-        result
+        // Handle Intersections (recursive)
+        // CRITICAL: If ANY part of intersection is falsy, the WHOLE intersection is falsy
+        if let Some(members_id) = intersection_list_id(self.db, resolved) {
+            let members = self.db.type_list(members_id);
+            let mut narrowed_members = Vec::with_capacity(members.len());
+
+            for &m in members.iter() {
+                let narrowed = self.narrow_by_truthiness(m);
+                // If any part is NEVER, the whole intersection is impossible
+                if narrowed == TypeId::NEVER {
+                    return TypeId::NEVER;
+                }
+                narrowed_members.push(narrowed);
+            }
+
+            if narrowed_members.len() == 1 {
+                return narrowed_members[0];
+            } else {
+                return self.db.intersection(narrowed_members);
+            }
+        }
+
+        // Handle Unions (filter out falsy members)
+        if let Some(members_id) = union_list_id(self.db, resolved) {
+            let members = self.db.type_list(members_id);
+            let remaining: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let narrowed = self.narrow_by_truthiness(m);
+                    if narrowed == TypeId::NEVER {
+                        None
+                    } else {
+                        Some(narrowed)
+                    }
+                })
+                .collect();
+
+            if remaining.is_empty() {
+                return TypeId::NEVER;
+            } else if remaining.len() == 1 {
+                return remaining[0];
+            } else {
+                return self.db.union(remaining);
+            }
+        }
+
+        // Base Case: Check if definitely falsy
+        if self.is_definitely_falsy(source_type) {
+            return TypeId::NEVER;
+        }
+
+        // Handle boolean -> true (TypeScript narrows boolean in truthy checks)
+        if resolved == TypeId::BOOLEAN {
+            return TypeId::BOOLEAN_TRUE;
+        }
+
+        // Handle Type Parameters (check constraint)
+        if let Some(info) = type_param_info(self.db, resolved) {
+            if let Some(constraint) = info.constraint {
+                let narrowed_constraint = self.narrow_by_truthiness(constraint);
+                if narrowed_constraint == TypeId::NEVER {
+                    return TypeId::NEVER;
+                }
+                // If constraint narrowed, intersect source with it
+                if narrowed_constraint != constraint {
+                    return self.db.intersection2(source_type, narrowed_constraint);
+                }
+            }
+        }
+
+        source_type
     }
 }
 
