@@ -10,7 +10,35 @@ Work is never done until all tests pass. This includes:
 
 ## Current Work
 
-**SESSION COMPLETED**: Major conformance improvements delivered ✅
+**SESSION IN PROGRESS**: Investigating abstract class constructor type issue
+
+### Investigation Status
+
+**Issue**: When abstract class `Animal` is used as a value (e.g., `createAnimal(Animal)`), its type shows Object prototype properties instead of the constructor type.
+
+Error: `Type '{ isPrototypeOf: ..., speak: { (): void }, ... }' is not assignable to type 'Animal'.`
+
+**Root Cause Identified**:
+- The type environment was caching instance type for class symbols
+- Even after fixing to cache constructor type, the issue persists
+- Previous fix attempt in tsz-3 was reverted because it didn't work
+
+**Current Understanding**:
+1. `get_class_constructor_type` correctly creates a Callable type with construct signatures
+2. `get_type_of_symbol` for CLASS symbols returns this constructor type
+3. However, somewhere in the type resolution path, the Object prototype type is being returned
+4. The error message shows target type as `Animal` (instance) instead of `typeof Animal` (constructor)
+
+**Status**: BLOCKED - Requires deeper investigation into:
+- How `typeof Class` is resolved in different contexts
+- Interaction between type environment caching and symbol resolution
+- Whether there's a different cache/mechanism being used
+
+### Known Failing Tests
+1. `test_abstract_constructor_assignability` - Object prototype type shown instead of constructor
+2. `test_abstract_mixin_intersection_ts2339` - Same root cause
+
+### Conformance Results (500 tests)
 
 ### Completed Fixes
 
