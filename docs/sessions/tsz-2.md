@@ -79,29 +79,32 @@ This leads to "type not assignable" errors when the result is passed to function
 ## Next Steps
 
 1. ✅ Session redefined with this plan
-2. ⏸️ Ask Gemini Question 1 (Approach Validation)
-3. ⏸️ Implement following Question 1 guidance
-4. ⏸️ Ask Gemini Question 2 (Implementation Review)
-5. ⏸️ Fix any issues found in review
-6. ⏸️ Test and commit
+2. ✅ Gemini Question 1 COMPLETE - got architectural guidance
+3. ⏸️ Implement following Question 1 guidance:
 
----
+### Key Architectural Decision (from Gemini Pro):
 
-## Previous Work
+**Use TypeResolver trait, NOT TypeDatabase!**
 
-### TDZ (2026-02-04) ✅ COMPLETE
+The chain: `InferenceContext` → `TypeResolver` → `CheckerContext` → `Binder`
 
-TDZ checking for static blocks, computed properties, and heritage clauses is complete.
-See: `docs/sessions/history/tsz-2-tdz-20260204.md`
+**Implementation Steps**:
+1. Add `get_base_type` to `TypeResolver` trait (src/solver/subtype.rs)
+2. Implement in `CheckerContext` (src/checker/context.rs)
+3. Update `InferenceContext` to hold resolver reference
+4. Implement `find_common_base_class` in src/solver/infer.rs
+5. Implement `get_class_hierarchy` using the new TypeResolver hook
 
-### Class Type Resolution (2026-02-04) ✅ COMPLETE
-
-Fixed TYPE position vs VALUE position bug for class type references.
-See: `docs/sessions/tsz-2-COMPLETE.md`
+### Critical Edge Cases (from Gemini):
+- Cycle protection in hierarchy traversal
+- Use `TypeResolver` for semantic lookups (extends clause)
+- `TypeDatabase` remains pure storage
+- Interior mutability considerations when calling stateful methods
 
 ## Session History
 
 - 2026-02-04: Started with TDZ focus (completed)
 - 2026-02-04: Worked on class type resolution (completed)
 - 2026-02-04: Redefined to BCT work
-- 2026-02-04: Ready for Question 1 (approach validation)
+- 2026-02-04: Question 1 complete - got detailed architectural guidance
+- 2026-04-04: Ready for implementation following Gemini guidance
