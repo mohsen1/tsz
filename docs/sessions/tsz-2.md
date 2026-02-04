@@ -61,22 +61,54 @@ These features are core to modern TypeScript's type system. Without them:
 
 **Next Steps**: Tasks 2-4 will implement the logic to use these fields
 
-#### Task 2: Update Lowering Logic to Populate Visibility 🔄 IN PROGRESS
-**File**: `src/solver/lower.rs`
+#### Task 2: Update Lowering Logic to Populate Visibility 🔄 IN PROGRESS (50% Complete)
+**Files**: `src/solver/lower.rs`, `src/checker/type_checking_queries.rs`, `src/checker/class_type.rs`
 
-**Requirements**:
-1. Check modifiers list for `PrivateKeyword` and `ProtectedKeyword`
-2. Map modifiers to `Visibility` enum:
-   - `SyntaxKind::PrivateKeyword` -> `Visibility::Private`
-   - `SyntaxKind::ProtectedKeyword` -> `Visibility::Protected`
-   - Default -> `Visibility::Public`
-3. Populate `parent_id` with the declaring class symbol
-4. Interfaces should always be `Public` with `None` parent_id
+**Status**: Partially Complete
 
-**Functions to Modify**:
-- `lower_type_element()` - Property signatures
-- Class member lowering - Detect private/protected modifiers
-- Interface lowering - Ensure Public/None
+**Completed (2026-02-04)**:
+- ✅ Added `get_visibility_from_modifiers()` to `src/checker/type_checking_queries.rs`
+- ✅ Added `get_visibility_from_modifiers()` to `src/solver/lower.rs`
+- ✅ Updated `lower_type_element()` in lower.rs to use visibility (type literals only)
+
+**Remaining Work**:
+- ⏳ Update 8 PropertyInfo construction sites in `src/checker/class_type.rs`:
+  - Lines: 199 (properties), 323 (constructor params), 398, 431, 452 (private brand), 1084, 1236, 1269
+- ⏳ For each PropertyInfo construction:
+  1. Call `self.get_visibility_from_modifiers(&member.modifiers)`
+  2. Set `parent_id: current_sym` (class symbol, available at line 101)
+  3. Keep `visibility: Visibility::Public` for private brand (line 452)
+
+**Pattern to Apply**:
+```rust
+// Before:
+PropertyInfo {
+    name,
+    type_id,
+    write_type: type_id,
+    optional,
+    readonly,
+    is_method: false,
+    visibility: Visibility::Public,  // Replace this
+    parent_id: None,                 // Replace this
+}
+
+// After:
+let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
+PropertyInfo {
+    name,
+    type_id,
+    write_type: type_id,
+    optional,
+    readonly,
+    is_method: false,
+    visibility,
+    parent_id: current_sym,
+}
+```
+
+**Commits**:
+- `ec7a3e06b`: feat(solver): add visibility detection helpers for nominal subtyping
 
 #### Task 3: Implement Property Compatibility Checking
 **File**: `src/solver/subtype_rules/objects.rs`
