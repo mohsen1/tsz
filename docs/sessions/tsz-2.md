@@ -1,86 +1,85 @@
-# Session tsz-2: TDZ (Temporal Dead Zone) Checking
+# Session tsz-2: Best Common Type (BCT) - Common Base Class & Literal Widening
 
 **Started**: 2026-02-04
-**Goal**: Implement TDZ checking to detect variables used before declaration in class contexts
+**Focus**: Implement Rule #32 - Best Common Type algorithm with proper common base class detection
 
 ## Problem Statement
 
-TypeScript enforces Temporal Dead Zone (TDZ) rules to prevent variables from being used before they're declared. Currently, several methods in `src/checker/flow_analysis.rs` are stubbed and return `false`, causing the compiler to miss these errors.
+The Best Common Type (BCT) algorithm is the foundation for type inference in:
+- Array literals: `[1, 2]` → `number[]`
+- Conditional expressions: `cond ? a : b` → common type
+- Function return types: inferred from return statements
+
+**Current Gap**: While `UnsoundnessAudit` marks BCT as "Fully Implemented," the actual code in `src/solver/infer.rs` reveals that the **Common Base Class** logic is a placeholder (lines 1270-1300).
+
+**Impact**: Without proper common base class detection:
+```typescript
+class Animal {}
+class Dog extends Animal {}
+class Cat extends Animal {}
+
+const animals = [new Dog(), new Cat()];
+// tsc infers: Animal[]
+// tsz currently infers: Dog | Cat (union - WRONG)
+```
+
+This leads to "type not assignable" errors when the result is passed to functions expecting the base class.
 
 ## Scope
 
-Implement TDZ checking for:
-1. **Static Blocks**: Variables used in static blocks before their declaration
-2. **Computed Properties**: Variables used in computed property names `[expr]` before declaration
-3. **Heritage Clauses**: Variables used in `extends`/`implements` clauses before declaration
+Implement proper BCT with:
+1. **Common Base Class Detection**: Find the most specific common ancestor of class types
+2. **Literal Widening**: Widen literals to primitives in non-const contexts
+3. **Tournament Reduction**: Proper supertype selection with `any`/`unknown` handling
 
-## Progress
+## Implementation Plan
 
-### 2026-02-04: TDZ Implementation - COMPLETE ✅
+### Phase 1: TypeDatabase Bridge
+**File**: `src/solver/db.rs`, `src/checker/context.rs`
+- Add `get_class_base_type(type_id: TypeId) -> Option<TypeId>` to `TypeDatabase` trait
+- Implement in `CheckerContext` to bridge Solver → Binder
+- Query symbol's `extends` clause via binder
 
-**All three TDZ checks implemented:**
+### Phase 2: Hierarchy Traversal
+**File**: `src/solver/infer.rs`
+- Replace placeholder `get_class_hierarchy` with robust implementation
+- Use `InheritanceGraph` or symbol resolution to find all ancestors
+- Implement `find_common_base_class` to find most specific common ancestor
 
-#### 1. Static Block TDZ ✅
-- Root cause: Static blocks weren't being traversed at all
-- Fixed by adding `CLASS_STATIC_BLOCK_DECLARATION` case to `check_class_member`
-- `is_variable_used_before_declaration_in_static_block` implemented
-- Test case: `classStaticBlockUseBeforeDef3.ts` passes
-- Emits TS2448
+### Phase 3: Literal Widening
+**File**: `src/solver/infer.rs`
+- Ensure `[1, 2]` widens to `number[]` (not `1 | 2[]`)
+- Respect `const` contexts (preserve literals)
 
-#### 2. Computed Property TDZ ✅
-- `is_variable_used_before_declaration_in_computed_property` implemented
-- Checks if usage is inside a computed property name `[expr]`
-- Uses `find_enclosing_computed_property` from scope_finder.rs
-- Emits TS2448
-
-#### 3. Heritage Clause TDZ ✅
-- `is_variable_used_before_declaration_in_heritage_clause` implemented
-- Checks if usage is in `extends`/`implements` clause
-- Uses `find_enclosing_heritage_clause` from scope_finder.rs
-- Emits TS2448
-
-**Implementation Details:**
-All three TDZ checks follow the same pattern:
-1. Get the symbol and verify it's block-scoped (let, const, class, enum)
-2. Get the declaration node
-3. Compare source positions: usage must be before declaration
-4. Check if usage is in the specific TDZ-sensitive context
-5. Return true if TDZ violation detected
-
-**Test Results:**
-```typescript
-class Baz {
-    static {
-        console.log(FOO);   // line 17
-    }
-}
-const FOO = "FOO";  // line 21
-```
-✅ tsc: `error TS2448: Block-scoped variable 'FOO' used before its declaration.`
-✅ tsz: `error TS2448: Block-scoped variable 'FOO' used before its declaration.`
-
-**Commits:**
-- fea4b95f5: Static block TDZ with traversal fix
-- 0e8d667a7: TS2448 diagnostic
-- 629e51593: Computed property and heritage clause TDZ
+### Phase 4: Tournament Reduction
+**File**: `src/solver/infer.rs`
+- Refine supertype selection logic
+- Handle `any`, `unknown`, `null`/`undefined` per tsc rules
 
 ## Success Criteria
 
-- [x] Static block TDZ method implemented
-- [x] Static block traversal fixed (root cause)
-- [x] TS2448 diagnostic added
-- [x] Test case passes (classStaticBlockUseBeforeDef3.ts)
-- [x] Computed property TDZ implemented
-- [x] Heritage clause TDZ implemented
-- [x] All work committed and pushed
-- [x] No regressions (52 pre-existing test failures, unchanged)
+- [ ] `get_class_base_type` added to TypeDatabase trait
+- [ ] Common base class detection implemented
+- [ ] Literal widening in array literals works
+- [ ] Test: `[new Dog(), new Cat()]` infers `Animal[]`
+- [ ] Test: `[1, 2]` infers `number[]`
+- [ ] No regressions in existing BCT tests
+- [ ] Conformance tests pass
 
-## Notes
+## Complexity
 
-- This task required fixing a missing traversal handler for static blocks
-- The fix enables ALL type checking for static blocks, not just TDZ
-- Static blocks were completely untype-checked before this fix
-- Reference: `docs/walkthrough/04-checker.md` documents this as a known gap
-- All three TDZ contexts now emit TS2448 as expected
+**Medium**
+- Logic is well-defined by TypeScript
+- Primary challenge: bridging Solver (TypeId) to Binder (symbols)
+- Requires care with concurrent interner architecture
 
-## Session Status: COMPLETED ✅
+## Why tsz-2?
+
+- **No Conflict**: Different space from tsz-1 (property access) and tsz-3 (narrowing)
+- **Focused**: Targets specific Rule #32 gap
+- **High-Impact**: Fixes fundamental type inference behavior
+
+## Previous Work: TDZ (2026-02-04) ✅
+
+TDZ checking for static blocks, computed properties, and heritage clauses is complete.
+See: `docs/sessions/history/tsz-2-tdz-20260204.md`
