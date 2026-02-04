@@ -2,27 +2,39 @@
 
 ## Date: 2026-02-04
 
-## Status: PAUSED - Waiting for TSZ-6 (Advanced Type Nodes)
+## Status: ACTIVE - Resuming after tsz-6 completion
 
-### Pause Reason (2026-02-04)
+### Pause Reason (2026-02-04) - RESOLVED ✅
 
-Per Gemini strategic consultation, TSZ-5 is **PAUSED** until TSZ-6 completes.
+**Previous Status:** TSZ-5 was PAUSED until TSZ-6 completed.
 
-**Strategic Rationale:**
+**Why it was paused:**
 - Import/Export Elision has a hard dependency on accurate type parsing
-- Current emit_type() lacks support for MappedType, ConditionalType, TypeQuery, IndexedAccessType
-- This causes 75+ TS1005 syntax errors that would corrupt usage analysis
+- Missing support for MappedType, ConditionalType, TypeQuery, IndexedAccessType
 - **Solver-First Principle:** Type nodes must be implemented before usage analysis can be accurate
 
-**Gemini Quote:**
-> "If a .d.ts contains `export const x: typeof InternalVar;` and TypeQuery isn't implemented, the usage analyzer will fail to see that InternalVar is 'used', leading to incorrect import elision."
+**Resolution:**
+- ✅ TSZ-6 COMPLETED (2026-02-04)
+- ✅ All advanced type nodes now implemented in emit_type()
+- ✅ Ready to resume with accurate type foundation
 
-**Next Steps:**
-1. Complete TSZ-6 (Advanced Type Nodes)
-2. Verify TS1005 errors reduced significantly
-3. Resume TSZ-5 with accurate type foundation
+**See:** `docs/sessions/tsz-6.md` for completed session
 
-**See:** `docs/sessions/tsz-6.md` for active session
+### Session Resumption Plan - 2026-02-04
+
+**Gemini's Strategic Guidance:**
+> "Now that tsz-6 has provided the necessary foundation for advanced type nodes, you can implement the usage analyzer with the accuracy required to prevent 'Module not found' errors."
+
+**Expected Impact:**
+- Conformance pass rate: +5% to +10% increase
+- Eliminates majority of "Module not found" errors in .d.ts files
+- Single largest blocker to declaration emit correctness
+
+**Corrected Architecture:**
+1. **Hybrid AST/Semantic Walk** - Not just AST nodes
+2. **SymbolUsageVisitor** - New TypeVisitor implementation
+3. **DefId→SymbolId Mapping** - Via BinderTypeDatabase
+4. **Type-Only vs Value Usage** - Critical distinction for elision
 
 ### Gemini Critical Review - 2026-02-04
 
