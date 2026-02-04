@@ -43,11 +43,16 @@
    - Changed loop to `enumerate()` for file_idx access
    - Usage analysis now fully functional in multi-file mode
 
-**Priority 2:** ✅ **COMPLETED** - Conformance Testing
-   - **Result:** 269/639 (42.1%)
-   - Bug fix: Check specifier.name instead of specifier node (commit `4e96878e9`)
-   - No regression - back to baseline after bug fix
-   - Note: Most conformance tests are single-file, so import/export elision impact is minimal
+**Priority 2:** ✅ **COMPLETED** - Edge Case Handlers (commit `727775bfe`)
+   - Added ObjectShape symbol extraction (object_shape_id, object_with_index_shape_id)
+   - Added CallableShape symbol extraction (callable_shape_id)
+   - Skipped ImportType (parser doesn't expose data structure yet)
+   - **Result:** 269/639 (42.1%) - matches baseline, no regressions
+
+**Task #5 Status:** ✅ **COMPLETE** (except ImportType)
+   - TypeKey::Ref: Not needed (removed in Phase 4.2)
+   - TypeKey::Object: ✅ Implemented
+   - ImportType: ⏸ Deferred (parser limitation)
 
 **Resolution of BinderState Blocker:**
 
