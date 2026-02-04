@@ -26,6 +26,7 @@
 
 use crate::checker::TypeCache;
 use crate::emitter::type_printer::TypePrinter;
+use crate::enums::evaluator::{EnumEvaluator, EnumValue};
 use crate::parser::node::{Node, NodeArena};
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
@@ -636,20 +637,23 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
+        // Evaluate enum member values to get correct auto-increment behavior
+        let mut evaluator = EnumEvaluator::new(self.arena);
+        let member_values = evaluator.evaluate_enum(enum_idx);
+
         for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
             self.write_indent();
             if let Some(member_node) = self.arena.get(member_idx)
                 && let Some(member) = self.arena.get_enum_member(member_node)
             {
                 self.emit_node(member.name);
-                // Always emit initializer value to match TypeScript behavior
-                // For explicit initializers, emit the expression
-                // For implicit (auto-incremented), emit the index value
-                if !member.initializer.is_none() {
-                    self.write(" = ");
-                    self.emit_expression(member.initializer);
+                // Always emit the evaluated value to match TypeScript behavior
+                self.write(" = ");
+                let member_name = self.get_enum_member_name(member.name);
+                if let Some(value) = member_values.get(&member_name) {
+                    self.emit_enum_value(value);
                 } else {
-                    self.write(" = ");
+                    // Fallback to index if evaluation failed
                     self.write(&i.to_string());
                 }
             }
@@ -1115,20 +1119,23 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
+        // Evaluate enum member values to get correct auto-increment behavior
+        let mut evaluator = EnumEvaluator::new(self.arena);
+        let member_values = evaluator.evaluate_enum(enum_idx);
+
         for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
             self.write_indent();
             if let Some(member_node) = self.arena.get(member_idx)
                 && let Some(member) = self.arena.get_enum_member(member_node)
             {
                 self.emit_node(member.name);
-                // Always emit initializer value to match TypeScript behavior
-                // For explicit initializers, emit the expression
-                // For implicit (auto-incremented), emit the index value
-                if !member.initializer.is_none() {
-                    self.write(" = ");
-                    self.emit_expression(member.initializer);
+                // Always emit the evaluated value to match TypeScript behavior
+                self.write(" = ");
+                let member_name = self.get_enum_member_name(member.name);
+                if let Some(value) = member_values.get(&member_name) {
+                    self.emit_enum_value(value);
                 } else {
-                    self.write(" = ");
+                    // Fallback to index if evaluation failed
                     self.write(&i.to_string());
                 }
             }
@@ -1142,6 +1149,38 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("}");
         self.write_line();
+    }
+
+    /// Get the name of an enum member from its name node
+    fn get_enum_member_name(&self, name_idx: NodeIndex) -> String {
+        if let Some(name_node) = self.arena.get(name_idx) {
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                return ident.escaped_text.clone();
+            }
+            if let Some(lit) = self.arena.get_literal(name_node) {
+                return lit.text.clone();
+            }
+        }
+        String::new()
+    }
+
+    /// Emit an evaluated enum value
+    fn emit_enum_value(&mut self, value: &EnumValue) {
+        match value {
+            EnumValue::Number(n) => {
+                self.write(&n.to_string());
+            }
+            EnumValue::String(s) => {
+                self.write(&format!(
+                    "\"{}\"",
+                    s.replace('\\', "\\\\").replace('"', "\\\"")
+                ));
+            }
+            EnumValue::Computed => {
+                // For computed values, emit 0 as fallback
+                self.write("0 /* computed */");
+            }
+        }
     }
 
     fn emit_exported_variable(&mut self, stmt_idx: NodeIndex) {

@@ -68,7 +68,7 @@ function moduleToCliArg(module: number): string {
  */
 function findTszBinary(): string {
   const possiblePaths = [
-    path.join(ROOT_DIR, 'target/release/tsz'), // Local build
+    path.join(ROOT_DIR, '.target/release/tsz'), // Local build (uses .target from .cargo/config.toml)
     '/Users/mohsenazimi/.cargo/bin/tsz',       // User cargo bin (from which)
     tszInPath(),                                 // Global installation
   ].filter(Boolean);

@@ -46,7 +46,7 @@ command -v node &>/dev/null || die "Node.js is required"
 
 # Check for tsz binary
 check_tsz_binary() {
-    local tsz_bin="$ROOT_DIR/target/release/tsz"
+    local tsz_bin="$ROOT_DIR/.target/release/tsz"
     if [[ ! -f "$tsz_bin" ]]; then
         log_error "tsz binary not found at $tsz_bin"
         log_info "Build it with: cargo build --release"
