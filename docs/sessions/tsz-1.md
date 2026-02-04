@@ -25,5 +25,15 @@
 - Document blockers quickly and move on
 - Focus on achievable wins
 
-## Status: ACTIVE
-Ready to continue conformance work.
+## Test Investigation: test_enum_namespace_merging
+
+**Issue**: TS2345 emitted for enum namespace merging
+- Test: enum and namespace with same name should merge
+- tsc: No errors (enum and namespace merge successfully)
+- tsz: "Argument of type 'Direction' is not assignable to parameter of type 'Direction'"
+- Root cause: Enum and namespace not being merged into single type
+
+**Status**: DEFERRED - Namespace/enum merging complexity
+
+## Current Task: Finding Simple Fixes
+Continuing to review remaining 46 tests for simple expectation corrections.
