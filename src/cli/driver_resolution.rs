@@ -1676,6 +1676,16 @@ pub(crate) fn emit_outputs(
     let mut outputs = Vec::new();
     let new_line = new_line_str(options.printer.new_line);
 
+    // Build mapping from arena address to file path for module resolution
+    let arena_to_path: rustc_hash::FxHashMap<usize, String> = program
+        .files
+        .iter()
+        .map(|file| {
+            let arena_addr = std::sync::Arc::as_ptr(&file.arena) as usize;
+            (arena_addr, file.file_name.clone())
+        })
+        .collect();
+
     for (file_idx, file) in program.files.iter().enumerate() {
         let input_path = PathBuf::from(&file.file_name);
         if let Some(dirty_paths) = dirty_paths
@@ -1745,20 +1755,23 @@ pub(crate) fn emit_outputs(
                     crate::parallel::create_binder_from_bound_file(file, program, file_idx);
 
                 // Create emitter with type information and binder
-                let mut emitter = if let Some(cache) = type_cache {
+                let mut emitter = if let Some(ref cache) = type_cache {
                     let mut emitter = DeclarationEmitter::with_type_info(
                         &file.arena,
-                        cache,
+                        cache.clone(),
                         &program.type_interner,
                         &binder,
                     );
-                    // Set current arena for foreign symbol tracking
-                    emitter.set_current_arena(file.arena.clone());
+                    // Set current arena and file path for foreign symbol tracking
+                    emitter.set_current_arena(file.arena.clone(), file.file_name.clone());
+                    // Set arena to path mapping for module resolution
+                    emitter.set_arena_to_path(arena_to_path.clone());
                     emitter
                 } else {
                     let mut emitter = DeclarationEmitter::new(&file.arena);
                     // Still set binder even without cache for consistency
                     emitter.set_binder(Some(&binder));
+                    emitter.set_arena_to_path(arena_to_path.clone());
                     emitter
                 };
                 let map_info = if options.declaration_map {
@@ -1777,6 +1790,31 @@ pub(crate) fn emit_outputs(
                         emitter.set_source_map_text(source_text);
                     }
                     emitter.enable_source_map(output_name, &file.file_name);
+                }
+
+                // Run usage analysis and calculate required imports if we have type cache
+                if let Some(ref cache) = type_cache {
+                    use crate::declaration_emitter::usage_analyzer::UsageAnalyzer;
+
+                    let mut analyzer = UsageAnalyzer::new(
+                        &file.arena,
+                        &binder,
+                        cache,
+                        &program.type_interner,
+                        file.arena.clone(),
+                    );
+
+                    // Clone used_symbols before calling another method on analyzer
+                    let used_symbols = analyzer.analyze(file.source_file).clone();
+                    let foreign_symbols = analyzer.get_foreign_symbols().clone();
+
+                    // Calculate required imports from foreign symbols
+                    let required_imports =
+                        calculate_required_imports(&binder, &foreign_symbols, file_idx, program);
+
+                    // Set used symbols and required imports on emitter
+                    emitter.set_used_symbols(used_symbols);
+                    emitter.set_required_imports(required_imports);
                 }
 
                 let mut contents = emitter.emit(file.source_file);

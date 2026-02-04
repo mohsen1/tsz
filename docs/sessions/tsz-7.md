@@ -8,7 +8,9 @@
 
 **Phase 1: Track Foreign Symbols in UsageAnalyzer** ✅ COMPLETE
 
-**Implementation Summary:**
+**Phase 2: Module Path Resolution** ✅ COMPLETE
+
+**Phase 1 Implementation Summary:**
 1. Added `current_arena: Arc<NodeArena>` to UsageAnalyzer struct
 2. Added `foreign_symbols: FxHashSet<SymbolId>` to track foreign symbols
 3. Modified `mark_symbol_used()` to categorize symbols:
@@ -21,17 +23,45 @@
    - Store `foreign_symbols: Option<FxHashSet<SymbolId>>`
    - Added `set_current_arena()` method
    - Pass `current_arena` to UsageAnalyzer in `emit()`
-6. Updated driver to call `emitter.set_current_arena(file.arena.clone())`
+6. Updated driver to call `emitter.set_current_arena(file.arena.clone(), file.file_name.clone())`
 
-**Architecture Decision:**
-Uses `Arc<NodeArena>` comparison (`Arc::ptr_eq()`) instead of `file_idx` to determine local vs foreign symbols. This follows tsz's design where `NodeArena` is the source of truth for file identity.
+**Phase 2 Implementation Summary:**
+1. Added module path resolution infrastructure to DeclarationEmitter:
+   - `current_file_path: Option<String>` - stores current file path
+   - `arena_to_path: FxHashMap<usize, String>` - maps arena address to file path
+   - `set_arena_to_path()` method to set the mapping
+2. Implemented `resolve_symbol_module_path(sym_id)` following Gemini's architectural guidance:
+   - **Ambient Module Check**: Walks symbol parent chain to detect `declare module "name"` blocks
+   - **Arena Lookup**: Uses `binder.symbol_arenas` to get source arena
+   - **Path Resolution**: Maps arena address → file path via `arena_to_path`
+   - **Relative Path Calculation**: Uses `pathdiff` crate with proper `./` and `../` prefixes
+   - **Extension Stripping**: Removes `.ts`, `.tsx`, `.d.ts` extensions
+3. Added helper methods:
+   - `check_ambient_module()` - detects ambient module declarations
+   - `calculate_relative_path()` - computes relative paths with normalized separators
+   - `strip_ts_extensions()` - removes TypeScript file extensions
+   - `group_foreign_symbols_by_module()` - groups symbols by module for batch import generation
+4. Updated driver to build `arena_to_path` mapping from `MergedProgram.files`
+5. Added `pathdiff = "0.2"` dependency to Cargo.toml
+
+**Architecture Decisions:**
+- Uses `Arc<NodeArena>` pointer address (`Arc::as_ptr() as usize`) as HashMap key
+- Follows tsz's design where `NodeArena` is the source of truth for file identity
+- Prioritizes ambient module detection (for `declare module "name"`) over physical paths
+- Generates relative paths with proper TypeScript conventions (`./` prefix)
+
+**Gemini Consultation:**
+- Asked for Phase 2 architectural guidance before implementation
+- Gemini provided detailed algorithm for hybrid lookup (ambient + physical paths)
+- Specified edge cases: default exports, re-exports, path normalization, self-imports
 
 **Testing:**
 - Conformance: 269/639 (42.1%) - no regressions
 - Compilation: Successful
 
 **Commits:**
-- (To be added after commit)
+- Phase 1: feat: track foreign symbols in UsageAnalyzer for import generation
+- Phase 2: (To be added after commit)
 
 ### Session Goal
 
@@ -74,9 +104,13 @@ Building on TSZ-5's UsageAnalyzer infrastructure:
    - Not from lib files (checked via `lib_symbol_ids`)
    - From different arenas (checked via `Arc::ptr_eq()`)
 
-2. **Resolve Module Paths**: ⏭ NEXT - Map SymbolId → source module path
+2. **Resolve Module Paths**: ✅ COMPLETE - Map SymbolId → source module path
+   - ✅ Ambient module detection (`declare module "name"`)
+   - ✅ Physical file path resolution via `arena_to_path` mapping
+   - ✅ Relative path calculation with `pathdiff` crate
+   - ✅ TypeScript extension stripping
 
-3. **Synthesize Imports**: ⏭ PENDING - Inject ImportDeclaration nodes before emitting file
+3. **Synthesize Imports**: ⏭ NEXT - Inject ImportDeclaration nodes before emitting file
 
 4. **Handle Edge Cases**: ⏭ PENDING
    - Name collisions (aliasing: `import { X as X_1 }`)
@@ -93,10 +127,24 @@ Building on TSZ-5's UsageAnalyzer infrastructure:
 - ✅ Update DeclarationEmitter to store and pass current_arena
 - ✅ Update driver to call `set_current_arena()`
 
-**Phase 2: Module Path Resolution** ⏭ NEXT
-- Map SymbolId → source module path
-- Leverage `module_exports` from MergedProgram
-- Handle both direct imports and namespace imports
+**Phase 2: Module Path Resolution** ✅ COMPLETE
+- ✅ Build `arena_to_path` mapping in driver from `MergedProgram.files`
+- ✅ Add `current_file_path` and `arena_to_path` fields to DeclarationEmitter
+- ✅ Implement `resolve_symbol_module_path(sym_id)` with ambient module detection
+- ✅ Add helper methods: `check_ambient_module()`, `calculate_relative_path()`, `strip_ts_extensions()`
+- ✅ Add `group_foreign_symbols_by_module()` to group symbols by module path
+- ✅ Add `pathdiff` dependency to Cargo.toml
+- ✅ Update driver to build and pass `arena_to_path` mapping
+
+**Phase 3: Import Synthesis** ⏭ NEXT
+- Add method to DeclarationEmitter to emit missing imports
+- Insert before other declarations in .d.ts
+- Format: `import { TypeName } from './module';`
+- Group by module path to emit `import { A, B } from './path'`
+
+**Phase 4: Testing & Refinement** ⏭ PENDING
+- Conformance tests for multi-file scenarios
+- Edge case handling (name collisions, type-only imports)
 
 **Phase 3: Import Synthesis** ⏭ PENDING
 - Add method to DeclarationEmitter to emit missing imports
