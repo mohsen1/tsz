@@ -1,9 +1,9 @@
 # Session tsz-3: Advanced CFA & Type Predicates
 
 **Started**: 2026-02-04
-**Status**: 🟢 ACTIVE (Priority 2a COMPLETE: Assertion Guard CFA)
-**Latest Update**: 2026-02-04 - Completed Assertion Guard CFA integration
-**Focus**: User-defined type guards, assertion guards, this type predicates
+**Status**: 🟢 ACTIVE (Priority 2 COMPLETE: User-Defined Type Guards)
+**Latest Update**: 2026-02-04 - Completed is type predicate narrowing
+**Focus**: Loop narrowing hardening, control flow refinement
 
 ---
 
@@ -20,33 +20,43 @@
 
 **Achievement**: Implemented comprehensive narrowing hardening for the Solver, following Two-Question Rule strictly for all changes. All code reviewed by Gemini Pro before committing.
 
-### Current Phase: User-Defined Type Guards (IN PROGRESS)
+---
+
+## Current Phase: Loop Narrowing Hardening (IN PROGRESS)
 
 **Started**: 2026-02-04
-**Status**: Priority 2a COMPLETE ✅
+**Status**: Priority 2 COMPLETE ✅
 
-#### Priority 2a: Assertion Guard CFA Integration ✅ COMPLETE
+### Priority 2: User-Defined Type Guards ✅ COMPLETE
 
-**Completed**: 2026-02-04 (commit `58061e588`)
+**Completed**: 2026-02-04
 
-**Problem**: Assertion guards (`asserts x is T`) weren't being applied in subsequent control flow after the assertion call. This was a major gap in type guard support (21.2% pass rate, 14/66 tests).
+#### Priority 2a: Assertion Guard CFA Integration ✅
+**Commit**: `58061e588`
+
+**Problem**: Assertion guards (`asserts x is T`) weren't being applied in subsequent control flow after the assertion call.
 
 **Solution**:
 1. **Truthiness narrowing** - Changed from weak null/undefined exclusion to comprehensive `TypeGuard::Truthy` narrowing (false, 0, "", NaN, 0n)
 2. **Intersection type support** - Added `Intersection` variant to `PredicateSignatureKind` enum
-3. **Union type safety** - Fixed `predicate_signature_for_type` to require ALL union members to have compatible predicates (not just first match)
-4. **Optional chaining** - Added check to skip narrowing when call is optional (`obj.method?.()`) since assertion might not execute
+3. **Union type safety** - Fixed `predicate_signature_for_type` to require ALL union members to have compatible predicates
+4. **Optional chaining** - Added check to skip narrowing when call is optional
 
-**Files Modified**:
-- `src/checker/control_flow_narrowing.rs`: Fixed `apply_type_predicate_narrowing`, `predicate_signature_for_type`, `narrow_by_call_predicate`
-- `src/solver/type_queries.rs`: Added `Intersection` to `PredicateSignatureKind` enum and classify function
+#### Priority 2b: is Type Predicate Narrowing ✅
+**Commit**: `619c3f279`
+
+**Problem**: Boolean type predicates (`x is T`) weren't narrowing types in if/else branches.
+
+**Solution**:
+1. **Optional chaining fix** - Allow narrowing on true branch with optional chaining, skip false branch
+2. **Overload handling** - Search all call signatures for first predicate (heuristic with safety TODO)
+3. **this target extraction** - Skip parentheses/assertions before extracting receiver
+4. **Negation narrowing** - False branch correctly excludes predicate type via existing logic
 
 **Validation**:
-- Manual test case confirmed: `unknown` → `string` narrowing works after `asserts x is T`
-- Gemini Pro review validated approach and caught critical Union safety bug
+- Manual testing confirmed both assertion and is predicates work correctly
+- Gemini Pro review validated approach and caught this target extraction bug
 - All pre-commit checks passed
-
-**Next**: Priority 2b - `is` type predicate support
 
 ---
 
