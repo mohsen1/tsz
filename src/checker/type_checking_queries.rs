@@ -188,6 +188,23 @@ impl<'a> CheckerState<'a> {
             || self.is_private_identifier_name(name_idx)
     }
 
+    /// Get the visibility from modifiers list.
+    /// Returns Private, Protected, or Public (default).
+    pub(crate) fn get_visibility_from_modifiers(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> crate::solver::types::Visibility {
+        use crate::solver::types::Visibility;
+
+        if self.has_private_modifier(modifiers) {
+            Visibility::Private
+        } else if self.has_protected_modifier(modifiers) {
+            Visibility::Protected
+        } else {
+            Visibility::Public
+        }
+    }
+
     /// Get the access level from modifiers (private/protected).
     pub(crate) fn member_access_level_from_modifiers(
         &self,
