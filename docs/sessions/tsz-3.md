@@ -14,27 +14,25 @@ Work is never done until all tests pass. This includes:
 1. **ClassDeclaration26.ts** (commit 8e21d5d71) - Fixed var constructor() pattern in class bodies
 2. **abstractPropertyNegative.ts** (commit 8a034be71) - Fixed getter/setter without body check
 
+**Completed This Session**:
+1. **ClassDeclaration26.ts** (commit 8e21d5d71) - Fixed var constructor() pattern in class bodies
+2. **abstractPropertyNegative.ts** (commit 8a034be71) - Fixed getter/setter without body check
+3. **MODULE_DECLARATION in duplicate resolution** (commit 0a881e3cd) - Added MODULE_DECLARATION to `resolve_duplicate_decl_node` to fix namespace/class merging
+
 **Next Focus**: TS2300 - Duplicate Identifier Errors
 
-**Investigation Status**:
-Read and analyzed the binder's `declare_symbol` function (src/binder/state.rs:3139) and `can_merge_flags` (src/binder/state.rs:3232).
-
-**Finding**: TS2300 errors are coming from the CHECKER, not the binder!
-- `src/checker/type_checking.rs` function `check_duplicate_identifiers` (line 2754)
-- It iterates over symbols and checks if declarations conflict
-- Lines 2927-2934: Has logic to allow namespace + class merging
-- BUT: It's still emitting TS2300 for namespace/class merges
+**Root Cause Found** (commit 0a881e3cd):
+The checker's `resolve_duplicate_decl_node` function in `src/checker/symbol_resolver.rs` was missing MODULE_DECLARATION in its list of declaration node kinds. This caused namespace declarations to return None from `declaration_symbol_flags`, making them invisible to the duplicate checking logic.
 
 **Test Case**: `cloduleTest2.ts`
 - Expected: [TS2339, TS2554, TS2576]
 - Actual: [TS2300, TS2300, TS2300, TS2300, TS2300, TS2554]
 - tsc emits NO TS2300 for this file (namespace/class merging is allowed)
-- tsz emits 5 TS2300 errors (one for each `declare class m3d`)
+- tsz was emitting 5 TS2300 errors (one for each `declare class m3d`)
 
-**Problem**: The checker's duplicate detection logic is correctly checking for namespace/class merging (lines 2927-2934), but something is preventing it from working. Need to investigate:
-1. Are symbols being merged properly in the binder?
-2. Is the checker seeing the correct symbol flags?
-3. Is there a different code path emitting these TS2300 errors?
+**Remaining Issue**: After the fix, namespace/class merging works for declarations in the SAME scope. However, there's still an issue with scope handling. The binder is merging symbols from DIFFERENT scopes (e.g., `namespace T1 { namespace m3d }` creates a local m3d symbol inside T1, but it's being merged with the top-level m3d symbol).
+
+**Investigation Needed**: The binder's scope management for nested namespaces. When `namespace T1 { namespace m3d }` is declared, it should create a symbol m3d that is LOCAL to T1's scope, not merge with any top-level m3d symbol.
 
 
 **Conformance Status**: 97/200 passed (48.5%)
