@@ -1402,6 +1402,22 @@ impl<'a> InferenceContext<'a> {
         };
 
         match type_key {
+            // Intersection types: recurse into all members to extract commonality
+            // This enables BCT to find common members from intersections
+            // Example: [A & B, A & C] -> A (common member)
+            TypeKey::Intersection(members_id) => {
+                let members = self.interner.type_list(members_id);
+                for &member in members.iter() {
+                    self.collect_class_hierarchy(member, hierarchy);
+                }
+            }
+            // Lazy types: add the type itself, then follow extends chain
+            // This enables BCT to work with classes/interfaces defined as Lazy(DefId)
+            TypeKey::Lazy(_) => {
+                if let Some(base_type) = self.get_extends_clause(ty) {
+                    self.collect_class_hierarchy(base_type, hierarchy);
+                }
+            }
             // For class/interface types, collect extends clauses
             TypeKey::Callable(shape_id) => {
                 let _shape = self.interner.callable_shape(shape_id);
