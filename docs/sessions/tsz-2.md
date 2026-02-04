@@ -61,57 +61,37 @@ These features are core to modern TypeScript's type system. Without them:
 
 **Next Steps**: Tasks 2-4 will implement the logic to use these fields
 
-#### Task 2: Update Lowering Logic to Populate Visibility 🔄 IN PROGRESS (50% Complete)
+#### Task 2: Update Lowering Logic to Populate Visibility ✅ COMPLETED (2026-02-04)
 **Files**: `src/solver/lower.rs`, `src/checker/type_checking_queries.rs`, `src/checker/class_type.rs`
 
-**Status**: Partially Complete
-
-**Completed (2026-02-04)**:
-- ✅ Added `get_visibility_from_modifiers()` to `src/checker/type_checking_queries.rs`
-- ✅ Added `get_visibility_from_modifiers()` to `src/solver/lower.rs`
-- ✅ Updated `lower_type_element()` in lower.rs to use visibility (type literals only)
-
-**Remaining Work**:
-- ⏳ Update 6 PropertyInfo construction sites in `src/checker/class_type.rs`:
-
-**Site 1 - Line 199** (Class properties - already has modifiers):
-```rust
-// Add before line 197:
-let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
-
-// Then update PropertyInfo to use:
-visibility, parent_id: current_sym,
-```
-
-**Site 2 - Line 323** (Constructor parameter properties - already has modifiers):
-```rust
-// Add before line 323:
-let visibility = self.get_visibility_from_modifiers(&param.modifiers);
-
-// Then update PropertyInfo to use:
-visibility, parent_id: current_sym,
-```
-
-**Sites 3 & 4 - Lines 398, 431** (Accessors and Methods):
-These are created AFTER the initial member processing loop, so we need
-to track visibility during the loop. Two options:
-1. Store visibility in AccessorAggregate/MethodAggregate structs
-2. Process accessors/methods immediately into properties (refactor)
-
-**RECOMMENDED**: Skip for now - these need AccessorAggregate/MethodAggregate changes
-
-**Site 5 - Line 452** (Private brand property):
-Keep `parent_id: None` (this is a synthetic brand property, not a real member)
-
-**Sites 6, 7, 8** (Lines 1084, 1236, 1269): Need to investigate - likely in constructor_static
-
-**ACTION PLAN**:
-1. Update Sites 1 and 2 (simple - modifiers available)
-2. Keep Site 5 as-is (private brand, correct with None)
-3. Sites 3, 4, 6, 7, 8: Defer to follow-up PR or investigate further
+**Status**: COMPLETE
 
 **Commits**:
 - `ec7a3e06b`: feat(solver): add visibility detection helpers for nominal subtyping
+- `43fd74dbf`: feat(solver): complete Task 2 - populate visibility for all class members
+
+**What Was Implemented**:
+
+1. **Helper Functions Added**:
+   - `get_visibility_from_modifiers()` in `src/checker/type_checking_queries.rs`
+   - `get_visibility_from_modifiers()` in `src/solver/lower.rs`
+
+2. **Refactored Aggregates** (Gemini's recommended approach):
+   - Added `visibility: Visibility` field to `MethodAggregate`
+   - Added `visibility: Visibility` field to `AccessorAggregate`
+   - Updated in both `get_class_instance_type_inner` and `get_class_constructor_type_inner`
+   - All members of a class share the same `parent_id` (class symbol)
+
+3. **Updated All PropertyInfo Sites**:
+   - ✅ Class properties: Uses `get_visibility_from_modifiers(&prop.modifiers)`
+   - ✅ Constructor parameters: Uses `get_visibility_from_modifiers(&param.modifiers)`
+   - ✅ Accessor-based properties: Uses stored `accessor.visibility`
+   - ✅ Method-based properties: Uses stored `method.visibility`
+   - ✅ All use `parent_id: current_sym` (class symbol)
+
+4. **Result**: All class members now have proper visibility and parent_id populated from AST modifiers
+
+**Next**: Task 3 - Implement nominal compatibility checking in subtype_rules/objects.rs
 
 #### Task 3: Implement Property Compatibility Checking
 **File**: `src/solver/subtype_rules/objects.rs`
