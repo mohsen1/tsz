@@ -43,9 +43,26 @@
 ### Total Progress
 - **51 → 35 failing tests (-16 tests total)**
 
-## Current Focus
+## Current Focus (Rebased on Gemini Guidance)
 
-### Investigation Resolution: Lazy Type Handling in Tests
+**Priority 1: Conditional Type Evaluation (Redux Pattern)**
+- Issue: `match_infer_pattern` is not being called at all
+- Investigation: `extends` check is failing before reaching `infer` pattern matching
+- File to investigate: `src/solver/evaluate.rs` - `evaluate_conditional` function
+- Hypothesis: Solver performs strict subtype check before checking for `infer` declarations
+- Next step: Use tsz-tracing to see logic flow in `evaluate_conditional`
+
+**Priority 2: Generic Inference with Index Signatures (4 tests)**
+- Classic "Lawyer vs. Judge" issue (NORTH_STAR.md section 3.3)
+- File to investigate: `src/solver/infer.rs`
+- Focus: `infer_from_types` handling of `TypeKey::ObjectWithIndex`
+
+**Priority 3: Readonly TS2540 (4 tests - revisit "blocker")**
+- In Phase 4.3, Lazy types are standard for deferred resolution
+- File to investigate: `src/solver/subtype.rs` or `src/solver/compat.rs`
+- Potential fix: Ensure Lawyer/Judge calls `resolve_lazy_type` during property write checks
+
+**Deferred**: CLI cache tests, LSP tests (integration issues, not core Solver logic)
 
 **Problem**: Namespace merging tests were failing because they expected Object types but got Lazy(DefId) types.
 
