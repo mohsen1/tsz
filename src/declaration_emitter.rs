@@ -184,11 +184,13 @@ impl<'a> DeclarationEmitter<'a> {
         // Check for export modifier
         let is_exported = self.has_export_modifier(&func.modifiers);
 
-        self.write_indent();
-        if is_exported {
-            self.write("export ");
+        // In declaration emit mode, only emit exported functions
+        if !is_exported {
+            return;
         }
-        self.write("declare function ");
+
+        self.write_indent();
+        self.write("export declare function ");
 
         // Function name
         self.emit_node(func.name);
@@ -209,6 +211,16 @@ impl<'a> DeclarationEmitter<'a> {
         if !func.type_annotation.is_none() {
             self.write(": ");
             self.emit_type(func.type_annotation);
+        } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
+            // No explicit return type, try to infer it
+            if let Some(func_type_id) = cache.node_types.get(&func_idx.0) {
+                if let Some(return_type_id) =
+                    type_queries::get_return_type(*interner, *func_type_id)
+                {
+                    self.write(": ");
+                    self.write(&self.print_type_id(return_type_id));
+                }
+            }
         }
 
         self.write(";");
