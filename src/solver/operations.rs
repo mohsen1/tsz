@@ -232,6 +232,70 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
 
+            fn visit_application(&mut self, app_id: u32) -> Self::Output {
+                use crate::solver::types::TypeApplicationId;
+
+                // 1. Retrieve the application data (Base<Args>)
+                let app = self.db.type_application(TypeApplicationId(app_id));
+
+                // 2. Resolve the base type to get the generic function signature
+                // e.g., for Handler<string>, this gets the shape of Handler<T>
+                let base_shape = self.visit_type(self.db, app.base)?;
+
+                // 3. Build the substitution map
+                // Maps generic parameters (e.g., T) to arguments (e.g., string)
+                // This handles default type parameters automatically
+                let subst =
+                    TypeSubstitution::from_args(self.db, &base_shape.type_params, &app.args);
+
+                // Optimization: If no substitution is needed, return base as-is
+                if subst.is_empty() {
+                    return Some(base_shape);
+                }
+
+                // 4. Instantiate the components of the function shape
+                let instantiated_params: Vec<ParamInfo> = base_shape
+                    .params
+                    .iter()
+                    .map(|p| ParamInfo {
+                        name: p.name,
+                        type_id: instantiate_type(self.db, p.type_id, &subst),
+                        optional: p.optional,
+                        rest: p.rest,
+                    })
+                    .collect();
+
+                let instantiated_return = instantiate_type(self.db, base_shape.return_type, &subst);
+
+                let instantiated_this = base_shape
+                    .this_type
+                    .map(|t| instantiate_type(self.db, t, &subst));
+
+                // Handle type predicates (e.g., `x is T`)
+                let instantiated_predicate =
+                    base_shape
+                        .type_predicate
+                        .as_ref()
+                        .map(|pred| TypePredicate {
+                            asserts: pred.asserts,
+                            target: pred.target.clone(),
+                            type_id: pred.type_id.map(|t| instantiate_type(self.db, t, &subst)),
+                        });
+
+                // 5. Return the concrete FunctionShape
+                Some(FunctionShape {
+                    // The generics are now consumed/applied, so the resulting signature
+                    // is concrete (not generic).
+                    type_params: Vec::new(),
+                    params: instantiated_params,
+                    this_type: instantiated_this,
+                    return_type: instantiated_return,
+                    type_predicate: instantiated_predicate,
+                    is_constructor: base_shape.is_constructor,
+                    is_method: base_shape.is_method,
+                })
+            }
+
             // Future: Handle Union (return None or intersect of params)
             // Future: Handle Intersection (pick first callable member)
         }
