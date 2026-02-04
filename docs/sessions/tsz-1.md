@@ -4,7 +4,11 @@
 **Status**: Active (Redefined 2026-02-04)
 **Goal**: Restore test suite, implement nominal subtyping, fix intersection reduction
 
-**Latest Update**: 2026-02-04 - Priority 3 (Intersection Reduction) COMPLETE ✅
+**Latest Update**: 2026-02-04 - All initial priorities complete ✅, starting new Priority 1 (Contextual Type Inference)
+
+**Session Redefined (2026-02-04)**:
+After completing Test Suite Restoration, Nominal Subtyping, and Intersection Reduction,
+Gemini provided 3 new high-leverage priorities.
 
 ## Session Redefinition (2026-02-04 - Updated)
 
@@ -98,7 +102,54 @@ Fixed 4 critical bugs discovered by Gemini Pro review:
 
 **Commit**: `9934dfcf2` - "fix(tsz-1): fix 4 critical bugs in intersection reduction (Rule #21)"
 
-**Rationale**: These priorities provide maximum leverage:
+---
+
+## New Priorities (2026-02-04 - Redefinition)
+
+### 🔄 Priority 1: Refined Type Inference & Contextual Constraints (Rule #32)
+**Goal**: Improve accuracy of generic function calls by implementing bidirectional type inference where the expected return type constrains inference variables.
+
+**Files**:
+- `src/solver/operations.rs` - `CallEvaluator::resolve_generic_call`
+- `src/solver/infer.rs` - `InferenceContext::infer_from_context`
+
+**Task**: Update to apply `self.contextual_type` to function's return type *before* resolving inference variables.
+
+**Impact**: Highest-leverage fix for conformance. Fixes cases like:
+- `let x: string = identity(42)` (should fail)
+- `let x: string = pickProperty(obj, "name")` (should infer string)
+
+**Risk**: HIGH - Requires Gemini validation on constraint collection order
+
+### Priority 2: Homomorphic Mapped Types & Modifier Preservation (Rule #27)
+**Goal**: Ensure mapped types like `{ [K in keyof T]: T[K] }` correctly preserve `readonly` and `optional` modifiers from source type.
+
+**Files**:
+- `src/solver/evaluate_rules/mapped.rs`
+- `src/solver/types.rs` - `MappedModifier`
+
+**Task**: Refine `TypeEvaluator::get_mapped_modifiers` to detect homomorphic patterns and pull modifiers from source properties.
+
+**Impact**: Fixes `Partial<T>`, `Required<T>`, `Readonly<T>` utility types. Critical for modern TypeScript libraries and unblocks tsz-2.
+
+**Risk**: MEDIUM - Requires validation for Union of objects
+
+### Priority 3: Intrinsic Boxing & Global Function (Rules #33 & #29)
+**Goal**: Implement "Lawyer" rules allowing primitives to be assigned to boxed interfaces (`number` to `Number`) and callables to global `Function` type.
+
+**Files**:
+- `src/solver/compat.rs` - `CompatChecker`
+- `src/solver/subtype_rules/intrinsics.rs`
+
+**Task**: Implement `is_boxed_primitive_subtype` and ensure `TypeId::FUNCTION` is supertype for all callables.
+
+**Impact**: Significantly improves `lib.d.ts` compatibility.
+
+**Risk**: LOW - Mostly wiring existing hooks
+
+---
+
+**Previous Rationale**: These priorities provide maximum leverage:
 - Test restoration enables verification of all other work
 - Nominal subtyping is fundamental to class/interface correctness
 - Intersection reduction will likely provide the biggest jump in conformance pass rates
