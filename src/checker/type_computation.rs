@@ -1532,7 +1532,7 @@ impl<'a> CheckerState<'a> {
                             write_type: method_type,
                             optional: false,
                             readonly: false,
-                            is_method: false,
+                            is_method: true, // Object literal methods should be bivariant
                         },
                     );
                 }
