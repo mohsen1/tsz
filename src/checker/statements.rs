@@ -87,6 +87,28 @@ pub trait StatementCheckCallbacks {
 
     /// Recursively check a nested statement (callback to check_statement).
     fn check_statement(&mut self, stmt_idx: NodeIndex);
+
+    /// Check switch statement exhaustiveness (Task 12: CFA Diagnostics).
+    ///
+    /// Called after all switch clauses have been checked to determine if
+    /// the switch is exhaustive (handles all possible cases).
+    ///
+    /// Parameters:
+    /// - `stmt_idx`: The switch statement node
+    /// - `expression`: The discriminant expression
+    /// - `case_block`: The case block containing all clauses
+    /// - `has_default`: Whether the switch has a default clause
+    ///
+    /// Default implementation does nothing (exhaustiveness checking is optional).
+    fn check_switch_exhaustiveness(
+        &mut self,
+        _stmt_idx: NodeIndex,
+        _expression: NodeIndex,
+        _case_block: NodeIndex,
+        _has_default: bool,
+    ) {
+        // Default: no exhaustiveness checking
+    }
 }
 
 /// Statement type checker that dispatches to specialized handlers.
@@ -302,6 +324,9 @@ impl StatementChecker {
                     };
 
                     if let Some(clauses) = clauses {
+                        // Track if there's a default clause (for exhaustiveness checking)
+                        let mut has_default = false;
+
                         for clause_idx in clauses {
                             // Extract clause data
                             let clause_data = {
@@ -316,8 +341,11 @@ impl StatementChecker {
                             };
 
                             if let Some((clause_expr, clause_stmts)) = clause_data {
-                                // Check case expression (skip for default clause which has NONE expression)
-                                if !clause_expr.is_none() {
+                                // Check if this is a default clause (expression is NONE)
+                                if clause_expr.is_none() {
+                                    has_default = true;
+                                } else {
+                                    // Check case expression
                                     state.get_type_of_node(clause_expr);
                                 }
                                 // Check statements in the case
@@ -326,6 +354,14 @@ impl StatementChecker {
                                 }
                             }
                         }
+
+                        // Check exhaustiveness (Task 12: CFA Diagnostics)
+                        state.check_switch_exhaustiveness(
+                            stmt_idx,
+                            expression,
+                            case_block,
+                            has_default,
+                        );
                     }
                 }
             }
