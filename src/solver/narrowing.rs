@@ -313,19 +313,29 @@ impl<'a> NarrowingContext<'a> {
                 continue;
             }
 
-            // Check if this member has the property
-            if let Some(shape_id) = object_shape_id(self.db, member) {
-                let shape = self.db.object_shape(shape_id);
+            // CRITICAL: Resolve Lazy types before checking for object shape
+            // This ensures type aliases are resolved to their actual types
+            let resolved_member = self.resolve_type(member);
 
-                // Find the property
-                let prop_type = shape
-                    .properties
-                    .iter()
-                    .find(|p| p.name == property_name)
-                    .map(|p| p.type_id);
+            // Handle Intersection types: check all intersection members for the property
+            let intersection_members =
+                if let Some(members_id) = intersection_list_id(self.db, resolved_member) {
+                    // Intersection type: check all members
+                    Some(self.db.type_list(members_id).to_vec())
+                } else {
+                    // Not an intersection: treat as single member
+                    None
+                };
 
-                match prop_type {
-                    Some(ty) => {
+            // Helper function to check if a type has a matching property
+            let check_member_for_property = |check_type_id: TypeId| -> bool {
+                if let Some(shape_id) = object_shape_id(self.db, check_type_id) {
+                    let shape = self.db.object_shape(shape_id);
+
+                    // Find the property
+                    if let Some(prop_info) =
+                        shape.properties.iter().find(|p| p.name == property_name)
+                    {
                         // CRITICAL: Use is_subtype_of(literal_value, property_type)
                         // NOT the reverse! This was the bug in the reverted commit.
                         //
@@ -334,29 +344,58 @@ impl<'a> NarrowingContext<'a> {
                         // - prop is "a" | "b", checking for "a" -> match
                         // - prop is string, checking for "a" -> match
                         // - prop is "a", checking for "a" | "b" -> no match (correct)
-                        if is_subtype_of(self.db, literal_value, ty) {
+                        let matches = is_subtype_of(self.db, literal_value, prop_info.type_id);
+
+                        if matches {
                             trace!(
-                                "Member {} has property with type {}, literal {} matches",
-                                member.0, ty.0, literal_value.0
+                                "Member {} has property {:?} with type {}, literal {} matches",
+                                check_type_id.0,
+                                self.db.resolve_atom_ref(property_name),
+                                prop_info.type_id.0,
+                                literal_value.0
                             );
-                            matching.push(member);
                         } else {
                             trace!(
-                                "Member {} has property with type {}, literal {} does not match",
-                                member.0, ty.0, literal_value.0
+                                "Member {} has property {:?} with type {}, literal {} does not match",
+                                check_type_id.0,
+                                self.db.resolve_atom_ref(property_name),
+                                prop_info.type_id.0,
+                                literal_value.0
                             );
                         }
-                    }
-                    None => {
+
+                        matches
+                    } else {
                         // Property doesn't exist on this member
                         // (x.prop === value implies prop must exist, so we exclude this member)
-                        trace!("Member {} does not have property", member.0);
+                        trace!(
+                            "Member {} does not have property {:?}",
+                            check_type_id.0,
+                            self.db.resolve_atom_ref(property_name)
+                        );
+                        false
                     }
+                } else {
+                    // Non-object member (function, class, etc.)
+                    trace!(
+                        "Member {} is not an object type, excluding",
+                        check_type_id.0
+                    );
+                    false
                 }
+            };
+
+            // Check for property match
+            let has_property_match = if let Some(ref intersection) = intersection_members {
+                // For Intersection: at least one member must have the property
+                intersection.iter().any(|&m| check_member_for_property(m))
             } else {
-                // Non-object member (function, class, etc.)
-                // TODO: Could handle Lazy types here if we had QueryDatabase access
-                trace!("Member {} is not an object type, excluding", member.0);
+                // For non-Intersection: check the single member
+                check_member_for_property(resolved_member)
+            };
+
+            if has_property_match {
+                matching.push(member);
             }
         }
 
@@ -444,42 +483,74 @@ impl<'a> NarrowingContext<'a> {
                 continue;
             }
 
-            if let Some(shape_id) = object_shape_id(self.db, member) {
-                let shape = self.db.object_shape(shape_id);
-                let prop_type = shape
-                    .properties
-                    .iter()
-                    .find(|p| p.name == property_name)
-                    .map(|p| p.type_id);
+            // CRITICAL: Resolve Lazy types before checking for object shape
+            let resolved_member = self.resolve_type(member);
 
-                match prop_type {
-                    Some(ty) => {
+            // Handle Intersection types: check all intersection members for the property
+            let intersection_members =
+                if let Some(members_id) = intersection_list_id(self.db, resolved_member) {
+                    // Intersection type: check all members
+                    Some(self.db.type_list(members_id).to_vec())
+                } else {
+                    // Not an intersection: treat as single member
+                    None
+                };
+
+            // Helper function to check if a member should be excluded
+            // Returns true if member should be KEPT (not excluded)
+            let should_keep_member = |check_type_id: TypeId| -> bool {
+                if let Some(shape_id) = object_shape_id(self.db, check_type_id) {
+                    let shape = self.db.object_shape(shape_id);
+
+                    // Find the property
+                    if let Some(prop_info) =
+                        shape.properties.iter().find(|p| p.name == property_name)
+                    {
                         // Exclude member ONLY if property type is subtype of excluded value
                         // This means the property is ALWAYS the excluded value
                         // REVERSE of narrow_by_discriminant logic
-                        if is_subtype_of(self.db, ty, excluded_value) {
+                        let should_exclude =
+                            is_subtype_of(self.db, prop_info.type_id, excluded_value);
+
+                        if should_exclude {
                             trace!(
                                 "Member {} has property type {} which is subtype of excluded {}, excluding",
-                                member.0, ty.0, excluded_value.0
+                                check_type_id.0, prop_info.type_id.0, excluded_value.0
                             );
-                            // Exclude this member
+                            false // Member should be excluded
                         } else {
                             trace!(
                                 "Member {} has property type {} which is not subtype of excluded {}, keeping",
-                                member.0, ty.0, excluded_value.0
+                                check_type_id.0, prop_info.type_id.0, excluded_value.0
                             );
-                            remaining.push(member);
+                            true // Member should be kept
                         }
-                    }
-                    None => {
+                    } else {
                         // Property doesn't exist - keep the member
                         // (property absence doesn't match excluded value)
-                        trace!("Member {} does not have property, keeping", member.0);
-                        remaining.push(member);
+                        trace!("Member {} does not have property, keeping", check_type_id.0);
+                        true
                     }
+                } else {
+                    // Non-object member - keep it
+                    true
                 }
+            };
+
+            // Check if member should be kept
+            let keep_member = if let Some(ref intersection) = intersection_members {
+                // CRITICAL: For Intersection exclusion, use ALL not ANY
+                // If ANY intersection member has the excluded property value,
+                // the ENTIRE intersection must be excluded.
+                // Example: { kind: "A" } & { data: string } with x.kind !== "A"
+                //   -> { kind: "A" } has "A" (excluded) -> exclude entire intersection
+                intersection.iter().all(|&m| should_keep_member(m))
             } else {
-                // Non-object member - keep it
+                // For non-Intersection: check the single member
+                should_keep_member(resolved_member)
+            };
+
+            if keep_member {
                 remaining.push(member);
             }
         }
