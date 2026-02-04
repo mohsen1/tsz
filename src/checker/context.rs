@@ -196,21 +196,6 @@ pub struct TypeCache {
     pub private_constructor_types: FxHashSet<TypeId>,
 }
 
-impl Default for TypeCache {
-    fn default() -> Self {
-        Self {
-            symbol_types: FxHashMap::default(),
-            symbol_instance_types: FxHashMap::default(),
-            node_types: FxHashMap::default(),
-            relation_cache: FxHashMap::default(),
-            symbol_dependencies: FxHashMap::default(),
-            abstract_constructor_types: FxHashSet::default(),
-            protected_constructor_types: FxHashSet::default(),
-            private_constructor_types: FxHashSet::default(),
-        }
-    }
-}
-
 impl TypeCache {
     /// Invalidate cached symbol types that depend on the provided roots.
     /// Returns the number of affected symbols.

@@ -1049,6 +1049,7 @@ impl<'a> CheckerState<'a> {
             };
 
         // Class - return class constructor type (merging namespace exports when present)
+        // Also compute and cache instance type for TYPE position resolution
         if flags & symbol_flags::CLASS != 0 {
             let decl_idx = if !value_decl.is_none() {
                 value_decl
@@ -1059,7 +1060,13 @@ impl<'a> CheckerState<'a> {
                 && let Some(node) = self.ctx.arena.get(decl_idx)
                 && let Some(class) = self.ctx.arena.get_class(node)
             {
+                // Compute both constructor and instance types
                 let ctor_type = self.get_class_constructor_type(decl_idx, class);
+                let instance_type = self.get_class_instance_type(decl_idx, class);
+
+                // Cache instance type for TYPE position resolution
+                self.ctx.symbol_instance_types.insert(sym_id, instance_type);
+
                 if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
                     let merged = self.merge_namespace_exports_into_constructor(sym_id, ctor_type);
                     return (merged, Vec::new());
