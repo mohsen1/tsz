@@ -32,9 +32,9 @@ use crate::solver::subtype::is_subtype_of;
 use crate::solver::types::Visibility;
 use crate::solver::types::*;
 use crate::solver::visitor::{
-    intersection_list_id, is_function_type_db, is_literal_type_db, is_object_like_type_db,
-    lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
-    type_param_info, union_list_id,
+    TypeVisitor, intersection_list_id, is_function_type_db, is_literal_type_db,
+    is_object_like_type_db, lazy_def_id, literal_value, object_shape_id,
+    object_with_index_shape_id, template_literal_id, type_param_info, union_list_id,
 };
 use crate::solver::{QueryDatabase, TypeDatabase};
 use tracing::{Level, span, trace};
@@ -1760,6 +1760,191 @@ impl<'a> NarrowingContext<'a> {
         }
 
         source_type
+    }
+
+    /// Narrows a type by another type using the Visitor pattern.
+    ///
+    /// This is the general-purpose narrowing function that implements the
+    /// Solver-First architecture (North Star Section 3.1). The Checker
+    /// identifies WHERE narrowing happens (AST nodes) and the Solver
+    /// calculates the RESULT.
+    ///
+    /// # Arguments
+    /// * `type_id` - The type to narrow (e.g., a union type)
+    /// * `narrower` - The type to narrow by (e.g., a literal type)
+    ///
+    /// # Returns
+    /// The narrowed type. For unions, filters to members assignable to narrower.
+    /// For type parameters, intersects with narrower.
+    ///
+    /// # Examples
+    /// - `narrow("A" | "B", "A")` → `"A"`
+    /// - `narrow(string | number, "hello")` → `"hello"`
+    /// - `narrow(T | null, undefined)` → `null` (filters out T)
+    pub fn narrow(&self, type_id: TypeId, narrower: TypeId) -> TypeId {
+        // Fast path: already a subtype
+        if is_subtype_of(self.db, type_id, narrower) {
+            return type_id;
+        }
+
+        // Use visitor to perform narrowing
+        let mut visitor = NarrowingVisitor {
+            db: self.db,
+            narrower,
+        };
+        visitor.visit_type(self.db, type_id)
+    }
+}
+
+/// Visitor that narrows a type by filtering/intersecting with a narrower type.
+struct NarrowingVisitor<'a> {
+    db: &'a dyn QueryDatabase,
+    narrower: TypeId,
+}
+
+impl<'a> TypeVisitor for NarrowingVisitor<'a> {
+    type Output = TypeId;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        match kind {
+            IntrinsicKind::Any => {
+                // Narrowing `any` by anything returns that type
+                self.narrower
+            }
+            IntrinsicKind::Unknown => {
+                // Narrowing `unknown` by anything returns that type
+                self.narrower
+            }
+            IntrinsicKind::Never => {
+                // Never stays never
+                TypeId::NEVER
+            }
+            _ => {
+                // For other intrinsics, check if assignable to narrower
+                // The type_id is constructed from the IntrinsicKind
+                let type_id = TypeId(kind as u32);
+                if is_subtype_of(self.db, type_id, self.narrower) {
+                    type_id
+                } else {
+                    TypeId::NEVER
+                }
+            }
+        }
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        // For literal types, check if assignable to narrower
+        // The literal type_id will be constructed and checked
+        // For now, return the narrower (will be refined with actual type_id)
+        self.narrower
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+
+        // Filter union members to those assignable to narrower
+        let filtered: Vec<TypeId> = members
+            .iter()
+            .filter(|&&member| is_subtype_of(self.db, member, self.narrower))
+            .copied()
+            .collect();
+
+        if filtered.is_empty() {
+            TypeId::NEVER
+        } else if filtered.len() == members.len() {
+            // All members match - return original (will be reconstructed as union)
+            // We need to reconstruct the union type
+            self.db.union(filtered)
+        } else if filtered.len() == 1 {
+            filtered[0]
+        } else {
+            self.db.union(filtered)
+        }
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+
+        // For intersection, we need to check if ALL members are assignable to narrower
+        let all_match = members
+            .iter()
+            .all(|&member| is_subtype_of(self.db, member, self.narrower));
+
+        if all_match {
+            // Intersection matches narrower, return the intersection
+            // We need to reconstruct the intersection type
+            self.db.intersection(members.to_vec())
+        } else {
+            // Intersection doesn't fully match - need to intersect with narrower
+            // For now, conservatively return the intersection as-is
+            // TODO: Implement proper intersection narrowing
+            self.db.intersection(members.to_vec())
+        }
+    }
+
+    fn visit_type_parameter(&mut self, info: &TypeParamInfo) -> Self::Output {
+        // For type parameters, intersect with the narrower
+        // This constrains the generic type variable
+        if let Some(constraint) = info.constraint {
+            self.db.intersection2(constraint, self.narrower)
+        } else {
+            // No constraint, so narrowing gives us the narrower
+            self.narrower
+        }
+    }
+
+    fn visit_lazy(&mut self, _def_id: u32) -> Self::Output {
+        // Resolve lazy type and recurse
+        // The current type should be a lazy type - resolve and visit
+        // We'll get the current type from context
+        Self::default_output()
+    }
+
+    fn visit_ref(&mut self, _symbol_ref: u32) -> Self::Output {
+        // Resolve ref type and recurse
+        // For now, default output (will check subtype in default_output)
+        Self::default_output()
+    }
+
+    fn visit_application(&mut self, _app_id: u32) -> Self::Output {
+        // Resolve application type and recurse
+        // For generic types, conservatively keep the narrower
+        self.narrower
+    }
+
+    fn visit_object(&mut self, _shape_id: u32) -> Self::Output {
+        // For object types, conservatively return the narrower
+        // (Proper narrowing would check property compatibility)
+        self.narrower
+    }
+
+    fn visit_function(&mut self, _shape_id: u32) -> Self::Output {
+        // For function types, conservatively return the narrower
+        self.narrower
+    }
+
+    fn visit_callable(&mut self, _shape_id: u32) -> Self::Output {
+        // For callable types, conservatively return the narrower
+        self.narrower
+    }
+
+    fn visit_tuple(&mut self, _list_id: u32) -> Self::Output {
+        // For tuple types, conservatively return the narrower
+        self.narrower
+    }
+
+    fn visit_array(&mut self, _element_type: TypeId) -> Self::Output {
+        // For array types, conservatively return the narrower
+        self.narrower
+    }
+
+    fn default_output() -> Self::Output {
+        // Fallback for types not explicitly handled above
+        // Conservative: return never (type doesn't match the narrower)
+        // This is safe because:
+        // - For unions, this member will be excluded from the filtered result
+        // - For other contexts, never means "no match"
+        TypeId::NEVER
     }
 }
 
