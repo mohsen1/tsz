@@ -1,8 +1,8 @@
 # Session tsz-3: Solver-First Narrowing & Discriminant Hardening
 
 **Started**: 2026-02-04
-**Status**: 🟢 ACTIVE (Tasks 1-4 COMPLETE, Task 5 PENDING)
-**Latest Update**: 2026-02-04 - Implemented in operator hardening with Lazy type resolution
+**Status**: ✅ ALL TASKS COMPLETE
+**Latest Update**: 2026-02-04 - Implemented truthiness narrowing for all falsy literals
 **Focus**: Fix discriminant narrowing bugs and harden narrowing logic for complex types
 
 ---
@@ -134,7 +134,35 @@ These bugs prevent discriminant narrowing from working correctly with type alias
 - Required vs optional property distinction
 - Negative narrowing (`!("prop" in x)`)
 
-### Task 5: Truthiness Narrowing for Literals
+### ✅ Task 5: Truthiness Narrowing for Literals (COMPLETE - 2026-02-04)
+
+**Commit**: `97753bfef`
+
+**Implementation**:
+1. Added `is_definitely_falsy` helper function:
+   - Checks null, undefined, void
+   - Checks boolean false, 0, -0, NaN
+   - Checks empty string, bigint "0"
+
+2. Updated `narrow_by_truthiness`:
+   - Added intersection handling (if any part is falsy, whole is NEVER)
+   - Added union filtering (filter out falsy members)
+   - Added boolean → BOOLEAN_TRUE narrowing
+   - Added type parameter constraint checking
+
+**Gemini Pro Review**: Two-Question Rule followed
+- Question 1 (Approach): ✅ Validated
+- Question 2 (Implementation): Found 3 critical bugs, fixed ✅
+  1. Intersection logic: Fixed to return NEVER if any part is falsy
+  2. Boolean narrowing: Added BOOLEAN_TRUE case
+  3. Type parameters: Added constraint checking
+
+**Result**: Truthiness narrowing now matches TypeScript behavior for all falsy values:
+- null, undefined, void
+- false (boolean literal)
+- 0, -0, NaN (number literals)
+- "" (empty string)
+- 0n (bigint literal)
 **File**: `src/solver/narrowing.rs`
 **Function**: `narrow_by_truthiness`
 
