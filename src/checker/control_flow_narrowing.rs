@@ -255,6 +255,19 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         is_true_branch: bool,
     ) -> Option<TypeId> {
+        // CRITICAL: If call is optional (obj.method?.()), assertion might not run
+        // TypeScript does NOT apply narrowing when the call is skipped due to optional chaining
+        // Check if the callee expression is an optional property access
+        if let Some(callee_node) = self.arena.get(call.expression) {
+            if (callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(access) = self.arena.get_access_expr(callee_node)
+                && access.question_dot_token
+            {
+                return None;
+            }
+        }
+
         let node_types = self.node_types?;
         let callee_type = *node_types.get(&call.expression.0)?;
         let signature = self.predicate_signature_for_type(callee_type)?;
@@ -294,6 +307,29 @@ impl<'a> FlowAnalyzer<'a> {
                 })
             }
             PredicateSignatureKind::Union(members) => {
+                // CRITICAL FIX: For Union, ALL members must have the same predicate
+                // If the type is A | B and only A has a predicate, we can't safely narrow
+                let mut common_sig: Option<PredicateSignature> = None;
+
+                for member in members {
+                    let sig = self.predicate_signature_for_type(member)?;
+
+                    if let Some(ref common) = common_sig {
+                        // Simplified check: predicates must match exactly
+                        // (Real TS does subtype compatibility check, but identity is safe for now)
+                        if common.predicate != sig.predicate {
+                            return None;
+                        }
+                    } else {
+                        common_sig = Some(sig);
+                    }
+                }
+                common_sig
+            }
+            PredicateSignatureKind::Intersection(members) => {
+                // For intersections, search ALL members and return the first predicate found
+                // Intersections of functions are rare but possible (e.g., overloaded functions)
+                // In an intersection A & B, if A has a predicate, the intersection has that predicate
                 for member in members {
                     if let Some(sig) = self.predicate_signature_for_type(member) {
                         return Some(sig);
@@ -344,9 +380,11 @@ impl<'a> FlowAnalyzer<'a> {
             return narrowing.narrow_excluding_type(type_id, predicate_type);
         }
 
+        // Assertion guards without type predicate (asserts x) narrow to truthy
+        // This is the CRITICAL fix: use TypeGuard::Truthy instead of just excluding null/undefined
         if is_true_branch {
-            let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-            return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+            // Delegate to narrow_type with TypeGuard::Truthy for comprehensive narrowing
+            return narrowing.narrow_type(type_id, &TypeGuard::Truthy, true);
         }
 
         self.narrow_to_falsy(type_id)
