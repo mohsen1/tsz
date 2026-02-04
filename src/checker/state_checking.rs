@@ -367,7 +367,23 @@ impl<'a> CheckerState<'a> {
         let compute_final_type = |checker: &mut CheckerState| -> TypeId {
             let mut has_type_annotation = !var_decl.type_annotation.is_none();
             let mut declared_type = if has_type_annotation {
-                checker.get_type_from_type_node(var_decl.type_annotation)
+                let type_id = checker.get_type_from_type_node(var_decl.type_annotation);
+
+                // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'
+                if is_catch_variable
+                    && type_id != TypeId::ANY
+                    && type_id != TypeId::UNKNOWN
+                    && !checker.type_contains_error(type_id)
+                {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    checker.error_at_node(
+                        var_decl.type_annotation,
+                        "Catch clause variable type annotation must be 'any' or 'unknown' if specified.",
+                        diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION,
+                    );
+                }
+
+                type_id
             } else if is_catch_variable && checker.ctx.use_unknown_in_catch_variables() {
                 TypeId::UNKNOWN
             } else {

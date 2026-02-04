@@ -409,6 +409,9 @@ pub mod diagnostic_codes {
     pub const MODULE_HAS_NO_DEFAULT_EXPORT: u32 = 1192; // Module '{0}' has no default export.
     pub const IMPORT_ASSIGNMENT_CANNOT_BE_USED_WITH_ESM: u32 = 1202; // Import assignment cannot be used when targeting ECMAScript modules.
 
+    // Catch clause errors
+    pub const CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION: u32 = 1196; // Catch clause variable type annotation must be 'any' or 'unknown' if specified.
+
     // Function/call errors
     pub const ARGUMENT_NOT_ASSIGNABLE_TO_PARAMETER: u32 = 2345;
     pub const CANNOT_INVOKE_EXPRESSION_WHOSE_TYPE_LACKS_CALL_SIGNATURE: u32 = 2348;
