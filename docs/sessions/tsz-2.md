@@ -38,7 +38,57 @@ The "false negatives" in conformance (missing=2 in 100-test sample) are likely d
 2. Specific edge cases in module resolution
 3. Test setup that doesn't properly configure module resolution context
 
-**TS2318 Status**: Not yet investigated.
+**TS2318 Verification**: Also working correctly! ✅
+
+Test case with `--noLib`:
+```typescript
+const arr: Array<number> = [1, 2, 3];
+```
+
+**Results**:
+- TSC: `error TS2318: Cannot find global type 'Array'.`
+- tsz: `error TS2318: Cannot find global type 'Array'.`
+
+Both TSC and tsz emit TS2318 for the same 8 global types when `--noLib` is used: Array, Boolean, Function, IArguments, Number, Object, RegExp, String.
+
+---
+
+### TS2305 (Module has no exported member) - ✅ Working
+
+Test case:
+```typescript
+// module.ts
+export function publicFn() {}
+function privateFn() {}
+
+// consumer.ts
+import { privateFn } from './module'; // TS2305
+```
+
+**Result**: tsz correctly emits TS2305 for non-exported members.
+
+---
+
+### TS2664 (Invalid module name in augmentation) - ❌ Not Working
+
+Test case:
+```typescript
+import {} from "dummy"; // Make this a module file
+
+declare module "nonExistentPackage" {
+  export function foo(): void;
+}
+```
+
+**Expected**: TS2694 - "Invalid module name in augmentation, module 'nonExistentPackage' cannot be found."
+**Actual**: tsz does NOT emit TS2664 (TSC does)
+
+**Status**: The code EXISTS in `src/checker/declarations.rs:829-843` and there's a passing test (`test_ts2307_import_with_module_augmentation`), but manual testing shows it's not being emitted in CLI usage.
+
+**Next Steps**: Investigate why the TS2664 check isn't working despite the code and test existing. Possible issues:
+- Binder not setting `is_external_module` correctly
+- `module_exists` returning incorrect value
+- Order of operations issue
 
 ---
 
