@@ -590,8 +590,17 @@ impl<'a> FlowAnalyzer<'a> {
             current_type
         };
 
+        eprintln!(
+            "DEBUG handle_switch_clause_iterative: clause.expression.is_none={}, reference={}",
+            clause.expression.is_none(),
+            reference.0
+        );
+
         let narrowing = NarrowingContext::new(self.interner);
         let clause_type = if clause.expression.is_none() {
+            eprintln!(
+                "DEBUG handle_switch_clause_iterative: calling narrow_by_default_switch_clause"
+            );
             self.narrow_by_default_switch_clause(
                 pre_switch_type,
                 switch_data.expression,
@@ -600,6 +609,7 @@ impl<'a> FlowAnalyzer<'a> {
                 &narrowing,
             )
         } else {
+            eprintln!("DEBUG handle_switch_clause_iterative: calling narrow_by_switch_clause");
             self.narrow_by_switch_clause(
                 pre_switch_type,
                 switch_data.expression,
@@ -608,6 +618,11 @@ impl<'a> FlowAnalyzer<'a> {
                 &narrowing,
             )
         };
+
+        eprintln!(
+            "DEBUG handle_switch_clause_iterative: clause_type={}",
+            clause_type.0
+        );
 
         // Handle fallthrough
         if flow.antecedent.len() > 1 {
@@ -1445,10 +1460,17 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         narrowing: &NarrowingContext,
     ) -> TypeId {
+        eprintln!(
+            "DEBUG narrow_by_default_switch_clause: type_id={}, switch_expr={}, target={}",
+            type_id.0, switch_expr.0, target.0
+        );
+
         let Some(case_block_node) = self.arena.get(case_block) else {
+            eprintln!("DEBUG narrow_by_default_switch_clause: no case_block_node");
             return type_id;
         };
         let Some(case_block) = self.arena.get_block(case_block_node) else {
+            eprintln!("DEBUG narrow_by_default_switch_clause: no case_block");
             return type_id;
         };
 
@@ -1469,9 +1491,21 @@ impl<'a> FlowAnalyzer<'a> {
                 operator_token: SyntaxKind::EqualsEqualsEqualsToken as u16,
                 right: clause.expression,
             };
+            eprintln!(
+                "DEBUG narrow_by_default_switch_clause: calling narrow_by_binary_expr with narrowed={}",
+                narrowed.0
+            );
             narrowed = self.narrow_by_binary_expr(narrowed, &binary, target, false, narrowing);
+            eprintln!(
+                "DEBUG narrow_by_default_switch_clause: after narrowing, result={}",
+                narrowed.0
+            );
         }
 
+        eprintln!(
+            "DEBUG narrow_by_default_switch_clause: final result={}",
+            narrowed.0
+        );
         narrowed
     }
 
