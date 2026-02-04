@@ -280,22 +280,32 @@ impl<'a> TypePrinter<'a> {
 
         let mut parts = Vec::with_capacity(elements.len());
         for elem in elements.iter() {
-            let type_str = self.print_type(elem.type_id);
+            let mut part = String::new();
 
-            // Handle optional properties
-            if elem.optional {
-                parts.push(format!("{}?", type_str));
-            } else {
-                parts.push(type_str);
-            }
-
-            // Handle rest elements
-            if elem.rest {
-                // Remove last element and add ... prefix
-                if let Some(last) = parts.pop() {
-                    parts.push(format!("...{}", last));
+            // Handle labeled tuple members (e.g., [name: string])
+            if let Some(name) = elem.name {
+                part.push_str(&self.resolve_atom(name));
+                // Optional marker comes after the label for labeled tuples
+                if elem.optional {
+                    part.push('?');
                 }
+                part.push_str(": ");
             }
+
+            // Rest parameter prefix
+            if elem.rest {
+                part.push_str("...");
+            }
+
+            // Type annotation
+            part.push_str(&self.print_type(elem.type_id));
+
+            // Optional marker for unlabeled tuples (comes after type)
+            if elem.name.is_none() && elem.optional {
+                part.push('?');
+            }
+
+            parts.push(part);
         }
 
         format!("[{}]", parts.join(", "))
@@ -436,10 +446,26 @@ impl<'a> TypePrinter<'a> {
 
     fn print_template_literal(
         &self,
-        _template_id: crate::solver::types::TemplateLiteralId,
+        template_id: crate::solver::types::TemplateLiteralId,
     ) -> String {
-        // TODO: Implement template literal type printing
-        "string".to_string()
+        let spans = self.interner.template_list(template_id);
+        let mut result = String::from("`");
+
+        for span in spans.iter() {
+            match span {
+                crate::solver::types::TemplateSpan::Text(atom) => {
+                    result.push_str(&self.resolve_atom(*atom));
+                }
+                crate::solver::types::TemplateSpan::Type(type_id) => {
+                    result.push_str("${");
+                    result.push_str(&self.print_type(*type_id));
+                    result.push_str("}");
+                }
+            }
+        }
+
+        result.push('`');
+        result
     }
 
     fn print_mapped_type(&self, _mapped_id: crate::solver::types::MappedTypeId) -> String {
