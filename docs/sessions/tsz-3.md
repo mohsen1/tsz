@@ -2,33 +2,24 @@
 
 ## Current Work
 
-**Status**: Investigating abstract class test failures - Found root cause!
-
-**Current Task**: Fixing nominal class subtype checking
+**Status**: Investigating why tests still fail after fixes
 
 **Root Cause Identified**:
-The `CompatChecker` was not configured with the `inheritance_graph`, causing nominal class subtype checks to fail. Without the inheritance graph, class instance types fall back to structural checking, which incorrectly fails for inheritance relationships.
+The `CompatChecker` was not configured with the `inheritance_graph`, and `check_object_subtype` was not converting `SymbolRef` to `SymbolId` before calling `is_derived_from`.
 
-**Fix Applied**:
-1. Added `set_inheritance_graph` method to `CompatChecker` in `src/solver/compat.rs`
-2. Updated `configure_compat_checker` in `src/checker/context.rs` to set the inheritance_graph
-3. Used `transmute` to handle lifetime constraints (safe because InheritanceGraph is owned by CheckerContext)
+**Fixes Applied**:
+1. Added `set_inheritance_graph` method to `CompatChecker` (src/solver/compat.rs)
+2. Updated `configure_compat_checker` to set the inheritance_graph (src/checker/context.rs)
+3. Added SymbolRef to SymbolId conversion in check_object_subtype (src/solver/subtype_rules/objects.rs)
 
-**Remaining Issue**:
-Tests still fail after fix. Investigation reveals:
-1. `SymbolRef` (solver) and `SymbolId` (binder) are different types wrapping `u32`
-2. `check_object_subtype` passes `SymbolRef` to `is_derived_from` which expects `SymbolId`
-3. The code in `generics.rs` (lines 107-108) shows explicit conversion is needed:
-   ```rust
-   let s_sid = SymbolId(s_sym.0);
-   let t_sid = SymbolId(t_sym.0);
-   ```
-4. But `objects.rs` line 83 doesn't do this conversion - this may be a type mismatch bug
+**Current Status**:
+Both fixes have been pushed, but tests still fail. This suggests there's another issue preventing nominal class subtype checking from working.
 
-**Next Steps**:
-1. Fix `check_object_subtype` in `src/solver/subtype_rules/objects.rs` to convert `SymbolRef` to `SymbolId` before calling `is_derived_from`
-2. Verify that instance types have the correct `symbol` field set
-3. Run tests to confirm nominal checking works
+**Remaining Investigation Needed**:
+1. Verify that instance types have the correct `symbol` field set
+2. Verify that the `inheritance_graph` is being populated before type checking
+3. Add debug output to trace through the nominal check path
+4. Check if there's a different code path being used for type checking that bypasses the nominal check
 
 **Failing Tests**:
 1. `test_abstract_constructor_assignability` - TS2322 error on `const animal = createAnimal(Animal);`
