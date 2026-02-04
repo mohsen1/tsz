@@ -267,6 +267,27 @@ Results:
 
 **Commit:** feat(tsz-7): implement proper relative path calculation for imports
 
+**Phase 4 Task 2 Implementation (COMPLETE):**
+
+Added name collision handling to `src/declaration_emitter/mod.rs`:
+- Added `reserved_names: FxHashSet<String>` to track local declaration names
+- Added `import_string_aliases: FxHashMap<(String, String), String>` to store aliases
+- Added `prepare_import_aliases()` method to detect collisions before emitting
+- Added `collect_local_declarations()` to gather reserved names from binder/AST
+- Added `extract_declaration_name()` helper to get names from declaration nodes
+- Added `resolve_import_name()` to generate aliases (TypeA_1, TypeA_2, etc.)
+- Added `generate_unique_name()` to create unique numbered aliases
+- Updated `emit_required_imports()` to emit "name as alias" syntax when needed
+- Fixed borrow checker issues by cloning data before mutations
+
+Implementation details:
+- Uses binder's root scope table if available for collecting local names
+- Falls back to AST walking for top-level declarations
+- Generates numbered aliases (Type_1, Type_2) when name collision detected
+- Reserves alias names in reserved_names after generation
+
+**Commit:** feat(tsz-7): implement name collision handling for imports
+
 ### Dependencies
 
 - TSZ-5 (UsageAnalyzer) - ✅ Complete
