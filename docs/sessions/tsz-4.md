@@ -2,9 +2,9 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟢 ACTIVE - 7th Task Complete (2026-02-04)
+## Status: 🟢 ACTIVE - Phase 1 Complete, Phase 2 In Progress (2026-02-04)
 
-Completed 7 tasks successfully:
+### Completed Tasks (7)
 1. Class Heritage and Generics (type literal formatting fix)
 2. Computed Property Names and unique symbol Support
 3. Type Predicates and Assertion Functions
@@ -12,6 +12,58 @@ Completed 7 tasks successfully:
 5. **Function Overload Normalization** (functions, constructors, methods)
 6. **Class Member Synthesis and Default Export Synthesis** (property inference, accessors, parameter props, default exports)
 7. **Visibility-Based Type Inlining** (local types, recursion depth, symbol visibility)
+
+---
+
+## Session Redefinition (2026-02-04)
+
+Based on Gemini Pro consultation, the session has been restructured into three phases:
+
+### Phase 1: Syntax Fidelity (Advanced Types & Patterns) ⏳ IN PROGRESS
+
+#### Task 8: Destructuring Export Flattening (NEXT)
+**Description**: Transform variable declarations with binding patterns into individual declarations.
+- Input: `export const { x, y: z } = point;`
+- Output: `export declare const x: number; export declare const z: number;`
+**Complexity**: Medium
+**Files**: `src/declaration_emitter/mod.rs` (`emit_variable_declaration_statement`)
+**Status**: Not started
+
+#### Task 9: Advanced Type Emission
+**Description**: Implement emission for `TemplateLiteralType` and `NamedTupleMember` (labeled tuples).
+**Complexity**: Low
+**Files**: `src/declaration_emitter/mod.rs` (`emit_type`)
+**Status**: Not started
+
+### Phase 2: Project Structure & Metadata
+
+#### Task 10: Triple-Slash Directive Emission
+**Description**: Emit `/// <reference ... />` directives at the top of the file.
+**Complexity**: Low
+**Files**: `src/declaration_emitter/mod.rs` (`emit`)
+**Status**: Not started
+
+#### Task 11: JSDoc Comment Preservation
+**Description**: Extract JSDoc comments from the AST and emit them before their associated nodes.
+**Complexity**: Medium
+**Files**: `src/declaration_emitter/mod.rs`, `src/scanner/mod.rs`
+**Status**: Not started
+
+### Phase 3: The Enforcer (Final Boss)
+
+#### Task 12: Accessibility Diagnostics (TS4023/TS4058)
+**Description**: Implement the "Lawyer" logic for exports. Error when a public API references a type that is not exported, not reachable, or cannot be inlined.
+**Complexity**: High
+**Files**: `src/declaration_emitter/mod.rs`, `src/checker/diagnostics.rs`
+**Status**: Not started
+
+---
+
+## Immediate Next Step
+
+**Task 8: Destructuring Export Flattening**
+
+This is the next task to work on. MANDATORY Gemini consultation is required before implementation per the workflow.
 
 ### Class Member Synthesis and Default Export Synthesis ✅ COMPLETE (2026-02-04)
 
