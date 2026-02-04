@@ -227,19 +227,19 @@ fn test_base_constraint_assignability_compat() {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
-        is_const: false,
+            is_const: false,
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(TypeId::STRING),
         default: None,
-        is_const: false,
+            is_const: false,
     }));
     let v_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: Some(TypeId::NUMBER),
         default: None,
-        is_const: false,
+            is_const: false,
     }));
 
     assert!(checker.is_assignable(t_param, TypeId::STRING));
@@ -3081,6 +3081,7 @@ fn test_mapped_type_over_number_keys_assignable() {
             constraint: None,
             is_const: false,
             default: None,
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -3124,6 +3125,7 @@ fn test_mapped_type_over_string_keys_assignable() {
             constraint: None,
             is_const: false,
             default: None,
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -3167,6 +3169,7 @@ fn test_mapped_type_over_boolean_keys_assignable() {
             constraint: None,
             is_const: false,
             default: None,
+            is_const: false,
         },
         constraint,
         name_type: None,
@@ -3229,7 +3232,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         name: interner.intern_string("K"),
         constraint: Some(keys),
         default: None,
-        is_const: false,
+            is_const: false,
     };
     let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
 
@@ -3270,6 +3273,7 @@ fn test_conditional_tuple_wrapper_no_distribution_assignable() {
         constraint: None,
         is_const: false,
         default: None,
+            is_const: false,
     }));
 
     let tuple_check = interner.tuple(vec![TupleElement {
