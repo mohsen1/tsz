@@ -828,12 +828,15 @@ impl<'a> NarrowingContext<'a> {
             let matching: Vec<TypeId> = members
                 .iter()
                 .map(|&member| {
-                    let has_property = self.type_has_property(member, property_name);
+                    // CRITICAL: Resolve Lazy types for each member
+                    let resolved_member = self.resolve_type(member);
+
+                    let has_property = self.type_has_property(resolved_member, property_name);
                     if present {
                         // Positive: "prop" in member
                         if has_property {
                             // Property exists: Promote to required
-                            let prop_type = self.get_property_type(member, property_name);
+                            let prop_type = self.get_property_type(resolved_member, property_name);
                             let required_prop = PropertyInfo {
                                 name: property_name,
                                 type_id: prop_type.unwrap_or(TypeId::UNKNOWN),
@@ -864,7 +867,11 @@ impl<'a> NarrowingContext<'a> {
                         }
                     } else {
                         // Negative: !("prop" in member)
-                        // For now, keep the member as-is (TypeScript has more complex behavior here)
+                        // Exclude member ONLY if property is required
+                        if self.is_property_required(resolved_member, property_name) {
+                            return TypeId::NEVER;
+                        }
+                        // Keep member (no required property found, or property is optional)
                         member
                     }
                 })
@@ -883,13 +890,15 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // For non-union types, check if the property exists
-        let has_property = self.type_has_property(source_type, property_name);
+        // CRITICAL: Resolve Lazy types before checking
+        let resolved_type = self.resolve_type(source_type);
+        let has_property = self.type_has_property(resolved_type, property_name);
 
         if present {
             // Positive: "prop" in x
             if has_property {
                 // Property exists: Promote to required
-                let prop_type = self.get_property_type(source_type, property_name);
+                let prop_type = self.get_property_type(resolved_type, property_name);
                 let required_prop = PropertyInfo {
                     name: property_name,
                     type_id: prop_type.unwrap_or(TypeId::UNKNOWN),
@@ -920,15 +929,12 @@ impl<'a> NarrowingContext<'a> {
             }
         } else {
             // Negative: !("prop" in x)
-            if has_property {
-                // Property exists but we're excluding it
-                // For optional properties, narrow to undefined (effectively missing)
-                // For required properties, this would be NEVER, but TypeScript handles this differently
-                source_type
-            } else {
-                // Property doesn't exist and we're checking it doesn't exist - no change
-                source_type
+            // Exclude ONLY if property is required (not optional)
+            if self.is_property_required(resolved_type, property_name) {
+                return TypeId::NEVER;
             }
+            // Keep source_type (no required property found, or property is optional)
+            source_type
         }
     }
 
@@ -940,16 +946,65 @@ impl<'a> NarrowingContext<'a> {
         self.get_property_type(type_id, property_name).is_some()
     }
 
+    /// Check if a property exists and is required on a type.
+    ///
+    /// Returns true if the property is required (not optional).
+    /// This is used for negative narrowing: `!("prop" in x)` should
+    /// exclude types where `prop` is required.
+    fn is_property_required(&self, type_id: TypeId, property_name: Atom) -> bool {
+        let resolved_type = self.resolve_type(type_id);
+
+        // Helper to check a specific shape
+        let check_shape = |shape_id: ObjectShapeId| -> bool {
+            let shape = self.db.object_shape(shape_id);
+            if let Some(prop) = shape.properties.iter().find(|p| p.name == property_name) {
+                return !prop.optional;
+            }
+            false
+        };
+
+        // Check standard object shape
+        if let Some(shape_id) = object_shape_id(self.db, resolved_type) {
+            if check_shape(shape_id) {
+                return true;
+            }
+        }
+
+        // Check object with index shape (CRITICAL for interfaces/classes)
+        if let Some(shape_id) = object_with_index_shape_id(self.db, resolved_type) {
+            if check_shape(shape_id) {
+                return true;
+            }
+        }
+
+        // Check intersection members
+        // If ANY member requires it, the intersection requires it
+        if let Some(members_id) = intersection_list_id(self.db, resolved_type) {
+            let members = self.db.type_list(members_id);
+            return members
+                .iter()
+                .any(|&m| self.is_property_required(m, property_name));
+        }
+
+        false
+    }
+
     /// Get the type of a property if it exists.
     ///
     /// Returns Some(type) if the property exists, None otherwise.
     fn get_property_type(&self, type_id: TypeId, property_name: Atom) -> Option<TypeId> {
+        // CRITICAL: Resolve Lazy types before checking for properties
+        // This ensures type aliases are resolved to their actual types
+        let resolved_type = self.resolve_type(type_id);
+
         // Check intersection types - property exists if ANY member has it
-        if let Some(members_id) = intersection_list_id(self.db, type_id) {
+        if let Some(members_id) = intersection_list_id(self.db, resolved_type) {
             let members = self.db.type_list(members_id);
             // Return the type from the first member that has the property
             for &member in members.iter() {
-                if let Some(prop_type) = self.get_property_type(member, property_name) {
+                // Resolve each member in the intersection
+                let resolved_member = self.resolve_type(member);
+                if let Some(prop_type) = self.get_property_type(resolved_member, property_name) {
                     return Some(prop_type);
                 }
             }
@@ -957,7 +1012,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Check object shape
-        if let Some(shape_id) = object_shape_id(self.db, type_id) {
+        if let Some(shape_id) = object_shape_id(self.db, resolved_type) {
             let shape = self.db.object_shape(shape_id);
 
             // Check if the property exists in the object's properties
@@ -984,7 +1039,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Check object with index signature
-        if let Some(shape_id) = object_with_index_shape_id(self.db, type_id) {
+        if let Some(shape_id) = object_with_index_shape_id(self.db, resolved_type) {
             let shape = self.db.object_shape(shape_id);
 
             // Check properties first
