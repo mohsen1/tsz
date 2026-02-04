@@ -68,16 +68,21 @@ declare class m3d { foo(): void; }
 tsc: No errors (3 separate m3d symbols)
 tsz: TS2300 on each `declare class m3d` (symbols incorrectly merged)
 
-**Next Steps** (from Gemini guidance):
-1. **Locate `declare_symbol`** in `src/binder/state.rs` (already found at line 3139)
-2. **Audit the merge logic**: The bug is that `declare_symbol` checks `self.current_scope.get(name)` but this might be finding symbols from parent scopes
-3. **Add debug traces** to verify cross-scope merging:
-   ```rust
-   eprintln!("Declaring '{}' in scope {:?}, found existing {:?} in same scope",
-       name, self.current_scope_id, existing_id);
-   ```
-4. **Fix the merge condition**: Only merge if existing symbol is in CURRENT scope, not parent scopes
-5. **Verify** with test case - should get 3 distinct m3d symbols instead of 1 merged symbol
+**ROOT CAUSE FOUND** (critical discovery in `src/parallel.rs`):
+The bug is NOT in `declare_symbol` - the binder is working correctly!
+
+**The Problem**: In `src/parallel.rs:750-777`, the `merge_bind_results_ref` function has `merged_symbols: FxHashMap<String, SymbolId>` that maps symbol NAMES to global IDs, IGNORING scope!
+
+When symbols are merged into the global symbol arena:
+- T1.m3d gets inserted into merged_symbols["m3d"]
+- T2.m3d finds merged_symbols["m3d"] exists, so it MERGES with T1.m3d
+- Top-level m3d also MERGES with the same symbol
+
+Result: All "m3d" symbols from all scopes are merged into ONE global symbol ID.
+
+**Fix Required**: Change `merged_symbols` from `FxHashMap<String, SymbolId>` to be scope-aware. Should probably be `FxHashMap<(ScopeId, String), SymbolId>` or track scope membership differently.
+
+**File to Fix**: `src/parallel.rs` function `merge_bind_results_ref`, specifically the symbol remapping logic around lines 650-780.
 
 
 **Conformance Status**: 97/200 passed (48.5%)
