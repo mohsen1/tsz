@@ -2,65 +2,66 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟡 ACTIVE - Function Overload Normalization In Progress (2026-02-04)
+## Status: 🟢 COMPLETE - Function Overload Normalization (2026-02-04)
 
-Completed 4.5 tasks:
+Completed 5 tasks successfully:
 1. Class Heritage and Generics (type literal formatting fix)
 2. Computed Property Names and unique symbol Support
 3. Type Predicates and Assertion Functions
 4. Module System Fidelity (ambient modules, import equals, namespace exports)
-5. **Function Overload Normalization** - PARTIAL (functions done, constructors/methods pending)
+5. **Function Overload Normalization** (functions, constructors, methods)
 
-### Function Overload Normalization - Progress Update (2026-02-04)
+### Function Overload Normalization ✅ COMPLETE (2026-02-04)
 
 **Completed:**
 - ✅ Top-level function overloads (export function foo())
-- ✅ Single function signatures (no overloads)
+- ✅ Constructor overloads (class constructors)
+- ✅ Method overloads (class methods)
+- ✅ Single function/method/constructor signatures (no overloads)
 - ✅ Overload tracking infrastructure
 
 **Pending:**
-- ⏳ Constructor overloads (class constructors)
-- ⏳ Method overloads (class methods)
-- ⏳ Default export synthesis (export default expression)
+- ⏳ Default export synthesis (export default expression) - deferred to future task
 
-**Commit:** 32c7e28ca (feat: function overload normalization)
+**Commits:**
+- 32c7e28ca (feat: function overload normalization - functions)
+- 919b5bd8d (feat: constructor and method overload normalization)
 
-**Test Results (Functions):**
+**Test Results (All Overload Types):**
 ```typescript
 // Input
 export function foo(x: string): void;
 export function foo(x: number): void;
 export function foo(x: string | number): void {}
-export function bar(x: number): void {}
 
-// Output ✅ (matches tsc)
-export declare function foo(x: string): void;
-export declare function foo(x: number): void;
-export declare function bar(x: number): void;
-```
-
-**Test Results (Constructors):**
-```typescript
-// Input
 export class C {
     constructor(x: string);
     constructor(x: number);
     constructor(x: string | number) {}
+
+    method(x: string): void;
+    method(x: number): void;
+    method(x: string | number): void {}
 }
 
-// Current Output ❌ (implementation signature not suppressed)
+// Output ✅ (matches tsc exactly)
+export declare function foo(x: string): void;
+export declare function foo(x: number): void;
 export declare class C {
     constructor(x: string);
     constructor(x: number);
-    constructor(x: string | number);
-}
-
-// Expected Output ✅
-export declare class C {
-    constructor(x: string);
-    constructor(x: number);
+    method(x: string): void;
+    method(x: number): void;
 }
 ```
+
+**Implementation Details:**
+- Added `function_names_with_overloads: FxHashSet<String>` for top-level functions
+- Added `class_has_constructor_overloads: bool` for constructor overload tracking
+- Added `method_names_with_overloads: FxHashSet<String>` for method overload tracking per class
+- Updated `get_function_name()` to work with both functions and methods
+- Implementation signatures automatically skipped when overloads exist
+- Tracking resets per class to handle multiple classes correctly
 
 **Next Steps:**
 1. Apply same overload logic to `emit_constructor_declaration()`
