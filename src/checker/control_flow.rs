@@ -24,8 +24,9 @@ use crate::interner::Atom;
 use crate::parser::node::{BinaryExprData, NodeArena};
 use crate::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
+#[allow(unused_imports)]
 use crate::solver::{
-    NarrowingContext, ParamInfo, QueryDatabase, TypeDatabase, TypeId, TypePredicate,
+    NarrowingContext, ParamInfo, QueryDatabase, TypeDatabase, TypeId, TypePredicate, Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;

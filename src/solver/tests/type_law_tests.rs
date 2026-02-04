@@ -12,7 +12,7 @@
 
 use crate::solver::types::{SymbolRef, TypeId};
 use crate::solver::{
-    FunctionShape, ParamInfo, PropertyInfo, SubtypeChecker, TupleElement, TypeInterner,
+    FunctionShape, ParamInfo, PropertyInfo, SubtypeChecker, TupleElement, TypeInterner, Visibility,
 };
 
 // =============================================================================
