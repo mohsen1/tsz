@@ -14,6 +14,7 @@
 7. **Visibility-Based Type Inlining** (local types, recursion depth, symbol visibility)
 8. **Destructuring Export Flattening** (binding pattern flattening, nested destructuring)
 9. **Advanced Type Emission** (template literal types, labeled tuple members)
+10. **Triple-Slash Directive Emission** (/// <reference>, /// <amd-module>, etc.)
 
 ---
 
@@ -147,12 +148,44 @@ export const x = 1;
 export declare const x: number;
 ```
 
-#### Task 11: Import/Export Elision
+#### Task 11: Import/Export Elision ⏳ IN PROGRESS (Partial - 2026-02-04)
 **Description**: Only emit imports that are actually used in the public API.
 - **Why**: Prevents broken `.d.ts` files that reference unused modules
-- **Complexity**: High (Requires usage analysis)
+- **Complexity**: High (Requires usage analysis and binder changes)
 - **Files**: `src/declaration_emitter/mod.rs`, `src/checker/` or `src/binder/mod.rs`
-- **Status**: Not started
+- **Status**: Partially implemented
+
+**Completed So Far:**
+- ✅ Added `has_export_modifier()` helper to check for Export keyword
+- ✅ Updated `analyze_statement()` to only analyze exported declarations
+- ✅ Fixed `is_local` check to use `declaration_arenas` instead of `symbol_arenas`
+- ✅ Foreign symbols are correctly identified and added to `foreign_symbols` set
+
+**Remaining Work:**
+- ❌ Module path resolution for imported symbols doesn't work
+- `resolve_symbol_module_path()` needs to track which module each symbol comes from
+- `declaration_arenas` isn't populated for imported symbols
+- Requires binder changes to track symbol provenance properly
+
+**Test Case:**
+```typescript
+// Input
+import { InternalType } from './internal';  // Should be elided
+import { PublicType } from './public';      // Should be kept
+
+export interface Api {
+    value: PublicType;
+}
+
+// Expected output
+import { PublicType } from './public';
+export interface Api {
+    value: PublicType;
+}
+```
+
+**Commits:**
+- 59ca8c3cd (feat(tsz-4): partial progress on Import/Export Elision)
 
 ### Phase 3: The Enforcer (Final Polish)
 
@@ -174,17 +207,24 @@ export declare const x: number;
 
 ## Immediate Next Step
 
-**Task 11: Import/Export Elision**
+**Task 11: Import/Export Elision (IN PROGRESS)**
 
-This is a high-complexity task that involves analyzing which imported types are actually used in the public API and removing unused imports.
+This is a high-complexity task. Partial implementation is complete - foreign symbols are correctly identified, but module path resolution requires deeper binder changes.
 
-**Implementation Plan:**
-1. Implement or integrate UsageAnalyzer to track symbol usage
-2. Mark imported symbols that are referenced in exported APIs
-3. Remove unused imports from .d.ts output
-4. Handle type-only imports vs value imports
+**Current Blocker:**
+The `resolve_symbol_module_path()` function cannot determine which module an imported symbol comes from because `declaration_arenas` isn't populated for imported symbols. The `symbol_arenas` map stores the LAST arena where a symbol was seen (the current file), not where it was originally declared.
 
-MANDATORY Gemini consultation required before implementation per the workflow.
+**Potential Solutions:**
+1. Modify binder to populate `declaration_arenas` for all imported symbols
+2. Create a separate map tracking `SymbolId -> ModulePath` from import statements
+3. Parse import statements directly to build the symbol-to-module mapping
+
+This task is blocked on architectural decisions in the binder layer.
+
+**Alternative Next Tasks:**
+While Task 11 is blocked, consider:
+- Task 12: Accessibility Diagnostics (TS4023/TS4058) - Also high complexity
+- Task 13: JSDoc Comment Preservation - Medium complexity, independent of binder
 
 ### Class Member Synthesis and Default Export Synthesis ✅ COMPLETE (2026-02-04)
 
