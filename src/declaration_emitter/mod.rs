@@ -275,6 +275,14 @@ impl<'a> DeclarationEmitter<'a> {
             return String::new();
         };
 
+        eprintln!(
+            "[DEBUG] source_file has {} comments",
+            source_file.comments.len()
+        );
+
+        // Emit triple-slash directives at the very top (before imports)
+        self.emit_triple_slash_directives(source_file);
+
         // Emit required imports first (before other declarations)
         self.emit_required_imports();
 
@@ -286,6 +294,48 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.writer.get_output().to_string()
+    }
+
+    /// Emits triple-slash directives at the top of the .d.ts file.
+    ///
+    /// TypeScript uses triple-slash directives for:
+    /// - File references: `/// <reference path="other.ts" />`
+    /// - Type references: `/// <reference types="node" />`
+    /// - Lib references: `/// <reference lib="es2015" />`
+    /// - AMD directives: `/// <amd-module />`, `/// <amd-dependency />`
+    ///
+    /// These must appear at the very top of the file, before any imports or declarations.
+    fn emit_triple_slash_directives(&mut self, source_file: &crate::parser::node::SourceFileData) {
+        eprintln!(
+            "[DEBUG] emit_triple_slash_directives: {} comments",
+            source_file.comments.len()
+        );
+
+        for comment in &source_file.comments {
+            // Extract the comment text from the source file
+            let text = &source_file.text[comment.pos as usize..comment.end as usize];
+
+            eprintln!(
+                "[DEBUG] Comment: '{}', starts_with ///: {}",
+                text,
+                text.starts_with("///")
+            );
+
+            // Triple-slash directives start with ///
+            if text.starts_with("///") {
+                let trimmed = text[3..].trim_start();
+
+                // Check if this is a directive we should preserve
+                if trimmed.starts_with("<reference")
+                    || trimmed.starts_with("<amd-module")
+                    || trimmed.starts_with("<amd-dependency")
+                {
+                    eprintln!("[DEBUG] Emitting directive: {}", text);
+                    self.write(text);
+                    self.write_line();
+                }
+            }
+        }
     }
 
     fn emit_statement(&mut self, stmt_idx: NodeIndex) {
