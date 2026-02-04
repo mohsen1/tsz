@@ -20,12 +20,20 @@
 **Why**: Cannot safely implement Priority 2 or 3 without a working test suite.
 
 **Progress** (2026-02-04):
-- 235 test compilation errors remaining (down from 237)
-- Fixed 2 errors in control_flow.rs and typescript_quirks_tests.rs
-- Most errors are missing `visibility` and `parent_id` fields in `PropertyInfo` initializers
-- Commit: `4079247e8` - "fix(tsz-1): add Visibility import to control_flow tests"
+- **Started**: 1484 compilation errors
+- **Current**: 19 errors remaining in solver tests (98.7% reduction)
+- **Fixed**: 24 solver test files with Visibility imports
+- **Fixed**: object_literal.rs, class_hierarchy.rs, control_flow.rs
+- **Remaining**: 14 PropertyInfo instances with same-line closing braces + 5 other errors
 
-**Blockers**: This is tedious manual work. Cannot run conformance tests to verify Priority 2 and Priority 3 without fixing test suite first.
+**Recent Commits**:
+- `bfd3f9bca` - "fix: add Visibility imports and fix SymbolId::from_u32"
+- `30b4ad671` - "fix: add Visibility imports to solver tests"
+
+**Known Issue**: Automation script failed on pattern where `}]);` is on same line as `is_method`.
+Need manual fix or improved regex.
+
+**Blockers**: tedious manual work for remaining edge cases. Cannot run conformance tests to verify Priority 2 and Priority 3 without fixing test suite first.
 
 ### Priority 2: Nominal Subtyping Audit & Implementation
 **Problem**: `PropertyInfo` has the fields, but the "Judge" (`src/solver/subtype.rs`) may not be fully enforcing them, and the "Lawyer" (`src/solver/lawyer.rs`) might be missing `any` bypass rules for private members.
