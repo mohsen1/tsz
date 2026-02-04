@@ -35,20 +35,23 @@ Added debug logging and traced the issue:
 3. But `TypeId(144)` contains instance properties like `speak` and Object.prototype methods
 
 **Root Cause Found**:
-The constructor type `TypeId(144)` contains INSTANCE properties instead of just STATIC properties!
+The constructor type `TypeId(144)` has **0 properties**, which is correct! Animal has no static members.
 
-The error shows:
-- `isPrototypeOf`, `propertyIsEnumerable`, etc. (Object.prototype methods)
-- `constructor: Function`
-- `speak: { (): void }` (Animal's instance method - should NOT be in constructor type!)
+However, the type environment (src/checker/state_type_analysis.rs:852-858) maps class symbols to their **instance type**, not their constructor type.
 
-The `get_class_constructor_type_inner` function builds a callable type with:
-- `construct_signatures` (correct)
-- `properties` (should only contain static members, but contains instance properties)
+```rust
+if let Some((instance_type, class_params)) = class_env_entry {
+    env.insert(SymbolRef(sym_id.0), instance_type);  // BUG: Should be constructor type!
+}
+```
 
-This means somewhere in the constructor type building logic, instance properties are being added to the `properties` HashMap.
+This creates an inconsistency:
+- `get_type_of_symbol(Animal)` → returns constructor type (TypeId(144)) with 0 properties ✓
+- `type_env.get(Animal)` → returns instance type with Object.prototype properties ✗
 
-Next: Find where instance properties are being added to the constructor type's properties HashMap.
+When the assignability check looks up the type of `Animal` (the value), it might be using the type environment which returns the instance type instead of the constructor type.
+
+**Next Step**: Investigate where the type environment is being used in the assignability check for `createAnimal(Animal)`. The issue is that we're getting the instance type from the type environment instead of the constructor type.
 
 **Failing Tests**:
 1. `test_abstract_constructor_assignability` - TS2322 error: Type for `Animal` includes Object.prototype properties
