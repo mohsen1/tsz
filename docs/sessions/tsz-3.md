@@ -56,13 +56,11 @@ Changed type environment to map class symbols to constructor type instead of ins
 
 **Reverted** the change since it didn't work and might have other impacts.
 
-**Next Investigation**:
-The error message shows instance properties even after my fix. This suggests either:
-1. The type is being looked up from a different cache/mechanism (not type environment)
-2. The type itself (TypeId) contains instance properties
-3. The error message formatting is showing a different type than what's being compared
+**Status**: BLOCKED - Need deeper investigation into type resolution path
 
-Need to trace through the assignability check to see where the instance type is coming from.
+The constructor type is correctly created with 0 properties, and `get_type_of_symbol` returns it. However, the error message shows instance properties, suggesting a different resolution path is being used.
+
+**Blocked By**: Complex interaction between type environment, symbol resolution, and type formatting that requires comprehensive tracing to understand.
 
 **Failing Tests**:
 1. `test_abstract_constructor_assignability` - TS2322 error: Type for `Animal` includes Object.prototype properties
