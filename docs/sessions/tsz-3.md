@@ -30,9 +30,24 @@ The checker's `resolve_duplicate_decl_node` function in `src/checker/symbol_reso
 - tsc emits NO TS2300 for this file (namespace/class merging is allowed)
 - tsz was emitting 5 TS2300 errors (one for each `declare class m3d`)
 
-**Remaining Issue**: After the fix, namespace/class merging works for declarations in the SAME scope. However, there's still an issue with scope handling. The binder is merging symbols from DIFFERENT scopes (e.g., `namespace T1 { namespace m3d }` creates a local m3d symbol inside T1, but it's being merged with the top-level m3d symbol).
+**Remaining Issue**: Binder scope merging bug.
+The binder is creating ONE symbol with ALL 10 m3d declarations (5 namespaces + 5 classes from different scopes).
 
-**Investigation Needed**: The binder's scope management for nested namespaces. When `namespace T1 { namespace m3d }` is declared, it should create a symbol m3d that is LOCAL to T1's scope, not merge with any top-level m3d symbol.
+Expected behavior:
+- T1.m3d should be a LOCAL symbol to T1 (namespace + class merged within T1)
+- T2.m3d should be a LOCAL symbol to T2 (namespace + class merged within T2)
+- Top-level m3d should be its own symbol
+- Total: 5 separate m3d symbols
+
+Actual behavior:
+- All 10 declarations merged into 1 global m3d symbol
+- Checker sees class vs class in different scopes and emits TS2300
+
+**Investigation Status**:
+- `bind_module_declaration` calls `enter_scope(ContainerKind::Module, idx)` at line 1257
+- `declare_symbol` checks `self.current_scope.get(name)` which should be scope-local
+- Both legacy and persistent scope systems exist and seem correct
+- Need to trace actual binding flow to find where cross-scope merging happens
 
 
 **Conformance Status**: 97/200 passed (48.5%)
