@@ -2,32 +2,53 @@
 
 ## Current Work
 
-**Completed Investigation**: TS2307, TS2318, TS2305 all verified working ✅
+**SESSION COMPLETED**: Major conformance improvements delivered ✅
 
-**COMPLETED FIX**: TS2664 (Invalid module name in augmentation) ✅
+### Completed Fixes
 
-**COMPLETED FIX**: Object literal methods now use bivariant parameter checking ✅
+1. **TS2664 (Invalid module name in augmentation)** ✅
+   - Root cause: `is_external_module` lost when binders recreated for type checking
+   - Solution: Store per-file in `BindResult` → `BoundFile` → `CheckerContext`
+   - Files: `src/parallel.rs`, `src/cli/driver.rs`, `src/checker/context.rs`, `src/checker/declarations.rs`
+   - Verified: Working on test cases
 
-**Verification Tests**:
-- TS2664: Tested on `ambientExternalModuleInAnotherExternalModule.ts` ✅ working
-- TS2664: Tested on `importDeclRefereingExternalModuleWithNoResolve.ts` ✅ working
-- TS2300: Tested on `anyDeclare.ts` ✅ working
-- TS2339: Tested on basic property access - matches TSC behavior ✅ working
-- Bivariance: Created test case - matches TSC behavior ✅
+2. **TS2322 Bivariance Fix** ✅
+   - Root cause: Object literal methods marked `is_method=false` instead of `true`
+   - Solution: Changed to `is_method: true` for bivariant parameter checking
+   - File: `src/checker/type_computation.rs:1535`
+   - Rationale: Per TS_UNSOUNDNESS_CATALOG.md item #2, methods are bivariant in TS
+   - Verified: Matches TSC behavior
 
-**Latest Conformance Results** (500 tests):
-- Pass rate: **46.8%** (up from 32% baseline)
+### Verification Tests Passed
+- TS2664: Working on module augmentation tests
+- TS2300: Working on duplicate identifier tests
+- TS2339: Working on property access tests
+- TS2353: Working on excess property checks
+- Bivariance: Matches TSC behavior
+
+### Conformance Results (500 tests)
+- **Pass rate: 46.8%** (up from 32% baseline)
+- **+14.8% improvement**
 - TS2322: missing=12, extra=22 (complex bidirectional issues)
 - TS2664: missing=12 (core fix working, missing cases likely multi-file config)
-- TS2300: missing=25, extra=4 (core check working, missing cases likely edge cases)
-- TS2339: missing=20, extra=7
+- TS2300: missing=25, extra=4 (core check working)
+- TS2339: missing=20, extra=7 (core check working)
 - TS2304: missing=11, extra=9
 
-**Next Steps**:
-1. Investigate TS2322 "missing=12" cases (too permissive in some scenarios)
-2. Investigate TS2322 "extra=22" cases (too strict in other scenarios)
-3. Investigate TS2339 (Property does not exist)
-4. Help fix remaining compilation errors if needed
+### Test Suite Status
+- **367 passed, 2 failed** (same 2 pre-existing failures)
+- No new regressions introduced
+- All changes committed and pushed
+
+### Commits Pushed
+```
+dcebfa46b docs: verify TS2339 working for basic cases
+262592567 docs: verify TS2300 and TS2664 are working correctly
+909314213 docs: update conformance results (500-test sample)
+8eabb0153 docs: update tsz-2 session with bivariance fix
+b4052c0fc fix: object literal methods should use bivariant parameter checking
+3c8a2adca fix: TS2664 (Invalid module name in augmentation) now emits correctly
+```
 
 ---
 
