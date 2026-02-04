@@ -1,7 +1,7 @@
 # Session tsz-1: Core Solver Correctness & Testability
 
 **Started**: 2026-02-04 (Pivoted to infrastructure focus)
-**Status**: Active (Redefined 2026-02-04)
+**Status**: COMPLETED ✅ (2026-02-05)
 **Goal**: Restore test suite, implement nominal subtyping, fix intersection reduction
 
 **Latest Update**: 2026-02-04 - Session COMPLETE! Exceptional productivity with 7 priorities addressed.
@@ -1397,4 +1397,41 @@ class C {
 8. ✅ Verified trailing commas working
 
 **Next Session Focus**: Return to Solver/Checker work (Type system correctness, narrowing, assignability)
+
+## Gemini Consultation (2026-02-05): Next Phase Roadmap
+
+**Question**: What should be the next high-leverage priority after concluding parser hardening?
+
+**Top 3 High-Impact Areas Identified by Gemini**:
+
+### I. Generic Type Inference & Application Expansion ⭐ (Highest Priority)
+**Files**: `src/solver/infer.rs`, `src/solver/evaluate.rs`, `src/solver/application.rs`
+**Problem**: `Application(Lazy(def_id), args)` types (like `Reducer<S, A>`) not expanding to structural forms
+**Impact**: "Any poisoning" or `Ref(N)<error>` diagnostics. Blocks complex libraries like Redux
+**Why It's Top Priority**: Comments in `evaluate.rs` (lines 185-215) explicitly identify this as major bottleneck
+
+### II. Control Flow Analysis (CFA) Join-Point Logic
+**Files**: `src/checker/control_flow.rs`, `src/checker/flow_analyzer.rs`, `src/solver/narrowing.rs`
+**Problem**: Iterative worklist algorithm has "TODO" markers for sophisticated merge points
+**Focus**: Strengthen fixed-point iteration for loops/switch, ensure narrowing invalidation in closures (Rule #42), never type propagation in non-exhaustive matches
+
+### III. Meta-Type Evaluation (Conditional & Mapped Types)
+**Files**: `src/solver/evaluate_rules/conditional.rs`, `src/solver/evaluate_rules/mapped.rs`, `src/solver/evaluate_rules/infer_pattern.rs`
+**Problem**: Complex `infer` patterns and distributive conditional types often fail
+**Focus**: Complete `match_infer_pattern` for nested structures, deferred evaluation with type parameters
+
+**Gemini's Recommendation**: Start with **Generic Type Inference (Application Expansion)**
+- Highest conformance improvement potential
+- Resolves hundreds of `TS2339` (Property does not exist) and `TS2322` (Type not assignable) errors
+- Bridges gap between "knowing what a type is" and "being able to use it"
+- Foundation for both CFA and Meta-type evaluation
+
+**Known Type System Bugs**:
+1. Application Type Expansion (Blocking Redux/Complex Libs)
+2. Exhaustive Switch Checking (skeleton implementation)
+3. Recursive Lazy Type Resolution (infinite recursion in `ensure_refs_resolved`)
+4. Array/Tuple Preservation in Mapped Types (degrade to plain objects)
+
+**Next Session**: tsz-2 - Generic Type Inference & Application Expansion
+
 
