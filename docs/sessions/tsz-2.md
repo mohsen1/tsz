@@ -6,16 +6,26 @@
 
 **COMPLETED FIX**: TS2664 (Invalid module name in augmentation) ✅
 
+**IN PROGRESS**: Fixing TS2322 false positives
+
+**Latest Fix** (2025-02-04): Object literal methods now use bivariant parameter checking
+- **Bug Found**: Object literal methods like `{ foo() {} }` were incorrectly marked `is_method=false`
+- **Impact**: This caused strict contravariant parameter checking instead of bivariant
+- **Fixed**: Changed `is_method: false` to `is_method: true` for object literal methods
+- **File**: `src/checker/type_computation.rs:1535`
+- **Rationale**: Per TS_UNSOUNDNESS_CATALOG.md item #2, methods should be bivariant to support common OOP patterns. This aligns object literal methods with interface methods.
+
 **Latest Conformance Results** (100 tests):
 - Pass rate: 38% (up from 32%)
 - TS2664: missing=2 (down from before - most cases now caught)
-- TS2322: extra=8 (8 false positives we report that TSC doesn't)
+- TS2322: extra=8 (8 false positives - bivariance fix should help)
 - TS2304: extra=9 (9 "Cannot find name" errors that TSC doesn't)
 
 **Next Steps**:
-1. Investigate and fix TS2322 false positives (8 extra)
-2. Investigate TS2304 false positives (9 extra)
-3. Help fix remaining compilation errors if needed
+1. Run larger conformance test to measure TS2322 improvement
+2. Investigate remaining TS2322 false positives if any
+3. Investigate TS2304 false positives (9 extra)
+4. Help fix remaining compilation errors if needed
 
 ---
 
