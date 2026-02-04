@@ -13,13 +13,34 @@ Previous session (tsz-3-control-flow-analysis) completed:
 - Tail-recursive conditional type evaluation fix
 - Investigation revealed discriminant narrowing is fundamentally broken (archived for future work)
 
-## Current Approach
+## Current Task: Abstract Mixin Intersection TS2339
 
-Focus on smaller, achievable fixes rather than large architectural changes:
-- Individual diagnostic emissions
-- Specific type checking scenarios
-- Test-driven fixes with clear expected behavior
+### Problem Statement
+
+Test `test_abstract_mixin_intersection_ts2339` fails with unexpected TS2339 errors.
+
+**Error**:
+```
+Property 'baseMethod' does not exist on type 'DerivedFromConcrete'
+Property 'mixinMethod' does not exist on type 'DerivedFromConcrete'
+```
+
+**Expected**: These properties SHOULD exist (no TS2339) when using abstract mixin pattern.
+
+**Test Location**: `src/tests/checker_state_tests.rs:23772`
+
+**Debug Output**:
+```
+[PROP-NOT-EXIST] prop_name=baseMethod, type_id=TypeId(152)
+[PROP-NOT-EXIST] prop_name=mixinMethod, type_id=TypeId(152)
+```
+
+### Investigation Needed
+
+1. Understand how abstract mixin intersection types should work
+2. Check how properties from mixin classes are resolved
+3. Fix property existence checking for intersection types with abstract classes
 
 ## Next Steps
 
-Awaiting specific task assignment or identify a failing test to investigate.
+Investigate and fix the abstract mixin intersection property resolution issue.
