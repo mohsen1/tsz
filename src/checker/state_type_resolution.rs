@@ -631,13 +631,17 @@ impl<'a> CheckerState<'a> {
             if symbol.flags & symbol_flags::CLASS != 0
                 && symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) == 0
             {
-                // Step 1: Ensure the instance type is computed and cached
-                let _instance_type = self.class_instance_type_from_symbol(sym_id);
+                // For classes in TYPE position, return the INSTANCE TYPE directly
+                // This is critical for nominal type checking to work correctly
+                let instance_type_opt = self.class_instance_type_from_symbol(sym_id);
 
-                // Step 2: Return a Lazy type reference for the class
-                // This allows error formatting to look up the class name by DefId
+                if let Some(instance_type) = instance_type_opt {
+                    self.ctx.leave_recursion();
+                    return instance_type;
+                }
+
+                // Fallback: if instance type couldn't be computed, return Lazy
                 let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
-
                 self.ctx.leave_recursion();
                 return lazy_type;
             }
