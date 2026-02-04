@@ -34,7 +34,7 @@
 - Updated documentation to clarify expected behavior
 - Behavior now matches tsc exactly
 
-## Current Task: Fix Tail-Recursive Conditional Type Evaluation
+## Current Task: Fix Tail-Recursive Conditional Type Evaluation ✅ COMPLETE
 
 ### Problem Statement
 
@@ -45,24 +45,25 @@ assertion `left == right` failed
  right: TypeId(10) // STRING
 ```
 
-**Root Cause**: In `src/solver/evaluate_rules/conditional.rs`, line 246 calls `self.evaluate(result_branch)` which increments the depth counter. After 50 nested conditionals, depth exceeds `MAX_EVALUATE_DEPTH` (50) and returns ERROR, even though `MAX_TAIL_RECURSION_DEPTH` is 1000.
+**Root Cause**: In `src/solver/evaluate_rules/conditional.rs`, the code called `self.evaluate(result_branch)` which increments the depth counter. After 50 nested conditionals, depth exceeded `MAX_EVALUATE_DEPTH` (50) and returned ERROR, even though `MAX_TAIL_RECURSION_DEPTH` is 1000.
 
-The tail-recursion elimination code (lines 249-256) never gets a chance to work because `self.evaluate` returns ERROR before we can check if the result is a conditional.
+The tail-recursion elimination code never got a chance to work because `self.evaluate` returned ERROR before we could check if the result was a conditional.
 
-### Implementation Plan
+### Solution Implemented
 
 **File**: `src/solver/evaluate_rules/conditional.rs`
 
 **Fix**: Check if `result_branch` is a ConditionalType BEFORE calling evaluate. If it is, directly extract it for tail-recursion without going through evaluate (which would increment depth).
 
-**Locations**:
-- Line 217: infer pattern path
-- Line 246: subtype check path
+**Modified**:
+- Line ~217: infer pattern path - check for conditional before evaluate
+- Line ~246: subtype check path - check for conditional before evaluate
 
-### Key Files
-- `src/solver/evaluate_rules/conditional.rs` - Tail-recursion elimination logic
-- `src/solver/evaluate.rs` - Type evaluation with depth tracking
-- `src/solver/tests/evaluate_tests.rs` - Test case at line 45476
+### Result
+
+✅ Test `test_tail_recursive_conditional` now passes
+✅ All 62 narrowing tests still pass
+✅ Commit: `6b20e0180`
 
 Fix the "poisoning" effect where missing global symbols (TS2304) cause types to default to `any`, which:
 - Suppresses subsequent type errors
