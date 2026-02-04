@@ -44,10 +44,34 @@ Actual behavior:
 - Checker sees class vs class in different scopes and emits TS2300
 
 **Investigation Status**:
-- `bind_module_declaration` calls `enter_scope(ContainerKind::Module, idx)` at line 1257
-- `declare_symbol` checks `self.current_scope.get(name)` which should be scope-local
-- Both legacy and persistent scope systems exist and seem correct
-- Need to trace actual binding flow to find where cross-scope merging happens
+- `bind_module_declaration` calls `enter_scope(ContainerKind::Module, idx)` at line 1257 ✓
+- `declare_symbol` checks `self.current_scope.get(name)` which should be scope-local ✓
+- **VERIFIED WITH DEBUG OUTPUT**: Binder creates 3 separate m3d symbols in different scopes (ScopeId(1), ScopeId(5), ScopeId(0))
+- Each scope correctly has 2 declarations (namespace + class merged within that scope)
+- **PROBLEM**: Checker sees only ONE symbol with 6 declarations instead of 3 symbols with 2 each
+
+**Hypothesis**: Symbols are being consolidated/merged somewhere between binding and checking.
+
+**Test Case for Reproduction**:
+```typescript
+namespace T1 {
+    namespace m3d { export var y = 2; }
+    declare class m3d { foo(): void; }
+}
+namespace T2 {
+    namespace m3d { export var y = 2; }
+    declare class m3d { foo(): void; }
+}
+namespace m3d { export var y = 2; }
+declare class m3d { foo(): void; }
+```
+tsc: No errors (3 separate m3d symbols)
+tsz: TS2300 on each `declare class m3d` (symbols incorrectly merged)
+
+**Next Steps**:
+1. Trace where symbols are consolidated after binding
+2. Check if there's a symbol merging step in the compilation pipeline
+3. Investigate whether the checker's symbol lookup bypasses scope
 
 
 **Conformance Status**: 97/200 passed (48.5%)
