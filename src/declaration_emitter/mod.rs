@@ -82,6 +82,8 @@ pub struct DeclarationEmitter<'a> {
     inside_declare_namespace: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
     in_constructor_params: bool,
+    /// Track function names that have overload signatures (to skip implementation signatures)
+    function_names_with_overloads: FxHashSet<String>,
 }
 
 struct SourceMapState {
@@ -112,6 +114,7 @@ impl<'a> DeclarationEmitter<'a> {
             symbol_aliases: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
+            function_names_with_overloads: FxHashSet::default(),
         }
     }
 
@@ -142,6 +145,7 @@ impl<'a> DeclarationEmitter<'a> {
             symbol_aliases: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
+            function_names_with_overloads: FxHashSet::default(),
         }
     }
 
@@ -348,6 +352,32 @@ impl<'a> DeclarationEmitter<'a> {
         // In declaration emit mode, only emit exported functions
         if !is_exported {
             return;
+        }
+
+        // Get function name as string for overload tracking
+        let function_name = self.get_function_name(func_idx);
+
+        // Check if this is an overload (no body) or implementation (has body)
+        let is_overload = func.body.is_none();
+        let is_implementation = !is_overload;
+
+        // Overload handling:
+        // - If this is an overload, emit it and mark that this function has overloads
+        // - If this is an implementation and the function already has overloads, skip it
+        // - If this is an implementation with no overloads, emit it
+        if is_overload {
+            // Mark that this function name has overload signatures
+            if let Some(ref name) = function_name {
+                self.function_names_with_overloads.insert(name.clone());
+            }
+        } else if is_implementation {
+            // This is an implementation - check if we've seen overloads for this name
+            if let Some(ref name) = function_name {
+                if self.function_names_with_overloads.contains(name) {
+                    // Skip implementation signature when overloads exist
+                    return;
+                }
+            }
         }
 
         self.write_indent();
@@ -1628,6 +1658,32 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        // Get function name as string for overload tracking
+        let function_name = self.get_function_name(func_idx);
+
+        // Check if this is an overload (no body) or implementation (has body)
+        let is_overload = func.body.is_none();
+        let is_implementation = !is_overload;
+
+        // Overload handling:
+        // - If this is an overload, emit it and mark that this function has overloads
+        // - If this is an implementation and the function already has overloads, skip it
+        // - If this is an implementation with no overloads, emit it
+        if is_overload {
+            // Mark that this function name has overload signatures
+            if let Some(ref name) = function_name {
+                self.function_names_with_overloads.insert(name.clone());
+            }
+        } else if is_implementation {
+            // This is an implementation - check if we've seen overloads for this name
+            if let Some(ref name) = function_name {
+                if self.function_names_with_overloads.contains(name) {
+                    // Skip implementation signature when overloads exist
+                    return;
+                }
+            }
+        }
+
         self.write_indent();
         if !self.inside_declare_namespace {
             self.write("export declare ");
@@ -2778,6 +2834,24 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn has_export_modifier(&self, modifiers: &Option<NodeList>) -> bool {
         self.has_modifier(modifiers, SyntaxKind::ExportKeyword as u16)
+    }
+
+    /// Get the function name as a string for overload tracking
+    fn get_function_name(&self, func_idx: NodeIndex) -> Option<String> {
+        let func_node = self.arena.get(func_idx)?;
+        let func = self.arena.get_function(func_node)?;
+
+        // Get the name node
+        let name_node = self.arena.get(func.name)?;
+
+        // Only extract identifier names (not computed or other name types)
+        if name_node.kind == SyntaxKind::Identifier as u16 {
+            // Get the identifier text
+            let ident = self.arena.get_identifier(name_node)?;
+            Some(ident.escaped_text.clone())
+        } else {
+            None
+        }
     }
 
     fn has_modifier(&self, modifiers: &Option<NodeList>, kind: u16) -> bool {
