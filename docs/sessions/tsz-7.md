@@ -618,3 +618,35 @@ fn analyze_function_declaration(&mut self, func_idx: NodeIndex) {
    ```
 4. Run conformance tests to measure impact
 
+
+### Discovery (2026-02-04): Type System Representation Issue
+
+**FINDING:** Type checker is INLINING interfaces instead of using Lazy references!
+
+**Debug Output:**
+```
+[DEBUG] walk_type_id: collected 5 types
+[DEBUG] walk_type_id: all_types = {TypeId(105), TypeId(125), TypeId(9), TypeId(1), TypeId(137)}
+[DEBUG] walk_type_id: TypeId(TypeId(105)) = Object(ObjectShapeId(1))
+[DEBUG] walk_type_id: TypeId(TypeId(125)) = Object(ObjectShapeId(0))
+[DEBUG] walk_type_id: ObjectShapeId=ObjectShapeId(1), symbol=None
+[DEBUG] walk_type_id: ObjectShapeId=ObjectShapeId(0), symbol=None
+```
+
+**Problem:**
+- `getHelper()` function's return type is `TypeId(137)` = Function(FunctionShapeId(0))
+- But when we walk the function's TypeId, we get ObjectShapes with `symbol=None`
+- The `Helper` interface is being inlined as an ObjectShape instead of referenced via Lazy(DefId)
+- This means there's no way to discover that the return type references the `Helper` symbol!
+
+**Root Cause:**
+The type checker is structurally typing interfaces - when it sees `Helper`, it creates an inline object shape matching the interface's signature, rather than a nominal reference to the interface's DefId.
+
+**Next Steps:**
+1. Ask Gemini: How should interfaces be referenced in the type system?
+2. Should the type checker preserve the interface type as Lazy(DefId)?
+3. Or should we track which ObjectShapes correspond to which interfaces?
+4. Is this a bug in type checking or expected behavior?
+
+This is a critical blocker for automatic import generation!
+
