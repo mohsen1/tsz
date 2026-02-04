@@ -49,6 +49,7 @@ mod module_wrapper;
 mod special_expressions;
 mod statements;
 mod template_literals;
+mod type_printer;
 mod types;
 
 pub use comments::{
