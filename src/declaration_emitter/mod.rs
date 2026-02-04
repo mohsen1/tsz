@@ -132,6 +132,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.used_symbols = Some(symbols);
     }
 
+    /// Set the binder state for symbol resolution.
+    ///
+    /// This enables UsageAnalyzer to resolve symbols during import/export elision.
+    pub fn set_binder(&mut self, binder: Option<&'a BinderState>) {
+        self.binder = binder;
+    }
+
     /// Emit declaration for a source file
     pub fn emit(&mut self, root_idx: NodeIndex) -> String {
         self.reset_writer();
