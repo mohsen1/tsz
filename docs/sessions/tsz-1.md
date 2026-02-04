@@ -2,9 +2,48 @@
 
 ## Current Work
 
-**Looking for next task - analyzing conformance test results**
+**Investigating missing TS2304 for undefined type references in function return types**
 
-After successfully fixing the TS1136 vs TS2304 issue, reviewing conformance results to identify the next high-priority fix.
+Working on fixing issue where type references in function return types don't emit TS2304 "Cannot find name" errors.
+
+### Test Case
+```typescript
+function A(): (public B) => C {}
+```
+
+**Expected errors (TSC):**
+- TS2355 at (1,15) - function must return value ✅
+- TS2369 at (1,16) - parameter property in wrong place ✅
+- TS2304 at (1,29) - Cannot find name 'C' ❌ (missing in tsz)
+
+### Root Cause (from Gemini analysis)
+The `get_type_from_function_type` method in `src/checker/type_node.rs` delegates everything to `TypeLowering::lower_type()`, which:
+- Computes the function signature type (Solver's job - WHAT)
+- Does NOT emit diagnostics for child nodes (Checker's job - WHERE)
+
+The Checker must explicitly walk the return type node to trigger TS2304 errors, similar to how type arguments are handled in `state_type_resolution.rs` lines 65-67:
+```rust
+// Explicit walk required to trigger diagnostics for children
+for &arg_idx in &args.nodes {
+    let _ = self.get_type_from_type_node(arg_idx);
+}
+```
+
+### Fix Location
+**Attempted fix in `src/checker/type_node.rs`** - INCOMPLETE
+
+Added explicit walk of return type in `get_type_from_function_type()`:
+```rust
+if !func_data.type_annotation.is_none() {
+    let _ = self.check(func_data.type_annotation);
+}
+```
+
+**Issue**: This doesn't work because `self.check()` -> `compute_type()` -> `get_type_from_type_reference()` in `TypeNodeChecker` doesn't emit TS2304. It just delegates to `TypeLowering`.
+
+The TS2304 emission happens in `state_type_resolution.rs::get_type_from_type_reference()` (lines 140-141), but function types are NOT explicitly handled there - they fall through to the default case which uses `TypeLowering`.
+
+**Next approach**: Need to add explicit function type handling in `state_type_resolution.rs` that walks the return type through the full diagnostic pipeline.
 
 ### Priority Candidates (from session history)
 

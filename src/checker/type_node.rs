@@ -466,6 +466,22 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         use crate::solver::TypeLowering;
         use crate::solver::types::is_compiler_managed_type;
 
+        // EXPLICIT WALK: Visit the return type annotation to emit diagnostics.
+        // This ensures TS2304 "Cannot find name" errors are emitted for undefined
+        // type references in function return types (e.g., `(x) => UndefinedType`).
+        // TypeLowering computes the type but does not emit diagnostics.
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+        let Some(func_data) = self.ctx.arena.get_function_type(node) else {
+            return TypeId::ERROR;
+        };
+        // Explicitly walk the return type to trigger TS2304 errors.
+        // Must use self.check() not self.compute_type() to go through caching and proper dispatch.
+        if !func_data.type_annotation.is_none() {
+            let _ = self.check(func_data.type_annotation);
+        }
+
         // Create a type resolver that looks up symbols in the binder
         let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
             let node = self.ctx.arena.get(node_idx)?;
