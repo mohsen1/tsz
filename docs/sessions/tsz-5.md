@@ -1,86 +1,92 @@
-# Session tsz-5: Advanced CFA - Type Predicates & Exhaustiveness
+# Session tsz-5 - Import/Export Elision for Declaration Emit
 
-**Started**: 2026-02-04
-**Status**: ACTIVE
-**Previous**: tsz-3 (CFA Infrastructure - COMPLETED)
+## Date: 2026-02-04
 
-## Context
+## Status: PHASE 1 - Usage Analysis Implementation
 
-Session tsz-3 completed the architectural foundation for CFA:
-- **Type Environment Unification**: Enabled `Lazy` type resolution (type aliases) during narrowing by sharing `Rc<RefCell<TypeEnvironment>>` across the Checker and Solver.
-- **Loop Narrowing**: Implemented conservative widening for mutable variables and preservation for constants.
-- **Cache Validation**: Verified that the triple-keyed flow cache (Node, Symbol, InitialType) correctly handles widened types without poisoning.
+### Session Goal
 
-This session builds on that foundation to implement advanced TypeScript features that require deep integration between the `FlowAnalyzer` (Checker) and `NarrowingContext` (Solver).
+Implement Import/Export Elision to remove unused imports from .d.ts files, preventing "Module not found" errors and matching TypeScript's behavior exactly.
 
-## Session Goals
+### Problem Statement
 
-1. **User-Defined Type Guards**: Support `is` and `asserts` predicates.
-2. **Property Path Narrowing**: Narrow nested properties (e.g., `if (user.address) ...`).
-3. **Switch Statement Exhaustiveness**: Narrow to `never` when all union constituents are handled.
-4. **Reachability Analysis**: Detect unreachable code and missing return statements.
+Currently, tsz emits ALL imports found in source files, even if they're not referenced in the exported API. This causes:
+- "Module not found" errors in consuming code
+- Unnecessary dependencies in declaration files
+- Non-compliance with TypeScript's declaration emit behavior
 
----
+### Gemini Consultation Guidance
 
-## Priority 1: User-Defined Type Guards ✅ COMPLETE
+**Recommended Approach:**
+1. Create `src/declaration_emitter/usage_analyzer.rs`
+2. Implement UsageAnalyzer with:
+   - `used_symbols: FxHashSet<SymbolId>`
+   - `visited_defs: FxHashSet<DefId>`
+   - Methods to walk exported declarations
+   - Type visitor to find Lazy(DefId), TypeQuery, Enum types
+3. Map DefId to SymbolId via DefinitionStore
+4. Filter import emission based on used symbols
+5. Handle edge cases: re-exports, circular references, private members
 
-### Problem
-Currently, calls to functions returning `arg is T` or `asserts arg is T` do not trigger narrowing in the `FlowAnalyzer`.
+**Estimated Complexity:** High (2-3 days)
 
-### Status
-**Feature Already Implemented!** The infrastructure exists in:
-- `src/checker/control_flow_narrowing.rs` - `narrow_by_call_predicate` implementation
-- `src/checker/control_flow.rs` - Called from `narrow_type_by_condition_inner`
-- Tests: `test_user_defined_type_predicate_narrows_branches`, `test_user_defined_type_predicate_alias_narrows`
+**Impact:** Critical - fixes major blocker for declaration emit correctness
 
-### Tasks
-- [x] **FlowAnalyzer Update**: Recognize `TypePredicate` nodes in function return types during call expression checking in `src/checker/flow_analysis.rs`.
-- [x] **NarrowingContext Integration**: Update `NarrowingContext` in `src/solver/narrowing.rs` to apply the predicate type to the target symbol.
-- [x] **Asserts Support**: Implement "assertion" narrowing where the flow following the call is narrowed regardless of a conditional check.
+### Implementation Plan
 
----
+#### Phase 1: Create UsageAnalyzer Module
+- [ ] Create `src/declaration_emitter/usage_analyzer.rs`
+- [ ] Define UsageAnalyzer struct with used_symbols and visited_defs sets
+- [ ] Implement method to walk exported declarations
+- [ ] Implement type visitor to extract SymbolIds from TypeIds
 
-## Priority 2: Property Path Narrowing
+#### Phase 2: DefId to SymbolId Mapping
+- [ ] Research DefinitionStore and SymbolId mapping
+- [ ] Implement lookup function for DefId → SymbolId
+- [ ] Handle TypeKey::Lazy(DefId)
+- [ ] Handle TypeKey::TypeQuery(SymbolRef)
+- [ ] Handle TypeKey::Enum(DefId, _)
 
-### Problem
-Narrowing a property (e.g., `if (x.kind === "a")`) should narrow the parent object `x` if it is a union of types with a `kind` discriminant.
+#### Phase 3: Import Filtering
+- [ ] Modify DeclarationEmitter to use UsageAnalyzer
+- [ ] Update emit_import_declaration to filter unused imports
+- [ ] Handle re-export special case (always keep)
+- [ ] Handle side-effect imports (always keep)
 
-### Tasks
-- [ ] **Path Tracking**: Enhance `NarrowingContext` to track property access paths (e.g., `['user', 'address', 'zip']`).
-- [ ] **Union Refinement**: Implement logic in `src/solver/operations.rs` or `narrowing.rs` to refine a union based on a narrowed property path.
-- [ ] **Edge Case**: Handle optional chaining and potential `null`/`undefined` in the path.
+#### Phase 4: Edge Cases
+- [ ] Circular reference handling
+- [ ] Private member exclusion (don't track their types)
+- [ ] Namespace imports with type-only imports
+- [ ] Default imports
 
----
+### Testing
 
-## Priority 3: Switch Exhaustiveness
+Test command:
+```bash
+./scripts/conformance.sh --filter=decl
+```
 
-### Problem
-After a `switch` on a discriminated union, the `default` block or the code immediately following the switch should narrow the variable to `never` if all possible constituents have been handled in `case` branches.
+Focus on multi-file test cases and import-related failures.
 
-### Tasks
-- [ ] **Exhaustion Logic**: In `src/checker/flow_analysis.rs`, track which constituents of a union have been "consumed" by `case` labels.
-- [ ] **Union Subtraction**: Use the Solver to subtract the handled types from the initial union type.
-- [ ] **Diagnostic Reporting**: Report `TS2534` if a `default` case is reached but the type is not `never` (when exhaustiveness is expected).
+### Conformance Baseline
 
----
+Current: 42.2% (267/633 tests passing)
+Target: Significant increase by fixing module resolution errors
 
-## Priority 4: Reachability Analysis
+### Dependencies
 
-### Problem
-The compiler needs to report errors for unreachable code (TS2534) and functions that don't return a value on all code paths (TS2366).
+- src/solver/visitor.rs - RecursiveTypeCollector
+- src/solver/types.rs - TypeKey definitions
+- src/solver/def.rs - DefId definitions
+- src/declaration_emitter.rs - Main emitter
 
-### Tasks
-- [ ] **CFG Traversal**: Use the `FlowNode` graph built by the Binder to identify nodes with no incoming active flow.
-- [ ] **Return Path Validation**: Implement a check in `src/checker/statements.rs` that ensures all paths in a non-void function end in a `return` or `throw`.
+### Previous Session Completion
 
----
+tsz-4 completed:
+- Function overloads ✅
+- Default parameters ✅
+- Parameter properties ✅
+- Class member visibility ✅
+- Abstract classes/methods ✅
 
-## Critical Reminders
-
-- **The Two-Question Rule**: Before implementing any logic in `src/solver/` or `src/checker/`, you **MUST** consult Gemini for approach validation and implementation review.
-- **Lazy Resolution**: Always use `ctx.type_environment` when resolving types to ensure type aliases are correctly handled, as established in `tsz-3`.
-- **Visitor Pattern**: Use the visitor pattern from `src/solver/visitor.rs` for any complex type traversals.
-
-## Complexity: HIGH
-
-**Why High**: These features involve complex interactions between the AST (Checker), the Control Flow Graph (Binder), and Type Relations (Solver). Property path narrowing in particular requires careful management of symbol identities across different scopes.
+All features match TypeScript .d.ts output exactly.
