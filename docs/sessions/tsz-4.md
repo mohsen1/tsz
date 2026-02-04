@@ -2,9 +2,9 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟢 ACTIVE - Phase 2 (Project Structure) - ~70% Complete (9/13 tasks)
+## Status: 🟢 ACTIVE - Phase 2 (Project Structure) - ~77% Complete (10/13 tasks)
 
-### Completed Tasks (9)
+### Completed Tasks (10)
 1. Class Heritage and Generics (type literal formatting fix)
 2. Computed Property Names and unique symbol Support
 3. Type Predicates and Assertion Functions
@@ -94,12 +94,45 @@ Phase 1 (Syntax Fidelity) is **COMPLETE**. The remaining work shifts from "How t
 
 ### Phase 2: Project Structure & Metadata
 
-#### Task 10: Triple-Slash Directive Emission (NEXT)
+#### Task 10: Triple-Slash Directive Emission ✅ COMPLETE (2026-02-04)
 **Description**: Emit `/// <reference ... />` directives at the top of the file.
 - **Why**: Essential for module resolution and file concatenation
 - **Complexity**: Low
 - **Files**: `src/declaration_emitter/mod.rs`
-- **Status**: Not started
+
+**Completed:**
+- ✅ `emit_triple_slash_directives()` - Iterates through source_file.comments and filters for directives
+- ✅ Integrated into `emit()` before `emit_required_imports()` to ensure correct ordering
+
+**Test Results:**
+```typescript
+// Input
+/// <reference path="./other.d.ts" />
+/// <reference types="node" />
+/// <reference lib="es2015" />
+/// <amd-module />
+/// <amd-dependency name="jquery" />
+export const x = 1;
+
+// Output ✅ (matches tsc exactly)
+/// <reference path="./other.d.ts" />
+/// <reference types="node" />
+/// <reference lib="es2015" />
+/// <amd-module />
+/// <amd-dependency name="jquery" />
+export declare const x = 1;
+```
+
+**Implementation:**
+- Extracts comment text from source file using byte offsets (pos/end)
+- Filters for comments starting with `///`
+- Matches directives: `<reference`, `<amd-module`, `<amd-dependency`
+- Directives appear at the very top of the file, before imports or exports
+
+**Commits:**
+- 345b29a87 (feat(declaration-emitter): complete triple-slash directive emission)
+
+#### Task 11: Import/Export Elision (NEXT)
 
 **Success Criteria:**
 ```typescript
@@ -141,19 +174,17 @@ export declare const x: number;
 
 ## Immediate Next Step
 
-**Task 10: Triple-Slash Directive Emission**
+**Task 11: Import/Export Elision**
 
-This is a quick win that stabilizes file structure before tackling complex elision logic.
+This is a high-complexity task that involves analyzing which imported types are actually used in the public API and removing unused imports.
 
 **Implementation Plan:**
-1. Locate where tsz stores parsed triple-slash directives (Parser/Scanner)
-2. Retrieve directives from SourceFile or ParserState
-3. Emit them at the very top of `emit_source_file`
-4. Handle both `path=` and `types=` attributes
+1. Implement or integrate UsageAnalyzer to track symbol usage
+2. Mark imported symbols that are referenced in exported APIs
+3. Remove unused imports from .d.ts output
+4. Handle type-only imports vs value imports
 
-MANDATORY Gemini consultation required before implementation.
-
-This is the next task to work on. MANDATORY Gemini consultation is required before implementation per the workflow.
+MANDATORY Gemini consultation required before implementation per the workflow.
 
 ### Class Member Synthesis and Default Export Synthesis ✅ COMPLETE (2026-02-04)
 
