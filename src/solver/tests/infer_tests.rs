@@ -28,7 +28,7 @@ fn test_inference_type_param() {
     let u_name = interner.intern_string("U");
 
     // Create type parameter T
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Look it up
     let found = ctx.find_type_param(t_name);
@@ -61,8 +61,8 @@ fn test_inference_unify_vars() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     ctx.unify_vars(var_t, var_u).unwrap();
     ctx.unify_var_type(var_u, TypeId::STRING).unwrap();
@@ -97,7 +97,7 @@ fn test_inference_occurs_check() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
@@ -116,7 +116,7 @@ fn test_inference_occurs_check_function_this_type() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
@@ -235,7 +235,7 @@ fn test_resolve_single_lower_bound() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
 
     // Add lower bound: string <: T
     ctx.add_lower_bound(var, TypeId::STRING);
@@ -251,7 +251,7 @@ fn test_resolve_multiple_lower_bounds_union() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
 
     // foo<T>(a: T, b: T) called with foo("hello", 42)
     let hello = interner.literal_string("hello");
@@ -272,7 +272,7 @@ fn test_resolve_lower_bounds_ignores_never() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     let hello = interner.literal_string("hello");
 
     ctx.add_lower_bound(var, TypeId::NEVER);
@@ -377,7 +377,7 @@ fn test_resolve_circular_upper_bound_defaults_unknown() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
@@ -406,7 +406,7 @@ fn test_resolve_self_upper_bound_with_concrete() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
@@ -428,8 +428,8 @@ fn test_resolve_mutual_circular_upper_bounds_unknown() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -461,8 +461,8 @@ fn test_resolve_mutual_circular_upper_bounds_with_concrete() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -495,8 +495,8 @@ fn test_resolve_self_recursive_object_bounds_two_params_unknown() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -546,8 +546,8 @@ fn test_resolve_mutual_recursive_object_bounds_unknown() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -596,7 +596,7 @@ fn test_resolve_multiple_upper_bounds_intersection() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
 
     ctx.add_upper_bound(var, TypeId::STRING);
     ctx.add_upper_bound(var, TypeId::NUMBER);
@@ -612,7 +612,7 @@ fn test_resolve_bounds_valid() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
 
     // function f<T extends string>(x: T) called with f("hello")
     // Lower: "hello" <: T, Upper: T <: string
@@ -631,7 +631,7 @@ fn test_resolve_bounds_tuple_lower_array_upper() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     let string_array = interner.array(TypeId::STRING);
     let tuple = interner.tuple(vec![
         TupleElement {
@@ -4892,7 +4892,7 @@ fn test_resolve_bounds_conflict() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
 
     ctx.add_lower_bound(var, TypeId::STRING);
     ctx.add_upper_bound(var, TypeId::NUMBER);
@@ -4914,7 +4914,7 @@ fn test_resolve_bounds_duplicate_upper_bounds_no_intersection() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
 
     ctx.add_upper_bound(var, TypeId::STRING);
     ctx.add_upper_bound(var, TypeId::STRING);
@@ -5018,8 +5018,8 @@ fn test_resolve_circular_extends_with_concrete_bound() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5053,8 +5053,8 @@ fn test_resolve_circular_extends_bound_order() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5088,8 +5088,8 @@ fn test_resolve_usage_based_inference_from_bound_param() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5192,8 +5192,8 @@ fn test_resolve_all_with_constraints() {
     let u_name = interner.intern_string("U");
 
     // Simulate: function foo<T, U>(a: T, b: U) called with foo("hello", 42)
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let hello = interner.literal_string("hello");
     let forty_two = interner.literal_number(42.0);
@@ -5215,8 +5215,8 @@ fn test_resolve_all_with_circular_extends_unknown() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5255,9 +5255,9 @@ fn test_circular_extends_three_way_cycle() {
     let u_name = interner.intern_string("U");
     let v_name = interner.intern_string("V");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
-    let var_v = ctx.fresh_type_param(v_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
+    let var_v = ctx.fresh_type_param(v_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5299,7 +5299,7 @@ fn test_circular_extends_self_reference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5327,8 +5327,8 @@ fn test_circular_extends_with_lower_bound() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5367,8 +5367,8 @@ fn test_circular_extends_both_have_lower_bounds() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5408,8 +5408,8 @@ fn test_circular_extends_unify_propagates() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5449,8 +5449,8 @@ fn test_circular_extends_conflicting_lower_bounds() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5493,9 +5493,9 @@ fn test_circular_extends_three_way_with_one_lower_bound() {
     let u_name = interner.intern_string("U");
     let v_name = interner.intern_string("V");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
-    let var_v = ctx.fresh_type_param(v_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
+    let var_v = ctx.fresh_type_param(v_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5543,8 +5543,8 @@ fn test_circular_extends_with_union_lower_bound() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5584,8 +5584,8 @@ fn test_circular_extends_with_literal_types() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5629,10 +5629,10 @@ fn test_circular_extends_four_way_cycle() {
     let v_name = interner.intern_string("V");
     let w_name = interner.intern_string("W");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
-    let var_v = ctx.fresh_type_param(v_name);
-    let var_w = ctx.fresh_type_param(w_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
+    let var_v = ctx.fresh_type_param(v_name, false);
+    let var_w = ctx.fresh_type_param(w_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5683,8 +5683,8 @@ fn test_circular_extends_with_concrete_upper_and_lower() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5727,9 +5727,9 @@ fn test_circular_extends_chain_with_endpoint_bound() {
     let u_name = interner.intern_string("U");
     let v_name = interner.intern_string("V");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
-    let var_v = ctx.fresh_type_param(v_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
+    let var_v = ctx.fresh_type_param(v_name, false);
 
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
@@ -5778,8 +5778,8 @@ fn test_circular_extends_multiple_lower_bounds_same_param() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -5826,7 +5826,7 @@ fn test_context_sensitive_callback_param_from_upper_bound() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Context provides: T must be a subtype of number (from array element type)
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -5844,7 +5844,7 @@ fn test_context_sensitive_return_type_from_usage() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Usage site provides: result is assigned to string variable
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -5865,7 +5865,7 @@ fn test_context_sensitive_multiple_usage_sites() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // First usage: called with string
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -5886,7 +5886,7 @@ fn test_context_sensitive_literal_widening_prevented() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let hello = interner.literal_string("hello");
     // Lower bound is the literal
@@ -5907,7 +5907,7 @@ fn test_context_sensitive_object_property_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Context expects number for property x
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -5928,7 +5928,7 @@ fn test_context_sensitive_array_element_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Context: array of strings means elements must be strings
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -5945,7 +5945,7 @@ fn test_context_sensitive_conditional_branch_types() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // True branch contributes string
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -5966,7 +5966,7 @@ fn test_context_sensitive_function_param_from_callback_context() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Contextual callback type says param must be number
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -5985,7 +5985,7 @@ fn test_context_sensitive_rest_param_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Multiple arguments of same type contribute to rest param type
     let one = interner.literal_number(1.0);
@@ -6006,7 +6006,7 @@ fn test_context_sensitive_default_param_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Default value is a string literal
     let default_val = interner.literal_string("default");
@@ -6028,7 +6028,7 @@ fn test_callback_param_inferred_from_array_map() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Array<string>.map provides callback with (element: string) => U
     // So T (the callback param type) has upper bound string
@@ -6048,8 +6048,8 @@ fn test_callback_param_inferred_with_index() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T is the element type from Array<number>
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -6071,7 +6071,7 @@ fn test_callback_param_inferred_from_generic_higher_order() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Lower bound from argument: array contains strings
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -6094,7 +6094,7 @@ fn test_generic_default_used_when_no_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // No constraints added - should use default if available
     // Note: defaults are typically handled during type param registration,
@@ -6111,7 +6111,7 @@ fn test_generic_default_overridden_by_lower_bound() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Inferred lower bound takes precedence
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -6128,7 +6128,7 @@ fn test_generic_default_with_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound from constraint
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -6145,7 +6145,7 @@ fn test_generic_default_with_literal_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let hello = interner.literal_string("hello");
     ctx.add_lower_bound(var_t, hello);
@@ -6163,8 +6163,8 @@ fn test_generic_multiple_params_with_defaults() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let _var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let _var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Only U has a lower bound
     ctx.add_lower_bound(var_u, TypeId::BOOLEAN);
@@ -6190,7 +6190,7 @@ fn test_constraint_propagation_upper_to_lower() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound: T extends string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -6211,8 +6211,8 @@ fn test_constraint_propagation_through_unification() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T has lower bound string
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -6236,7 +6236,7 @@ fn test_constraint_propagation_transitive_upper_bounds() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound: T extends string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -6258,7 +6258,7 @@ fn test_constraint_propagation_multiple_upper_bounds() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Multiple upper bounds
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -6277,7 +6277,7 @@ fn test_constraint_propagation_lower_bounds_union() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Multiple lower bounds from different call sites
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -6297,7 +6297,7 @@ fn test_constraint_propagation_with_never_lower_bound() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Lower bounds including never
     ctx.add_lower_bound(var_t, TypeId::NEVER);
@@ -6315,7 +6315,7 @@ fn test_constraint_propagation_any_lower_with_concrete() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Lower bounds: any and string
     ctx.add_lower_bound(var_t, TypeId::ANY);
@@ -6335,7 +6335,7 @@ fn test_constraint_propagation_object_properties() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create object type with property
     let prop_name = interner.intern_string("x");
@@ -6366,7 +6366,7 @@ fn test_constructor_single_param_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constructor param receives string argument
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -6383,8 +6383,8 @@ fn test_constructor_multiple_params_inference() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // First param is string, second is number
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -6404,7 +6404,7 @@ fn test_constructor_with_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T has upper bound of object
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -6433,7 +6433,7 @@ fn test_constructor_optional_param_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Optional param not provided - may include undefined
     let optional_type = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
@@ -6451,7 +6451,7 @@ fn test_constructor_rest_param_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Rest param elements are string and number - infer union
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -6478,7 +6478,7 @@ fn test_method_return_type_inference_basic() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
@@ -6516,7 +6516,7 @@ fn test_method_parameter_type_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
@@ -6559,7 +6559,7 @@ fn test_method_this_type_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let this_name = interner.intern_string("This");
 
-    let var_this = ctx.fresh_type_param(this_name);
+    let var_this = ctx.fresh_type_param(this_name, false);
     let this_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: this_name,
         constraint: None,
@@ -6607,7 +6607,7 @@ fn test_method_generic_parameter_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
@@ -6652,8 +6652,8 @@ fn test_method_multiple_generic_params_inference() {
     let k_name = interner.intern_string("K");
     let v_name = interner.intern_string("V");
 
-    let var_k = ctx.fresh_type_param(k_name);
-    let var_v = ctx.fresh_type_param(v_name);
+    let var_k = ctx.fresh_type_param(k_name, false);
+    let var_v = ctx.fresh_type_param(v_name, false);
 
     // Called with (string, number)
     ctx.add_lower_bound(var_k, TypeId::STRING);
@@ -6680,7 +6680,7 @@ fn test_circular_type_alias_self_reference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // No bounds - trying to resolve should give unknown/any
     let result = ctx.resolve_with_constraints(var_t);
@@ -6695,7 +6695,7 @@ fn test_circular_type_alias_via_array() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Add concrete array lower bound
     let string_array = interner.array(TypeId::STRING);
@@ -6713,7 +6713,7 @@ fn test_circular_type_alias_via_union() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound: string | null
     let string_or_null = interner.union(vec![TypeId::STRING, TypeId::NULL]);
@@ -6734,7 +6734,7 @@ fn test_circular_type_alias_nested_object() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Just test that we can have object bounds without infinite recursion
     let prop_name = interner.intern_string("value");
@@ -6760,7 +6760,7 @@ fn test_circular_type_alias_function_return() {
     let mut ctx = InferenceContext::new(&interner);
     let f_name = interner.intern_string("F");
 
-    let var_f = ctx.fresh_type_param(f_name);
+    let var_f = ctx.fresh_type_param(f_name, false);
 
     // Add function lower bound
     let fn_type = interner.function(FunctionShape {
@@ -6791,7 +6791,7 @@ fn test_self_ref_constraint_comparable() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound: number (which is comparable to itself)
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -6812,7 +6812,7 @@ fn test_self_ref_constraint_builder_pattern() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Simulate builder with method that returns same type
     let build_prop = interner.intern_string("build");
@@ -6848,7 +6848,7 @@ fn test_self_ref_constraint_iterable() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound: array (iterable)
     let number_array = interner.array(TypeId::NUMBER);
@@ -6869,7 +6869,7 @@ fn test_self_ref_constraint_json_value() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound: primitive union (simplified JSON)
     let json_primitive = interner.union(vec![
@@ -6895,7 +6895,7 @@ fn test_self_ref_constraint_recursive_array() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Test with array bounds
     let string_array = interner.array(TypeId::STRING);
@@ -6919,8 +6919,8 @@ fn test_mutual_recursion_two_types() {
     let a_name = interner.intern_string("A");
     let b_name = interner.intern_string("B");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
 
     // Both get object lower bounds (breaking the cycle with concrete types)
     let prop_a = interner.intern_string("value");
@@ -6963,9 +6963,9 @@ fn test_mutual_recursion_three_types() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // All have same upper bound
     ctx.add_upper_bound(var_a, TypeId::STRING);
@@ -6998,8 +6998,8 @@ fn test_mutual_recursion_shared_constraint() {
     let a_name = interner.intern_string("A");
     let b_name = interner.intern_string("B");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
 
     // Shared upper bound
     let shared_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -7026,8 +7026,8 @@ fn test_mutual_recursion_array_element() {
     let a_name = interner.intern_string("A");
     let b_name = interner.intern_string("B");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
 
     // Concrete array lower bounds
     let string_array = interner.array(TypeId::STRING);
@@ -7052,8 +7052,8 @@ fn test_mutual_recursion_function_params() {
     let f_name = interner.intern_string("F");
     let g_name = interner.intern_string("G");
 
-    let var_f = ctx.fresh_type_param(f_name);
-    let var_g = ctx.fresh_type_param(g_name);
+    let var_f = ctx.fresh_type_param(f_name, false);
+    let var_g = ctx.fresh_type_param(g_name, false);
 
     // Create ParamInfo structs
     let param_f = ParamInfo {
@@ -7114,8 +7114,8 @@ fn test_hof_callback_param_inference() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T inferred from array element type
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -7138,9 +7138,9 @@ fn test_hof_compose_functions() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // Infer from concrete function types
     ctx.add_lower_bound(var_a, TypeId::STRING);
@@ -7163,9 +7163,9 @@ fn test_hof_curried_function() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // Infer from uncurried function parameters and return
     ctx.add_lower_bound(var_a, TypeId::STRING);
@@ -7187,8 +7187,8 @@ fn test_hof_reduce_accumulator() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T from array elements
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -7209,7 +7209,7 @@ fn test_hof_function_returning_function() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T inferred from usage of returned function
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -7230,7 +7230,7 @@ fn test_method_chain_builder_pattern() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T inferred from setValue argument
     let string_lit = interner.literal_string("hello");
@@ -7248,8 +7248,8 @@ fn test_method_chain_transform() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T from initial chain value
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -7270,7 +7270,7 @@ fn test_method_chain_filter() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T preserved through filter
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -7289,10 +7289,10 @@ fn test_method_chain_multiple_transforms() {
     let c_name = interner.intern_string("C");
     let d_name = interner.intern_string("D");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
-    let var_d = ctx.fresh_type_param(d_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
+    let var_d = ctx.fresh_type_param(d_name, false);
 
     // Each step infers next type
     ctx.add_lower_bound(var_a, TypeId::STRING);
@@ -7316,8 +7316,8 @@ fn test_method_chain_flatmap() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T from outer chain
     let string_array = interner.array(TypeId::STRING);
@@ -7344,7 +7344,7 @@ fn test_default_type_param_not_inferred() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // No lower bounds added - would use default in real scenario
     // For inference, resolve gives unknown
@@ -7359,7 +7359,7 @@ fn test_default_type_param_override() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Inference from argument overrides default
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -7375,7 +7375,7 @@ fn test_default_type_param_with_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound from constraint
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -7404,8 +7404,8 @@ fn test_default_type_param_chain() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Both inferred from same value
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -7424,7 +7424,7 @@ fn test_default_type_param_array() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Inferred from array element
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -7448,9 +7448,9 @@ fn test_generic_function_three_type_params() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // Called with (string, number, boolean)
     ctx.add_lower_bound(var_a, TypeId::STRING);
@@ -7475,8 +7475,8 @@ fn test_generic_function_dependent_type_params() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T gets bound from first argument
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -7499,7 +7499,7 @@ fn test_generic_function_shared_type_param() {
     let mut ctx = InferenceContext::new(&interner);
 
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Called with two different string literals - should infer union
     let lit_a = interner.literal_string("a");
@@ -7526,7 +7526,7 @@ fn test_inference_array_element_type() {
     let mut ctx = InferenceContext::new(&interner);
 
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Array<string> is passed, so T should be string
     let string_array = interner.array(TypeId::STRING);
@@ -7551,8 +7551,8 @@ fn test_inference_tuple_element_types() {
     let a_name = interner.intern_string("A");
     let b_name = interner.intern_string("B");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
 
     // Tuple [string, number] is passed
     // Destructuring [first, second] = tuple infers A = string, B = number
@@ -7574,7 +7574,7 @@ fn test_inference_object_property_type() {
     let mut ctx = InferenceContext::new(&interner);
 
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Object { value: number } is passed
     // Destructuring { value } = obj infers T = number
@@ -7592,7 +7592,7 @@ fn test_inference_nested_object_property() {
     let mut ctx = InferenceContext::new(&interner);
 
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Nested destructuring { inner: { value } } = obj
     // value is boolean, so T = boolean
@@ -7616,7 +7616,7 @@ fn test_contextual_arrow_return_simple() {
     let mut ctx = InferenceContext::new(&interner);
 
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Contextual type says return is string
     // Arrow function body returns a string literal
@@ -7637,7 +7637,7 @@ fn test_contextual_arrow_return_array() {
     let mut ctx = InferenceContext::new(&interner);
 
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Context expects Array<number>
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -7658,7 +7658,7 @@ fn test_contextual_arrow_return_object() {
     let mut ctx = InferenceContext::new(&interner);
 
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Context expects { x: number }
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -7679,7 +7679,7 @@ fn test_contextual_arrow_callback_param() {
     let mut ctx = InferenceContext::new(&interner);
 
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Contextual type from Array<number>.map callback is (element: number) => U
     // So T (the callback parameter type) should be number
@@ -7700,9 +7700,9 @@ fn test_contextual_arrow_higher_order() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // compose((x: number) => x.toString(), (s: string) => s.length)
     // A = string, B = number, C = string
@@ -7730,7 +7730,7 @@ fn test_variadic_tuple_rest_element() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T inferred as array of strings from rest element
     let string_array = interner.array(TypeId::STRING);
@@ -7747,7 +7747,7 @@ fn test_variadic_tuple_prefix_and_rest() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T is the rest part after string prefix
     let number_array = interner.array(TypeId::NUMBER);
@@ -7764,7 +7764,7 @@ fn test_variadic_tuple_suffix_and_rest() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T is the rest part before string suffix
     let boolean_array = interner.array(TypeId::BOOLEAN);
@@ -7782,8 +7782,8 @@ fn test_variadic_tuple_multiple_rest() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T and U are different array types
     let string_array = interner.array(TypeId::STRING);
@@ -7805,8 +7805,8 @@ fn test_variadic_tuple_concat() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Infer from concrete tuple parts
     let tuple_t = interner.tuple(vec![TupleElement {
@@ -7844,8 +7844,8 @@ fn test_named_tuple_basic() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Infer from named tuple elements
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -7865,8 +7865,8 @@ fn test_named_tuple_with_optional() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Create named tuple with optional element
     let x_name = interner.intern_string("x");
@@ -7903,8 +7903,8 @@ fn test_named_tuple_destructuring() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Types inferred from destructuring context
     let lit_hello = interner.literal_string("hello");
@@ -7928,9 +7928,9 @@ fn test_named_tuple_three_elements() {
     let u_name = interner.intern_string("U");
     let v_name = interner.intern_string("V");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
-    let var_v = ctx.fresh_type_param(v_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
+    let var_v = ctx.fresh_type_param(v_name, false);
 
     ctx.add_lower_bound(var_t, TypeId::STRING);
     ctx.add_lower_bound(var_u, TypeId::NUMBER);
@@ -7951,8 +7951,8 @@ fn test_named_tuple_mixed_named_unnamed() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Create mixed tuple
     let x_name = interner.intern_string("x");
@@ -7992,7 +7992,7 @@ fn test_tuple_spread_into_array() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Tuple spread becomes union of element types
     let string_number_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -8009,7 +8009,7 @@ fn test_tuple_spread_function_args() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T is inferred as tuple from function arguments
     let args_tuple = interner.tuple(vec![
@@ -8040,8 +8040,8 @@ fn test_tuple_spread_concat_tuples() {
     let a_name = interner.intern_string("A");
     let b_name = interner.intern_string("B");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
 
     // A and B are tuple parts
     let tuple_a = interner.tuple(vec![TupleElement {
@@ -8081,7 +8081,7 @@ fn test_tuple_spread_in_return() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T is the spread part of return tuple
     let spread_part = interner.tuple(vec![
@@ -8112,8 +8112,8 @@ fn test_tuple_spread_with_rest() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T is fixed tuple, U is element type of rest
     let fixed_tuple = interner.tuple(vec![TupleElement {
@@ -8143,7 +8143,7 @@ fn test_type_guard_typeof_string() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Original type is string | number
     let string_or_number = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -8163,7 +8163,7 @@ fn test_type_guard_typeof_number() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Original type is string | number | boolean
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
@@ -8183,7 +8183,7 @@ fn test_type_guard_typeof_object() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound is object | null | string
     let obj_or_null_or_string = interner.union(vec![TypeId::OBJECT, TypeId::NULL, TypeId::STRING]);
@@ -8204,7 +8204,7 @@ fn test_type_guard_instanceof() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound is Error | string (simulated with object)
     let error_or_string = interner.union(vec![TypeId::OBJECT, TypeId::STRING]);
@@ -8224,7 +8224,7 @@ fn test_type_guard_custom_predicate() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound is unknown
     ctx.add_upper_bound(var_t, TypeId::UNKNOWN);
@@ -8248,7 +8248,7 @@ fn test_discriminated_union_basic() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create discriminated union members
     let kind_prop = interner.intern_string("kind");
@@ -8277,7 +8277,7 @@ fn test_discriminated_union_switch() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // After switch case "circle"
     let kind_prop = interner.intern_string("kind");
@@ -8316,7 +8316,7 @@ fn test_discriminated_union_type_property() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let type_prop = interner.intern_string("type");
     let lit_request = interner.literal_string("request");
@@ -8354,7 +8354,7 @@ fn test_discriminated_union_boolean_discriminant() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let success_prop = interner.intern_string("success");
     let data_prop = interner.intern_string("data");
@@ -8392,7 +8392,7 @@ fn test_discriminated_union_numeric_discriminant() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let code_prop = interner.intern_string("code");
     let body_prop = interner.intern_string("body");
@@ -8435,7 +8435,7 @@ fn test_in_operator_basic() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // After "name" in x, narrow to object with name
     let name_prop = interner.intern_string("name");
@@ -8461,7 +8461,7 @@ fn test_in_operator_union_narrowing() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Bird has fly method
     let fly_prop = interner.intern_string("fly");
@@ -8497,7 +8497,7 @@ fn test_in_operator_optional_property() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Object with optional property (in check confirms it exists)
     let opt_prop = interner.intern_string("optional");
@@ -8523,7 +8523,7 @@ fn test_in_operator_method_check() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Array-like with forEach method
     let foreach_prop = interner.intern_string("forEach");
@@ -8559,7 +8559,7 @@ fn test_in_operator_negation() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // After !("special" in x), narrow to object without special
     let other_prop = interner.intern_string("basic");
@@ -8597,7 +8597,7 @@ fn test_callback_param_inferred_from_call_site() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // val argument provides lower bound
     let hello = interner.literal_string("hello");
@@ -8616,7 +8616,7 @@ fn test_callback_param_inferred_from_multiple_calls() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Callback called with string
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -8636,7 +8636,7 @@ fn test_callback_return_inferred_from_usage() {
     let mut ctx = InferenceContext::new(&interner);
     let u_name = interner.intern_string("U");
 
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Return type must satisfy usage context
     ctx.add_upper_bound(var_u, TypeId::NUMBER);
@@ -8655,7 +8655,7 @@ fn test_callback_param_from_object_method_context() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Object method provides context that param is number
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -8672,7 +8672,7 @@ fn test_callback_param_from_overloaded_function() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Chosen overload expects callback with string param
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -8694,8 +8694,8 @@ fn test_array_map_callback_param_and_return() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T from Array<number> element type
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -8719,9 +8719,9 @@ fn test_array_map_with_index_and_array_params() {
     let idx_name = interner.intern_string("Idx");
     let arr_name = interner.intern_string("Arr");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_idx = ctx.fresh_type_param(idx_name);
-    let var_arr = ctx.fresh_type_param(arr_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_idx = ctx.fresh_type_param(idx_name, false);
+    let var_arr = ctx.fresh_type_param(arr_name, false);
 
     // Element type
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -8748,7 +8748,7 @@ fn test_array_filter_preserves_element_type() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Filter preserves element type
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -8767,8 +8767,8 @@ fn test_array_filter_with_type_guard() {
     let t_name = interner.intern_string("T");
     let s_name = interner.intern_string("S");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_s = ctx.fresh_type_param(s_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_s = ctx.fresh_type_param(s_name, false);
 
     // Original element type is union
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -8794,8 +8794,8 @@ fn test_array_reduce_accumulator_inference() {
     let acc_name = interner.intern_string("Acc");
     let elem_name = interner.intern_string("Elem");
 
-    let var_acc = ctx.fresh_type_param(acc_name);
-    let var_elem = ctx.fresh_type_param(elem_name);
+    let var_acc = ctx.fresh_type_param(acc_name, false);
+    let var_elem = ctx.fresh_type_param(elem_name, false);
 
     // Accumulator type from initial value
     let zero = interner.literal_number(0.0);
@@ -8823,8 +8823,8 @@ fn test_array_reduce_different_accumulator_type() {
     let acc_name = interner.intern_string("Acc");
     let elem_name = interner.intern_string("Elem");
 
-    let var_acc = ctx.fresh_type_param(acc_name);
-    let var_elem = ctx.fresh_type_param(elem_name);
+    let var_acc = ctx.fresh_type_param(acc_name, false);
+    let var_elem = ctx.fresh_type_param(elem_name, false);
 
     // Accumulator is object with string keys and boolean values
     let obj_type = interner.object(vec![]);
@@ -8848,7 +8848,7 @@ fn test_array_find_returns_element_or_undefined() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Element type
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -8869,8 +8869,8 @@ fn test_array_every_callback_returns_boolean() {
     let t_name = interner.intern_string("T");
     let ret_name = interner.intern_string("Ret");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_ret = ctx.fresh_type_param(ret_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_ret = ctx.fresh_type_param(ret_name, false);
 
     // Element type
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -8897,8 +8897,8 @@ fn test_promise_then_basic_chain() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T from Promise<number> resolved value
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -8920,8 +8920,8 @@ fn test_promise_then_transform_type() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T is string from input promise
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -8946,10 +8946,10 @@ fn test_promise_then_chained_multiple() {
     let c_name = interner.intern_string("C");
     let d_name = interner.intern_string("D");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
-    let var_d = ctx.fresh_type_param(d_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
+    let var_d = ctx.fresh_type_param(d_name, false);
 
     // Initial promise value
     ctx.add_lower_bound(var_a, TypeId::STRING);
@@ -8977,8 +8977,8 @@ fn test_promise_then_returns_promise() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Input promise resolves to number
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -9000,7 +9000,7 @@ fn test_promise_catch_error_type() {
     let mut ctx = InferenceContext::new(&interner);
     let err_name = interner.intern_string("Err");
 
-    let var_err = ctx.fresh_type_param(err_name);
+    let var_err = ctx.fresh_type_param(err_name, false);
 
     // Catch handler receives unknown error type
     ctx.add_upper_bound(var_err, TypeId::UNKNOWN);
@@ -9017,7 +9017,7 @@ fn test_promise_finally_no_value() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Promise value passes through finally unchanged
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9035,9 +9035,9 @@ fn test_promise_all_tuple_inference() {
     let t2_name = interner.intern_string("T2");
     let t3_name = interner.intern_string("T3");
 
-    let var_t1 = ctx.fresh_type_param(t1_name);
-    let var_t2 = ctx.fresh_type_param(t2_name);
-    let var_t3 = ctx.fresh_type_param(t3_name);
+    let var_t1 = ctx.fresh_type_param(t1_name, false);
+    let var_t2 = ctx.fresh_type_param(t2_name, false);
+    let var_t3 = ctx.fresh_type_param(t3_name, false);
 
     // Each promise resolves to different type
     ctx.add_lower_bound(var_t1, TypeId::STRING);
@@ -9058,7 +9058,7 @@ fn test_promise_race_union_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Race could resolve to either type
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9081,7 +9081,7 @@ fn test_generic_arg_inferred_from_return_context() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Return context expects string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -9101,7 +9101,7 @@ fn test_generic_arg_inferred_from_parameter_type() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Argument is number
     let forty_two = interner.literal_number(42.0);
@@ -9119,8 +9119,8 @@ fn test_generic_args_inferred_from_multiple_params() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // First argument
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9141,7 +9141,7 @@ fn test_generic_arg_inferred_from_callback_param() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Callback parameter usage implies type
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9158,7 +9158,7 @@ fn test_generic_arg_constrained_by_extends() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint from extends clause
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -9177,7 +9177,7 @@ fn test_generic_arg_inferred_from_array_element() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Array element type flows to T
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9194,7 +9194,7 @@ fn test_generic_arg_from_nested_generic() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Inner type of Box<string> is string
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9211,7 +9211,7 @@ fn test_generic_arg_from_object_property_context() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Property context expects string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -9228,7 +9228,7 @@ fn test_generic_arg_bidirectional_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // From parameter
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -9246,7 +9246,7 @@ fn test_generic_arg_inferred_from_spread() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Spread elements contribute to T
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9265,8 +9265,8 @@ fn test_generic_arg_partial_inference() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T inferred from argument
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9287,7 +9287,7 @@ fn test_generic_arg_from_conditional_return() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Return context from conditional
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -9308,7 +9308,7 @@ fn test_constructor_param_basic() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T inferred from constructor argument
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9325,8 +9325,8 @@ fn test_constructor_param_multiple() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T and U inferred from constructor arguments
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9345,7 +9345,7 @@ fn test_constructor_param_with_default() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // When called with number, T is inferred as number (overriding default)
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -9361,7 +9361,7 @@ fn test_constructor_param_array() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T inferred from array element type
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9377,7 +9377,7 @@ fn test_constructor_param_object() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T inferred from object property
     ctx.add_lower_bound(var_t, TypeId::BOOLEAN);
@@ -9398,7 +9398,7 @@ fn test_method_return_basic() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T inferred from expected return type
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9414,7 +9414,7 @@ fn test_method_return_generic_call() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Return type flows into T
     let return_type = interner.object(vec![PropertyInfo {
@@ -9438,7 +9438,7 @@ fn test_method_return_promise() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T is the resolved type of the promise
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9454,7 +9454,7 @@ fn test_method_return_array() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T inferred from array element expectation
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -9471,8 +9471,8 @@ fn test_method_return_chained() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T from input chain, U from callback return
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9496,7 +9496,7 @@ fn test_static_member_basic() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T inferred from static method context
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9512,7 +9512,7 @@ fn test_static_member_factory() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T inferred from factory argument
     let lit_hello = interner.literal_string("hello");
@@ -9529,7 +9529,7 @@ fn test_static_member_property() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T from static property type
     let config_type = interner.object(vec![PropertyInfo {
@@ -9554,8 +9554,8 @@ fn test_static_member_multiple_type_params() {
     let k_name = interner.intern_string("K");
     let v_name = interner.intern_string("V");
 
-    let var_k = ctx.fresh_type_param(k_name);
-    let var_v = ctx.fresh_type_param(v_name);
+    let var_k = ctx.fresh_type_param(k_name, false);
+    let var_v = ctx.fresh_type_param(v_name, false);
 
     // K and V inferred from entry types
     ctx.add_lower_bound(var_k, TypeId::STRING);
@@ -9574,7 +9574,7 @@ fn test_static_member_with_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Upper bound from constraint
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -9615,9 +9615,9 @@ fn test_hof_compose_two_functions() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // g: A => B means A is boolean, B is number
     ctx.add_lower_bound(var_a, TypeId::BOOLEAN);
@@ -9642,10 +9642,10 @@ fn test_hof_compose_three_functions() {
     let c_name = interner.intern_string("C");
     let d_name = interner.intern_string("D");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
-    let var_d = ctx.fresh_type_param(d_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
+    let var_d = ctx.fresh_type_param(d_name, false);
 
     ctx.add_lower_bound(var_a, TypeId::STRING);
     ctx.add_lower_bound(var_b, TypeId::NUMBER);
@@ -9670,9 +9670,9 @@ fn test_hof_pipe_left_to_right() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // g: A => B, f: B => C
     ctx.add_lower_bound(var_a, TypeId::STRING);
@@ -9696,9 +9696,9 @@ fn test_hof_pipe_with_value() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // Starting value determines A
     let hello = interner.literal_string("hello");
@@ -9724,9 +9724,9 @@ fn test_hof_curry_binary() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // Original function (a: string, b: number) => boolean
     ctx.add_lower_bound(var_a, TypeId::STRING);
@@ -9750,10 +9750,10 @@ fn test_hof_curry_ternary() {
     let c_name = interner.intern_string("C");
     let d_name = interner.intern_string("D");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
-    let var_d = ctx.fresh_type_param(d_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
+    let var_d = ctx.fresh_type_param(d_name, false);
 
     ctx.add_lower_bound(var_a, TypeId::STRING);
     ctx.add_lower_bound(var_b, TypeId::NUMBER);
@@ -9777,9 +9777,9 @@ fn test_hof_uncurry() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // Curried function types
     ctx.add_lower_bound(var_a, TypeId::STRING);
@@ -9802,9 +9802,9 @@ fn test_hof_flip() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     ctx.add_lower_bound(var_a, TypeId::STRING);
     ctx.add_lower_bound(var_b, TypeId::NUMBER);
@@ -9823,7 +9823,7 @@ fn test_hof_constant() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let hello = interner.literal_string("hello");
     ctx.add_lower_bound(var_t, hello);
@@ -9839,7 +9839,7 @@ fn test_hof_identity() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -9859,7 +9859,7 @@ fn test_chain_builder_pattern() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Builder accumulates to final type
     let name_prop = interner.intern_string("name");
@@ -9896,8 +9896,8 @@ fn test_chain_fluent_interface() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Initial type
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9918,7 +9918,7 @@ fn test_chain_optional_method() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Optional chain may return undefined
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -9937,8 +9937,8 @@ fn test_chain_type_narrowing() {
     let t_name = interner.intern_string("T");
     let s_name = interner.intern_string("S");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_s = ctx.fresh_type_param(s_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_s = ctx.fresh_type_param(s_name, false);
 
     // Original type is union
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -9963,8 +9963,8 @@ fn test_chain_accumulator_type() {
     let elem_name = interner.intern_string("Elem");
     let acc_name = interner.intern_string("Acc");
 
-    let var_elem = ctx.fresh_type_param(elem_name);
-    let var_acc = ctx.fresh_type_param(acc_name);
+    let var_elem = ctx.fresh_type_param(elem_name, false);
+    let var_acc = ctx.fresh_type_param(acc_name, false);
 
     // Element type from source
     ctx.add_lower_bound(var_elem, TypeId::NUMBER);
@@ -9985,9 +9985,9 @@ fn test_chain_async_await() {
     let t2_name = interner.intern_string("T2");
     let t3_name = interner.intern_string("T3");
 
-    let var_t1 = ctx.fresh_type_param(t1_name);
-    let var_t2 = ctx.fresh_type_param(t2_name);
-    let var_t3 = ctx.fresh_type_param(t3_name);
+    let var_t1 = ctx.fresh_type_param(t1_name, false);
+    let var_t2 = ctx.fresh_type_param(t2_name, false);
+    let var_t3 = ctx.fresh_type_param(t3_name, false);
 
     // Chain of transformations
     ctx.add_lower_bound(var_t1, TypeId::STRING);
@@ -10009,9 +10009,9 @@ fn test_chain_branching() {
     let branch1_name = interner.intern_string("Branch1");
     let branch2_name = interner.intern_string("Branch2");
 
-    let var_base = ctx.fresh_type_param(base_name);
-    let var_branch1 = ctx.fresh_type_param(branch1_name);
-    let var_branch2 = ctx.fresh_type_param(branch2_name);
+    let var_base = ctx.fresh_type_param(base_name, false);
+    let var_branch1 = ctx.fresh_type_param(branch1_name, false);
+    let var_branch2 = ctx.fresh_type_param(branch2_name, false);
 
     // Base type shared
     ctx.add_lower_bound(var_base, TypeId::STRING);
@@ -10033,7 +10033,7 @@ fn test_chain_merge() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Merging two chains with different types creates union
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -10058,9 +10058,9 @@ fn test_partial_first_arg() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // First arg fixed as string
     let hello = interner.literal_string("hello");
@@ -10086,10 +10086,10 @@ fn test_partial_multiple_args() {
     let c_name = interner.intern_string("C");
     let d_name = interner.intern_string("D");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
-    let var_d = ctx.fresh_type_param(d_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
+    let var_d = ctx.fresh_type_param(d_name, false);
 
     // First two args fixed
     ctx.add_lower_bound(var_a, TypeId::STRING);
@@ -10115,9 +10115,9 @@ fn test_partial_right() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // First param remains free
     ctx.add_upper_bound(var_a, TypeId::STRING);
@@ -10142,9 +10142,9 @@ fn test_partial_with_placeholder() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // First param placeholder (remains in signature)
     ctx.add_upper_bound(var_a, TypeId::STRING);
@@ -10169,9 +10169,9 @@ fn test_partial_bind_this() {
     let a_name = interner.intern_string("A");
     let r_name = interner.intern_string("R");
 
-    let var_this = ctx.fresh_type_param(this_name);
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_this = ctx.fresh_type_param(this_name, false);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     // This type fixed by bind
     let obj = interner.object(vec![]);
@@ -10198,11 +10198,11 @@ fn test_partial_bind_this_and_args() {
     let c_name = interner.intern_string("C");
     let r_name = interner.intern_string("R");
 
-    let var_this = ctx.fresh_type_param(this_name);
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_this = ctx.fresh_type_param(this_name, false);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     // This fixed
     let obj = interner.object(vec![]);
@@ -10232,9 +10232,9 @@ fn test_partial_preserves_rest_params() {
     let rest_name = interner.intern_string("Rest");
     let r_name = interner.intern_string("R");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_rest = ctx.fresh_type_param(rest_name);
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_rest = ctx.fresh_type_param(rest_name, false);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     // First param fixed
     ctx.add_lower_bound(var_a, TypeId::STRING);
@@ -10263,7 +10263,7 @@ fn test_overload_select_by_arg_count() {
     let mut ctx = InferenceContext::new(&interner);
     let r_name = interner.intern_string("R");
 
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     // With two arguments, second overload is selected
     ctx.add_lower_bound(var_r, TypeId::BOOLEAN);
@@ -10282,8 +10282,8 @@ fn test_overload_select_by_arg_type() {
     let t_name = interner.intern_string("T");
     let r_name = interner.intern_string("R");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     // Argument is number, so second overload
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -10306,8 +10306,8 @@ fn test_overload_select_by_callback_signature() {
     let cb_param_name = interner.intern_string("CbParam");
     let r_name = interner.intern_string("R");
 
-    let var_cb_param = ctx.fresh_type_param(cb_param_name);
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_cb_param = ctx.fresh_type_param(cb_param_name, false);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     // Callback expects number param, so second overload
     ctx.add_upper_bound(var_cb_param, TypeId::NUMBER);
@@ -10328,7 +10328,7 @@ fn test_overload_select_by_return_context() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Return context expects string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -10346,7 +10346,7 @@ fn test_overload_select_most_specific() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Literal argument matches more specific overload
     let hello = interner.literal_string("hello");
@@ -10366,7 +10366,7 @@ fn test_overload_with_optional_params() {
     let mut ctx = InferenceContext::new(&interner);
     let r_name = interner.intern_string("R");
 
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     // With optional param provided, second overload's return type
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -10385,7 +10385,7 @@ fn test_overload_with_rest_params() {
     let mut ctx = InferenceContext::new(&interner);
     let r_name = interner.intern_string("R");
 
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     // With rest params provided, second overload
     ctx.add_lower_bound(var_r, TypeId::NUMBER);
@@ -10403,7 +10403,7 @@ fn test_overload_generic_instantiation() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Two args of same type, second overload selected
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -10422,7 +10422,7 @@ fn test_overload_union_arg() {
     let mut ctx = InferenceContext::new(&interner);
     let r_name = interner.intern_string("R");
 
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     // Union arg may match either overload, result is union
     let s = interner.literal_string("s");
@@ -10442,7 +10442,7 @@ fn test_overload_fallback_to_implementation() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Implementation signature is most general
     ctx.add_upper_bound(var_t, TypeId::UNKNOWN);
@@ -10460,8 +10460,8 @@ fn test_overload_conditional_return() {
     let t_name = interner.intern_string("T");
     let r_name = interner.intern_string("R");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     // T is string, so return is number
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -10491,7 +10491,7 @@ fn test_constraint_upper_bound_primitive() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -10511,7 +10511,7 @@ fn test_constraint_upper_bound_object() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends { name: string }
     let name_prop = interner.intern_string("name");
@@ -10558,7 +10558,7 @@ fn test_constraint_upper_bound_array() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends any[]
     let any_array = interner.array(TypeId::ANY);
@@ -10579,7 +10579,7 @@ fn test_constraint_upper_bound_function() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends function
     let any_fn = interner.function(FunctionShape {
@@ -10616,7 +10616,7 @@ fn test_constraint_upper_bound_union() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends string | number
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -10636,7 +10636,7 @@ fn test_constraint_upper_bound_literal() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends "a" | "b" | "c"
     let a = interner.literal_string("a");
@@ -10659,7 +10659,7 @@ fn test_constraint_upper_bound_keyof() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends "name" | "age" (simulating keyof { name, age })
     let name = interner.literal_string("name");
@@ -10681,7 +10681,7 @@ fn test_constraint_no_inference_uses_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint only, no lower bounds
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -10702,7 +10702,7 @@ fn test_constraint_multiple_bounds_intersection() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends { name: string } & { age: number }
     let name_prop = interner.intern_string("name");
@@ -10758,7 +10758,7 @@ fn test_constraint_multiple_upper_bounds() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Two separate upper bounds (both must be satisfied)
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -10776,7 +10776,7 @@ fn test_constraint_intersection_with_callable() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: function type
     let fn_type = interner.function(FunctionShape {
@@ -10806,9 +10806,9 @@ fn test_constraint_multiple_type_params_related() {
     let u_name = interner.intern_string("U");
     let v_name = interner.intern_string("V");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
-    let var_v = ctx.fresh_type_param(v_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
+    let var_v = ctx.fresh_type_param(v_name, false);
 
     // V is string
     ctx.add_lower_bound(var_v, TypeId::STRING);
@@ -10835,8 +10835,8 @@ fn test_constraint_circular_bounds() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Mutual constraints with same inference
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -10854,7 +10854,7 @@ fn test_constraint_intersection_primitives() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // For branded primitives, the intersection is with an object
     let brand_prop = interner.intern_string("__brand");
@@ -10886,7 +10886,7 @@ fn test_constraint_satisfaction_widens_to_bound() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -10906,7 +10906,7 @@ fn test_constraint_satisfaction_multiple_candidates() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends string | number
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -10931,7 +10931,7 @@ fn test_constraint_satisfaction_object_structural() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: { x: number }
     let x_prop = interner.intern_string("x");
@@ -10978,7 +10978,7 @@ fn test_constraint_satisfaction_function_return() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint from return context
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -10997,7 +10997,7 @@ fn test_constraint_satisfaction_array_element() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends Comparable (has compare method)
     let compare_prop = interner.intern_string("compare");
@@ -11035,8 +11035,8 @@ fn test_constraint_satisfaction_generic_call() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T inferred from argument
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -11055,7 +11055,7 @@ fn test_constraint_satisfaction_conditional_type() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -11077,7 +11077,7 @@ fn test_default_used_when_no_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // No constraints, no lower bounds - would use default
     // In this test, we just verify unknown is returned without constraints
@@ -11092,7 +11092,7 @@ fn test_default_overridden_by_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Inference provides number
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -11109,7 +11109,7 @@ fn test_default_with_constraint_satisfied() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends object (upper bound)
     let empty_obj = interner.object(vec![]);
@@ -11127,7 +11127,7 @@ fn test_default_literal_with_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -11146,7 +11146,7 @@ fn test_default_array_type() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends any[]
     let any_array = interner.array(TypeId::ANY);
@@ -11167,7 +11167,7 @@ fn test_default_function_type() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends () => any (allows any return type)
     let any_fn = interner.function(FunctionShape {
@@ -11205,8 +11205,8 @@ fn test_default_with_dependent_constraint() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T inferred
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -11226,8 +11226,8 @@ fn test_default_with_constraint_chain() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // U defaults to string
     ctx.add_lower_bound(var_u, TypeId::STRING);
@@ -11250,8 +11250,8 @@ fn test_default_partial_inference() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Only T inferred
     ctx.add_lower_bound(var_t, TypeId::BOOLEAN);
@@ -11271,7 +11271,7 @@ fn test_default_explicit_type_arg() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Explicit type argument (simulated as lower bound)
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -11289,7 +11289,7 @@ fn test_default_recursive_type() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Recursive types represented as object with children
     let children_prop = interner.intern_string("children");
@@ -11323,7 +11323,7 @@ fn test_self_ref_type_param_array_of_self() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Lower bound from usage: string[]
     let string_array = interner.array(TypeId::STRING);
@@ -11341,7 +11341,7 @@ fn test_self_ref_type_param_promise_of_self() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create a function type for the method
     let then_fn = interner.function(FunctionShape {
@@ -11376,7 +11376,7 @@ fn test_self_ref_type_param_node_with_children() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create a node type with children array
     let children_array = interner.array(TypeId::OBJECT);
@@ -11401,7 +11401,7 @@ fn test_self_ref_type_param_linked_list() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create a linked list node with next pointer
     let next_type = interner.union(vec![TypeId::OBJECT, TypeId::NULL]);
@@ -11436,7 +11436,7 @@ fn test_self_ref_type_param_recursive_json() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // JSON-like type: union of primitives
     let json_primitives = interner.union(vec![
@@ -11463,8 +11463,8 @@ fn test_mutual_dependency_key_value() {
     let k_name = interner.intern_string("K");
     let v_name = interner.intern_string("V");
 
-    let var_k = ctx.fresh_type_param(k_name);
-    let var_v = ctx.fresh_type_param(v_name);
+    let var_k = ctx.fresh_type_param(k_name, false);
+    let var_v = ctx.fresh_type_param(v_name, false);
 
     // K gets "name" literal
     let name_literal = interner.literal_string("name");
@@ -11495,8 +11495,8 @@ fn test_mutual_dependency_parent_child() {
     let p_name = interner.intern_string("P");
     let c_name = interner.intern_string("C");
 
-    let var_p = ctx.fresh_type_param(p_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_p = ctx.fresh_type_param(p_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // Create parent type with child reference
     let parent_type = interner.object(vec![PropertyInfo {
@@ -11535,8 +11535,8 @@ fn test_mutual_dependency_input_output() {
     let i_name = interner.intern_string("I");
     let o_name = interner.intern_string("O");
 
-    let var_i = ctx.fresh_type_param(i_name);
-    let var_o = ctx.fresh_type_param(o_name);
+    let var_i = ctx.fresh_type_param(i_name, false);
+    let var_o = ctx.fresh_type_param(o_name, false);
 
     // Input function type
     let input_fn = interner.function(FunctionShape {
@@ -11571,8 +11571,8 @@ fn test_mutual_dependency_request_response() {
     let req_name = interner.intern_string("Req");
     let res_name = interner.intern_string("Res");
 
-    let var_req = ctx.fresh_type_param(req_name);
-    let var_res = ctx.fresh_type_param(res_name);
+    let var_req = ctx.fresh_type_param(req_name, false);
+    let var_res = ctx.fresh_type_param(res_name, false);
 
     // Create a method type
     let respond_fn = interner.function(FunctionShape {
@@ -11643,9 +11643,9 @@ fn test_mutual_dependency_three_way() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     let type_a = interner.object(vec![PropertyInfo {
         name: interner.intern_string("b"),
@@ -11696,7 +11696,7 @@ fn test_recursive_constraint_comparable() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create method type
     let compare_fn = interner.function(FunctionShape {
@@ -11733,7 +11733,7 @@ fn test_recursive_constraint_builder_pattern() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create method types
     let set_fn = interner.function(FunctionShape {
@@ -11789,7 +11789,7 @@ fn test_recursive_constraint_expression_tree() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create method type
     let evaluate_fn = interner.function(FunctionShape {
@@ -11835,7 +11835,7 @@ fn test_recursive_constraint_cloneable() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create method type
     let clone_fn = interner.function(FunctionShape {
@@ -11871,7 +11871,7 @@ fn test_recursive_constraint_iterable() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create method type
     let next_fn = interner.function(FunctionShape {
@@ -11912,8 +11912,8 @@ fn test_constraint_cycle_direct_extends() {
     let a_name = interner.intern_string("A");
     let b_name = interner.intern_string("B");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
 
     // Both constrained by object
     ctx.add_upper_bound(var_a, TypeId::OBJECT);
@@ -11938,9 +11938,9 @@ fn test_constraint_cycle_interface_extends() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // Create distinct interface types
     let type_a = interner.object(vec![PropertyInfo {
@@ -11988,7 +11988,7 @@ fn test_constraint_cycle_generic_extends() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create method type
     let get_container_fn = interner.function(FunctionShape {
@@ -12036,7 +12036,7 @@ fn test_constraint_cycle_mixin_pattern() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constructor function type
     let constructor_fn = interner.function(FunctionShape {
@@ -12064,7 +12064,7 @@ fn test_constraint_cycle_enum_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Enum key union
     let enum_keys = interner.union(vec![
@@ -12091,7 +12091,7 @@ fn test_param_inference_from_array_map_callback() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Array element type provides lower bound for callback parameter
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -12107,7 +12107,7 @@ fn test_param_inference_from_array_filter_predicate() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Array element is string | null
     let string_or_null = interner.union(vec![TypeId::STRING, TypeId::NULL]);
@@ -12124,7 +12124,7 @@ fn test_param_inference_from_reduce_accumulator() {
     let mut ctx = InferenceContext::new(&interner);
     let acc_name = interner.intern_string("Acc");
 
-    let var_acc = ctx.fresh_type_param(acc_name);
+    let var_acc = ctx.fresh_type_param(acc_name, false);
 
     // Initial value is number, so accumulator is number
     ctx.add_lower_bound(var_acc, TypeId::NUMBER);
@@ -12140,7 +12140,7 @@ fn test_param_inference_from_promise_then_callback() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Promise resolves to string
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -12156,7 +12156,7 @@ fn test_param_inference_rest_parameter_tuple() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Arguments are [string, number, boolean]
     let tuple = interner.tuple(vec![
@@ -12192,7 +12192,7 @@ fn test_param_inference_spread_arguments() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Spread array of numbers
     let number_array = interner.array(TypeId::NUMBER);
@@ -12209,7 +12209,7 @@ fn test_param_inference_from_return_type_usage() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Function returns T, assigned to string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -12228,7 +12228,7 @@ fn test_param_inference_generic_identity() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Argument is number literal
     let forty_two = interner.literal_number(42.0);
@@ -12246,8 +12246,8 @@ fn test_param_inference_from_property_access() {
     let t_name = interner.intern_string("T");
     let k_name = interner.intern_string("K");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_k = ctx.fresh_type_param(k_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_k = ctx.fresh_type_param(k_name, false);
 
     // Object argument
     let name_prop = interner.intern_string("name");
@@ -12280,8 +12280,8 @@ fn test_param_inference_nested_callback() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Outer array element (has children property)
     let children_prop = interner.intern_string("children");
@@ -12322,7 +12322,7 @@ fn test_param_inference_optional_with_default() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // No lower bound (optional parameter not provided)
     // Default type acts as fallback
@@ -12339,7 +12339,7 @@ fn test_param_inference_from_union_argument() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let string_or_undefined = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
     ctx.add_lower_bound(var_t, string_or_undefined);
@@ -12355,7 +12355,7 @@ fn test_param_inference_constrained_to_subset() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let constraint = interner.union(vec![
         interner.literal_string("a"),
@@ -12378,8 +12378,8 @@ fn test_param_inference_from_tuple_destructure() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // First element is number
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -12401,7 +12401,7 @@ fn test_param_inference_bidirectional() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Argument provides lower bound
     let hello = interner.literal_string("hello");
@@ -12421,7 +12421,7 @@ fn test_param_inference_void_callback() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Array element provides parameter type
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -12442,7 +12442,7 @@ fn test_f_bounded_comparable() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // compareTo method
     let compare_to_fn = interner.function(FunctionShape {
@@ -12484,7 +12484,7 @@ fn test_f_bounded_builder_pattern() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let build_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -12545,7 +12545,7 @@ fn test_f_bounded_tree_node() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Children is array of self-type
     let children_array = interner.array(TypeId::OBJECT);
@@ -12591,7 +12591,7 @@ fn test_f_bounded_cloneable() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let clone_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -12627,7 +12627,7 @@ fn test_f_bounded_with_additional_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let compare_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -12689,8 +12689,8 @@ fn test_mutually_recursive_constraints() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     let type_a = interner.object(vec![PropertyInfo {
         name: interner.intern_string("a"),
@@ -12726,7 +12726,7 @@ fn test_extends_clause_with_keyof() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // keyof SomeType = "a" | "b" | "c"
     let key_union = interner.union(vec![
@@ -12749,7 +12749,7 @@ fn test_extends_clause_with_mapped_type_key() {
     let mut ctx = InferenceContext::new(&interner);
     let k_name = interner.intern_string("K");
 
-    let var_k = ctx.fresh_type_param(k_name);
+    let var_k = ctx.fresh_type_param(k_name, false);
 
     // Simulating keyof T where T = { name: string, age: number }
     let keys = interner.union(vec![
@@ -12771,7 +12771,7 @@ fn test_extends_clause_conditional_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T extends string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -12788,7 +12788,7 @@ fn test_extends_clause_array_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let string_array = interner.array(TypeId::STRING);
     ctx.add_lower_bound(var_t, string_array);
@@ -12813,9 +12813,9 @@ fn test_higher_order_function_inference() {
     let b_name = interner.intern_string("B");
     let c_name = interner.intern_string("C");
 
-    let var_a = ctx.fresh_type_param(a_name);
-    let var_b = ctx.fresh_type_param(b_name);
-    let var_c = ctx.fresh_type_param(c_name);
+    let var_a = ctx.fresh_type_param(a_name, false);
+    let var_b = ctx.fresh_type_param(b_name, false);
+    let var_c = ctx.fresh_type_param(c_name, false);
 
     // g: (a: string) => number, so A = string, B = number
     ctx.add_lower_bound(var_a, TypeId::STRING);
@@ -12842,8 +12842,8 @@ fn test_method_chaining_inference() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Initial array element type
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -12865,7 +12865,7 @@ fn test_partial_type_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Source object type
     let name_prop = interner.intern_string("name");
@@ -12905,8 +12905,8 @@ fn test_record_utility_inference() {
     let k_name = interner.intern_string("K");
     let v_name = interner.intern_string("V");
 
-    let var_k = ctx.fresh_type_param(k_name);
-    let var_v = ctx.fresh_type_param(v_name);
+    let var_k = ctx.fresh_type_param(k_name, false);
+    let var_v = ctx.fresh_type_param(v_name, false);
 
     // Keys from object: "a" | "b"
     let key_a = interner.literal_string("a");
@@ -12931,7 +12931,7 @@ fn test_tuple_to_union_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Tuple [string, number, boolean]
     let tuple = interner.tuple(vec![
@@ -12970,8 +12970,8 @@ fn test_spread_tuple_inference() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // First part of tuple: [string]
     let tuple_t = interner.tuple(vec![TupleElement {
@@ -13014,7 +13014,7 @@ fn test_awaited_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Promise resolves to string
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -13030,7 +13030,7 @@ fn test_return_type_inference_async() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Return statements provide lower bound
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -13046,7 +13046,7 @@ fn test_mapped_type_key_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let k_name = interner.intern_string("K");
 
-    let var_k = ctx.fresh_type_param(k_name);
+    let var_k = ctx.fresh_type_param(k_name, false);
 
     // Keys from iteration
     let key_x = interner.literal_string("x");
@@ -13068,8 +13068,8 @@ fn test_pick_utility_inference() {
     let t_name = interner.intern_string("T");
     let k_name = interner.intern_string("K");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_k = ctx.fresh_type_param(k_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_k = ctx.fresh_type_param(k_name, false);
 
     let name_prop = interner.intern_string("name");
     let age_prop = interner.intern_string("age");
@@ -13126,7 +13126,7 @@ fn test_omit_utility_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let k_name = interner.intern_string("K");
 
-    let var_k = ctx.fresh_type_param(k_name);
+    let var_k = ctx.fresh_type_param(k_name, false);
 
     // Keys to omit: "password"
     let password_key = interner.literal_string("password");
@@ -13145,8 +13145,8 @@ fn test_extract_utility_inference() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Union to filter: string | number | boolean
     let union_t = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
@@ -13170,7 +13170,7 @@ fn test_parameters_utility_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Function type (a: string, b: number) => void
     let func = interner.function(FunctionShape {
@@ -13209,7 +13209,7 @@ fn test_constructor_parameters_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constructor type new (name: string) => Instance
     let ctor = interner.function(FunctionShape {
@@ -13240,7 +13240,7 @@ fn test_instance_type_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Instance has specific shape
     let name_prop = interner.intern_string("name");
@@ -13271,7 +13271,7 @@ fn test_circular_constraint_polymorphic_this() {
     let mut ctx = InferenceContext::new(&interner);
     let this_name = interner.intern_string("This");
 
-    let var_this = ctx.fresh_type_param(this_name);
+    let var_this = ctx.fresh_type_param(this_name, false);
 
     let next_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -13316,7 +13316,7 @@ fn test_circular_constraint_recursive_promise() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let then_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -13356,7 +13356,7 @@ fn test_circular_constraint_event_emitter() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let on_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -13429,7 +13429,7 @@ fn test_circular_constraint_fluent_interface() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let with_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -13495,7 +13495,7 @@ fn test_circular_constraint_recursive_json() {
     let mut ctx = InferenceContext::new(&interner);
     let json_name = interner.intern_string("JSON");
 
-    let var_json = ctx.fresh_type_param(json_name);
+    let var_json = ctx.fresh_type_param(json_name, false);
 
     // JSON is a union of primitives and recursive structures
     let json_union = interner.union(vec![
@@ -13520,8 +13520,8 @@ fn test_circular_constraint_linked_list_generic() {
     let t_name = interner.intern_string("T");
     let self_name = interner.intern_string("Self");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_self = ctx.fresh_type_param(self_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_self = ctx.fresh_type_param(self_name, false);
 
     let node_type = interner.object(vec![
         PropertyInfo {
@@ -13558,8 +13558,8 @@ fn test_circular_constraint_state_machine() {
     let s_name = interner.intern_string("S");
     let e_name = interner.intern_string("E");
 
-    let var_s = ctx.fresh_type_param(s_name);
-    let var_e = ctx.fresh_type_param(e_name);
+    let var_s = ctx.fresh_type_param(s_name, false);
+    let var_e = ctx.fresh_type_param(e_name, false);
 
     let transition_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -13620,7 +13620,7 @@ fn test_circular_constraint_visitor_pattern() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let accept_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -13660,7 +13660,7 @@ fn test_circular_constraint_expression_tree() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let eval_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -13721,8 +13721,8 @@ fn test_circular_constraint_repository_pattern() {
     let t_name = interner.intern_string("T");
     let r_name = interner.intern_string("R");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     let find_fn = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -13803,7 +13803,7 @@ fn test_inference_from_method_chain() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // T is inferred from the input array element type
     let obj_with_name = interner.object(vec![PropertyInfo {
@@ -13829,7 +13829,7 @@ fn test_inference_from_spread_in_array() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Both arrays contribute to T
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -13848,7 +13848,7 @@ fn test_inference_from_spread_in_object() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let obj1 = interner.object(vec![PropertyInfo {
         name: interner.intern_string("a"),
@@ -13873,7 +13873,7 @@ fn test_inference_from_optional_chain() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Optional chaining produces T | undefined
     let value_or_undef = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
@@ -13890,7 +13890,7 @@ fn test_inference_from_nullish_coalescing() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // ?? operator: left side is T | null | undefined, right is T
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -13907,7 +13907,7 @@ fn test_inference_from_default_param() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Default parameter provides lower bound
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -13923,7 +13923,7 @@ fn test_inference_from_array_destructure() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Array destructuring: first is T, rest is T[]
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -13939,7 +13939,7 @@ fn test_inference_from_object_destructure() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let obj_type = interner.object(vec![
         PropertyInfo {
@@ -13974,7 +13974,7 @@ fn test_inference_from_computed_property() {
     let mut ctx = InferenceContext::new(&interner);
     let k_name = interner.intern_string("K");
 
-    let var_k = ctx.fresh_type_param(k_name);
+    let var_k = ctx.fresh_type_param(k_name, false);
 
     let key_union = interner.union(vec![
         interner.literal_string("x"),
@@ -13996,8 +13996,8 @@ fn test_inference_bidirectional_callback() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T is inferred from array element, U from callback return
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -14025,7 +14025,7 @@ fn test_inference_from_async_await() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Awaited type should be the unwrapped value
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -14041,7 +14041,7 @@ fn test_inference_from_generator_yield() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Yield type contributes to T
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -14057,7 +14057,7 @@ fn test_inference_from_for_of_loop() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Loop variable type is inferred from iterable
     let string_array = interner.array(TypeId::STRING);
@@ -14074,7 +14074,7 @@ fn test_inference_from_ternary_branches() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Both branches contribute to T
     ctx.add_lower_bound(var_t, interner.literal_string("a"));
@@ -14092,7 +14092,7 @@ fn test_inference_from_type_assertion() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Type assertion provides the type
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -14114,7 +14114,7 @@ fn test_generic_function_call_single_arg_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Argument "hello" provides lower bound for T
     let hello = interner.literal_string("hello");
@@ -14132,7 +14132,7 @@ fn test_generic_function_call_multiple_args_same_type() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let lit_a = interner.literal_string("a");
     let lit_b = interner.literal_string("b");
@@ -14155,8 +14155,8 @@ fn test_generic_function_call_different_type_params() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T inferred from argument
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -14179,7 +14179,7 @@ fn test_contextual_callback_parameter_type() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Array element type provides upper bound for callback param
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -14199,7 +14199,7 @@ fn test_contextual_callback_return_type() {
     let mut ctx = InferenceContext::new(&interner);
     let r_name = interner.intern_string("R");
 
-    let var_r = ctx.fresh_type_param(r_name);
+    let var_r = ctx.fresh_type_param(r_name, false);
 
     // filter expects boolean return
     ctx.add_upper_bound(var_r, TypeId::BOOLEAN);
@@ -14219,7 +14219,7 @@ fn test_inference_from_return_context() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Return context provides upper bound
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -14236,7 +14236,7 @@ fn test_inference_object_literal_context() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Object property context
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -14254,7 +14254,7 @@ fn test_inference_array_literal_context() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Array element context
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -14276,7 +14276,7 @@ fn test_inference_from_generic_method_chain() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Initial array type
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -14296,7 +14296,7 @@ fn test_inference_with_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -14316,7 +14316,7 @@ fn test_inference_constraint_violation_fallback() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constraint: T extends string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -14339,8 +14339,8 @@ fn test_contextual_tuple_element_types() {
     let t1_name = interner.intern_string("T1");
     let t2_name = interner.intern_string("T2");
 
-    let var_t1 = ctx.fresh_type_param(t1_name);
-    let var_t2 = ctx.fresh_type_param(t2_name);
+    let var_t1 = ctx.fresh_type_param(t1_name, false);
+    let var_t2 = ctx.fresh_type_param(t2_name, false);
 
     // Tuple context
     ctx.add_upper_bound(var_t1, TypeId::STRING);
@@ -14363,7 +14363,7 @@ fn test_inference_promise_then_callback() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Promise<string> provides context for callback param
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -14381,7 +14381,7 @@ fn test_inference_reduce_accumulator() {
     let mut ctx = InferenceContext::new(&interner);
     let acc_name = interner.intern_string("Acc");
 
-    let var_acc = ctx.fresh_type_param(acc_name);
+    let var_acc = ctx.fresh_type_param(acc_name, false);
 
     // Initial value is number
     ctx.add_lower_bound(var_acc, TypeId::NUMBER);
@@ -14400,7 +14400,7 @@ fn test_inference_generic_class_constructor() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Constructor argument
     let hello = interner.literal_string("hello");
@@ -14417,7 +14417,7 @@ fn test_inference_spread_in_array() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // arr1: string[], arr2: number[]
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -14435,7 +14435,7 @@ fn test_inference_object_spread() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let obj_type = interner.object(vec![PropertyInfo {
         name: interner.intern_string("x"),
@@ -14464,7 +14464,7 @@ fn test_overload_with_generic_constraint() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // When called with string literal, should match first overload
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -14485,8 +14485,8 @@ fn test_overload_with_multiple_generics() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Two arguments provided
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -14508,7 +14508,7 @@ fn test_overload_with_this_parameter() {
     let mut ctx = InferenceContext::new(&interner);
     let this_name = interner.intern_string("This");
 
-    let var_this = ctx.fresh_type_param(this_name);
+    let var_this = ctx.fresh_type_param(this_name, false);
 
     // this is string
     ctx.add_lower_bound(var_this, TypeId::STRING);
@@ -14526,7 +14526,7 @@ fn test_overload_intersection_argument() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let obj_a = interner.object(vec![PropertyInfo {
         name: interner.intern_string("a"),
@@ -14562,7 +14562,7 @@ fn test_overload_constructor_signatures() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Argument is string
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -14581,7 +14581,7 @@ fn test_overload_with_literal_types() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let lit_a = interner.literal_string("a");
     ctx.add_lower_bound(var_t, lit_a);
@@ -14599,7 +14599,7 @@ fn test_overload_with_union_arg_selects_common() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     ctx.add_lower_bound(var_t, union);
@@ -14617,7 +14617,7 @@ fn test_overload_prefer_non_generic() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Provide string argument
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -14636,7 +14636,7 @@ fn test_overload_with_spread_param() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let string_array = interner.array(TypeId::STRING);
     ctx.add_lower_bound(var_t, string_array);
@@ -14654,7 +14654,7 @@ fn test_overload_with_tuple_spread() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let tuple = interner.tuple(vec![
         TupleElement {
@@ -14683,7 +14683,7 @@ fn test_overload_ambiguous_fallback() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // any argument could match multiple overloads
     ctx.add_lower_bound(var_t, TypeId::ANY);
@@ -14702,7 +14702,7 @@ fn test_overload_callback_return_type() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Callback returns string
     let callback = interner.function(FunctionShape {
@@ -14729,7 +14729,7 @@ fn test_overload_nested_generics() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Provide Promise-like object
     let then_method = interner.function(FunctionShape {
@@ -14764,7 +14764,7 @@ fn test_overload_with_default_type_param() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // No lower bound provided, should fallback to upper if exists
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -14782,7 +14782,7 @@ fn test_overload_contextual_from_target() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Target expects string -> string
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -14803,7 +14803,7 @@ fn test_conditional_type_inference_basic() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create a conditional type: T extends string ? { value: T } : never
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
@@ -15004,7 +15004,7 @@ fn test_infer_from_context() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Infer from context: result type is string
     ctx.infer_from_context(var_t, TypeId::STRING).unwrap();
@@ -15023,8 +15023,8 @@ fn test_strengthen_constraints() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // U extends T
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
@@ -15102,7 +15102,7 @@ fn test_contains_inference_var() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -15123,7 +15123,7 @@ fn test_validate_variance() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Unify with a concrete type
     ctx.unify_var_type(var_t, TypeId::STRING).unwrap();
@@ -15174,8 +15174,8 @@ fn test_complex_generic_inference() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // T is inferred from array element type
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -15208,7 +15208,7 @@ fn test_bidirectional_inference() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Context provides upper bound
     ctx.infer_from_context(var_t, TypeId::STRING).unwrap();
@@ -15226,7 +15226,7 @@ fn test_inference_with_constraints() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Add constraint: T extends number
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -15254,7 +15254,7 @@ fn test_template_literal_contains_inference_var() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create a TypeParameter representing T
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
@@ -15285,8 +15285,8 @@ fn test_template_literal_does_not_contain_unrelated_var() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let _var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let _var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Create a TypeParameter representing T
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
@@ -15316,7 +15316,7 @@ fn test_template_literal_text_only_no_inference_var() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create text-only template literal: `hello world`
     let template = interner.template_literal(vec![TemplateSpan::Text(
@@ -15337,8 +15337,8 @@ fn test_template_literal_multiple_inference_positions() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
-    let var_u = ctx.fresh_type_param(u_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let var_u = ctx.fresh_type_param(u_name, false);
 
     // Create type parameters
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
@@ -15375,7 +15375,7 @@ fn test_template_literal_infer_from_conditional() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     // Create a TypeParameter representing T with constraint string
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
@@ -15418,7 +15418,7 @@ fn test_template_literal_inference_context_integration() {
     let mut ctx = InferenceContext::new(&interner);
     let k_name = interner.intern_string("K");
 
-    let var_k = ctx.fresh_type_param(k_name);
+    let var_k = ctx.fresh_type_param(k_name, false);
 
     // Create infer type representing "infer K"
     let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
@@ -15452,7 +15452,7 @@ fn test_nested_template_literal_in_conditional() {
     let mut ctx = InferenceContext::new(&interner);
     let k_name = interner.intern_string("K");
 
-    let var_k = ctx.fresh_type_param(k_name);
+    let var_k = ctx.fresh_type_param(k_name, false);
 
     // Create infer type representing "infer K"
     let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
