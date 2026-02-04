@@ -56,21 +56,38 @@ function handle(action: Action) {
 
 ---
 
-### 🔄 CURRENT TASK: Fix Lazy Type Resolution (CRITICAL)
+### 🔄 CURRENT TASK: Fix Lazy Type Resolution (BLOCKED)
 
 #### Task 3.1: Implement TypeResolver for BinderTypeDatabase
-**Goal**: Fix `QueryDatabase::evaluate_type()` to resolve Lazy types using TypeEnvironment
+**Status**: ⛔ BLOCKED by Architecture Issue (Commit: a379be1bb)
 
-**Root Cause**: `BinderTypeDatabase::evaluate_type()` uses `NoopResolver`, which returns `ERROR` for Lazy types
+**What Was Completed**:
+- ✅ Implemented `TypeResolver` trait for `BinderTypeDatabase`
+- ✅ Added `type_env: Rc<RefCell<TypeEnvironment>>` field
+- ✅ Implemented all `TypeResolver` methods (delegate to `type_env`)
+- ✅ Updated `evaluate_type()` to use `TypeEvaluator::with_resolver()`
 
-**Solution** (from Gemini Pro consultation):
-1. Add `type_env: &'a TypeEnvironment` field to `BinderTypeDatabase`
-2. Implement `TypeResolver` trait for `BinderTypeDatabase` (delegates to `type_env`)
-3. Override `evaluate_type()` to use `TypeEvaluator::with_resolver(self, self)`
+**Critical Architecture Issue**:
+The current architecture has TWO separate `TypeEnvironment` instances:
+1. **CheckerContext.type_environment**: Where type aliases are INSERTED during checking
+2. **BinderTypeDatabase.type_environment**: Where types are READ during narrowing
 
-**File**: `src/solver/db.rs`
+These are NOT the same instance, so Lazy type resolution fails even with the fix.
 
-**Status**: 🔄 IN PROGRESS
+**Required Fix** (Multi-File Refactoring):
+To share a single `TypeEnvironment` instance, need to update:
+1. `src/cli/driver.rs`: Create shared `Rc<RefCell<TypeEnvironment>>` and pass to both places
+2. `src/checker/context.rs`: Change field type, update 4 constructors to accept `type_env` parameter
+3. `src/checker/state.rs`: Update `CheckerState::new()` and `with_cache()` to pass `type_env`
+4. Test files: Update all test files that create `CheckerContext` or `CheckerState`
+
+**Impact**: ~20+ files need updates. This is too large for current session context.
+
+**Recommendation**: Create dedicated session for this architectural refactoring.
+
+**Current Test Results**:
+- ✅ `test_fallthrough_simple.ts`: Fall-through works for LITERAL types
+- ❌ `test_fallthrough.ts`: Fall-through fails for TYPE ALIASES (blocked by this issue)
 
 ---
 
