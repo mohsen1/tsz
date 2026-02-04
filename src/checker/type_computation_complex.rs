@@ -1544,10 +1544,34 @@ impl<'a> CheckerState<'a> {
                 );
                 return TypeId::ERROR;
             } else if self.is_variable_used_before_declaration_in_computed_property(sym_id, idx) {
-                self.error_variable_used_before_assigned_at(name, idx);
+                // TS2448: Block-scoped variable used before declaration (TDZ error)
+                use crate::checker::types::diagnostics::{
+                    diagnostic_codes, diagnostic_messages, format_message,
+                };
+                let message = format_message(
+                    diagnostic_messages::BLOCK_SCOPED_VARIABLE_USED_BEFORE_DECLARATION,
+                    &[name],
+                );
+                self.error_at_node(
+                    idx,
+                    &message,
+                    diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_DECLARATION,
+                );
                 return TypeId::ERROR;
             } else if self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx) {
-                self.error_variable_used_before_assigned_at(name, idx);
+                // TS2448: Block-scoped variable used before declaration (TDZ error)
+                use crate::checker::types::diagnostics::{
+                    diagnostic_codes, diagnostic_messages, format_message,
+                };
+                let message = format_message(
+                    diagnostic_messages::BLOCK_SCOPED_VARIABLE_USED_BEFORE_DECLARATION,
+                    &[name],
+                );
+                self.error_at_node(
+                    idx,
+                    &message,
+                    diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_DECLARATION,
+                );
                 return TypeId::ERROR;
             } else if self.should_check_definite_assignment(sym_id, idx) {
                 let skip_type = self.skip_definite_assignment_for_type(declared_type);
