@@ -33095,12 +33095,12 @@ const x: UserId = "user123";
     );
 }
 
-/// Test that a class does NOT get a DefId created (yet)
+/// Test that a class DOES get a DefId created (Phase 4.3)
 ///
-/// Classes should remain without DefIds during Phase 4.2.1
-/// to minimize regression risk.
+/// Phase 4.3: Unified type resolution for all named types (interfaces, type aliases, classes)
+/// to return Lazy(DefId) references instead of eagerly expanded structural types.
 #[test]
-fn test_selective_migration_class_no_def_id() {
+fn test_selective_migration_class_has_def_id() {
     let source = r#"
 class Foo {
     x: number;
@@ -33131,21 +33131,21 @@ const obj: Foo = new Foo();
         .get("Foo")
         .expect("Foo symbol should exist");
 
-    // During Phase 4.2.1, classes should NOT have DefIds created
+    // During Phase 4.3, classes SHOULD have DefIds created for unified type resolution
     let def_id = checker.ctx.get_existing_def_id(foo_sym);
 
     assert!(
-        def_id.is_none(),
-        "Class should NOT have DefId during Phase 4.2.1 (deferred to later phase)"
+        def_id.is_some(),
+        "Class should have DefId during Phase 4.3 (unified type resolution)"
     );
 }
 
-/// Test that an interface does NOT get a DefId created (yet)
+/// Test that an interface DOES get a DefId created (Phase 4.3)
 ///
-/// Interfaces should remain without DefIds during Phase 4.2.1
-/// to minimize regression risk.
+/// Phase 4.3: Unified type resolution for all named types (interfaces, type aliases, classes)
+/// to return Lazy(DefId) references instead of eagerly expanded structural types.
 #[test]
-fn test_selective_migration_interface_no_def_id() {
+fn test_selective_migration_interface_has_def_id() {
     let source = r#"
 interface Point {
     x: number;
@@ -33177,12 +33177,12 @@ const p: Point = { x: 1, y: 2 };
         .get("Point")
         .expect("Point symbol should exist");
 
-    // During Phase 4.2.1, interfaces should NOT have DefIds created
+    // During Phase 4.3, interfaces SHOULD have DefIds created for unified type resolution
     let def_id = checker.ctx.get_existing_def_id(point_sym);
 
     assert!(
-        def_id.is_none(),
-        "Interface should NOT have DefId during Phase 4.2.1 (deferred to later phase)"
+        def_id.is_some(),
+        "Interface should have DefId during Phase 4.3 (unified type resolution)"
     );
 }
 
