@@ -1,8 +1,8 @@
-# Session tsz-3 - Control Flow Narrowing Implementation
+# Session tsz-3 - Control Flow Analysis Fixes
 
 **Started**: 2026-02-04
-**Status**: AWAITING NEXT TASK
-**Focus**: Control Flow Analysis - Type Narrowing
+**Status**: ACTIVE
+**Focus**: Type Evaluation - Tail-Recursive Conditional Types
 
 ## Completed Work
 
@@ -34,25 +34,35 @@
 - Updated documentation to clarify expected behavior
 - Behavior now matches tsc exactly
 
-**Key Finding**: TypeScript's truthiness narrowing is intentionally conservative - it only removes `null` and `undefined` because those are the only types that are *always* falsy. Types like `string`, `number`, and `boolean` have both truthy and falsy values, so they are not narrowed in `if (x)` checks.
+## Current Task: Fix Tail-Recursive Conditional Type Evaluation
 
-## Session Status
+### Problem Statement
 
-Narrowing implementation is complete. All core narrowing features have been implemented:
-- ✅ typeof narrowing
-- ✅ instanceof narrowing
-- ✅ in operator narrowing
-- ✅ Discriminant narrowing
-- ✅ Truthiness narrowing (null/undefined only)
+Test `test_tail_recursive_conditional` fails with:
+```
+assertion `left == right` failed
+  left: TypeId(1)  // ERROR
+ right: TypeId(10) // STRING
+```
 
-All 62 narrowing tests pass. The implementation matches TypeScript behavior.
+**Root Cause**: In `src/solver/evaluate_rules/conditional.rs`, line 246 calls `self.evaluate(result_branch)` which increments the depth counter. After 50 nested conditionals, depth exceeds `MAX_EVALUATE_DEPTH` (50) and returns ERROR, even though `MAX_TAIL_RECURSION_DEPTH` is 1000.
 
-## Next Steps
+The tail-recursion elimination code (lines 249-256) never gets a chance to work because `self.evaluate` returns ERROR before we can check if the result is a conditional.
 
-Awaiting guidance on next focus area. Possible directions:
-- Investigate failing test: `test_tail_recursive_conditional`
-- Work on other type checking features
-- Conformance test improvements
+### Implementation Plan
+
+**File**: `src/solver/evaluate_rules/conditional.rs`
+
+**Fix**: Check if `result_branch` is a ConditionalType BEFORE calling evaluate. If it is, directly extract it for tail-recursion without going through evaluate (which would increment depth).
+
+**Locations**:
+- Line 217: infer pattern path
+- Line 246: subtype check path
+
+### Key Files
+- `src/solver/evaluate_rules/conditional.rs` - Tail-recursion elimination logic
+- `src/solver/evaluate.rs` - Type evaluation with depth tracking
+- `src/solver/tests/evaluate_tests.rs` - Test case at line 45476
 
 Fix the "poisoning" effect where missing global symbols (TS2304) cause types to default to `any`, which:
 - Suppresses subsequent type errors
