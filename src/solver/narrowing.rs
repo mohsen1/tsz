@@ -639,7 +639,18 @@ impl<'a> NarrowingContext<'a> {
             "bigint" => TypeId::BIGINT,
             "symbol" => TypeId::SYMBOL,
             "undefined" => TypeId::UNDEFINED,
-            "object" => TypeId::OBJECT, // includes null
+            // CRITICAL: typeof null === "object" in JavaScript
+            // So "object" must narrow to object | null to match TypeScript behavior
+            // CRITICAL: typeof function === "function", not "object"
+            // Even though Function is a subtype of Object, we must exclude functions
+            "object" => {
+                // 1. Narrow to Object | Null (includes functions because Function extends Object)
+                let target = self.db.union2(TypeId::OBJECT, TypeId::NULL);
+                let narrowed = self.narrow_to_type(source_type, target);
+
+                // 2. Explicitly exclude functions (because typeof function === 'function')
+                self.narrow_excluding_function(narrowed)
+            }
             "function" => return self.narrow_to_function(source_type),
             _ => return source_type,
         };
@@ -1894,122 +1905,6 @@ impl<'a> NarrowingContext<'a> {
         }
 
         source_type
-    }
-
-    /// Narrow a type to its falsy component(s).
-    ///
-    /// This is the negation of `narrow_by_truthiness`.
-    /// For example, narrowing `string | number` with falsy (sense=false)
-    /// yields `"" | 0 | NaN` (the falsy literals).
-    ///
-    /// TypeScript behavior:
-    /// - `string` → `""`
-    /// - `number` → `0 | NaN`
-    /// - `boolean` → `false`
-    /// - `bigint` → `0n`
-    /// - `null | undefined | void` → unchanged (already falsy)
-    fn narrow_to_falsy(&self, source_type: TypeId) -> TypeId {
-        // Handle special cases
-        if source_type == TypeId::ANY {
-            return source_type;
-        }
-
-        // For UNKNOWN, narrow to the union of all falsy types
-        // TypeScript allows narrowing unknown through type guards
-        // CRITICAL: Must include NaN (number has two falsy values: 0 and NaN)
-        if source_type == TypeId::UNKNOWN {
-            return self.db.union(vec![
-                TypeId::NULL,
-                TypeId::UNDEFINED,
-                self.db.literal_boolean(false),
-                self.db.literal_string(""),
-                self.db.literal_number(0.0),
-                self.db.literal_number(f64::NAN),
-                self.db.literal_bigint("0"),
-            ]);
-        }
-
-        // Use falsy_component to get the falsy representation
-        match self.falsy_component(source_type) {
-            Some(falsy) => falsy,
-            None => TypeId::NEVER,
-        }
-    }
-
-    /// Get the falsy component of a type.
-    ///
-    /// Returns Some(type) where type is the falsy representation:
-    /// - `null` → `null`
-    /// - `undefined` → `undefined`
-    /// - `void` → `void`
-    /// - `boolean` → `false`
-    /// - `string` → `""`
-    /// - `number` → `0 | NaN`
-    /// - `bigint` → `0n`
-    fn falsy_component(&self, type_id: TypeId) -> Option<TypeId> {
-        // Intrinsics that are already falsy
-        // CRITICAL: void is falsy (effectively undefined at runtime)
-        if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED || type_id == TypeId::VOID {
-            return Some(type_id);
-        }
-
-        // Intrinsics that have literal falsy values
-        if type_id == TypeId::BOOLEAN {
-            return Some(self.db.literal_boolean(false));
-        }
-        if type_id == TypeId::STRING {
-            return Some(self.db.literal_string(""));
-        }
-        // CRITICAL: number narrows to 0 | NaN (both are falsy)
-        if type_id == TypeId::NUMBER {
-            return Some(self.db.union(vec![
-                self.db.literal_number(0.0),
-                self.db.literal_number(f64::NAN),
-            ]));
-        }
-        if type_id == TypeId::BIGINT {
-            return Some(self.db.literal_bigint("0"));
-        }
-
-        // Handle other types using classifier
-        use crate::solver::type_queries::FalsyComponentKind;
-        use crate::solver::type_queries::classify_for_falsy_component;
-
-        match classify_for_falsy_component(self.db, type_id) {
-            FalsyComponentKind::Literal(literal) => {
-                if self.literal_is_falsy(&literal) {
-                    Some(type_id)
-                } else {
-                    None
-                }
-            }
-            FalsyComponentKind::Union(members) => {
-                let mut falsy_members = Vec::new();
-                for member in members {
-                    if let Some(falsy) = self.falsy_component(member) {
-                        falsy_members.push(falsy);
-                    }
-                }
-                match falsy_members.len() {
-                    0 => None,
-                    1 => Some(falsy_members[0]),
-                    _ => Some(self.db.union(falsy_members)),
-                }
-            }
-            FalsyComponentKind::TypeParameter => Some(type_id),
-            FalsyComponentKind::None => None,
-        }
-    }
-
-    /// Check if a literal value is falsy.
-    fn literal_is_falsy(&self, literal: &LiteralValue) -> bool {
-        match literal {
-            LiteralValue::Boolean(false) => true,
-            LiteralValue::Number(value) => value.0 == 0.0,
-            LiteralValue::String(atom) => self.db.resolve_atom(*atom).is_empty(),
-            LiteralValue::BigInt(atom) => self.db.resolve_atom(*atom) == "0",
-            _ => false,
-        }
     }
 
     /// Narrows a type by another type using the Visitor pattern.
