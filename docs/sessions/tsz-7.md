@@ -535,3 +535,86 @@ bitflags::bitflags! {
 - If all are `Type` only, emit `import type { ... }`
 - Otherwise emit standard `import { ... }`
 
+
+### Root Cause Discovery (2026-02-04)
+
+**THE BUG:** UsageAnalyzer's AST walk approach cannot find imported type references!
+
+**Why:**
+- `node_symbols` map only contains nodes that DECLARE symbols (e.g., the `Helper` in `export interface Helper`)
+- It does NOT contain nodes that merely USE symbols (e.g., the `Helper` in `: Helper` return type)
+- When analyzing `export function getHelper(): Helper`, the Identifier node for the type reference `Helper` is NOT in `node_symbols`
+- This is because `Helper` is imported from another file, not declared in main.ts
+
+**Debug Output Confirms:**
+```
+[DEBUG] analyze_entity_name: found Identifier, name_idx=NodeIndex(9)
+[DEBUG] analyze_entity_name: no symbol found for name_idx=NodeIndex(9)
+```
+
+**THE SOLUTION:** Use `TypeCache.symbol_dependencies` instead!
+
+**How it works:**
+1. TypeChecker already builds a dependency graph: `symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>`
+2. This maps a symbol to ALL symbols it references (including imported types!)
+3. For `export function getHelper(): Helper`, the type checker records: `symbol_dependencies[getHelper] = {Helper}`
+4. We just need to look up the exported function's symbol, then recursively collect its dependencies
+
+**Implementation:**
+Add `collect_symbol_dependencies()` method to UsageAnalyzer:
+```rust
+fn collect_symbol_dependencies(&mut self, root_sym_id: SymbolId) {
+    let deps = self.type_cache.symbol_dependencies.get(&root_sym_id).cloned().unwrap_or_default();
+    
+    for &dep_sym_id in &deps {
+        // Skip lib symbols
+        if self.binder.lib_symbol_ids.contains(&dep_sym_id) { continue; }
+        
+        // Check if foreign
+        let is_local = self.binder.symbol_arenas.get(&dep_sym_id)
+            .map(|arena| Arc::ptr_eq(arena, &self.current_arena))
+            .unwrap_or(false);
+        
+        // Add to used_symbols
+        self.used_symbols.entry(dep_sym_id)
+            .and_modify(|kind| *kind |= UsageKind::TYPE)
+            .or_insert(UsageKind::TYPE);
+        
+        // Track foreign symbols
+        if !is_local {
+            self.foreign_symbols.insert(dep_sym_id);
+        }
+    }
+}
+```
+
+Then call it from `analyze_function_declaration`, `analyze_class_declaration`, etc.:
+```rust
+fn analyze_function_declaration(&mut self, func_idx: NodeIndex) {
+    // ... get func ...
+    
+    // NEW: Use symbol_dependencies
+    if let Some(&func_sym_id) = self.binder.node_symbols.get(&func.name.0) {
+        self.collect_symbol_dependencies(func_sym_id);
+    }
+    
+    // ... rest of method ...
+}
+```
+
+**Current Status:**
+- ✅ Root cause identified
+- ✅ Solution designed
+- ⏸ Implementation blocked by file editing issues (changes not persisting)
+- 📝 Patch file created: `/tmp/tsz7_symbol_deps_fix.patch`
+
+**Next Steps:**
+1. Apply the patch manually or investigate file editing issue
+2. Build and test with test case in `/tmp/test_import/`
+3. Expected output:
+   ```typescript
+   import { Helper } from './utils';
+   export declare function getHelper(): Helper;
+   ```
+4. Run conformance tests to measure impact
+
