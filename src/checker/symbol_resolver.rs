@@ -293,7 +293,8 @@ impl<'a> CheckerState<'a> {
         let is_from_lib = |sym_id: SymbolId| self.ctx.symbol_is_from_lib(sym_id);
         let should_skip_lib_symbol = |sym_id: SymbolId| ignore_libs && is_from_lib(sym_id);
 
-        self.ctx.binder.resolve_identifier_with_filter(
+        // First try the binder's resolver which checks scope chain and file_locals
+        let result = self.ctx.binder.resolve_identifier_with_filter(
             self.ctx.arena,
             idx,
             &lib_binders,
@@ -310,7 +311,34 @@ impl<'a> CheckerState<'a> {
                 }
                 true
             },
-        )
+        );
+
+        // IMPORTANT: If the binder didn't find the symbol, check lib_contexts directly as a fallback.
+        // The binder's method has a bug where it only queries lib_binders when lib_symbols_merged is FALSE.
+        // After lib symbols are merged into the main binder, lib_symbols_merged is set to TRUE,
+        // causing the binder to skip lib lookup entirely. By checking lib_contexts.file_locals
+        // directly here as a fallback, we bypass that bug and ensure global symbols are always resolved.
+        // This matches the pattern used successfully in generators.rs (lookup_global_type).
+        if result.is_none() && !ignore_libs {
+            // Get the identifier name
+            let node = self.ctx.arena.get(idx)?;
+            let name = if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                ident.escaped_text.as_str()
+            } else {
+                return None;
+            };
+
+            // Check lib_contexts directly for global symbols
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    if !should_skip_lib_symbol(sym_id) {
+                        return Some(sym_id);
+                    }
+                }
+            }
+        }
+
+        result
     }
 
     /// Resolve an identifier symbol for type positions, skipping value-only symbols.
@@ -333,9 +361,11 @@ impl<'a> CheckerState<'a> {
             Some(node) => node,
             None => return TypeSymbolResolution::NotFound,
         };
-        if self.ctx.arena.get_identifier(node).is_none() {
-            return TypeSymbolResolution::NotFound;
-        }
+        let ident = match self.ctx.arena.get_identifier(node) {
+            Some(ident) => ident,
+            None => return TypeSymbolResolution::NotFound,
+        };
+        let name = ident.escaped_text.as_str();
 
         let ignore_libs = !self.ctx.has_lib_loaded();
         // Collect lib binders for cross-arena symbol lookup
@@ -347,6 +377,71 @@ impl<'a> CheckerState<'a> {
         let should_skip_lib_symbol =
             |sym_id: SymbolId| ignore_libs && self.ctx.symbol_is_from_lib(sym_id);
         let mut value_only_candidate = None;
+
+        // IMPORTANT: Check lib_contexts directly BEFORE calling binder's resolve_identifier_with_filter.
+        // The binder's method has a bug where it only queries lib_binders when lib_symbols_merged is FALSE.
+        // After lib symbols are merged into the main binder, lib_symbols_merged is set to TRUE,
+        // causing the binder to skip lib lookup entirely. By checking lib_contexts.file_locals
+        // directly here, we bypass that bug and ensure global type symbols are always resolved.
+        // This matches the pattern used successfully in generators.rs (lookup_global_type).
+        if !ignore_libs {
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    if !should_skip_lib_symbol(sym_id) {
+                        // Check if this lib symbol is acceptable as a type symbol
+                        let flags = lib_ctx
+                            .binder
+                            .get_symbol(sym_id)
+                            .map(|s| s.flags)
+                            .unwrap_or(0);
+
+                        // Namespaces and modules are value-only but should be allowed in type position
+                        let is_namespace_or_module = (flags
+                            & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                            != 0;
+
+                        if is_namespace_or_module {
+                            return TypeSymbolResolution::Type(sym_id);
+                        }
+
+                        // For ALIAS symbols, resolve to the target
+                        if flags & symbol_flags::ALIAS != 0 {
+                            let mut visited = Vec::new();
+                            if let Some(target_sym_id) =
+                                self.resolve_alias_symbol(sym_id, &mut visited)
+                            {
+                                // Check the target symbol's flags
+                                let target_flags = self
+                                    .ctx
+                                    .binder
+                                    .get_symbol_with_libs(target_sym_id, &lib_binders)
+                                    .map(|s| s.flags)
+                                    .unwrap_or(0);
+                                if (target_flags
+                                    & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                                    != 0
+                                {
+                                    return TypeSymbolResolution::Type(target_sym_id);
+                                }
+                            }
+                        }
+
+                        // Check if this is a value-only symbol
+                        let is_value_only = (self.alias_resolves_to_value_only(sym_id, None)
+                            || self.symbol_is_value_only(sym_id, None))
+                            && !self.symbol_is_type_only(sym_id, None);
+                        if is_value_only {
+                            if value_only_candidate.is_none() {
+                                value_only_candidate = Some(sym_id);
+                            }
+                        } else {
+                            // Valid type symbol found in lib
+                            return TypeSymbolResolution::Type(sym_id);
+                        }
+                    }
+                }
+            }
+        }
 
         let mut accept_type_symbol = |sym_id: SymbolId| -> bool {
             // Get symbol flags to check for special cases
