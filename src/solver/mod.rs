@@ -85,6 +85,7 @@ pub use operations::*;
 pub use salsa_db::*;
 pub use sound::*;
 pub use subtype::*;
+pub use types::Visibility;
 pub use types::*;
 pub use unsoundness_audit::*;
 

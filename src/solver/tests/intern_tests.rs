@@ -35,6 +35,8 @@ fn test_interner_fresh_object_distinct_from_non_fresh() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
 
     let fresh = interner.object_fresh(vec![prop.clone()]);
@@ -173,6 +175,8 @@ fn test_interner_intersection_flattens_and_dedups() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let obj_b = interner.object(vec![PropertyInfo {
         name: interner.intern_string("b"),
@@ -181,6 +185,8 @@ fn test_interner_intersection_flattens_and_dedups() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let inner = interner.intersection(vec![obj_a, obj_b]);
@@ -215,6 +221,8 @@ fn test_interner_intersection_disjoint_object_literals() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let obj_b = interner.object(vec![PropertyInfo {
         name: kind,
@@ -223,6 +231,8 @@ fn test_interner_intersection_disjoint_object_literals() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let disjoint = interner.intersection(vec![obj_a, obj_b]);
@@ -245,6 +255,8 @@ fn test_interner_intersection_disjoint_object_literal_union() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let obj_c = interner.object(vec![PropertyInfo {
         name: kind,
@@ -253,6 +265,8 @@ fn test_interner_intersection_disjoint_object_literal_union() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let disjoint = interner.intersection(vec![obj_union, obj_c]);
@@ -271,6 +285,8 @@ fn test_interner_intersection_optional_object_literals_not_reduced() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let obj_b = interner.object(vec![PropertyInfo {
         name: kind,
@@ -279,6 +295,8 @@ fn test_interner_intersection_optional_object_literals_not_reduced() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
@@ -298,6 +316,8 @@ fn test_interner_object_sorting() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -306,6 +326,8 @@ fn test_interner_object_sorting() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ];
     let props2 = vec![
@@ -316,6 +338,8 @@ fn test_interner_object_sorting() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("a"),
@@ -324,6 +348,8 @@ fn test_interner_object_sorting() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ];
 
@@ -347,6 +373,8 @@ fn test_interner_object_property_lookup_cache() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         });
     }
 
@@ -379,6 +407,8 @@ fn test_interner_object_property_lookup_cache() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let small_shape_id = match interner.lookup(small) {
         Some(TypeKey::Object(shape_id)) => shape_id,

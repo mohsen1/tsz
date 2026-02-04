@@ -125,6 +125,8 @@ fn test_call_assignability_respects_strict_function_types_toggle() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let dog = interner.object(vec![
         PropertyInfo {
@@ -134,6 +136,8 @@ fn test_call_assignability_respects_strict_function_types_toggle() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: breed,
@@ -142,6 +146,8 @@ fn test_call_assignability_respects_strict_function_types_toggle() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -217,6 +223,8 @@ fn test_call_weak_type_with_compat_checker() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
@@ -240,6 +248,8 @@ fn test_call_weak_type_with_compat_checker() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = evaluator.resolve_call(func, &[arg]);
@@ -793,6 +803,8 @@ fn test_property_access_object() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -801,6 +813,8 @@ fn test_property_access_object() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -915,6 +929,8 @@ fn test_property_access_optional_property() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = evaluator.resolve_property_access(obj, "x");
@@ -958,6 +974,8 @@ fn make_array_test_env(
         optional: false,
         readonly: true,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
 
     // map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]
@@ -1183,6 +1201,8 @@ fn make_array_test_env(
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("at"),
@@ -1191,6 +1211,8 @@ fn make_array_test_env(
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("entries"),
@@ -1199,6 +1221,8 @@ fn make_array_test_env(
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("reduce"),
@@ -1207,6 +1231,8 @@ fn make_array_test_env(
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -1451,6 +1477,8 @@ fn test_property_access_object_with_index_optional_property() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -2647,6 +2675,8 @@ fn test_infer_generic_keyof_param_from_keyof_arg() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let arg_keyof = interner.intern(TypeKey::KeyOf(obj));
 
@@ -2698,6 +2728,8 @@ fn test_infer_generic_index_access_param_from_index_access_arg() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let index_access_arg = interner.intern(TypeKey::IndexAccess(obj, key_literal));
 
@@ -2726,6 +2758,8 @@ fn test_infer_generic_index_access_param_from_object_property_arg() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let index_access_param = interner.intern(TypeKey::IndexAccess(obj, key_x));
 
@@ -2889,6 +2923,8 @@ fn test_infer_generic_mapped_param_from_object_arg() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -2897,6 +2933,8 @@ fn test_infer_generic_mapped_param_from_object_arg() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -3211,6 +3249,8 @@ fn test_infer_generic_object_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let func = FunctionShape {
@@ -3235,6 +3275,8 @@ fn test_infer_generic_object_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
     assert_eq!(result, TypeId::STRING);
@@ -3264,6 +3306,8 @@ fn test_infer_generic_optional_property_value() {
                 optional: true,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -3282,6 +3326,8 @@ fn test_infer_generic_optional_property_value() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
@@ -3312,6 +3358,8 @@ fn test_infer_generic_optional_property_undefined_value() {
                 optional: true,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -3330,6 +3378,8 @@ fn test_infer_generic_optional_property_undefined_value() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
@@ -3360,6 +3410,8 @@ fn test_infer_generic_optional_property_missing() {
                 optional: true,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -3403,6 +3455,8 @@ fn test_infer_generic_required_property_from_optional_argument() {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -3421,6 +3475,8 @@ fn test_infer_generic_required_property_from_optional_argument() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
@@ -3452,6 +3508,8 @@ fn test_infer_generic_required_property_missing_argument() {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -3494,6 +3552,8 @@ fn test_infer_generic_readonly_property_mismatch() {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -3512,6 +3572,8 @@ fn test_infer_generic_readonly_property_mismatch() {
         optional: false,
         readonly: true,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
@@ -3546,6 +3608,8 @@ fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 }],
                 string_index: Some(IndexSignature {
                     key_type: TypeId::STRING,
@@ -3574,6 +3638,8 @@ fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
             optional: false,
             readonly: true,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -3737,6 +3803,8 @@ fn test_infer_generic_method_property_bivariant_param() {
                 optional: false,
                 readonly: false,
                 is_method: true,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -3771,6 +3839,8 @@ fn test_infer_generic_method_property_bivariant_param() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
@@ -3816,6 +3886,8 @@ fn test_infer_generic_function_property_contravariant_param() {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -3850,6 +3922,8 @@ fn test_infer_generic_function_property_contravariant_param() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
@@ -3896,6 +3970,8 @@ fn test_infer_generic_method_property_bivariant_optional_param() {
                 optional: false,
                 readonly: false,
                 is_method: true,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -3930,6 +4006,8 @@ fn test_infer_generic_method_property_bivariant_optional_param() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
@@ -3960,6 +4038,8 @@ fn test_infer_generic_missing_property_uses_index_signature() {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -4011,6 +4091,8 @@ fn test_infer_generic_missing_numeric_property_uses_number_index_signature() {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -4383,6 +4465,8 @@ fn test_infer_generic_index_signature_from_object_literal() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
@@ -4436,6 +4520,8 @@ fn test_infer_generic_index_signature_from_optional_property() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
@@ -4490,6 +4576,8 @@ fn test_infer_generic_number_index_from_optional_property() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
@@ -4544,6 +4632,8 @@ fn test_infer_generic_number_index_from_numeric_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
@@ -4597,6 +4687,8 @@ fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
@@ -4650,6 +4742,8 @@ fn test_infer_generic_number_index_ignores_negative_zero_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
@@ -4703,6 +4797,8 @@ fn test_infer_generic_number_index_from_nan_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
@@ -4756,6 +4852,8 @@ fn test_infer_generic_number_index_from_exponent_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
@@ -4809,6 +4907,8 @@ fn test_infer_generic_number_index_from_negative_infinity_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
@@ -4887,6 +4987,8 @@ fn test_infer_generic_index_signatures_from_mixed_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("foo"),
@@ -4895,6 +4997,8 @@ fn test_infer_generic_index_signatures_from_mixed_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -4989,6 +5093,8 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("foo"),
@@ -4997,6 +5103,8 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -5092,6 +5200,8 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("00"),
@@ -5100,6 +5210,8 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -5146,6 +5258,8 @@ fn test_infer_generic_property_from_source_index_signature() {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -5197,6 +5311,8 @@ fn test_infer_generic_property_from_number_index_signature_infinity() {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]),
             optional: false,
             rest: false,
@@ -5245,6 +5361,8 @@ fn test_infer_generic_union_source() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let func = FunctionShape {
@@ -5269,6 +5387,8 @@ fn test_infer_generic_union_source() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let boxed_string = interner.object(vec![PropertyInfo {
         name: interner.intern_string("value"),
@@ -5277,6 +5397,8 @@ fn test_infer_generic_union_source() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union_arg = interner.union(vec![boxed_number, boxed_string]);
@@ -6964,6 +7086,8 @@ fn test_solve_generic_instantiation_object_constraint() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // <T extends { x: number }>
@@ -6983,6 +7107,8 @@ fn test_solve_generic_instantiation_object_constraint() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -6991,6 +7117,8 @@ fn test_solve_generic_instantiation_object_constraint() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -7758,6 +7886,8 @@ fn test_is_arithmetic_operand_object_invalid() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert!(
         !evaluator.is_arithmetic_operand(obj_type),
@@ -7824,6 +7954,8 @@ fn test_property_access_array_push_with_env_resolver() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Set up TypeEnvironment with Array<T> registered
@@ -7942,6 +8074,8 @@ fn test_array_mapped_type_method_resolution() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("length"),
@@ -7950,6 +8084,8 @@ fn test_array_mapped_type_method_resolution() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ];
     let array_interface = interner.object(array_props);

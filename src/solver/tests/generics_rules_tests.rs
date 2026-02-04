@@ -24,6 +24,8 @@ fn test_try_evaluate_mapped_constraint_keyof_object() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -32,6 +34,8 @@ fn test_try_evaluate_mapped_constraint_keyof_object() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -87,6 +91,8 @@ fn test_try_get_keyof_keys_object_with_index_returns_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -123,6 +129,8 @@ fn test_try_get_keyof_keys_resolves_reference() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let mut env = TypeEnvironment::new();
@@ -157,6 +165,8 @@ fn test_try_expand_application_instantiates_type_params() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let mut env = TypeEnvironment::new();

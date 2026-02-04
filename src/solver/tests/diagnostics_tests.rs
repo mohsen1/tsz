@@ -48,6 +48,8 @@ fn test_format_object_type() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -56,6 +58,8 @@ fn test_format_object_type() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -208,6 +212,8 @@ fn test_property_missing_diagnostic() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let diag = builder.property_missing("x", obj1, obj2);

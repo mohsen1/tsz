@@ -26,6 +26,7 @@ use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 
+use crate::solver::types::Visibility;
 /// Type checker for generator functions and yield expressions.
 pub struct GeneratorChecker<'a, 'ctx> {
     ctx: &'a mut CheckerContext<'ctx>,

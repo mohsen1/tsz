@@ -50,6 +50,7 @@ use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 
+use crate::solver::types::Visibility;
 /// Type checker for iterators and iterables.
 pub struct IteratorChecker<'a, 'ctx> {
     ctx: &'a mut CheckerContext<'ctx>,

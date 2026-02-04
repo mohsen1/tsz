@@ -20,6 +20,8 @@ fn test_find_discriminants_basic() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let member2 = interner.object(vec![PropertyInfo {
         name: type_name,
@@ -28,6 +30,8 @@ fn test_find_discriminants_basic() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union = interner.union(vec![member1, member2]);
@@ -59,6 +63,8 @@ fn test_find_discriminants_multiple_props() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: type_name,
@@ -67,6 +73,8 @@ fn test_find_discriminants_multiple_props() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
     let member2 = interner.object(vec![
@@ -77,6 +85,8 @@ fn test_find_discriminants_multiple_props() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: type_name,
@@ -85,6 +95,8 @@ fn test_find_discriminants_multiple_props() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -110,6 +122,8 @@ fn test_find_discriminants_non_literal() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let member2 = interner.object(vec![PropertyInfo {
         name: type_name,
@@ -118,6 +132,8 @@ fn test_find_discriminants_non_literal() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union = interner.union(vec![member1, member2]);
@@ -146,6 +162,8 @@ fn test_find_discriminants_missing_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let member2 = interner.object(vec![PropertyInfo {
         name: kind_name,
@@ -154,6 +172,8 @@ fn test_find_discriminants_missing_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union = interner.union(vec![member1, member2]);
@@ -225,6 +245,8 @@ fn test_narrow_by_discriminant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("value"),
@@ -233,6 +255,8 @@ fn test_narrow_by_discriminant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
     let member_remove = interner.object(vec![
@@ -243,6 +267,8 @@ fn test_narrow_by_discriminant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("id"),
@@ -251,6 +277,8 @@ fn test_narrow_by_discriminant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -280,6 +308,8 @@ fn test_narrow_by_discriminant_no_match() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union = interner.union(vec![member]);
@@ -307,6 +337,8 @@ fn test_narrow_excluding_discriminant() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let member_b = interner.object(vec![PropertyInfo {
         name: type_name,
@@ -315,6 +347,8 @@ fn test_narrow_excluding_discriminant() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let member_c = interner.object(vec![PropertyInfo {
         name: type_name,
@@ -323,6 +357,8 @@ fn test_narrow_excluding_discriminant() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union = interner.union(vec![member_a, member_b, member_c]);
@@ -477,6 +513,8 @@ fn test_narrow_by_typeof_negation_function() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let union = interner.union(vec![func, obj]);
 
@@ -496,6 +534,8 @@ fn test_narrow_by_typeof_negation_function_branded_intersection() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
@@ -701,6 +741,8 @@ fn test_narrow_by_typeof_branded_string_intersection() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let branded = interner.intersection(vec![TypeId::STRING, brand]);
     let union = interner.union(vec![branded, TypeId::NUMBER]);
@@ -720,6 +762,8 @@ fn test_narrow_by_typeof_branded_function_intersection() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
@@ -753,6 +797,8 @@ fn test_narrow_by_typeof_object_excludes_branded_function_intersection() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
@@ -776,6 +822,8 @@ fn test_narrow_by_typeof_object_excludes_branded_function_intersection() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let union = interner.union(vec![branded, obj]);
 
@@ -794,6 +842,8 @@ fn test_narrow_by_typeof_object_with_object_literal() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let union = interner.union(vec![obj, TypeId::NUMBER]);
 
@@ -812,6 +862,8 @@ fn test_narrow_by_typeof_object_excludes_function() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
@@ -1028,6 +1080,8 @@ fn test_type_predicate_this_target() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // this is Foo
@@ -1184,6 +1238,8 @@ fn test_narrow_to_interface_type() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let dog_type = interner.object(vec![PropertyInfo {
@@ -1193,6 +1249,8 @@ fn test_narrow_to_interface_type() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union = interner.union(vec![cat_type, dog_type]);
@@ -1328,6 +1386,8 @@ fn test_type_guard_discriminant() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let member2 = interner.object(vec![PropertyInfo {
         name: kind_name,
@@ -1336,6 +1396,8 @@ fn test_type_guard_discriminant() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union = interner.union(vec![member1, member2]);
@@ -1368,6 +1430,8 @@ fn test_type_guard_discriminant_negated() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let member2 = interner.object(vec![PropertyInfo {
         name: kind_name,
@@ -1376,6 +1440,8 @@ fn test_type_guard_discriminant_negated() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union = interner.union(vec![member1, member2]);

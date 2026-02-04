@@ -77,6 +77,8 @@ fn test_concurrent_object_creation() {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 },
                 PropertyInfo {
                     name: interner.intern_string(&format!("prop_{}", i)),
@@ -85,6 +87,8 @@ fn test_concurrent_object_creation() {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 },
             ];
             interner.object(props)
@@ -206,6 +210,8 @@ fn test_concurrent_property_map_building() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         })
         .collect();
 
@@ -287,6 +293,8 @@ fn test_concurrent_callable_creation() {
                     optional: false,
                     readonly: true,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 }],
                 number_index: None,
                 string_index: None,

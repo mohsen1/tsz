@@ -132,6 +132,8 @@ fn test_union_literal_widening_to_optional_properties() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -141,6 +143,8 @@ fn test_union_literal_widening_to_optional_properties() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union_ab = interner.union2(obj_a, obj_b);
@@ -153,6 +157,8 @@ fn test_union_literal_widening_to_optional_properties() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -161,6 +167,8 @@ fn test_union_literal_widening_to_optional_properties() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -187,6 +195,8 @@ fn test_union_literal_widening_with_different_types() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -196,6 +206,8 @@ fn test_union_literal_widening_with_different_types() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union_ab = interner.union2(obj_a, obj_b);
@@ -208,6 +220,8 @@ fn test_union_literal_widening_with_different_types() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -216,6 +230,8 @@ fn test_union_literal_widening_with_different_types() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -242,6 +258,8 @@ fn test_union_not_assignable_to_mixed_optional_required() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -251,6 +269,8 @@ fn test_union_not_assignable_to_mixed_optional_required() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union_ab = interner.union2(obj_a, obj_b);
@@ -263,6 +283,8 @@ fn test_union_not_assignable_to_mixed_optional_required() {
             optional: false, // Required!
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -271,6 +293,8 @@ fn test_union_not_assignable_to_mixed_optional_required() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -298,6 +322,8 @@ fn test_union_with_type_mismatch_not_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -307,6 +333,8 @@ fn test_union_with_type_mismatch_not_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union_ab = interner.union2(obj_a, obj_b);
@@ -319,6 +347,8 @@ fn test_union_with_type_mismatch_not_assignable() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -327,6 +357,8 @@ fn test_union_with_type_mismatch_not_assignable() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -355,6 +387,8 @@ fn test_union_to_object_with_all_optional_and_extra_source_props() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("c"),
@@ -363,6 +397,8 @@ fn test_union_to_object_with_all_optional_and_extra_source_props() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -373,6 +409,8 @@ fn test_union_to_object_with_all_optional_and_extra_source_props() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union_ab = interner.union2(obj_a, obj_b);
@@ -385,6 +423,8 @@ fn test_union_to_object_with_all_optional_and_extra_source_props() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -393,6 +433,8 @@ fn test_union_to_object_with_all_optional_and_extra_source_props() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -419,6 +461,8 @@ fn test_union_to_intersection_distributivity() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -428,6 +472,8 @@ fn test_union_to_intersection_distributivity() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_c = interner.object(vec![PropertyInfo {
@@ -437,6 +483,8 @@ fn test_union_to_intersection_distributivity() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_d = interner.object(vec![PropertyInfo {
@@ -446,6 +494,8 @@ fn test_union_to_intersection_distributivity() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Create intersection C & D
@@ -475,6 +525,8 @@ fn test_union_to_intersection_with_overlap() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -484,6 +536,8 @@ fn test_union_to_intersection_with_overlap() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_c = interner.object(vec![PropertyInfo {
@@ -493,6 +547,8 @@ fn test_union_to_intersection_with_overlap() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_d = interner.object(vec![PropertyInfo {
@@ -502,6 +558,8 @@ fn test_union_to_intersection_with_overlap() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let intersection_cd = interner.intersection2(obj_c, obj_d);
@@ -593,6 +651,8 @@ fn test_discriminated_union_narrowing() {
             optional: false,
             readonly: true,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("radius"),
@@ -601,6 +661,8 @@ fn test_discriminated_union_narrowing() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -612,6 +674,8 @@ fn test_discriminated_union_narrowing() {
             optional: false,
             readonly: true,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("side"),
@@ -620,6 +684,8 @@ fn test_discriminated_union_narrowing() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -634,6 +700,8 @@ fn test_discriminated_union_narrowing() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("radius"),
@@ -642,6 +710,8 @@ fn test_discriminated_union_narrowing() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("side"),
@@ -650,6 +720,8 @@ fn test_discriminated_union_narrowing() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -678,6 +750,8 @@ fn test_union_with_common_discriminant_property() {
             optional: false,
             readonly: true,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("a"),
@@ -686,6 +760,8 @@ fn test_union_with_common_discriminant_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -697,6 +773,8 @@ fn test_union_with_common_discriminant_property() {
             optional: false,
             readonly: true,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -705,6 +783,8 @@ fn test_union_with_common_discriminant_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -720,6 +800,8 @@ fn test_union_with_common_discriminant_property() {
             optional: false, // Required discriminant!
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("a"),
@@ -728,6 +810,8 @@ fn test_union_with_common_discriminant_property() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -736,6 +820,8 @@ fn test_union_with_common_discriminant_property() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -771,6 +857,8 @@ fn test_union_to_empty_object() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -780,6 +868,8 @@ fn test_union_to_empty_object() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union_ab = interner.union2(obj_a, obj_b);
@@ -809,6 +899,8 @@ fn test_union_to_object_with_index_signature() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -818,6 +910,8 @@ fn test_union_to_object_with_index_signature() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union_ab = interner.union2(obj_a, obj_b);
@@ -833,6 +927,8 @@ fn test_union_to_object_with_index_signature() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,

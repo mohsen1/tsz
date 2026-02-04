@@ -95,7 +95,7 @@ fn obj_with_method(interner: &TypeInterner, method_name: &str, method: TypeId) -
         write_type: method,
         optional: false,
         readonly: false,
-        is_method: true, // This is a method
+        is_method: true, // This is a method        visibility: Visibility::Public,        parent_id: None,
     }])
 }
 
@@ -108,7 +108,7 @@ fn obj_with_prop(interner: &TypeInterner, prop_name: &str, prop: TypeId) -> Type
         write_type: prop,
         optional: false,
         readonly: false,
-        is_method: false, // Not a method, just a function property
+        is_method: false, // Not a method, just a function property        visibility: Visibility::Public,        parent_id: None,
     }])
 }
 
@@ -122,6 +122,8 @@ fn animal_type(interner: &TypeInterner) -> TypeId {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }])
 }
 
@@ -137,6 +139,8 @@ fn cat_type(interner: &TypeInterner) -> TypeId {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: breed,
@@ -145,6 +149,8 @@ fn cat_type(interner: &TypeInterner) -> TypeId {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ])
 }
@@ -505,6 +511,8 @@ fn test_optional_property_includes_undefined() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // { x: string | undefined }
@@ -516,6 +524,8 @@ fn test_optional_property_includes_undefined() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // With exact_optional_property_types=false, optional properties implicitly

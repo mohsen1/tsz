@@ -98,6 +98,8 @@ mod phase1_cycle_detection {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let b = interner.object(vec![PropertyInfo {
@@ -107,6 +109,8 @@ mod phase1_cycle_detection {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Should handle bivariant checking without cycle issues
@@ -374,6 +378,8 @@ mod phase2_judge {
             optional: false,
             readonly: true,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Found property
@@ -498,6 +504,8 @@ mod phase3_defid {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 },
                 PropertyInfo {
                     name: y,
@@ -506,6 +514,8 @@ mod phase3_defid {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 },
             ],
         ));
@@ -806,6 +816,8 @@ mod integration {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let outer_a = interner.intern_string("outer");
@@ -816,6 +828,8 @@ mod integration {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Access outer.outer
@@ -863,6 +877,8 @@ mod integration {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let obj_b = interner.object(vec![PropertyInfo {
@@ -872,6 +888,8 @@ mod integration {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let obj_ab = interner.object(vec![
@@ -882,6 +900,8 @@ mod integration {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             PropertyInfo {
                 name: b,
@@ -890,6 +910,8 @@ mod integration {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 

@@ -19,6 +19,8 @@ fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let dog = interner.object(vec![
@@ -29,6 +31,8 @@ fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: breed,
@@ -37,6 +41,8 @@ fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -75,6 +81,8 @@ fn make_object_interface(interner: &TypeInterner) -> TypeId {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
     let to_string = PropertyInfo {
         name: interner.intern_string("toString"),
@@ -83,6 +91,8 @@ fn make_object_interface(interner: &TypeInterner) -> TypeId {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
     let to_locale = PropertyInfo {
         name: interner.intern_string("toLocaleString"),
@@ -91,6 +101,8 @@ fn make_object_interface(interner: &TypeInterner) -> TypeId {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
     let value_of = PropertyInfo {
         name: interner.intern_string("valueOf"),
@@ -99,6 +111,8 @@ fn make_object_interface(interner: &TypeInterner) -> TypeId {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
     let has_own = PropertyInfo {
         name: interner.intern_string("hasOwnProperty"),
@@ -107,6 +121,8 @@ fn make_object_interface(interner: &TypeInterner) -> TypeId {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
     let is_proto = PropertyInfo {
         name: interner.intern_string("isPrototypeOf"),
@@ -115,6 +131,8 @@ fn make_object_interface(interner: &TypeInterner) -> TypeId {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
     let prop_enum = PropertyInfo {
         name: interner.intern_string("propertyIsEnumerable"),
@@ -123,6 +141,8 @@ fn make_object_interface(interner: &TypeInterner) -> TypeId {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
 
     interner.object(vec![
@@ -558,6 +578,8 @@ fn test_method_bivariance_even_strict() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -567,6 +589,8 @@ fn test_method_bivariance_even_strict() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(source, target));
@@ -618,6 +642,8 @@ fn test_function_property_stays_strict() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -627,6 +653,8 @@ fn test_function_property_stays_strict() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(!checker.is_assignable(source, target));
@@ -733,6 +761,8 @@ fn test_constructor_void_return_assignability() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let returns_instance = interner.function(FunctionShape {
@@ -771,6 +801,8 @@ fn test_construct_signature_void_return_assignability() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let returns_instance = interner.callable(CallableShape {
@@ -960,6 +992,8 @@ fn test_weak_type_rejects_no_common_properties() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let source = interner.object(vec![PropertyInfo {
@@ -969,6 +1003,8 @@ fn test_weak_type_rejects_no_common_properties() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(!checker.is_assignable(source, weak_target));
@@ -992,6 +1028,8 @@ fn test_weak_type_allows_overlap() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let source = interner.object(vec![PropertyInfo {
@@ -1001,6 +1039,8 @@ fn test_weak_type_allows_overlap() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(source, weak_target));
@@ -1021,6 +1061,8 @@ fn test_weak_type_skips_empty_target() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(source, empty_target));
@@ -1042,6 +1084,8 @@ fn test_weak_union_rejects_no_common_properties() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let weak_b = interner.object(vec![PropertyInfo {
         name: b,
@@ -1050,6 +1094,8 @@ fn test_weak_union_rejects_no_common_properties() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.union(vec![weak_a, weak_b]);
 
@@ -1060,6 +1106,8 @@ fn test_weak_union_rejects_no_common_properties() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(!checker.is_assignable(source, target));
@@ -1085,6 +1133,8 @@ fn test_weak_union_rejects_no_common_properties_with_refs() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let weak_b = interner.object(vec![PropertyInfo {
         name: b,
@@ -1093,6 +1143,8 @@ fn test_weak_union_rejects_no_common_properties_with_refs() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let def_id_a = DefId(1);
@@ -1108,6 +1160,8 @@ fn test_weak_union_rejects_no_common_properties_with_refs() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let mut checker = CompatChecker::with_resolver(&interner, &env);
@@ -1133,6 +1187,8 @@ fn test_weak_union_allows_overlap() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let weak_b = interner.object(vec![PropertyInfo {
         name: b,
@@ -1141,6 +1197,8 @@ fn test_weak_union_allows_overlap() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.union(vec![weak_a, weak_b]);
 
@@ -1151,6 +1209,8 @@ fn test_weak_union_allows_overlap() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(source, target));
@@ -1177,6 +1237,8 @@ fn test_weak_union_source_with_one_common_member_allows() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let weak_b = interner.object(vec![PropertyInfo {
         name: b,
@@ -1185,6 +1247,8 @@ fn test_weak_union_source_with_one_common_member_allows() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.union(vec![weak_a, weak_b]);
 
@@ -1199,6 +1263,8 @@ fn test_weak_union_source_with_one_common_member_allows() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let source_with_c = interner.object(vec![PropertyInfo {
         name: c,
@@ -1207,6 +1273,8 @@ fn test_weak_union_source_with_one_common_member_allows() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let source = interner.union(vec![source_with_a, source_with_c]);
 
@@ -1239,6 +1307,8 @@ fn test_weak_union_source_all_members_lack_common_rejects() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let weak_b = interner.object(vec![PropertyInfo {
         name: b,
@@ -1247,6 +1317,8 @@ fn test_weak_union_source_all_members_lack_common_rejects() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.union(vec![weak_a, weak_b]);
 
@@ -1259,6 +1331,8 @@ fn test_weak_union_source_all_members_lack_common_rejects() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let source_with_d = interner.object(vec![PropertyInfo {
         name: d,
@@ -1267,6 +1341,8 @@ fn test_weak_union_source_all_members_lack_common_rejects() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let source = interner.union(vec![source_with_c, source_with_d]);
 
@@ -1299,6 +1375,8 @@ fn test_weak_union_nested_union_source() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let weak_b = interner.object(vec![PropertyInfo {
         name: b,
@@ -1307,6 +1385,8 @@ fn test_weak_union_nested_union_source() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.union(vec![weak_a, weak_b]);
 
@@ -1318,6 +1398,8 @@ fn test_weak_union_nested_union_source() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let source_with_c = interner.object(vec![PropertyInfo {
         name: c,
@@ -1326,6 +1408,8 @@ fn test_weak_union_nested_union_source() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let source_with_d = interner.object(vec![PropertyInfo {
         name: d,
@@ -1334,6 +1418,8 @@ fn test_weak_union_nested_union_source() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let inner_union = interner.union(vec![source_with_a, source_with_c]);
     let source = interner.union(vec![inner_union, source_with_d]);
@@ -1366,6 +1452,8 @@ fn test_weak_union_with_intersection_source() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let weak_b = interner.object(vec![PropertyInfo {
         name: b,
@@ -1374,6 +1462,8 @@ fn test_weak_union_with_intersection_source() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.union(vec![weak_a, weak_b]);
 
@@ -1387,6 +1477,8 @@ fn test_weak_union_with_intersection_source() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: c,
@@ -1395,6 +1487,8 @@ fn test_weak_union_with_intersection_source() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -1995,6 +2089,8 @@ fn test_correlated_union_index_access_assignable() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: key_a,
@@ -2003,6 +2099,8 @@ fn test_correlated_union_index_access_assignable() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
     let obj_b = interner.object(vec![
@@ -2013,6 +2111,8 @@ fn test_correlated_union_index_access_assignable() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: key_b,
@@ -2021,6 +2121,8 @@ fn test_correlated_union_index_access_assignable() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -2049,6 +2151,8 @@ fn test_object_keyword_accepts_non_primitives() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert!(checker.is_assignable(obj, TypeId::OBJECT));
 
@@ -2129,6 +2233,8 @@ fn test_split_accessor_allows_wider_setter_in_source() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -2138,6 +2244,8 @@ fn test_split_accessor_allows_wider_setter_in_source() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(source, target));
@@ -2156,6 +2264,8 @@ fn test_split_accessor_rejects_wider_setter_in_target() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -2165,6 +2275,8 @@ fn test_split_accessor_rejects_wider_setter_in_target() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(!checker.is_assignable(source, target));
@@ -2242,6 +2354,8 @@ fn test_function_type_rejects_non_callables() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert!(!checker.is_assignable(obj, function_top));
 }
@@ -2405,6 +2519,8 @@ fn test_apparent_string_members_assignable() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: to_upper,
@@ -2413,6 +2529,8 @@ fn test_apparent_string_members_assignable() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -2474,6 +2592,8 @@ fn test_apparent_string_members_include_substr_and_locale_compare() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: substr,
@@ -2482,6 +2602,8 @@ fn test_apparent_string_members_include_substr_and_locale_compare() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -2533,6 +2655,8 @@ fn test_apparent_string_members_include_legacy_and_unicode() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: is_well_formed,
@@ -2541,6 +2665,8 @@ fn test_apparent_string_members_include_legacy_and_unicode() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: fontcolor,
@@ -2549,6 +2675,8 @@ fn test_apparent_string_members_include_legacy_and_unicode() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -2568,6 +2696,8 @@ fn test_apparent_string_members_reject_mismatch() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(!checker.is_assignable(TypeId::STRING, target));
@@ -2596,6 +2726,8 @@ fn test_apparent_number_method_assignable() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(TypeId::NUMBER, target));
@@ -2624,6 +2756,8 @@ fn test_apparent_number_method_not_assignable_to_number() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(!checker.is_assignable(target, TypeId::NUMBER));
@@ -2660,6 +2794,8 @@ fn test_apparent_number_member_rejects_mismatch() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(!checker.is_assignable(TypeId::NUMBER, mismatch));
@@ -2688,6 +2824,8 @@ fn test_number_interface_boxing_assignability() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let mut env = TypeEnvironment::new();
@@ -2721,6 +2859,8 @@ fn test_apparent_boolean_members_assignable() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(TypeId::BOOLEAN, target));
@@ -2749,6 +2889,8 @@ fn test_apparent_bigint_members_assignable() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(TypeId::BIGINT, target));
@@ -2780,6 +2922,8 @@ fn test_apparent_symbol_members_assignable() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: to_string,
@@ -2788,6 +2932,8 @@ fn test_apparent_symbol_members_assignable() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -2847,6 +2993,8 @@ fn test_optional_property_allows_undefined() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -2855,6 +3003,8 @@ fn test_optional_property_allows_undefined() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(source, target));
@@ -2873,6 +3023,8 @@ fn test_optional_property_rejects_required_target() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -2881,6 +3033,8 @@ fn test_optional_property_rejects_required_target() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(!checker.is_assignable(source, target));
@@ -2899,6 +3053,8 @@ fn test_optional_property_rejects_string_index_signature() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let target = interner.object_with_index(ObjectShape {
@@ -2930,6 +3086,8 @@ fn test_exact_optional_property_rejects_undefined() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -2938,6 +3096,8 @@ fn test_exact_optional_property_rejects_undefined() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(!checker.is_assignable(source, target));
@@ -2957,6 +3117,8 @@ fn test_exact_optional_property_allows_string_index_signature() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let target = interner.object_with_index(ObjectShape {
@@ -3097,6 +3259,8 @@ fn test_mapped_type_over_number_keys_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let mismatch = interner.object(vec![PropertyInfo {
         name: to_fixed,
@@ -3105,6 +3269,8 @@ fn test_mapped_type_over_number_keys_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(mapped, expected));
@@ -3140,6 +3306,8 @@ fn test_mapped_type_over_string_keys_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let mismatch = interner.object(vec![PropertyInfo {
         name: to_upper,
@@ -3148,6 +3316,8 @@ fn test_mapped_type_over_string_keys_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(mapped, expected));
@@ -3183,6 +3353,8 @@ fn test_mapped_type_over_boolean_keys_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let mismatch = interner.object(vec![PropertyInfo {
         name: to_string,
@@ -3191,6 +3363,8 @@ fn test_mapped_type_over_boolean_keys_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(mapped, expected));
@@ -3210,6 +3384,8 @@ fn test_mapped_type_key_remap_filters_keys() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
     let prop_b = PropertyInfo {
         name: interner.intern_string("b"),
@@ -3218,6 +3394,8 @@ fn test_mapped_type_key_remap_filters_keys() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
     let obj = interner.object(vec![prop_a.clone(), prop_b.clone()]);
 
@@ -3315,6 +3493,8 @@ fn test_keyof_intersection_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let obj_b = interner.object(vec![PropertyInfo {
         name: interner.intern_string("b"),
@@ -3323,6 +3503,8 @@ fn test_keyof_intersection_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
@@ -3380,6 +3562,8 @@ fn test_keyof_union_intersection_only_shared_keys() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
     let prop_b = PropertyInfo {
         name: interner.intern_string("b"),
@@ -3388,6 +3572,8 @@ fn test_keyof_union_intersection_only_shared_keys() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
     let prop_c = PropertyInfo {
         name: interner.intern_string("c"),
@@ -3396,6 +3582,8 @@ fn test_keyof_union_intersection_only_shared_keys() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
 
     let obj_ab = interner.object(vec![prop_a.clone(), prop_b]);
@@ -3425,6 +3613,8 @@ fn test_intersection_reduction_disjoint_discriminant_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let obj_b = interner.object(vec![PropertyInfo {
         name: kind,
@@ -3433,6 +3623,8 @@ fn test_intersection_reduction_disjoint_discriminant_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
@@ -3502,6 +3694,8 @@ fn test_weak_type_all_optional_properties_detection() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: b,
@@ -3510,6 +3704,8 @@ fn test_weak_type_all_optional_properties_detection() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -3522,6 +3718,8 @@ fn test_weak_type_all_optional_properties_detection() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(!checker.is_assignable(source, weak_target));
@@ -3552,6 +3750,8 @@ fn test_weak_type_with_index_signature_not_weak() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -3570,6 +3770,8 @@ fn test_weak_type_with_index_signature_not_weak() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(checker.is_assignable(source, target));
@@ -3590,6 +3792,8 @@ fn test_weak_type_empty_source_accepted() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let empty_source = interner.object(Vec::new());
@@ -3614,6 +3818,8 @@ fn test_weak_union_with_all_weak_members() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let weak_b = interner.object(vec![PropertyInfo {
         name: b,
@@ -3622,6 +3828,8 @@ fn test_weak_union_with_all_weak_members() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let weak_union = interner.union(vec![weak_a, weak_b]);
@@ -3634,6 +3842,8 @@ fn test_weak_union_with_all_weak_members() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Source with no overlap should be rejected
@@ -3657,6 +3867,8 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let non_weak_type = interner.object(vec![PropertyInfo {
         name: b,
@@ -3665,6 +3877,8 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         optional: false, // Required property - NOT weak
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union = interner.union(vec![weak_type, non_weak_type]);
@@ -3677,6 +3891,8 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Should be accepted since source matches the non-weak member
@@ -3694,6 +3910,8 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Should be rejected since source doesn't match any union member
@@ -3726,6 +3944,8 @@ fn test_exact_optional_property_types_distinguishes_undefined_from_missing() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // { x: number | undefined }
@@ -3737,6 +3957,8 @@ fn test_exact_optional_property_types_distinguishes_undefined_from_missing() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // With exact mode, these are NOT the same
@@ -3771,6 +3993,8 @@ fn test_exact_optional_property_types_false_allows_undefined() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // { x: number | undefined }
@@ -3782,6 +4006,8 @@ fn test_exact_optional_property_types_false_allows_undefined() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // With non-exact mode, undefined should be assignable to optional property
@@ -3793,6 +4019,8 @@ fn test_exact_optional_property_types_false_allows_undefined() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(
@@ -3816,6 +4044,8 @@ fn test_exact_optional_property_types_toggle_behavior() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let just_undefined = interner.object(vec![PropertyInfo {
@@ -3825,6 +4055,8 @@ fn test_exact_optional_property_types_toggle_behavior() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Default (false): undefined is assignable to optional
@@ -4048,6 +4280,8 @@ fn test_void_return_exception_constructors() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // new () => void
@@ -4061,6 +4295,8 @@ fn test_void_return_exception_constructors() {
             type_predicate: None,
             is_constructor: true,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }),
         write_type: TypeId::ANY,
         optional: false,
@@ -4079,6 +4315,8 @@ fn test_void_return_exception_constructors() {
             type_predicate: None,
             is_constructor: true,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }),
         write_type: TypeId::ANY,
         optional: false,
@@ -4114,6 +4352,8 @@ fn test_method_bivariance_allows_derived_methods() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let base_method = interner.object(vec![PropertyInfo {
@@ -4147,6 +4387,8 @@ fn test_method_bivariance_allows_derived_methods() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -4155,6 +4397,8 @@ fn test_method_bivariance_allows_derived_methods() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -4206,6 +4450,8 @@ fn test_method_bivariance_persists_with_strict_function_types() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let base_with_method = interner.object(vec![PropertyInfo {
@@ -4239,6 +4485,8 @@ fn test_method_bivariance_persists_with_strict_function_types() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -4247,6 +4495,8 @@ fn test_method_bivariance_persists_with_strict_function_types() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -4335,7 +4585,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         write_type: TypeId::ANY,
         optional: false,
         readonly: false,
-        is_method: true, // IS a method
+        is_method: true, // IS a method        visibility: Visibility::Public,        parent_id: None,
     }]);
 
     let obj_with_animal_method = interner.object(vec![PropertyInfo {
@@ -4344,7 +4594,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         write_type: TypeId::ANY,
         optional: false,
         readonly: false,
-        is_method: true, // IS a method
+        is_method: true, // IS a method        visibility: Visibility::Public,        parent_id: None,
     }]);
 
     // Methods are bivariant even with strictFunctionTypes
@@ -4439,6 +4689,8 @@ fn test_compiler_options_independent_toggles() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
     let explicit_union = interner.object(vec![PropertyInfo {
@@ -4448,6 +4700,8 @@ fn test_compiler_options_independent_toggles() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Default (exact_optional_property_types=false): optional includes undefined
@@ -4580,6 +4834,8 @@ fn test_function_intrinsic_rejects_non_callable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert!(
         !checker.is_assignable(obj, TypeId::FUNCTION),
@@ -4678,6 +4934,8 @@ fn test_union_intersection_distributivity_basic() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let type_b = interner.object(vec![PropertyInfo {
@@ -4687,6 +4945,8 @@ fn test_union_intersection_distributivity_basic() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let type_c = interner.object(vec![PropertyInfo {
@@ -4696,6 +4956,8 @@ fn test_union_intersection_distributivity_basic() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // (A | B) & C
@@ -4727,6 +4989,8 @@ fn test_intersection_union_distributivity() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let type_b = interner.object(vec![PropertyInfo {
@@ -4736,6 +5000,8 @@ fn test_intersection_union_distributivity() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let type_c = interner.object(vec![PropertyInfo {
@@ -4745,6 +5011,8 @@ fn test_intersection_union_distributivity() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // A & (B | C)
@@ -4800,6 +5068,8 @@ fn test_weak_type_detection_with_all_strict_options() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: y,
@@ -4808,6 +5078,8 @@ fn test_weak_type_detection_with_all_strict_options() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -4819,6 +5091,8 @@ fn test_weak_type_detection_with_all_strict_options() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(
@@ -4843,6 +5117,8 @@ fn test_weak_union_detection_improved() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let weak2 = interner.object(vec![PropertyInfo {
@@ -4852,6 +5128,8 @@ fn test_weak_union_detection_improved() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let weak_union = interner.union(vec![weak1, weak2]);
@@ -4864,6 +5142,8 @@ fn test_weak_union_detection_improved() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(
@@ -4888,6 +5168,8 @@ fn test_all_compiler_options_combinations() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
@@ -4898,6 +5180,8 @@ fn test_all_compiler_options_combinations() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Test all combinations
@@ -4940,6 +5224,8 @@ fn test_strict_function_types_affects_methods_independently() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Dog: { name: string, breed: string } - Dog is subtype of Animal
@@ -4952,6 +5238,8 @@ fn test_strict_function_types_affects_methods_independently() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: breed,
@@ -4960,6 +5248,8 @@ fn test_strict_function_types_affects_methods_independently() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -5082,6 +5372,8 @@ fn test_keyof_union_contravariance() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Type B: { age: number }
@@ -5092,6 +5384,8 @@ fn test_keyof_union_contravariance() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // keyof (A | B) should be keyof A & keyof B
@@ -5115,6 +5409,8 @@ fn test_keyof_union_contravariance() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     };
     // Type C: { name: string, x: number }
     let type_c = interner.object(vec![
@@ -5126,6 +5422,8 @@ fn test_keyof_union_contravariance() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
     // Type D: { name: string, y: boolean }
@@ -5138,6 +5436,8 @@ fn test_keyof_union_contravariance() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -5171,6 +5471,8 @@ fn test_keyof_intersection_distributivity() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Type B: { name: string, age: number }
@@ -5182,6 +5484,8 @@ fn test_keyof_intersection_distributivity() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: age,
@@ -5190,6 +5494,8 @@ fn test_keyof_intersection_distributivity() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -5231,6 +5537,8 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: age,
@@ -5239,6 +5547,8 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -5252,6 +5562,8 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: email,
@@ -5260,6 +5572,8 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -5326,6 +5640,8 @@ fn test_best_common_type_with_supertype() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Type Dog: { name: string, breed: string }
@@ -5338,6 +5654,8 @@ fn test_best_common_type_with_supertype() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: breed,
@@ -5346,6 +5664,8 @@ fn test_best_common_type_with_supertype() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -5424,6 +5744,8 @@ fn test_private_brand_same_brand_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name: brand,
@@ -5432,6 +5754,8 @@ fn test_private_brand_same_brand_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Same brand = same class declaration = assignable
@@ -5454,6 +5778,8 @@ fn test_private_brand_different_brand_not_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name: brand2,
@@ -5462,6 +5788,8 @@ fn test_private_brand_different_brand_not_assignable() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Different brands = different class declarations = not assignable
@@ -5484,6 +5812,8 @@ fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand()
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.object(vec![
         PropertyInfo {
@@ -5493,6 +5823,8 @@ fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand()
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name,
@@ -5501,6 +5833,8 @@ fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand()
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -5525,6 +5859,8 @@ fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name,
@@ -5533,6 +5869,8 @@ fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
     let target = interner.object(vec![PropertyInfo {
@@ -5542,6 +5880,8 @@ fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // A class can implement an interface (source with brand -> target without brand)
@@ -5563,6 +5903,8 @@ fn test_private_brand_neither_has_brand_falls_through() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let target = interner.object(vec![PropertyInfo {
         name,
@@ -5571,6 +5913,8 @@ fn test_private_brand_neither_has_brand_falls_through() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Structural check passes
@@ -5604,6 +5948,8 @@ fn test_private_brand_callable_with_brand() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         ..Default::default()
     });
@@ -5626,6 +5972,8 @@ fn test_private_brand_callable_with_brand() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         ..Default::default()
     });

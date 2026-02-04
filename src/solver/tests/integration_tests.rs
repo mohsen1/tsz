@@ -32,6 +32,8 @@ mod generic_strictness_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
@@ -50,6 +52,8 @@ mod generic_strictness_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             PropertyInfo {
                 name: interner.intern_string("name"),
@@ -58,6 +62,8 @@ mod generic_strictness_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 
@@ -78,6 +84,8 @@ mod generic_strictness_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
@@ -95,6 +103,8 @@ mod generic_strictness_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // This should NOT be assignable - constraint is violated
@@ -147,6 +157,8 @@ mod generic_strictness_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // U extends { name: string }
@@ -157,6 +169,8 @@ mod generic_strictness_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
@@ -182,6 +196,8 @@ mod generic_strictness_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             PropertyInfo {
                 name: interner.intern_string("name"),
@@ -190,6 +206,8 @@ mod generic_strictness_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 
@@ -211,6 +229,8 @@ mod generic_strictness_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
@@ -227,6 +247,8 @@ mod generic_strictness_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Function type: (obj: T) => number
@@ -912,6 +934,8 @@ mod function_variance_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // (this: ObjType) => void
@@ -1014,6 +1038,8 @@ mod lawyer_strict_mode_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }])
     }
 
@@ -1363,6 +1389,8 @@ mod error_detection_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             PropertyInfo {
                 name: interner.intern_string("b"),
@@ -1371,6 +1399,8 @@ mod error_detection_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 
@@ -1382,6 +1412,8 @@ mod error_detection_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // type_b should NOT be assignable to type_a (missing property 'b')
@@ -1401,6 +1433,8 @@ mod error_detection_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Type B: { value: string; }
@@ -1411,6 +1445,8 @@ mod error_detection_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // type_b should NOT be assignable to type_a (property type mismatch)
@@ -1430,6 +1466,8 @@ mod error_detection_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Type B: { a: string; b: number; }
@@ -1441,6 +1479,8 @@ mod error_detection_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             PropertyInfo {
                 name: interner.intern_string("b"),
@@ -1449,6 +1489,8 @@ mod error_detection_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 
@@ -1624,6 +1666,8 @@ mod unknown_fallback_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // With Unknown fallback, object should NOT be assignable to unconstrained generic
@@ -1662,6 +1706,8 @@ mod unknown_fallback_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Unknown type (what fallbacks should use)
@@ -1688,6 +1734,8 @@ mod unknown_fallback_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Any is assignable to anything (permissive)
@@ -1891,6 +1939,8 @@ mod typescript_quirks_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let func_returns_object = interner.function(FunctionShape {
@@ -1931,6 +1981,8 @@ mod typescript_quirks_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let cat_type = interner.object(vec![
@@ -1941,6 +1993,8 @@ mod typescript_quirks_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             PropertyInfo {
                 name: interner.intern_string("meow"),
@@ -1949,6 +2003,8 @@ mod typescript_quirks_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 
@@ -2021,6 +2077,8 @@ mod typescript_quirks_tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let cat_type = interner.object(vec![
@@ -2031,6 +2089,8 @@ mod typescript_quirks_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             PropertyInfo {
                 name: interner.intern_string("meow"),
@@ -2039,6 +2099,8 @@ mod typescript_quirks_tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 

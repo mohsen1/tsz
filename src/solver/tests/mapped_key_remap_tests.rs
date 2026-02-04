@@ -21,6 +21,8 @@ fn test_mapped_type_as_never_skips_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -29,6 +31,8 @@ fn test_mapped_type_as_never_skips_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 

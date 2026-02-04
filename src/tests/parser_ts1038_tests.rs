@@ -14,7 +14,10 @@ declare namespace chrome {
 "#;
     let mut parser = Parser::new(source, "test.ts");
     let result = parser.parse();
-    assert!(!result.has_errors(), "Should not emit TS1038 for declare inside declare namespace");
+    assert!(
+        !result.has_errors(),
+        "Should not emit TS1038 for declare inside declare namespace"
+    );
 }
 
 #[test]
@@ -29,5 +32,8 @@ namespace M {
     let result = parser.parse();
     // We removed TS1038 check, so this should NOT error
     // TypeScript actually ALLOWS this pattern too!
-    assert!(!result.has_errors(), "declare inside regular namespace is allowed in TS");
+    assert!(
+        !result.has_errors(),
+        "declare inside regular namespace is allowed in TS"
+    );
 }
