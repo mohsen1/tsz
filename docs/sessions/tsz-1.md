@@ -1,10 +1,27 @@
 # Session tsz-1: Core Solver Infrastructure & Conformance
 
 **Started**: 2026-02-04 (Pivoted to infrastructure focus)
-**Status**: Active
-**Goal**: Fix Application expansion and IndexSignature inference to unblock complex type evaluation
+**Status**: Active (Redefined 2026-02-04)
+**Goal**: Core Solver Infrastructure - Recursion guards, nominal subtyping, intersection reduction
 
 ## Session Achievements (2026-02-04)
+
+### Session Redefinition (2026-02-04)
+
+**Gemini Consultation**: Asked for session redefinition given:
+- Priority 3 (Readonly TS2540) has complex architectural issues (stack overflow, incomplete Lazy resolution)
+- Other sessions active on Conditional Types (tsz-2) and Declaration Emit (tsz-4, tsz-5, tsz-6)
+- 18% test reduction is solid progress, need next high-leverage priorities
+
+**New Priorities** (from Gemini):
+1. **Priority 3**: Property Access Recursion Guard - Fix stack overflow
+2. **Priority 4**: Nominal Subtyping Infrastructure - Unblock tsz-2
+3. **Priority 5**: Intersection Reduction (Rule #21) - High-leverage conformance improvement
+
+**Rationale**: These priorities provide maximum leverage:
+- Fixing stack overflow completes Readonly TS2540 work
+- Visibility flags unblock tsz-2 (high impact on project)
+- Intersection reduction fixes "black hole" for complex generic tests
 
 ### Previous Session
 - ✅ Fixed 3 test expectations (51 → 46 failing tests)
@@ -86,18 +103,76 @@
 - test_infer_generic_property_from_number_index_signature_infinity
 - test_infer_generic_property_from_source_index_signature
 
-### Priority 3: Readonly TS2540 (Architectural - 4 tests, IN PROGRESS)
-**Problem**: Readonly checks fail due to `Lazy` types
-- Element access like `config["name"]` doesn't check if property is readonly
-- Should error with TS2540 but currently errors with TS2318 instead
+### 🔄 Priority 3: Property Access Recursion Guard (NEW - 2026-02-04 Redefinition)
+**Problem**: Stack overflow in `test_readonly_method_signature_assignment_2540`
+- `resolve_property_access_inner` for `Lazy` types can recurse infinitely
+- Types like `interface A { next: A }` cause infinite recursion
+- Missing recursion guard in property resolver
 
-**Root Cause**: Property access resolution doesn't return `readonly` status, and `Lazy` types aren't properly resolved before checking writability.
-
-**Implementation Plan** (from Gemini consultation):
+**Solution** (from Gemini consultation):
+- Add `visiting: RefCell<FxHashSet<TypeId>>` and `depth: RefCell<u32>` to `PropertyAccessEvaluator`
+- Mirror the pattern in `TypeEvaluator` (src/solver/evaluate.rs)
+- Wrap `Lazy` and `Application` branches in `resolve_property_access_inner` with insert/remove calls
+- On cycle detection, return `PropertyResult::NotFound` or `IsAny` to break loop safely
 
 **Files to modify**:
-1. `src/solver/operations_property.rs`:
-   - Update `PropertyAccessResult::Success` to include `readonly: bool`
+- `src/solver/operations_property.rs`: `PropertyAccessEvaluator`, `resolve_property_access_inner`
+
+**Tests affected**:
+- test_readonly_method_signature_assignment_2540 (stack overflow)
+- test_readonly_element_access_assignment_2540 (potentially)
+- test_readonly_property_assignment_2540 (potentially)
+
+**Status**: Not started
+
+---
+
+### 🆕 Priority 4: Nominal Subtyping Infrastructure (UNBLOCKS tsz-2)
+**Problem**: tsz-2 is blocked because `PropertyInfo` lacks visibility metadata
+- Cannot distinguish between public/private/protected members
+- Needed for correct nominal subtyping behavior
+
+**Solution** (from Gemini consultation):
+- Add `pub visibility: MemberAccessLevel` to `PropertyInfo` struct
+- Update `src/solver/intern.rs`: object, object_with_flags, object_with_index
+- Update `src/solver/subtype.rs`: `object_subtype_of` to check visibility
+- Private/protected property in target can only be satisfied by same/stricter visibility in source
+
+**Files to modify**:
+- `src/solver/types.rs`: `PropertyInfo` struct
+- `src/solver/intern.rs`: Object creation functions
+- `src/solver/subtype.rs`: `object_subtype_of` function
+- `src/checker/class_type.rs`: Update PropertyInfo creation
+- `src/solver/lower.rs`: Update PropertyInfo lowering
+
+**Impact**: Unblocks tsz-2 (Advanced Type Evaluation)
+
+**Status**: Not started
+
+---
+
+### 🆕 Priority 5: Intersection Reduction (Rule #21)
+**Problem**: Intersections don't properly reduce disjoint types to `never`
+- `string & number` should be `never`
+- `{kind: "a"} & {kind: "b"}` should be `never` (non-optional property)
+- Many conformance tests fail because tsz sees valid type where tsc sees never
+
+**Solution** (from Gemini consultation):
+- Modify `normalize_intersection` in `src/solver/intern.rs`
+- Implement `intersection_has_disjoint_primitives`: string & number, true & false
+- Implement `intersection_has_disjoint_object_literals`: common non-optional property with disjoint types
+- Match TypeScript Rule #21 exactly
+
+**Files to modify**:
+- `src/solver/intern.rs`: `normalize_intersection`, add helper functions
+
+**Impact**: High-leverage conformance improvement (fixes "black hole" for complex generic tests)
+
+**Status**: Not started
+
+---
+
+## ARCHIVED: Readonly TS2540 (Partial Completion - 2/4 tests passing)
    - Update `resolve_property_access_inner` to:
      - Handle `TypeKey::Lazy` by resolving first
      - Return `readonly` status from property/index signature metadata
@@ -115,10 +190,40 @@
 
 **Status**: Consulted Gemini for implementation guidance. Ready to implement.
 
+## ARCHIVED: Readonly TS2540 (Partial Completion - 2/4 tests passing)
+
+**Problem**: Readonly checks fail due to `Lazy` types
+- Element access like `config["name"]` doesn't check if property is readonly
+- Should error with TS2540 but currently errors with TS2318 instead
+
+**Implementation Progress** (2026-02-04):
+- ✅ Added `visit_lazy` to `ReadonlyChecker` and `IndexInfoCollector` (src/solver/index_signatures.rs)
+- ✅ Added Lazy type case to `property_is_readonly` (src/solver/operations_property.rs)
+- ✅ Added Lazy type case to `resolve_property_access_inner` (src/solver/operations_property.rs)
+
+**Tests Fixed**:
+- ✅ test_readonly_array_element_access_2540
+- ✅ test_readonly_property_assignment_2540
+
+**Tests Still Failing**:
+- ❌ test_readonly_element_access_assignment_2540 (stack overflow - infinite recursion)
+- ❌ test_readonly_index_signature_element_access_assignment_2540 (TS2318)
+- ❌ test_readonly_index_signature_variable_access_assignment_2540 (TS2318)
+- ❌ test_readonly_method_signature_assignment_2540 (stack overflow - infinite recursion)
+
+**Known Issues**:
+- Stack overflow suggests infinite recursion in Lazy type resolution
+- TS2318 errors suggest some Lazy types still aren't being resolved
+- Need cycle detection in `resolve_property_access_inner` for Lazy types
+
+**Decision**: Deferred to Priority 3 (Property Access Recursion Guard) which will fix the underlying architectural issue.
+
+---
+
 ## Remaining 32 Failing Tests - Categorized
 
-**Core Infrastructure** (Priority 3):
-- 4x Readonly TS2540 (architectural)
+**Core Infrastructure** (New Priority 3):
+- 2x Readonly TS2540 (stack overflow - need recursion guard)
 
 **Complex Type Inference** (5 tests):
 - 1x mixin property access (complex)
