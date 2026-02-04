@@ -2,11 +2,11 @@
 
 ## Date: 2026-02-04
 
-## Status: ✅ COMPLETE (2026-02-04)
+## Status: 🟡 ACTIVE - Ready for Next Task (2026-02-04)
 
-Completed Computed Property Names and `unique symbol` Support task.
+Completed 2 tasks: Class Heritage/Generics (formatting fix), Computed Props/unique symbols.
 
-### New Task: Class Heritage and Generics (2026-02-04) ✅ COMPLETE
+### Next Task: Type Predicates and Assertion Functions (2026-02-04)
 
 **Gemini Consultation Summary:**
 
@@ -622,4 +622,90 @@ export declare const MySym: unique symbol;
 
 ---
 
-## Previous Task: Class Heritage and Generics ✅
+## Next Task: Type Predicates and Assertion Functions (2026-02-04)
+
+**Gemini Consultation Summary:**
+
+Next high-impact task for declaration emit is implementing support for **Type Predicates and Assertion Functions**.
+
+### Problem Description
+
+TypeScript uses type predicates and assertion functions to provide type safety through narrowing. These must be preserved in `.d.ts` files for consumers to get proper type checking.
+
+**Features to support:**
+- User-defined Type Guards: `function isString(x: any): x is string`
+- Assertion Functions: `function assert(cond: any): asserts cond`
+- Assertion Type Guards: `function assertIsString(x: any): asserts x is string`
+- `this` Predicates: `isIdentifier(): this is Identifier`
+
+### Implementation Plan
+
+**Estimated Complexity: Medium (1-2 days)**
+
+#### Phase 1: TYPE_PREDICATE Node Handling
+- Update `emit_type` to handle `syntax_kind_ext::TYPE_PREDICATE`
+- Implement `emit_type_predicate` helper
+- Handle parameter name resolution (can be `Identifier` or `ThisType`)
+
+#### Phase 2: Modifier Handling
+- Support `asserts` keyword (without type)
+- Support `asserts x is Type` (with type)
+- Support `x is Type` (type predicates)
+
+#### Phase 3: Integration
+- Ensure function and method declarations pass return types correctly
+- Handle private methods (omit return type rule)
+
+### Files to Modify
+- **`src/declaration_emitter/mod.rs`**: Primary changes
+  - Update `emit_type` for `TYPE_PREDICATE`
+  - Add `emit_type_predicate` helper
+  - Verify `emit_function_declaration` and `emit_method_declaration`
+- **`src/parser/syntax_kind_ext.rs`**: Verify `TYPE_PREDICATE` constant (usually kind 181)
+
+### Success Criteria
+
+**Type Guards:**
+```typescript
+// Input
+export function isBuffer(obj: any): obj is Buffer {
+    return obj instanceof Buffer;
+}
+
+// Output ✅
+export declare function isBuffer(obj: any): obj is Buffer;
+```
+
+**Assertion Functions:**
+```typescript
+// Input
+export function assert(condition: any, msg?: string): asserts condition {
+    if (!condition) throw new Error(msg);
+}
+
+// Output ✅
+export declare function assert(condition: any, msg?: string): asserts condition;
+```
+
+**This Predicates:**
+```typescript
+// Input
+export class Node {
+    isExpression(): this is Expression { return false; }
+}
+
+// Output ✅
+export declare class Node {
+    isExpression(): this is Expression;
+}
+```
+
+### Implementation Pitfalls
+- Parameter resolution: TypePredicate refers to parameter by name/index
+- Optional type: `asserts condition` vs `asserts x is Type`
+- Precedence: Type predicates have lower precedence
+- Private methods: Should omit return type even with type predicate
+
+---
+
+## Previous Task: Computed Property Names and unique symbol ✅
