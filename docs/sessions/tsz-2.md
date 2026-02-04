@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟡 Phase 1 Complete, Phase 2 Pending
+**Status**: 🟢 Phase 2 Active - Task 6: Equality & Identity Narrowing
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -418,20 +418,43 @@ However, to achieve the goal of matching `tsc` behavior exactly, additional narr
 - `src/solver/narrowing.rs`: Add `TypeGuard::Predicate` variant
 - `src/binder/`: Track type predicate information
 
-#### Task 6: Equality & Identity Narrowing (HIGH PRIORITY)
+#### Task 6: Equality & Identity Narrowing (HIGH PRIORITY) - 🔄 IN PROGRESS
 
 **Goal**: Handle `===` and `!==` between variables and literals.
 
-**Implementation**:
-- Extract identity guards from equality expressions
-- Handle `x === y` where both are variables (bidirectional narrowing)
-- Special handling for literal comparisons
+**Status**: 🔄 IN PROGRESS (Started 2026-02-04)
 
-**Why High Priority**: Fundamental narrowing mechanism used extensively
+**Implementation Plan (per Gemini Question 1 validation):**
+
+1. **Loose Equality Support**:
+   - Add handling for `==` and `!=` operators
+   - `x == null` and `x == undefined` are treated identically
+   - Use existing `TypeGuard::NullishEquality`
+
+2. **Bidirectional Narrowing**:
+   - If both sides are references (`x === y`): narrow both directions
+   - Use caller-side iteration in `FlowAnalyzer`
+   - Keep `extract_type_guard` as a query for a single node
+
+3. **Verify Strict Equality**:
+   - Ensure `===` and `!==` with literals work correctly
+   - Check proper NaN handling
+   - Handle `any`, enum members, object identity
+
+**Edge Cases**:
+- `any`: Narrowing `any === string` → `string` (true), `any` (false)
+- NaN: `x === NaN` is valid type-level operation, always false at runtime
+- Enums: Use specific enum member type, not just base number
+- Objects: `x !== y` does NOT narrow (different objects can have same type)
 
 **Files to modify**:
-- `src/checker/control_flow_narrowing.rs`: Extract equality guards
-- `src/solver/narrowing.rs`: Add identity narrowing logic
+- `src/checker/control_flow_narrowing.rs`: Add loose equality support
+- `src/checker/control_flow.rs`: Implement bidirectional narrowing
+- `src/solver/narrowing.rs`: Verify `LiteralEquality` handling
+
+**Gemini Guidance**:
+- Question 1 (PRE): Approach validated - use caller-side iteration for bidirectional
+- Question 2 (POST): Pending - after implementation
 
 #### Task 7: Assignment Narrowing (MEDIUM PRIORITY)
 
