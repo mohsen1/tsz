@@ -300,6 +300,7 @@ fn is_definitely_falsy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
 mod tests {
     use super::*;
     use crate::solver::intern::TypeInterner;
+    use crate::solver::subtype::NoopResolver;
 
     // =========================================================================
     // Conditional Expression Tests
