@@ -845,3 +845,65 @@ Per Gemini Pro guidance, implemented TS2675 check for class inheritance with pri
 - ✅ Priority 2: Private Brand Checking COMPLETE
 - ✅ Priority 3: Constructor Accessibility COMPLETE
 - 🔄 Priority 4: Literal Type Widening (PENDING)
+
+### Commit: TBD - Priority 4 Investigation: Literal Type Widening Architecture
+
+**CRITICAL FINDING**: Initial approach was WRONG!
+
+**Gemini Pro Feedback**:
+Asked pre-implementation question about implementing widening in CompatChecker. Gemini Pro said:
+> "🛑 STOP: Your planned approach is INCORRECT. Do NOT modify CompatChecker to implement widening."
+
+**Why CompatChecker is Wrong**:
+- CompatChecker answers: "Is Type A assignable to Type B?"
+- CompatChecker does NOT determine what Type A *is*
+- Widening is a **Type Inference** problem, not an **Assignability** problem
+
+**Example**:
+```typescript
+let x = { a: "hello" };
+// If x has type { a: "hello" }, that's an INFERENCE problem
+// CompatChecker correctly sees "hello" assignable to string
+// But CompatChecker cannot "change" the type of x for future assignments
+```
+
+**Correct Approach**:
+Modify **Type Inference** logic in `src/solver/infer.rs` or `src/checker/expr.rs`:
+1. Find where Object Literals are converted to Types
+2. Implement `get_widened_type()` function:
+   ```rust
+   fn get_widened_type(&self, type_id: TypeId) -> TypeId {
+       match self.lookup(type_id) {
+           TypeKey::Literal(LiteralValue::String(_)) => TypeId::STRING,
+           TypeKey::Literal(LiteralValue::Number(_)) => TypeId::NUMBER,
+           TypeKey::Literal(LiteralValue::Boolean(_)) => TypeId::BOOLEAN,
+           // ... handle unions recursively
+           _ => type_id
+       }
+   }
+   ```
+3. Apply to object properties when constructing object type
+
+**const vs let Widening Rules**:
+- `const x = "a"` → Non-Widening context → Inferred type: `"a"`
+- `let x = "a"` → Widening context → Inferred type: `string`
+- `const o = { x: "a" }` → Properties are mutable! → Inferred type: `{ x: string }`
+- `const o = { x: "a" } as const` → Non-Widening → Inferred type: `{ readonly x: "a" }`
+
+**Union Edge Cases**:
+- `"a" | "b"` in widening context → `string`
+- `null` and `undefined` → widen to `any` (non-strict) or stay (strict)
+- `false | true` → widens to `boolean`
+
+**Freshness vs Widening**:
+- **Freshness**: Allows excess properties in object literals
+- **Stripping**: Happens when fresh object literal is assigned to variable
+- Look for `remove_freshness(TypeId) -> TypeId` in `src/solver/freshness.rs`
+
+**Next Steps**:
+1. Investigate `src/solver/infer.rs` and `src/checker/expr.rs`
+2. Find where Object Literals are converted to Types
+3. Implement widening logic in type inference layer
+4. DO NOT modify CompatChecker for this feature
+
+**Status**: Priority 4 - ARCHITECTURE INVESTIGATION COMPLETE 🟡
