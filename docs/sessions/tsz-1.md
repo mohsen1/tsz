@@ -7,6 +7,34 @@
 ## Active Tasks
 
 ### Task #16: Robust Optional Property Subtyping & Narrowing
+**Status**: 🔄 In Progress (Investigation Phase)
+**Priority**: High
+**Estimated Impact**: +2-3% conformance
+
+**Description**:
+Fix critical bugs in optional property subtyping and narrowing logic identified in AGENTS.md investigation.
+
+**Investigation Findings**:
+1. `narrow_by_discriminant` (line 491): ✅ CORRECT - `is_subtype_of(literal, prop_type)`
+2. `narrow_by_excluding_discriminant` (line 642): ✅ CORRECT - `is_subtype_of(prop_type, excluded_value)`
+3. `resolve_type`: Handles Lazy and Application types correctly
+4. Ref types: Deprecated and removed, not needed
+5. Discriminant tests: All passing (test_switch_discriminant_narrowing)
+
+**Still Pending** (need investigation in subtype.rs):
+- Intersection type handling in lookup_property
+- Optional property subtyping with exactOptionalPropertyTypes
+- Property access through Intersection types
+
+**Gemini Guidance Received**:
+- Validated approach for resolve_type, discriminant functions
+- Provided specific file paths and function names to check
+- Identified edge cases with undefined in optional properties
+
+**Next Steps**:
+- Investigate subtype.rs for Intersection handling
+- Check lookup_property function
+- Verify exactOptionalPropertyTypes implementation
 **Status**: Pending
 **Priority**: High
 **Estimated Impact**: +2-3% conformance
