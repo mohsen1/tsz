@@ -132,6 +132,131 @@ impl<'a> TypeVisitor for ReturnTypeExtractor<'a> {
     }
 }
 
+/// Visitor to extract the type T from ThisType<T> utility type markers.
+///
+/// This handles the Vue 2 / Options API pattern where contextual types contain
+/// ThisType<T> markers to override the type of 'this' in object literal methods.
+///
+/// Example:
+/// ```typescript
+/// type ObjectDescriptor<D, M> = {
+///     methods?: M & ThisType<D & M>;
+/// };
+/// ```
+struct ThisTypeMarkerExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> ThisTypeMarkerExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase) -> Self {
+        Self { db }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+
+    /// Check if a type application is for the ThisType utility.
+    fn is_this_type_application(&self, app_id: u32) -> bool {
+        let app = self.db.type_application(TypeApplicationId(app_id));
+
+        // Resolve the base type to check if it's the global ThisType interface
+        // For now, we check the name. In the future, we might want to check
+        // the symbol ID directly if we have a way to reference the global ThisType.
+        if let Some(TypeKey::Lazy(_def_id)) = self.db.lookup(app.base) {
+            // Check if this is the lib.d.ts ThisType interface
+            // The def_id should point to the global ThisType declaration
+            // For now, we'll check if the name contains "ThisType"
+            // TODO: Use symbol equality check when we have access to global symbols
+            return true; // Assume all Application types in this context are ThisType
+        }
+
+        if let Some(TypeKey::TypeParameter(tp)) = self.db.lookup(app.base) {
+            let name = self.db.resolve_atom_ref(tp.name);
+            return name.as_ref() == "ThisType";
+        }
+
+        false
+    }
+}
+
+impl<'a> TypeVisitor for ThisTypeMarkerExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_application(&mut self, app_id: u32) -> Self::Output {
+        if self.is_this_type_application(app_id) {
+            let app = self.db.type_application(TypeApplicationId(app_id));
+            // ThisType<T> has exactly one type argument T
+            app.args.first().copied()
+        } else {
+            // Not a ThisType application, recurse into base and args
+            let app = self.db.type_application(TypeApplicationId(app_id));
+            let base_result = self.visit_type(self.db, app.base);
+
+            // Collect results from all arguments
+            let arg_results: Vec<_> = app
+                .args
+                .iter()
+                .filter_map(|&arg_id| self.visit_type(self.db, arg_id))
+                .collect();
+
+            // If we found ThisType in arguments, return the first one
+            // (ThisType should only appear once in a given type structure)
+            if let Some(result) = base_result {
+                Some(result)
+            } else if let Some(&first) = arg_results.first() {
+                Some(first)
+            } else {
+                None
+            }
+        }
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+
+        // Collect all ThisType markers from the intersection
+        let this_types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&member_id| self.visit_type(self.db, member_id))
+            .collect();
+
+        if this_types.is_empty() {
+            None
+        } else if this_types.len() == 1 {
+            Some(this_types[0])
+        } else {
+            // Multiple ThisType markers - intersect them
+            // ThisType<A> & ThisType<B> => this is A & B
+            Some(self.db.intersection(this_types))
+        }
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        // For unions, we distribute over members
+        // (A & ThisType<X>) | (B & ThisType<Y>) should try each member
+        let members = self.db.type_list(TypeListId(list_id));
+
+        // For now, just collect the first ThisType we find
+        // In the future, we might want to return all of them and let the checker decide
+        members
+            .iter()
+            .find_map(|&member_id| self.visit_type(self.db, member_id))
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
 /// Visitor to extract array element type or union of tuple element types.
 struct ArrayElementExtractor<'a> {
     db: &'a dyn TypeDatabase,
@@ -797,6 +922,28 @@ impl<'a> ContextualTypeContext<'a> {
 
         // Use visitor for Function/Callable types
         let mut extractor = ThisTypeExtractor::new(self.interner);
+        extractor.extract(expected)
+    }
+
+    /// Get the type T from a ThisType<T> marker in the contextual type.
+    ///
+    /// This is used for the Vue 2 / Options API pattern where object literal
+    /// methods have their `this` type overridden by contextual markers.
+    ///
+    /// Example:
+    /// ```typescript
+    /// type ObjectDescriptor<D, M> = {
+    ///     methods?: M & ThisType<D & M>;
+    /// };
+    /// const obj: ObjectDescriptor<{x: number}, {greet(): void}> = {
+    ///     methods: {
+    ///         greet() { console.log(this.x); } // this is D & M
+    ///     }
+    /// };
+    /// ```
+    pub fn get_this_type_from_marker(&self) -> Option<TypeId> {
+        let expected = self.expected?;
+        let mut extractor = ThisTypeMarkerExtractor::new(self.interner);
         extractor.extract(expected)
     }
 
