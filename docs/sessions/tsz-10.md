@@ -722,3 +722,36 @@ These are pre-existing bugs unrelated to the sense inversion refactor.
 1. Investigate union resolution bug for discriminant inequality narrowing
 2. Fix or disable pre-existing test failures
 3. Continue with Task 2 (Equality & Instanceof) once discriminant narrowing works
+
+### 2026-02-05: Further Fixes Based on Gemini Guidance (DefId Migration)
+
+**Context**: After discovering discriminant narrowing was completely broken, asked Gemini for focused debugging guidance.
+
+**Gemini's Key Findings**:
+1. ✅ User correctly identified that code should prefer DefId over SymbolRef
+2. ✅ Confirmed `TypeKey::Ref` was removed in migration to `Lazy(DefId)` (PHASE 4.2)
+3. Must use `classify_for_union_members` instead of `union_list_id`
+4. Issue appears to be in Checker layer - TypeGuard extraction or application failing
+
+**Changes Made**:
+1. Confirmed `resolve_type` doesn't handle Ref types (they don't exist anymore)
+2. Updated `narrow_by_discriminant` to use `classify_for_union_members`
+
+**Test Result**:
+- Narrowing functions still not being called during flow analysis
+- Issue confirmed to be in Checker layer
+- Discriminant narrowing completely non-functional
+
+**Commits**:
+- `fix(tsz-10): preserve undefined in optional property types`
+- `fix(tsz-10): use classify_for_union_members in discriminant narrowing`
+
+**Current Status**:
+Discriminant narrowing requires deeper investigation. The Solver layer fixes are complete, but the Checker layer is not extracting or applying TypeGuards correctly. This is a complex issue involving the flow analysis pipeline that requires more time to debug and fix.
+
+**Session Progress Summary**:
+- Tasks 1-4: ✅ Complete (typeof, instanceof, literal equality, type guards, assertions)
+- Task 5: ⚠️  Partially complete (Solver improved, but Checker layer issue blocks functionality)
+- Tasks 6-7: Not started
+
+The foundational work on type resolution (Lazy/Ref/Application) is complete and will benefit all narrowing operations once the flow analysis pipeline is fixed.
