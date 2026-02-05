@@ -2540,6 +2540,10 @@ impl ParserState {
                 | SyntaxKind::ColonToken
                 | SyntaxKind::EqualsToken
                 | SyntaxKind::SemicolonToken
+                // When followed by } or EOF, treat the keyword as a property name, not a modifier
+                // This allows patterns like: class C { public }
+                | SyntaxKind::CloseBraceToken
+                | SyntaxKind::EndOfFileToken
         )
     }
 
