@@ -174,6 +174,15 @@ impl ProjectFile {
         self.scope_cache.clear();
     }
 
+    /// Invalidate all caches for this file.
+    ///
+    /// This should be called when a dependency of this file changes, forcing
+    /// recomputation of type information and scope analysis on next access.
+    pub fn invalidate_caches(&mut self) {
+        self.type_cache = None;
+        self.scope_cache.clear();
+    }
+
     pub fn update_source_with_edits(&mut self, source_text: String, edits: &[TextEdit]) {
         if edits.is_empty() {
             self.update_source(source_text);
@@ -1124,6 +1133,14 @@ impl Project {
         let arena = file.parser.get_arena();
         self.symbol_index
             .update_file(file_name, &file.binder, arena);
+
+        // Transitive cache invalidation: Clear caches for all files that depend on this file
+        let affected_files = self.dependency_graph.get_affected_files(file_name);
+        for affected_file in affected_files {
+            if let Some(dep_file) = self.files.get_mut(&affected_file) {
+                dep_file.invalidate_caches();
+            }
+        }
 
         Some(())
     }
