@@ -708,4 +708,17 @@ object type rather than the full union. This suggests either:
 2. Parameter type is incorrectly stored/looked up
 3. Union construction is broken
 
-**Status**: Sense inversion refactor complete. Union resolution bug needs investigation.
+**Status**: ✅ Sense inversion refactor complete and committed (f6f370523).
+
+**Test Failures Investigation**: Confirmed that 3 tests were already failing BEFORE
+this change. Ran tests with `git stash` to verify:
+- test_truthiness_false_branch_narrows_to_falsy
+- test_array_destructuring_assignment_clears_narrowing
+- test_array_destructuring_default_initializer_clears_narrowing
+
+These are pre-existing bugs unrelated to the sense inversion refactor.
+
+**Next Steps**:
+1. Investigate union resolution bug for discriminant inequality narrowing
+2. Fix or disable pre-existing test failures
+3. Continue with Task 2 (Equality & Instanceof) once discriminant narrowing works
