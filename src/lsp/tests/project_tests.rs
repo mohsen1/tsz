@@ -1080,6 +1080,55 @@ fn test_project_completions_auto_import_named() {
 }
 
 #[test]
+fn test_project_completions_prefix_matching() {
+    let mut project = Project::new();
+
+    // a.ts exports multiple symbols with different prefixes
+    project.set_file(
+        "a.ts".to_string(),
+        "export const useHook = 1;\nexport const useState = 2;\nexport const foo = 3;\n"
+            .to_string(),
+    );
+
+    // b.ts tries to use "use" - should get both useHook and useState
+    project.set_file("b.ts".to_string(), "use".to_string());
+
+    let items = project
+        .get_completions("b.ts", Position::new(0, 3))
+        .expect("Expected completions");
+
+    // Should have completions for symbols starting with "use"
+    let use_completions: Vec<_> = items
+        .iter()
+        .filter(|item| item.label.starts_with("use"))
+        .collect();
+
+    assert!(
+        use_completions.len() >= 2,
+        "Should have at least 2 completions starting with 'use', got {}",
+        use_completions.len()
+    );
+
+    // Should have auto-import for useHook
+    let has_use_hook = items.iter().any(|item| {
+        item.label == "useHook" && item.detail.as_deref().unwrap_or("").contains("auto-import")
+    });
+    assert!(
+        has_use_hook,
+        "Should have auto-import completion for useHook"
+    );
+
+    // Should have auto-import for useState
+    let has_use_state = items.iter().any(|item| {
+        item.label == "useState" && item.detail.as_deref().unwrap_or("").contains("auto-import")
+    });
+    assert!(
+        has_use_state,
+        "Should have auto-import completion for useState"
+    );
+}
+
+#[test]
 fn test_project_diagnostics_cached() {
     let mut project = Project::new();
 

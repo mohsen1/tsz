@@ -1289,6 +1289,73 @@ impl Project {
         }
     }
 
+    /// Collect import candidates for symbols matching a prefix.
+    ///
+    /// This is used for auto-completion when the user has typed a partial
+    /// identifier (e.g., "use" should match "useEffect", "useState", etc.).
+    pub(crate) fn collect_import_candidates_for_prefix(
+        &self,
+        from_file: &ProjectFile,
+        prefix: &str,
+        existing: &FxHashSet<String>,
+        output: &mut Vec<ImportCandidate>,
+        seen: &mut FxHashSet<(String, String, String, bool)>,
+    ) {
+        // Get all symbols that match the prefix using the sorted symbol index
+        let matching_symbols = self.symbol_index.get_symbols_with_prefix(prefix);
+
+        for symbol_name in matching_symbols {
+            // Skip if the symbol already exists in the current file (local definition or imported)
+            if existing.contains(&symbol_name) {
+                continue;
+            }
+
+            // Check ALL files for this symbol (including wildcard re-exports)
+            let files_to_check: Vec<String> = self.files.keys().cloned().collect();
+
+            for file_name in files_to_check {
+                if file_name == from_file.file_name() {
+                    continue;
+                }
+
+                let Some(module_specifier) =
+                    self.module_specifier_from_files(from_file.file_name(), &file_name)
+                else {
+                    continue;
+                };
+
+                let mut visited = FxHashSet::default();
+                let matches = self.matching_exports_in_file(&file_name, &symbol_name, &mut visited);
+
+                for export_match in matches {
+                    let candidate = ImportCandidate {
+                        module_specifier: module_specifier.clone(),
+                        local_name: symbol_name.clone(),
+                        kind: export_match.kind,
+                        is_type_only: export_match.is_type_only,
+                    };
+
+                    let kind_key = match &candidate.kind {
+                        ImportCandidateKind::Named { export_name } => {
+                            format!("named:{}", export_name)
+                        }
+                        ImportCandidateKind::Default => "default".to_string(),
+                        ImportCandidateKind::Namespace => "namespace".to_string(),
+                    };
+
+                    if seen.insert((
+                        candidate.module_specifier.clone(),
+                        candidate.local_name.clone(),
+                        kind_key,
+                        candidate.is_type_only,
+                    )) {
+                        output.push(candidate);
+                    }
+                }
+            }
+        }
+    }
+
     /// Check if a file has a default export.
     fn file_has_default_export(&self, file_name: &str) -> bool {
         let Some(file) = self.files.get(file_name) else {

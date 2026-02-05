@@ -84,6 +84,11 @@ pub struct SymbolIndex {
     /// Reverse mapping for efficient cleanup: file -> symbols it contains
     /// This enables O(1) removal of a file's contributions from the index
     file_symbols: FxHashMap<String, FxHashSet<String>>,
+
+    /// Sorted list of all symbol names for prefix search.
+    /// Enables efficient prefix matching using binary search (O(log N)).
+    /// Maintained in sorted order via binary search on insert/update.
+    sorted_names: Vec<String>,
 }
 
 impl SymbolIndex {
@@ -167,6 +172,8 @@ impl SymbolIndex {
                     files.remove(file_name);
                     if files.is_empty() {
                         self.name_to_files.remove(sym);
+                        // Only remove from sorted_names if no other files reference this symbol
+                        self.remove_sorted_name(sym);
                     }
                 }
 
@@ -187,11 +194,38 @@ impl SymbolIndex {
         self.definitions.retain(|_, defs| !defs.is_empty());
 
         // Remove definition kinds for symbols that no longer have any definitions
-        self.definition_kinds
-            .retain(|name, _| self.definitions.contains_key(name));
+        let names_to_remove: Vec<String> = self
+            .definition_kinds
+            .keys()
+            .filter(|name| {
+                !self
+                    .definitions
+                    .get(name.as_str())
+                    .map(|defs| !defs.is_empty())
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+
+        for name in names_to_remove {
+            self.definition_kinds.remove(&name);
+            self.remove_sorted_name(&name);
+        }
 
         // Remove exports for this file
-        self.exports.remove(file_name);
+        if let Some(exports) = self.exports.remove(file_name) {
+            // Check if we need to remove any export names from sorted_names
+            for export_name in exports {
+                // Only remove from sorted_names if this is the only file exporting this name
+                let is_still_exported = self
+                    .exports
+                    .values()
+                    .any(|file_exports| file_exports.contains(&export_name));
+                if !is_still_exported && !self.name_to_files.contains_key(&export_name) {
+                    self.remove_sorted_name(&export_name);
+                }
+            }
+        }
 
         // Remove imports for this file and update importers
         if let Some(imports) = self.imports.remove(file_name) {
@@ -224,6 +258,9 @@ impl SymbolIndex {
                 .or_default()
                 .insert(file_name_owned.clone());
 
+            // Add to sorted names for prefix search
+            self.insert_sorted_name(name.clone());
+
             // Track in reverse mapping for efficient cleanup
             file_symbol_names.insert(name.clone());
 
@@ -241,6 +278,9 @@ impl SymbolIndex {
                     .entry(file_name_owned.clone())
                     .or_default()
                     .insert(export_name.clone());
+
+                // Also add exports to sorted names for prefix search
+                self.insert_sorted_name(export_name.clone());
             }
         }
 
@@ -252,6 +292,9 @@ impl SymbolIndex {
                     .entry(file_name_owned.clone())
                     .or_default()
                     .insert(export_name.clone());
+
+                // Add to sorted names for prefix search
+                self.insert_sorted_name(export_name.clone());
 
                 // Track the import relationship for reexports
                 self.importers
@@ -295,6 +338,9 @@ impl SymbolIndex {
             .or_default()
             .insert(file_name.to_string());
 
+        // Add to sorted names for prefix search
+        self.insert_sorted_name(symbol_name.to_string());
+
         // Update file_symbols reverse mapping for efficient cleanup
         self.file_symbols
             .entry(file_name.to_string())
@@ -304,10 +350,28 @@ impl SymbolIndex {
 
     /// Add a symbol definition to the index.
     pub fn add_definition(&mut self, symbol_name: &str, location: Location) {
+        // Track which file contains this definition for cleanup
+        let file_path = location.file_path.clone();
+
+        // Add to name_to_files so we can track which files have which symbols
+        self.name_to_files
+            .entry(symbol_name.to_string())
+            .or_default()
+            .insert(file_path.clone());
+
         self.definitions
             .entry(symbol_name.to_string())
             .or_default()
             .push(location);
+
+        // Add to sorted names for prefix search
+        self.insert_sorted_name(symbol_name.to_string());
+
+        // Track which file contains this definition for cleanup
+        self.file_symbols
+            .entry(file_path)
+            .or_default()
+            .insert(symbol_name.to_string());
     }
 
     /// Add a symbol definition with a known kind to the index.
@@ -405,6 +469,68 @@ impl SymbolIndex {
         self.imports.clear();
         self.importers.clear();
         self.file_symbols.clear();
+        self.sorted_names.clear();
+    }
+
+    /// Get all symbols that start with the given prefix.
+    ///
+    /// Uses binary search on the sorted names vector for O(log N) prefix matching.
+    /// This is useful for auto-completion where users type partial names.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let matches = index.get_symbols_with_prefix("use");
+    /// // Returns: ["useEffect", "useState", "useCallback"]
+    /// ```
+    pub fn get_symbols_with_prefix(&self, prefix: &str) -> Vec<String> {
+        // Empty prefix matches all symbols
+        if prefix.is_empty() {
+            return self.sorted_names.clone();
+        }
+
+        // Binary search to find the first symbol >= prefix
+        let start = self
+            .sorted_names
+            .partition_point(|name| name.as_str() < prefix);
+
+        // Collect all symbols that start with the prefix
+        // We iterate from the start position until we find a symbol that doesn't match
+        let mut result = Vec::new();
+        for name in &self.sorted_names[start..] {
+            if name.starts_with(prefix) {
+                result.push(name.clone());
+            } else {
+                // Since sorted_names is sorted, once we find a non-matching name,
+                // we can stop iterating
+                break;
+            }
+        }
+
+        result
+    }
+
+    /// Insert a name into the sorted vector while maintaining sorted order.
+    fn insert_sorted_name(&mut self, name: String) {
+        // Binary search to find insertion point
+        let pos = self
+            .sorted_names
+            .partition_point(|n| n.as_str() < name.as_str());
+
+        // Only insert if not already present
+        if pos >= self.sorted_names.len() || self.sorted_names[pos] != name {
+            self.sorted_names.insert(pos, name);
+        }
+    }
+
+    /// Remove a name from the sorted vector.
+    fn remove_sorted_name(&mut self, name: &str) {
+        // Binary search to find the name
+        let pos = self.sorted_names.partition_point(|n| n.as_str() < name);
+
+        // Remove if found
+        if pos < self.sorted_names.len() && self.sorted_names[pos] == name {
+            self.sorted_names.remove(pos);
+        }
     }
 }
 
@@ -866,5 +992,108 @@ mod tests {
         // it is checked first in the specificity order.
         let flags = symbol_flags::CLASS | symbol_flags::INTERFACE;
         assert_eq!(symbol_flags_to_kind(flags), SymbolKind::Class);
+    }
+
+    // =========================================================================
+    // Prefix matching tests
+    // =========================================================================
+
+    #[test]
+    fn test_get_symbols_with_prefix_empty() {
+        let index = SymbolIndex::new();
+        let matches = index.get_symbols_with_prefix("foo");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_get_symbols_with_prefix_single_match() {
+        let mut index = SymbolIndex::new();
+        index.add_definition("fooBar", make_location("a.ts", 0, 0, 6));
+
+        let matches = index.get_symbols_with_prefix("foo");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0], "fooBar");
+    }
+
+    #[test]
+    fn test_get_symbols_with_prefix_multiple_matches() {
+        let mut index = SymbolIndex::new();
+        index.add_definition("fooBar", make_location("a.ts", 0, 0, 6));
+        index.add_definition("fooBaz", make_location("a.ts", 1, 0, 6));
+        index.add_definition("barQux", make_location("a.ts", 2, 0, 6));
+
+        let matches = index.get_symbols_with_prefix("foo");
+        assert_eq!(matches.len(), 2);
+        assert!(matches.contains(&"fooBar".to_string()));
+        assert!(matches.contains(&"fooBaz".to_string()));
+    }
+
+    #[test]
+    fn test_get_symbols_with_prefix_case_sensitive() {
+        let mut index = SymbolIndex::new();
+        index.add_definition("fooBar", make_location("a.ts", 0, 0, 6));
+        index.add_definition("FooBaz", make_location("a.ts", 1, 0, 6));
+
+        let matches = index.get_symbols_with_prefix("foo");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0], "fooBar");
+
+        let matches_upper = index.get_symbols_with_prefix("Foo");
+        assert_eq!(matches_upper.len(), 1);
+        assert_eq!(matches_upper[0], "FooBaz");
+    }
+
+    #[test]
+    fn test_get_symbols_with_prefix_returns_sorted() {
+        let mut index = SymbolIndex::new();
+        // Add in non-sorted order
+        index.add_definition("zebra", make_location("a.ts", 0, 0, 5));
+        index.add_definition("apple", make_location("a.ts", 1, 0, 5));
+        index.add_definition("banana", make_location("a.ts", 2, 0, 6));
+
+        let matches = index.get_symbols_with_prefix("a");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0], "apple");
+
+        // All symbols should be in sorted order
+        let all_matches = index.get_symbols_with_prefix("");
+        assert_eq!(all_matches, vec!["apple", "banana", "zebra"]);
+    }
+
+    #[test]
+    fn test_get_symbols_with_prefix_after_remove() {
+        let mut index = SymbolIndex::new();
+        index.add_definition("fooBar", make_location("a.ts", 0, 0, 6));
+        index.add_definition("fooBaz", make_location("b.ts", 0, 0, 6));
+        index.add_definition("barQux", make_location("c.ts", 0, 0, 6));
+
+        // Remove file a.ts which contains fooBar
+        index.remove_file("a.ts");
+
+        let matches = index.get_symbols_with_prefix("foo");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0], "fooBaz");
+    }
+
+    #[test]
+    fn test_get_symbols_with_prefix_empty_prefix() {
+        let mut index = SymbolIndex::new();
+        index.add_definition("zebra", make_location("a.ts", 0, 0, 5));
+        index.add_definition("apple", make_location("b.ts", 0, 0, 5));
+
+        let matches = index.get_symbols_with_prefix("");
+        assert_eq!(matches.len(), 2);
+        // Should be sorted
+        assert_eq!(matches[0], "apple");
+        assert_eq!(matches[1], "zebra");
+    }
+
+    #[test]
+    fn test_get_symbols_with_prefix_no_match() {
+        let mut index = SymbolIndex::new();
+        index.add_definition("fooBar", make_location("a.ts", 0, 0, 6));
+
+        let matches = index.get_symbols_with_prefix("xyz");
+        assert!(matches.is_empty());
     }
 }
