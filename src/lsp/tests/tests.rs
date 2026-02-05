@@ -99,6 +99,108 @@ fn test_project_multi_file_definition() {
 }
 
 #[test]
+fn test_project_cross_file_definition_named_import() {
+    // Test cross-file Go to Definition for named imports
+    let mut project = Project::new();
+
+    // a.ts exports a function `foo`
+    project.set_file(
+        "a.ts".to_string(),
+        "export function foo() {}\nfoo();".to_string(),
+    );
+
+    // b.ts imports and uses `foo`
+    project.set_file(
+        "b.ts".to_string(),
+        "import { foo } from './a';\nfoo();".to_string(),
+    );
+
+    // Click on `foo` in the import statement in b.ts (line 0, column 11)
+    // Should jump to the definition in a.ts
+    let defs = project.get_definition("b.ts", Position::new(0, 11));
+    assert!(
+        defs.is_some(),
+        "Should find cross-file definition for named import"
+    );
+
+    let defs = defs.unwrap();
+    assert_eq!(defs.len(), 1, "Should have one definition");
+    assert_eq!(defs[0].file_path, "a.ts", "Should point to a.ts");
+    assert_eq!(
+        defs[0].range.start.line, 0,
+        "Should point to line 0 (the export)"
+    );
+}
+
+#[test]
+fn test_project_cross_file_definition_default_import() {
+    // Test cross-file Go to Definition for default imports
+    let mut project = Project::new();
+
+    // a.ts has a default export
+    project.set_file(
+        "a.ts".to_string(),
+        "export default function bar() {}\nbar();".to_string(),
+    );
+
+    // b.ts imports and uses the default export
+    project.set_file(
+        "b.ts".to_string(),
+        "import bar from './a';\nbar();".to_string(),
+    );
+
+    // Click on `bar` in the import statement in b.ts (line 0, column 8)
+    // Should jump to the default export in a.ts
+    let defs = project.get_definition("b.ts", Position::new(0, 8));
+    assert!(
+        defs.is_some(),
+        "Should find cross-file definition for default import"
+    );
+
+    let defs = defs.unwrap();
+    assert_eq!(defs.len(), 1, "Should have one definition");
+    assert_eq!(defs[0].file_path, "a.ts", "Should point to a.ts");
+    assert_eq!(
+        defs[0].range.start.line, 0,
+        "Should point to line 0 (the default export)"
+    );
+}
+
+#[test]
+fn test_project_cross_file_definition_import_with_alias() {
+    // Test cross-file Go to Definition for imports with alias (import { foo as bar })
+    let mut project = Project::new();
+
+    // a.ts exports a function `originalName`
+    project.set_file(
+        "a.ts".to_string(),
+        "export function originalName() {}\noriginalName();".to_string(),
+    );
+
+    // b.ts imports with alias and uses it
+    project.set_file(
+        "b.ts".to_string(),
+        "import { originalName as alias } from './a';\nalias();".to_string(),
+    );
+
+    // Click on `originalName` in the import statement (the name being imported)
+    // Position is approximately at "originalName" which starts at column 10
+    let defs = project.get_definition("b.ts", Position::new(0, 10));
+    assert!(
+        defs.is_some(),
+        "Should find cross-file definition for aliased import"
+    );
+
+    let defs = defs.unwrap();
+    assert_eq!(defs.len(), 1, "Should have one definition");
+    assert_eq!(defs[0].file_path, "a.ts", "Should point to a.ts");
+    assert_eq!(
+        defs[0].range.start.line, 0,
+        "Should point to line 0 (the export)"
+    );
+}
+
+#[test]
 fn test_lsp_diagnostic_conversion() {
     let source = "const x: string = 1;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

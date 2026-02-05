@@ -218,6 +218,23 @@ Added prefix matching support for auto-import completions, enabling users to typ
 
 **Value**: Users can now type partial identifiers and get relevant auto-import suggestions, matching the "magical" IDE experience where typing "use" suggests "useEffect", "useState", etc.
 
+### Cross-File Go to Definition (2026-02-05)
+**Status**: ✅ COMPLETE
+
+Added cross-file Go to Definition support for import statements.
+
+**Implementation**:
+- The feature was already implemented in `src/lsp/project_operations.rs` via `definition_from_import()` method
+- Added comprehensive tests to verify the functionality works correctly
+- The method detects import specifiers and resolves them to exports in other files
+
+**Tests Added (3 new tests)**:
+1. `test_project_cross_file_definition_named_import` - Verifies `import { foo } from './a'` jumps to `foo` export in `a.ts`
+2. `test_project_cross_file_definition_default_import` - Verifies `import bar from './a'` jumps to default export in `a.ts`
+3. `test_project_cross_file_definition_import_with_alias` - Verifies `import { foo as bar }` jumps to `foo` export
+
+**Value**: Users can now Cmd+Click on import specifiers to jump to their definitions in other files, matching the standard IDE Go to Definition experience.
+
 ## Session Status
 
 **Status**: 🔄 ACTIVE - Ready for next feature
@@ -225,6 +242,7 @@ Added prefix matching support for auto-import completions, enabling users to typ
 **Completed LSP Features** (all working with SymbolIndex optimization):
 - ✅ File Rename (with directory support, dynamic imports, and require calls)
 - ✅ Auto-Import Completions (with prefix matching, additionalTextEdits, O(1) lookup, and transitive re-export support)
+- ✅ Cross-File Go to Definition (for imports: named, default, and aliased)
 - ✅ JSX Linked Editing
 - ✅ SymbolIndex integration (O(1) auto-import candidate lookup, O(log N) prefix search)
 - ✅ Workspace Symbols (project-wide symbol search via Cmd+T / Ctrl+T)
