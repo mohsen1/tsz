@@ -960,6 +960,7 @@ pub enum ProjectRequestKind {
     SignatureHelp,
     Completions,
     Diagnostics,
+    Implementations,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

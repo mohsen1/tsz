@@ -2008,4 +2008,173 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
 
         None
     }
+
+    /// Check if a DefId corresponds to a numeric enum (not a string enum).
+    ///
+    /// This determines whether an enum allows bidirectional number assignability (Rule #7).
+    /// Numeric enums like `enum E { A = 0 }` allow `number <-> E` assignments.
+    /// String enums like `enum F { A = "a" }` do NOT allow `string <-> F` assignments.
+    fn is_numeric_enum(&self, def_id: crate::solver::DefId) -> bool {
+        use crate::binder::symbol_flags;
+        use crate::scanner::SyntaxKind;
+
+        // Convert DefId to SymbolId
+        let Some(sym_id) = self.def_to_symbol_id(def_id) else {
+            return false;
+        };
+
+        // Get the symbol
+        let Some(symbol) = self.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // BUG FIX: Handle ENUM_MEMBER by looking up the parent ENUM symbol
+        let enum_symbol = if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+            // It's a member, get the parent enum symbol
+            let Some(parent) = self.binder.get_symbol(symbol.parent) else {
+                return false;
+            };
+            parent
+        } else if (symbol.flags & symbol_flags::ENUM) != 0 {
+            // It's the enum itself
+            symbol
+        } else {
+            return false;
+        };
+
+        // Get the enum declaration from the arena
+        let decl_idx = if !enum_symbol.value_declaration.is_none() {
+            enum_symbol.value_declaration
+        } else {
+            *enum_symbol
+                .declarations
+                .first()
+                .unwrap_or(&crate::parser::NodeIndex(0))
+        };
+
+        if decl_idx == crate::parser::NodeIndex(0) {
+            return false;
+        }
+
+        let Some(node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(enum_decl) = self.arena.get_enum(node) else {
+            return false;
+        };
+
+        // Check if any member has a string literal initializer
+        let mut has_string_member = false;
+
+        for &member_idx in &enum_decl.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(member) = self.arena.get_enum_member(member_node) else {
+                continue;
+            };
+
+            if !member.initializer.is_none() {
+                let Some(init_node) = self.arena.get(member.initializer) else {
+                    continue;
+                };
+                if init_node.kind == SyntaxKind::StringLiteral as u16 {
+                    has_string_member = true;
+                    break;
+                }
+            }
+        }
+
+        // It's a numeric enum if no string members were found
+        !has_string_member
+    }
+
+    /// Check if a TypeId represents a full Enum type (not a specific member).
+    ///
+    /// Used to distinguish between:
+    /// - `enum E` (the enum TYPE - allows `let x: E = 1`)
+    /// - `enum E.A` (an enum MEMBER - rejects `let x: E.A = 1`)
+    ///
+    /// Returns true if:
+    /// - TypeId is TypeKey::Enum where Symbol has ENUM flag but not ENUM_MEMBER flag
+    /// - TypeId is a Union of TypeKey::Enum members from the same parent enum
+    ///
+    /// Returns false for:
+    /// - Enum members (symbols with ENUM_MEMBER flag)
+    /// - Non-enum types
+    fn is_enum_type(
+        &self,
+        type_id: crate::solver::TypeId,
+        _interner: &dyn crate::solver::TypeDatabase,
+    ) -> bool {
+        use crate::binder::symbol_flags;
+        use crate::solver::visitor;
+
+        // Case 1: Direct Enum type key
+        if let Some((def_id, _inner)) = visitor::enum_components(self.types, type_id) {
+            // Convert DefId to SymbolId
+            let Some(sym_id) = self.def_to_symbol_id(def_id) else {
+                return false;
+            };
+
+            // Get the symbol
+            let Some(symbol) = self.binder.get_symbol(sym_id) else {
+                return false;
+            };
+
+            // It's an enum type if it has ENUM flag but not ENUM_MEMBER flag
+            return (symbol.flags & symbol_flags::ENUM) != 0
+                && (symbol.flags & symbol_flags::ENUM_MEMBER) == 0;
+        }
+
+        // Case 2: Union of Enum members (e.g., the full enum type E = E.A | E.B | ...)
+        if let Some(members) = visitor::union_list_id(self.types, type_id) {
+            let member_list = self.types.type_list(members);
+
+            // Check if all members are enum members from the same parent enum
+            let mut common_parent_sym_id: Option<crate::binder::SymbolId> = None;
+            let mut has_enum_members = false;
+
+            for &member in member_list.iter() {
+                if let Some((def_id, _inner)) = visitor::enum_components(self.types, member) {
+                    has_enum_members = true;
+
+                    // Check if this is an enum member (not the enum type itself)
+                    let Some(sym_id) = self.def_to_symbol_id(def_id) else {
+                        return false;
+                    };
+
+                    let Some(symbol) = self.binder.get_symbol(sym_id) else {
+                        return false;
+                    };
+
+                    // If this is an enum member, track the PARENT enum symbol
+                    if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+                        // Get the parent symbol (the enum itself)
+                        let parent_sym_id = symbol.parent;
+
+                        if let Some(existing_parent) = common_parent_sym_id {
+                            if existing_parent != parent_sym_id {
+                                // Mixed enums in the union (different parents)
+                                return false;
+                            }
+                        } else {
+                            // Track the common parent symbol
+                            common_parent_sym_id = Some(parent_sym_id);
+                        }
+                    } else {
+                        // Found an enum type (not a member) in the union
+                        // This is unusual but treat it as an enum type
+                        return true;
+                    }
+                }
+            }
+
+            // If the union consists entirely of enum members from the same enum,
+            // treat it as the enum type
+            has_enum_members && common_parent_sym_id.is_some()
+        } else {
+            false
+        }
+    }
 }

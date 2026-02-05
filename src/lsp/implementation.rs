@@ -35,13 +35,22 @@ pub struct GoToImplementationProvider<'a> {
 
 /// The kind of target the user is searching implementations for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TargetKind {
+pub enum TargetKind {
     /// An interface: look for classes that `implements` it or interfaces that `extends` it.
     Interface,
     /// An abstract class: look for classes that `extends` it.
     AbstractClass,
     /// A concrete class: look for classes that `extends` it.
     ConcreteClass,
+}
+
+/// Result of finding an implementation: the class/interface name and its location.
+#[derive(Debug, Clone)]
+pub struct ImplementationResult {
+    /// The name of the implementing class/interface
+    pub name: String,
+    /// The location of the implementation declaration
+    pub location: Location,
 }
 
 impl<'a> GoToImplementationProvider<'a> {
@@ -79,7 +88,7 @@ impl<'a> GoToImplementationProvider<'a> {
     /// 1. Direct lookup in `node_symbols` (works for declaration nodes)
     /// 2. Parent lookup in `node_symbols` (works for name identifiers of declarations)
     /// 3. Name-based lookup in `file_locals` using escaped_text
-    fn resolve_symbol_at_node(&self, node_idx: NodeIndex) -> Option<crate::binder::SymbolId> {
+    pub fn resolve_symbol_at_node(&self, node_idx: NodeIndex) -> Option<crate::binder::SymbolId> {
         // Strategy 1: Direct lookup - the node itself is a declaration node
         if let Some(&sym_id) = self.binder.node_symbols.get(&node_idx.0) {
             return Some(sym_id);
@@ -147,7 +156,7 @@ impl<'a> GoToImplementationProvider<'a> {
     }
 
     /// Determine if a symbol represents an interface, abstract class, or concrete class.
-    fn determine_target_kind(&self, symbol: &crate::binder::Symbol) -> Option<TargetKind> {
+    pub fn determine_target_kind(&self, symbol: &crate::binder::Symbol) -> Option<TargetKind> {
         use crate::binder::symbol_flags;
 
         if symbol.flags & symbol_flags::INTERFACE != 0 {
@@ -366,6 +375,95 @@ impl<'a> GoToImplementationProvider<'a> {
             file_path: self.file_name.clone(),
             range: Range::new(start_pos, end_pos),
         })
+    }
+
+    /// Find implementations of a target by name (for project-wide search).
+    ///
+    /// This method is used by Project for cross-file implementation search.
+    /// It searches the current file for classes/interfaces that implement or extend
+    /// the given target name, returning both the locations and the implementing names
+    /// (for transitive search).
+    ///
+    /// # Arguments
+    /// * `target_name` - The name of the interface/class to find implementations for
+    /// * `target_kind` - The kind of target (Interface, AbstractClass, or ConcreteClass)
+    ///
+    /// # Returns
+    /// A vector of ImplementationResult containing the implementing class/interface names
+    /// and their locations
+    pub fn find_implementations_for_name(
+        &self,
+        target_name: &str,
+        target_kind: TargetKind,
+    ) -> Vec<ImplementationResult> {
+        let mut results = Vec::new();
+
+        // Iterate over all nodes in the arena looking for class and interface declarations
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            let node_idx = NodeIndex(i as u32);
+
+            match node.kind {
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    if let Some(class) = self.arena.get_class(node) {
+                        if self.class_implements_or_extends(class, target_name, target_kind) {
+                            if let Some(class_name) = self.get_identifier_escaped_text(class.name) {
+                                if let Some(loc) =
+                                    self.location_for_declaration(node_idx, class.name)
+                                {
+                                    results.push(ImplementationResult {
+                                        name: class_name.to_string(),
+                                        location: loc,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    // An interface can extend another interface
+                    if target_kind == TargetKind::Interface {
+                        if let Some(iface) = self.arena.get_interface(node) {
+                            if self.interface_extends(iface, target_name) {
+                                if let Some(iface_name) =
+                                    self.get_identifier_escaped_text(iface.name)
+                                {
+                                    if let Some(loc) =
+                                        self.location_for_declaration(node_idx, iface.name)
+                                    {
+                                        results.push(ImplementationResult {
+                                            name: iface_name.to_string(),
+                                            location: loc,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        results
+    }
+
+    /// Resolve the target kind for a symbol by name.
+    ///
+    /// This is used by Project to determine what kind of target we're searching for
+    /// when doing project-wide implementation search.
+    ///
+    /// # Arguments
+    /// * `symbol_name` - The name of the symbol to resolve
+    ///
+    /// # Returns
+    /// The TargetKind if the symbol is found and is an interface or class, None otherwise
+    pub fn resolve_target_kind_for_name(&self, symbol_name: &str) -> Option<TargetKind> {
+        // Look up the symbol by name in file_locals
+        let symbol_id = self.binder.file_locals.get(symbol_name)?;
+        let symbol = self.binder.symbols.get(symbol_id)?;
+        self.determine_target_kind(symbol)
     }
 }
 

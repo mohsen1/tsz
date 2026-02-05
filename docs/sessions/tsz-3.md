@@ -255,28 +255,114 @@ The parser creates `PROPERTY_ASSIGNMENT` (kind 303) nodes for **both** regular p
 
 **Value**: Shorthand property rename now works correctly, matching TypeScript's behavior where `{ x }` becomes `{ x: y }` when renaming `x` to `y`.
 
+### Cross-File Go to Implementation (2026-02-05)
+**Status**: ✅ COMPLETE
+
+Implemented project-wide Go to Implementation with transitive search support.
+
+**Implementation** (Task #29 - SymbolIndex Heritage Tracking):
+- Added `heritage_clauses: HashMap<String, HashSet<String>>` to track files that extend/implement symbols
+- Added `get_files_with_heritage()` for O(1) candidate lookup
+- Enhanced `index_file()` to scan AST for HeritageClause nodes (extends/implements)
+- Added `extract_heritage_type_name()` helper to handle:
+  - Simple identifiers: `extends A` → "A"
+  - Property access: `implements ns.I` → "I"
+- Updated `remove_file()` to clean up heritage clause entries
+
+**Implementation** (Task #30 - Project::get_implementations):
+- Added `Project::get_implementations()` method in `src/lsp/project_operations.rs`
+- Refactored `GoToImplementationProvider` with new public APIs:
+  - `find_implementations_for_name()`: Search by name, returns (name, location) pairs
+  - `resolve_target_kind_for_name()`: Get TargetKind for a symbol name
+  - Made `resolve_symbol_at_node()` and `determine_target_kind()` public
+- Added `ImplementationResult` struct and made `TargetKind` enum public
+- Implemented **transitive search** using iterative worklist (queue):
+  - If `class B extends A` and `class C extends B`, searching for implementations of `A` returns both `B` and `C`
+  - Cycle detection via processed (file, name) set
+  - Uses SymbolIndex for O(1) candidate filtering
+- Added `Implementations` to `ProjectRequestKind` for performance tracking
+
+**Value**: Users can now find all implementations of interfaces and classes across the entire project, with full transitive support matching TypeScript's behavior.
+
 ## Session Status
 
-**Status**: 🔄 ACTIVE - Working on Cross-File Member Support
+**Status**: 🔄 ACTIVE - Heritage-Aware References & Rename
 
 **Completed LSP Features** (all working with SymbolIndex optimization):
 - ✅ File Rename (with directory support, dynamic imports, and require calls)
 - ✅ Auto-Import Completions (with prefix matching, additionalTextEdits, O(1) lookup, and transitive re-export support)
 - ✅ Cross-File Go to Definition (for imports: named, default, and aliased)
+- ✅ **Cross-File Go to Implementation (with transitive search)**
 - ✅ JSX Linked Editing
-- ✅ SymbolIndex integration (O(1) auto-import candidate lookup, O(log N) prefix search)
+- ✅ SymbolIndex integration (O(1) auto-import candidate lookup, O(log N) prefix search, heritage clause tracking)
 - ✅ Workspace Symbols (project-wide symbol search via Cmd+T / Ctrl+T)
 - ✅ Transitive Re-exports (auto-import via `export * from './mod'`)
 - ✅ Prefix Matching (partial identifier completion, e.g., "use" → "useEffect")
+- ✅ Shorthand Property Rename (fixed detection for PROPERTY_ASSIGNMENT with name==initializer)
 
-**Current Work: Cross-File Member Support** (2026-02-05)
+**Current Work: Heritage-Aware References & Rename** (2026-02-05)
 
-**Per Gemini consultation**, the highest priority next step is **Cross-File Member Support** for References, Rename, and Implementation. While top-level symbols work well, the LSP currently struggles with class/interface members across file boundaries.
+**Per Gemini consultation**, the highest priority next step is **Heritage-Aware References & Rename**. Now that we have `heritage_clauses` tracking in SymbolIndex, we should ensure that finding references to (or renaming) a method in a base class/interface correctly identifies all implementations and overrides in derived classes across the project.
 
 **Completed Tasks**:
-1. ✅ **Enhance SymbolIndex for identifier mentions** - Implemented "Pool Scan" optimization to track all identifier strings in the AST for O(1) candidate filtering
+1. ✅ **Enhance SymbolIndex for identifier mentions** - Pool Scan optimization (Task #25)
+2. ✅ **Enhance SymbolIndex for heritage tracking** - Heritage clause tracking (Task #29)
+3. ✅ **Cross-File Go to Implementation** - Transitive search (Task #27, #30)
+4. ✅ **Shorthand Property Rename** - Fixed parser node detection (Task #28)
+
+**Remaining Tasks**:
+1. **Upward/Downward Reference Discovery** - Modify `Project::find_references` to use `heritage_clauses` for member references
+2. **Heritage-Aware Rename** - Update `Project::get_rename_edits` to handle inheritance hierarchies
+3. **Unify find_references with Pool Scan** - Use `symbol_index.get_files_with_symbol()` for O(1) filtering
+
+**Implementation Notes for Heritage-Aware References**:
+
+To implement Task #1 (Upward/Downward Reference Discovery), the following approach is needed in `src/lsp/project_operations.rs`:
+
+```rust
+// After resolving the target symbol at position (around line 657):
+let symbol = file.binder().symbols.get(symbol_id)?;
+
+// Check if this is a member symbol (property, method, constructor, accessor)
+use crate::binder::symbol_flags;
+let is_member = symbol.has_any_flags(
+    symbol_flags::PROPERTY |
+    symbol_flags::METHOD |
+    symbol_flags::CONSTRUCTOR |
+    symbol_flags::GET_ACCESSOR |
+    symbol_flags::SET_ACCESSOR
+);
+
+if is_member && symbol.parent != SymbolId::NONE {
+    // This is a member - get parent class/interface name
+    let parent_symbol = file.binder().symbols.get(symbol.parent)?;
+    let parent_name = parent_symbol.escaped_name.clone();
+
+    // Find all files that extend/implement the parent
+    let derived_files = self.symbol_index.get_files_with_heritage(&parent_name);
+
+    // For each derived file, search for references to the member
+    for derived_file_path in derived_files {
+        let derived_file = self.files.get(&derived_file_path);
+        if let Some(file) = derived_file {
+            // Find the corresponding class/interface in this file
+            // Then search for references to the member within that class
+            // This requires matching the member by name and type
+        }
+    }
+}
+```
+
+**Key Challenges**:
+- **Member Matching**: When finding `Base.method` references, derived classes might override it. Need to match by name, not by symbol ID.
+- **This/Super References**: References to `this.method()` or `super.method()` need special handling.
+- **Private Identifiers**: Private members (`#field`) are strictly class-local and should NOT be found across files.
+- **Structural Typing**: TypeScript's structural typing means objects can implement interfaces without explicit `implements` clauses. This requires full type checking (out of scope for LSP-only session).
 
 **Task Status Updates**:
+- ✅ **Task #27 (Cross-File Go to Implementation)** - COMPLETE (consolidated as Tasks #29 and #30)
+- ❌ **Task #26 (Type-aware reference filtering)** - ABANDONED per Gemini guidance
+- ❌ **Task #31 (Update GoToImplementationProvider)** - COMPLETE (part of Task #30)
 - ❌ **Task #26 (Type-aware reference filtering)** - ABANDONED per Gemini guidance as too complex for LSP session (requires Checker integration). Will revisit later with Symbol-ID Matching approach (Phase 1).
 - ✅ **Task #28 (Shorthand property rename)** - FIXED. The parser creates `PROPERTY_ASSIGNMENT` (303) nodes for both regular and shorthand properties, not `SHORTHAND_PROPERTY_ASSIGNMENT` (304). Fixed by detecting shorthand via `name == initializer` check.
 
