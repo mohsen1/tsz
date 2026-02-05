@@ -598,24 +598,12 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
     fn get_iterator_return_type(&self, type_id: TypeId) -> TypeId {
         // Get the return type of an iterator (the TReturn in Generator<Y, TReturn, N>)
         // This is used for yield* to get the result of the delegated iterator
-        // Check if this is a generator-like type and extract TReturn
-        if let Some(type_key) = self.ctx.types.lookup(type_id) {
-            match type_key {
-                crate::solver::TypeKey::Object(shape_id) => {
-                    let shape = self.ctx.types.object_shape(shape_id);
-                    // Look for a 'return' method and extract its return type
-                    for prop in &shape.properties {
-                        let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                        if prop_name.as_ref() == "return" && prop.is_method {
-                            // Extract the return type from the method's return
-                            return self.extract_iterator_result_value(prop.type_id);
-                        }
-                    }
-                }
-                _ => {}
-            }
+        // Use Solver helper to extract iterator information
+        use crate::solver::operations::get_iterator_info;
+        match get_iterator_info(self.ctx.types, self.ctx, type_id, false) {
+            Some(info) => info.return_type,
+            None => TypeId::ANY,
         }
-        TypeId::ANY
     }
 
     /// Extract the value type from an IteratorResult<T, TReturn>-like type
@@ -992,6 +980,10 @@ pub fn get_async_iterable_element_type(
     types: &crate::solver::TypeInterner,
     type_id: TypeId,
 ) -> TypeId {
+    // Use Solver helper to extract iterator information
+    // Note: We can't use get_iterator_info directly because it requires a TypeResolver
+    // and we only have TypeInterner here. Fall back to TypeKey inspection for now.
+    // TODO: Refactor to pass TypeResolver context so we can use get_iterator_info
     if let Some(type_key) = types.lookup(type_id) {
         match type_key {
             crate::solver::TypeKey::Object(shape_id) => {
