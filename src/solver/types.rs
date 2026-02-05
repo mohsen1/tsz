@@ -519,6 +519,32 @@ pub enum TypeKey {
     /// Type parameter (generic)
     TypeParameter(TypeParamInfo),
 
+    /// Bound type parameter using De Bruijn index for alpha-equivalence.
+    ///
+    /// Represents a type parameter relative to the current binding scope.
+    /// Used by the Canonicalizer to achieve alpha-equivalence, where
+    /// `type F<T> = T` and `type G<U> = U` are considered identical.
+    ///
+    /// ## Alpha-Equivalence (Task #32)
+    ///
+    /// When canonicalizing generic types, we replace named type parameters
+    /// with positional indices to achieve structural identity.
+    ///
+    /// ### Example
+    ///
+    /// ```typescript
+    /// type F<T> = { value: T };  // canonicalizes to Object({ value: BoundParameter(0) })
+    /// type G<U> = { value: U };  // also canonicalizes to Object({ value: BoundParameter(0) })
+    /// // Both get the same TypeId because they're structurally identical
+    /// ```
+    ///
+    /// ## De Bruijn Index Semantics
+    ///
+    /// - `BoundParameter(0)` = the most recently bound type parameter
+    /// - `BoundParameter(1)` = the second-most recently bound type parameter
+    /// - `BoundParameter(n)` = the (n+1)th-most recently bound type parameter
+    BoundParameter(u32),
+
     /// Reference to a named type (interface, class, type alias)
     /// Uses SymbolId to break infinite recursion
     /// DEPRECATED: Use `Lazy(DefId)` for new code. This is kept for backward compatibility

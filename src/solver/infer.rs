@@ -673,6 +673,7 @@ impl<'a> InferenceContext<'a> {
             | TypeKey::Literal(_)
             | TypeKey::Lazy(_)
             | TypeKey::Recursive(_)
+            | TypeKey::BoundParameter(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType
@@ -870,6 +871,7 @@ impl<'a> InferenceContext<'a> {
             | TypeKey::Literal(_)
             | TypeKey::Lazy(_)
             | TypeKey::Recursive(_)
+            | TypeKey::BoundParameter(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType

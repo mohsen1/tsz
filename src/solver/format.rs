@@ -276,6 +276,9 @@ impl<'a> TypeFormatter<'a> {
             TypeKey::Recursive(idx) => {
                 format!("Recursive({})", idx)
             }
+            TypeKey::BoundParameter(idx) => {
+                format!("BoundParameter({})", idx)
+            }
             TypeKey::Application(app) => {
                 let app = self.interner.type_application(*app);
                 let base_key = self.interner.lookup(app.base);
