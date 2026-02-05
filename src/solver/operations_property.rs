@@ -9,6 +9,7 @@ use crate::interner::Atom;
 use crate::solver::db::QueryDatabase;
 use crate::solver::evaluate::evaluate_type;
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
+use crate::solver::subtype::TypeResolver;
 use crate::solver::types::*;
 use crate::solver::visitor::TypeVisitor;
 use crate::solver::{
@@ -81,6 +82,19 @@ impl<'a> Drop for PropertyAccessGuard<'a> {
 
 impl<'a> PropertyAccessEvaluator<'a> {
     pub fn new(db: &'a dyn QueryDatabase) -> Self {
+        PropertyAccessEvaluator {
+            db,
+            no_unchecked_indexed_access: false,
+            visiting: RefCell::new(FxHashSet::default()),
+            depth: RefCell::new(0),
+            current_prop_name: RefCell::new(None),
+            current_prop_atom: RefCell::new(None),
+        }
+    }
+
+    pub fn with_resolver(db: &'a dyn QueryDatabase, _resolver: &dyn TypeResolver) -> Self {
+        // Note: resolver parameter is currently unused but kept for API compatibility
+        // TODO: Integrate resolver into PropertyAccessEvaluator if needed
         PropertyAccessEvaluator {
             db,
             no_unchecked_indexed_access: false,
