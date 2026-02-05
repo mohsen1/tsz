@@ -1,8 +1,8 @@
 # Session TSZ-10: Advanced Control Flow Analysis (CFA) & Narrowing
 
 **Started**: 2026-02-05
-**Status**: 🔄 ACTIVE (Task 5 IN PROGRESS)
-**Focus**: Implement robust control flow analysis and type narrowing
+**Status**: 🔄 ACTIVE (Task 2 IN PROGRESS)
+**Focus**: Implement equality and instanceof narrowing
 
 ## Session Scope
 
