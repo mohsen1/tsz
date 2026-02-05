@@ -494,25 +494,15 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn evaluate_application_type_inner(&mut self, type_id: TypeId) -> TypeId {
-        use crate::binder::SymbolId;
-        use crate::solver::type_queries::{get_application_info, get_symbol_ref};
+        use crate::solver::type_queries::get_application_info;
         use crate::solver::{TypeSubstitution, instantiate_type};
 
         let Some((base, args)) = get_application_info(self.ctx.types, type_id) else {
             return type_id;
         };
 
-        // Check if the base is a Ref or Lazy
-        let sym_id = if let Some(sym_ref) = get_symbol_ref(self.ctx.types, base) {
-            sym_ref.0
-        } else if let Some(def_id) =
-            crate::solver::type_queries_extended::get_def_id(self.ctx.types, base)
-        {
-            let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
-                return type_id;
-            };
-            sym_id.0
-        } else {
+        // Check if the base is a Lazy or Enum type
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
             return type_id;
         };
 
@@ -520,8 +510,7 @@ impl<'a> CheckerState<'a> {
         // to ensure the TypeIds in the body match the TypeIds in the substitution.
         // Previously we called type_reference_symbol_type and get_type_params_for_symbol
         // separately, which created DIFFERENT TypeIds for the same type parameters.
-        let (body_type, type_params) =
-            self.type_reference_symbol_type_with_params(SymbolId(sym_id));
+        let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
         if body_type == TypeId::ANY || body_type == TypeId::ERROR {
             return type_id;
         }
@@ -1031,9 +1020,8 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         visited: &mut std::collections::HashSet<TypeId>,
     ) {
-        use crate::binder::SymbolId;
         use crate::solver::type_queries::{
-            SymbolResolutionTraversalKind, classify_for_symbol_resolution_traversal, get_symbol_ref,
+            SymbolResolutionTraversalKind, classify_for_symbol_resolution_traversal,
         };
 
         if !visited.insert(type_id) {
@@ -1042,17 +1030,8 @@ impl<'a> CheckerState<'a> {
 
         match classify_for_symbol_resolution_traversal(self.ctx.types, type_id) {
             SymbolResolutionTraversalKind::Application { base, args, .. } => {
-                // If the base is a Ref or Lazy, resolve the symbol
-                let base_sym_id = if let Some(sym_ref) = get_symbol_ref(self.ctx.types, base) {
-                    Some(SymbolId(sym_ref.0))
-                } else if let Some(def_id) =
-                    crate::solver::type_queries_extended::get_def_id(self.ctx.types, base)
-                {
-                    self.ctx.def_to_symbol_id(def_id)
-                } else {
-                    None
-                };
-                if let Some(sym_id) = base_sym_id {
+                // If the base is a Lazy or Enum type, resolve the symbol
+                if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) {
                     let resolved = self.type_reference_symbol_type(sym_id);
                     self.insert_type_env_symbol(sym_id, resolved);
                 }

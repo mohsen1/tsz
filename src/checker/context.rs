@@ -1317,12 +1317,6 @@ impl<'a> CheckerContext<'a> {
             return self.def_to_symbol_id(def_id);
         }
 
-        // 3. Fallback for legacy Ref types (if any remain during migration)
-        #[allow(deprecated)]
-        if let Some(sym_ref) = type_queries::get_symbol_ref(self.types, type_id) {
-            return Some(SymbolId(sym_ref.0));
-        }
-
         None
     }
 
