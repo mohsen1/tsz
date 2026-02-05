@@ -1,32 +1,76 @@
 # Session TSZ-13: Type Inference for Function Calls
 
 **Started**: 2026-02-05
-**Status**: 🔄 Phase 1 COMPLETE - Phase 2 Pending
-**Focus**: Implement type argument inference from function call value arguments
+**Status**: ✅ COMPLETE (Discovery: Already Implemented)
+**Focus**: Verify type argument inference from function call value arguments
 
-## Progress Summary
+## Summary
 
-### ✅ Phase 1: Solver Infrastructure (COMPLETE 2026-02-05)
+**MAJOR DISCOVERY** (2026-02-05): Type inference was **ALREADY FULLY IMPLEMENTED** in tsz!
+
+### What Was Found
+
+After implementing Phase 1 (Solver infrastructure) and beginning Phase 2 (Checker integration), investigation revealed that **type inference is already working correctly** in tsz.
+
+**Existing Implementation Locations**:
+
+1. **Solver Layer**: `src/solver/operations.rs`
+   - `constrain_types_impl` (lines 1756-2200+): Comprehensive structural type matching
+   - Handles: objects, functions (with contravariance!), arrays, tuples, unions, intersections
+   - Index signatures, conditional types, mapped types, template literals
+   - Property matching with optional/readonly/mutable handling
+
+2. **Checker Layer**: `src/checker/type_computation_complex.rs`
+   - `get_type_of_call_expression_inner` (lines 1209+): Full call expression handling
+   - Two-pass inference (lines 1376-1427): Non-contextual then contextual
+   - `compute_contextual_types` integration (line 1413)
+
+3. **Inference Engine**: `src/solver/infer.rs`
+   - `InferenceContext` with Union-Find unification
+   - `fix_current_variables`: Resolves types from candidates
+   - `get_current_substitution`: Creates TypeSubstitution mapping
+
+### What I Built (Phase 1 - Unnecessary Duplication)
 
 **File**: `src/solver/infer.rs`
 
-**Implemented**:
-1. Core structural type inference algorithm (`infer_from_types`)
-2. Variance handling (contravariant for function parameters, covariant for return types)
-3. Support for: objects, arrays, tuples, functions, unions, intersections, applications
-4. Rest parameter handling in functions
-5. Index signature support in objects
+Added `infer_from_types` method with:
+- Structural type inference algorithm
+- Variance handling (contravariant for function parameters, covariant for return types)
+- Support for: objects, arrays, tuples, functions, unions, intersections, applications
+- Rest parameter handling
+- Index signature support
 
-**Critical Fixes** (based on Gemini Pro review):
-- ✅ Added upper bound handling for contravariance (when source is TypeParameter)
-- ✅ Fixed rest parameter inference (was stopping at shortest list)
-- ✅ Added index signature inference
+**Status**: Passed Gemini Pro review, but **unnecessary** as this logic already exists in `operations.rs`.
 
 **Commits**:
 1. `feat(solver): implement infer_from_types for structural type inference`
 2. `fix(solver): handle contravariance and rest parameters in type inference`
+3. `docs(tsz-13): update session status - Phase 1 complete`
 
-**Validation**: ✅ Reviewed by Gemini Pro - algorithm correct for TypeScript semantics
+### Verification Tests
+
+**Test 1**: Basic inference ✅
+```typescript
+function identity<T>(x: T): T { return x; }
+const result = identity("hello"); // T = string inferred
+```
+Result: Both tsz and tsc accept without errors
+
+**Test 2**: Multiple type parameters ✅
+```typescript
+function map<T, U>(arr: T[], f: (x: T) => U): U[] { return arr.map(f); }
+const mapped = map([1, 2, 3], (x) => x.toString()); // T = number, U = string
+```
+Result: Both tsz and tsc accept without errors
+
+**Test 3**: Type verification ✅
+```typescript
+const result = identity("hello");
+const wrong: number = result; // Should error
+```
+Result: Both tsz and tsc correctly report `Type 'string' is not assignable to type 'number'`
+
 
 ### 🔄 Phase 2: Checker Integration (PENDING)
 
