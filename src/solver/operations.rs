@@ -1594,6 +1594,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::Lazy(_)
+            | TypeKey::Recursive(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType
@@ -1714,6 +1715,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::Lazy(_)
+            | TypeKey::Recursive(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType

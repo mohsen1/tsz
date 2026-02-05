@@ -135,6 +135,14 @@ pub trait TypeVisitor: Sized {
         Self::default_output()
     }
 
+    /// Visit a recursive type reference using De Bruijn index.
+    ///
+    /// This is used for canonicalizing recursive types to achieve O(1) equality.
+    /// The index represents how many levels up the nesting chain to refer to.
+    fn visit_recursive(&mut self, _de_bruijn_index: u32) -> Self::Output {
+        Self::default_output()
+    }
+
     /// Visit a generic type application Base<Args>.
     fn visit_application(&mut self, _app_id: u32) -> Self::Output {
         Self::default_output()
@@ -241,6 +249,7 @@ pub trait TypeVisitor: Sized {
             TypeKey::Callable(id) => self.visit_callable(id.0),
             TypeKey::TypeParameter(info) => self.visit_type_parameter(info),
             TypeKey::Lazy(def_id) => self.visit_lazy(def_id.0),
+            TypeKey::Recursive(index) => self.visit_recursive(*index),
             TypeKey::Enum(def_id, member_type) => self.visit_enum(def_id.0, *member_type),
             TypeKey::Application(id) => self.visit_application(id.0),
             TypeKey::Conditional(id) => self.visit_conditional(id.0),
@@ -501,6 +510,7 @@ where
         TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Lazy(_)
+        | TypeKey::Recursive(_)
         | TypeKey::TypeQuery(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
@@ -582,7 +592,7 @@ impl TypeKindVisitor {
             TypeKey::Application(_) => TypeKind::Generic,
             TypeKey::TypeParameter(_) | TypeKey::Infer(_) => TypeKind::TypeParameter,
             TypeKey::Conditional(_) => TypeKind::Conditional,
-            TypeKey::Lazy(_) => TypeKind::Reference,
+            TypeKey::Lazy(_) | TypeKey::Recursive(_) => TypeKind::Reference,
             TypeKey::Enum(_, _) => TypeKind::Primitive, // enums behave like primitives
             TypeKey::Mapped(_) => TypeKind::Mapped,
             TypeKey::IndexAccess(_, _) => TypeKind::IndexAccess,
@@ -1238,7 +1248,10 @@ pub fn is_template_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bo
 
 /// Check if a type is a type reference (Lazy/DefId).
 pub fn is_type_reference(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(types.lookup(type_id), Some(TypeKey::Lazy(_)))
+    matches!(
+        types.lookup(type_id),
+        Some(TypeKey::Lazy(_) | TypeKey::Recursive(_))
+    )
 }
 
 /// Check if a type is a generic type application.
@@ -1512,6 +1525,7 @@ impl<'a> RecursiveTypeCollector<'a> {
                 }
             }
             TypeKey::Lazy(_)
+            | TypeKey::Recursive(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => {
@@ -1710,6 +1724,7 @@ where
                     || info.default.map(|d| self.check(d)).unwrap_or(false)
             }
             TypeKey::Lazy(_)
+            | TypeKey::Recursive(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => false,

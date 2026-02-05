@@ -542,6 +542,36 @@ pub enum TypeKey {
     /// Eventually all `Ref(SymbolRef)` usages will be replaced with `Lazy(DefId)`.
     Lazy(DefId),
 
+    /// Recursive type reference using De Bruijn index.
+    ///
+    /// Represents a back-reference to a type N levels up the nesting path.
+    /// This is used for canonicalizing recursive types to achieve O(1) equality.
+    ///
+    /// ## Graph Isomorphism (Task #32)
+    ///
+    /// When canonicalizing recursive type aliases, we replace cycles with
+    /// relative De Bruijn indices instead of absolute Lazy references.
+    ///
+    /// ### Example
+    ///
+    /// ```typescript
+    /// type A = { x: A };  // canonicalizes to Object({ x: Recursive(0) })
+    /// type B = { x: B };  // also canonicalizes to Object({ x: Recursive(0) })
+    /// // Both get the same TypeId because they're structurally identical
+    /// ```
+    ///
+    /// ## De Bruijn Index Semantics
+    ///
+    /// - `Recursive(0)` = the current type itself (immediate recursion)
+    /// - `Recursive(1)` = one level up (parent in the nesting chain)
+    /// - `Recursive(n)` = n levels up
+    ///
+    /// ## Nominal vs Structural
+    ///
+    /// This is ONLY used for structural types (type aliases). Nominal types
+    /// (classes, interfaces) preserve their Lazy(DefId) for nominal identity.
+    Recursive(u32),
+
     /// Enum type with nominal identity and structural member types.
     ///
     /// Enums are nominal types - two different enums with the same member types
