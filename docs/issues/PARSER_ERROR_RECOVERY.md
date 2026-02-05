@@ -11,12 +11,12 @@ tsz's parser error recovery produces different (usually more) errors than TSC wh
 
 ## Conformance Stats (Updated 2026-02-05)
 
-- Parser tests: 52.6% pass rate (440/836)
+- Parser tests: 52.9% pass rate (443/838)
 - Top error mismatches:
-  - TS2304: missing=36, extra=82 (cannot find name)
-  - TS1005: missing=29, extra=31 (token expected)
-  - TS1109: missing=12, extra=27 (expression expected)
-  - TS1128: missing=2, extra=28 (declaration expected)
+  - TS2304: missing=35, extra=82 (cannot find name) - mostly lib loading bug
+  - TS1005: missing=29, extra=30 (token expected)
+  - TS1109: missing=11, extra=26 (expression expected)
+  - TS1128: missing=2, extra=26 (declaration expected)
   - TS2552: missing=7, extra=19 (name typo suggestion)
   - TS1100: missing=11, extra=0 (invalid use of eval/arguments)
 
@@ -104,6 +104,18 @@ tsz's parser:
 Fixed issue where `class C { public }` caused TS1068 errors because the parser was consuming `public` as a modifier expecting more tokens after it. The fix treats modifier keywords as property names when followed by `}` or EOF.
 
 **File**: `src/parser/state_statements.rs` - `should_stop_class_member_modifier()`
+
+### TS1132 for leading comma in enum members (commit later)
+
+Fixed `enum E { , }` to emit TS1132 "Enum member expected" instead of generic TS1003 "Identifier expected".
+
+**File**: `src/parser/state_declarations.rs` - `parse_enum_members()`
+
+### TS1357 for invalid tokens after enum member name (commit 0299d37)
+
+Fixed `enum E { a: 1 }` to emit TS1357 "An enum member name must be followed by a ',', '=', or '}'" instead of TS1005.
+
+**File**: `src/parser/state_declarations.rs` - `parse_enum_members()`
 
 ## Recommended Approach
 
