@@ -1,6 +1,6 @@
 # Task #32 Graph Isomorphism - Work In Progress
 
-## Status: Pattern Match Fixes Complete ✅ (All compilation errors resolved)
+## Status: DefKind Infrastructure Complete ✅
 
 ## Completed Work
 
@@ -17,7 +17,7 @@ Recursive(u32),
 - Visitor pattern updated (visit_recursive, for_each_child, TypeKind)
 - All pattern matches fixed for Recursive variant
 
-### Phase 2: TypeKey::BoundParameter(u32) variant ✅ (Just completed)
+### Phase 2: TypeKey::BoundParameter(u32) variant ✅ (Previously completed)
 ```rust
 /// Bound type parameter using De Bruijn index for alpha-equivalence.
 ///
@@ -26,54 +26,78 @@ Recursive(u32),
 BoundParameter(u32),
 ```
 
-### 3. Fixed Pattern Matches for BoundParameter ✅
-Fixed 11 compilation errors across 2 files:
+- Added to src/solver/types.rs
+- All pattern matches fixed for BoundParameter variant (11 locations)
 
-**src/solver/type_queries.rs** (9 locations):
-- Line 1067: `classify_constructor_type` - NotConstructor case
-- Line 1358: `classify_for_constraint` - NoConstraint case
-- Line 1455: `classify_full_signature_type` - NoSignatures case
-- Line 1586: `classify_full_iterable_type` - NotIterable case
-- Line 1768: `classify_for_property_lookup` - NoProperties case
-- Line 1867: `classify_for_evaluation` - Resolved case
-- Line 1960: `classify_for_property_access` - Resolved case
-- Line 2069: `classify_for_traversal` - Terminal case
-- Line 2162: `classify_for_interface_merge` - Other case
+### Phase 3: DefKind Infrastructure ✅ (Just completed)
 
-**src/solver/visitor.rs** (2 locations):
-- Line 1417: `visit_key` - Leaf types (nothing to traverse)
-- Line 1699: `check_key` - Leaf types (returns false)
+**Implementation Summary:**
+Added def_kinds storage to TypeEnvironment to enable the Canonicalizer to distinguish between structural and nominal types.
+
+**Changes Made:**
+1. **TypeEnvironment struct** (src/solver/subtype.rs):
+   - Added `def_kinds: HashMap<u32, DefKind>` field
+   - Added `insert_def_kind(def_id, kind)` method
+   - Added `get_def_kind(def_id) -> Option<DefKind>` method
+
+2. **TypeResolver trait** (src/solver/subtype.rs):
+   - Implemented `get_def_kind` for TypeEnvironment
+   - Delegates to the def_kinds map
+
+3. **BinderTypeDatabase** (src/solver/db.rs):
+   - Implemented `get_def_kind` for BinderTypeDatabase
+   - Delegates to `type_env.borrow().get_def_kind(def_id)`
+
+**Commit**: `af9b82f68`
 
 ## Next Steps
 
-### 1. Implement get_def_kind() in TypeResolver
-**File**: `src/solver/db.rs`
-**Action**: Add `get_def_kind(def_id: DefId) -> DefKind` to TypeResolver trait
-**Why**: Distinguish TypeAlias (structural) from Interface/Class (nominal)
+### Step 1: MANDATORY Gemini Consultation (Question 2 - Pro)
 
-### 2. MANDATORY Gemini Consultation (Question 1)
-Before implementing Canonicalizer, ask:
+Before implementing Canonicalizer, ask Gemini Pro for implementation review:
 ```bash
-./scripts/ask-gemini.mjs --include=src/solver "I am ready to implement the Canonicalizer for Task #32.
-Goal: Transform cyclic TypeAlias graphs into trees using TypeKey::Recursive(u32) and TypeKey::BoundParameter(u32).
+./scripts/ask-gemini.mjs --pro --include=src/solver "
+I've completed the get_def_kind() infrastructure for Task #32.
 
-My planned approach:
-1. Create Canonicalizer struct in src/solver/intern.rs with stack: Vec<DefId>
-2. Implement intern_canonical(type_id) with De Bruijn index transformation
-3. Add canonical_cache: DashMap<TypeId, TypeId> to TypeInterner
+What I've done:
+1. Added def_kinds: HashMap<u32, DefKind> to TypeEnvironment
+2. Added insert_def_kind() and get_def_kind() methods
+3. Implemented get_def_kind() in TypeResolver for TypeEnvironment and BinderTypeDatabase
 
-Is this correct? How to handle TypeApplication (generics)?
-Should I canonicalize TypeParameter names for alpha-equivalence?"
+Next: I'm ready to implement the Canonicalizer struct.
+
+Planned approach:
+1. Create Canonicalizer struct in src/solver/intern.rs with:
+   - def_stack: Vec<DefId> for tracking recursion
+   - param_stack: Vec<Vec<Atom>> for tracking nested type parameter scopes
+2. Implement canonicalize() method that:
+   - Only processes DefKind::TypeAlias (structural)
+   - Preserves Lazy(DefId) for Interface/Class/Enum (nominal)
+   - Converts Lazy(DefId) -> Recursive(n) for self-references
+   - Converts TypeParameter -> BoundParameter(n) for alpha-equivalence
+
+Please review:
+1) Is this approach correct?
+2) What edge cases should I handle?
+3) Should I canonicalize during lowering (lower_type_alias_declaration)?
+4) Any pitfalls I'm missing?
+"
 ```
 
-### 3. Implement Canonicalizer
-- Based on Gemini's guidance from Question 1
-- Stack-based cycle detection
-- Transform Lazy -> Recursive for TypeAlias only
-- Transform TypeParameter -> BoundParameter for alpha-equivalence
+### Step 2: Implement Canonicalizer (after Gemini approval)
+Based on Gemini's guidance, implement:
+- `struct Canonicalizer<'a, R: TypeResolver>` in src/solver/intern.rs
+- `canonicalize(&mut self, type_id: TypeId) -> TypeId` method
+- Handle mutual recursion, generic shadowing, mapped types, conditional types
 
-### 4. Gemini Question 2 (Pro)
-- Implementation review before integration
+### Step 3: Integrate into TypeLowering
+- Modify `lower_type_alias_declaration` in src/solver/lower.rs
+- Call Canonicalizer before returning the final TypeId
+
+### Step 4: Add canonical_cache to TypeInterner
+```rust
+canonical_cache: DashMap<TypeId, TypeId, FxBuildHasher>,
+```
 
 ## Context from Gemini
 
@@ -86,7 +110,21 @@ Should I canonicalize TypeParameter names for alpha-equivalence?"
 - Cache canonical forms to avoid O(N) re-traversal
 - Critical: Check stack BEFORE resolve_lazy to prevent infinite unroll
 
+**Edge Cases from Gemini:**
+- Mutual Recursion: `type A = B; type B = A;`
+- Generic Shadowing: `type F<T> = { g: <T>(x: T) => T };`
+- Mapped Types: `{ [K in keyof T]: ... }`
+- Conditional Types: `T extends U ? (infer R) : Y`
+- Constraints: `type F<T extends string>`
+
+**Critical Pitfalls:**
+- Only TypeAlias should be expanded (Interface/Class must remain Lazy)
+- Infinite expansion if not checking def_stack before resolve_lazy
+- De Bruijn index off-by-one errors
+- Nominal vs Structural confusion
+
 ## Recent Commits
 
-- 2026-02-05: Fixed all 11 BoundParameter pattern match errors (tsz-1)
-- Previous: Recursive variant and pattern matches completed (other session)
+- `af9b82f68`: feat(tsz-1): add DefKind storage to TypeEnvironment
+- `a0917e439`: feat(tsz-1): fix BoundParameter pattern matches
+- Previous: Recursive variant and pattern matches completed
