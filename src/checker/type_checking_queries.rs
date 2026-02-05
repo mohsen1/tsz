@@ -964,7 +964,6 @@ impl<'a> CheckerState<'a> {
         is_definitely_nullish: bool,
     ) {
         use crate::checker::types::diagnostics::diagnostic_codes;
-        
 
         // In non-strict mode, if the value is only possibly nullish (not definitely),
         // we don't report any error because null/undefined are assignable to all types.

@@ -1069,6 +1069,8 @@ fn build_program_with_cache(
                     file_locals: Default::default(),
                     declared_modules: Default::default(),
                     node_symbols: Default::default(),
+                    symbol_arenas: Default::default(),
+                    declaration_arenas: Default::default(),
                     scopes: Vec::new(),
                     node_scope_ids: Default::default(),
                     parse_diagnostics: Vec::new(),
