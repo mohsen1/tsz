@@ -1,12 +1,55 @@
 # Session tsz-3: CFA Refinement & Advanced Features
 
 **Started**: 2026-02-05
-**Status**: 🟡 ACTIVE
+**Status**: 🟡 ACTIVE - FIXING PRE-EXISTING REGRESSIONS
 **Previous Session**: tsz-3 Phase 1 (CFA Features - Complete)
 
 ## Goal
 
-Implement advanced CFA features and unblock architectural issues to achieve 100% TypeScript parity.
+Fix core CFA regressions to provide a stable foundation for advanced features.
+
+## Priority Shift (2026-02-05)
+
+**Gemini Recommendation**: Fix pre-existing test failures BEFORE implementing nested discriminants.
+
+**Rationale**:
+- The 4 failing tests indicate regressions in the core CFA foundation
+- Likely caused by recent discriminant narrowing work (commit f2d4ae5d5)
+- Building nested discriminants on a broken narrowing engine = "Zombie Narrowing"
+- Must fix foundation before adding new features
+
+---
+
+## Phase 0: Fix CFA Regressions (🔄 ACTIVE - HIGH PRIORITY)
+
+**Status**: 🟡 IN PROGRESS
+
+**Failing Tests**:
+1. `test_asserts_type_predicate_narrows_true_branch` - Gets `TypeId(130)` instead of `TypeId(9)` (union)
+2. `test_truthiness_false_branch_narrows_to_falsy`
+3. `test_array_destructuring_assignment_clears_narrowing`
+4. `test_array_destructuring_default_initializer_clears_narrowing`
+
+**Investigation Plan** (per Gemini guidance):
+
+### Task 1: Fix Assertion and Truthiness Regressions
+- **File**: `src/solver/narrowing.rs`
+- **Focus**: `narrow_by_truthiness` and assertion-related functions
+- **Hypothesis**: TypeId(130) is likely a `Ref`/`Application`/`Intersection` that isn't being resolved
+- **Action**: Use `TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo test test_asserts_type_predicate_narrows_true_branch`
+- **Fix**: Ensure all types pass through `resolve_type()` or `evaluate()` before narrowing operations
+
+### Task 2: Fix Array Destructuring Narrowing
+- **File**: `src/checker/control_flow.rs`
+- **Focus**: `handle_assignment` and `clear_narrowing_for_reference`
+- **Problem**: Destructuring assignments (`[x] = arr`) should invalidate narrowing for `x`
+- **Action**: Ensure binder/checker identifies mutations in destructuring patterns
+
+### Task 3: Re-verify All Tests Pass
+- **Command**: `cargo nextest run` (or `cargo test`)
+- **Goal**: 100% test pass rate before proceeding
+
+**Estimated Effort**: 4-6 hours (deep solver tracing required)
 
 ## Context from Completed Session
 
@@ -18,11 +61,58 @@ Previous tsz-3 Phase 1 successfully delivered:
 
 ---
 
-## Phase 1: Nested Discriminants (🔄 ACTIVE - INVESTIGATION PAUSED)
+## Phase 1: Fix CFA Regressions (🔄 ACTIVE - BLOCKS ALL OTHER WORK)
 
-**Status**: 🟡 IN PROGRESS - INVESTIGATION PAUSED DUE TO PRE-EXISTING TEST FAILURES
+**Status**: 🟡 IN PROVESTIGATION - USE TRACING TO FIND ROOT CAUSE
 
-**Problem**: Support narrowing for nested discriminant paths like `action.payload.kind`.
+**Test Failures**:
+```bash
+# Run individual test with debug output
+TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo test test_asserts_type_predicate_narrows_true_branch
+
+# Run all failing tests
+cargo test test_asserts_type_predicate_narrows_true_branch \
+  test_truthiness_false_branch_narrows_to_falsy \
+  test_array_destructuring_assignment_clears_narrowing \
+  test_array_destructuring_default_initializer_clears_narrowing
+```
+
+**Investigation Steps**:
+1. ✅ Confirmed tests were failing before nested discriminant work
+2. ✅ Asked Gemini about `is_matching_reference` behavior (it's working correctly)
+3. ⏭️ **NEXT**: Use `tsz-tracing` skill to trace type resolution
+4. ⏭️ Ask Gemini Question 1: "Where is type resolution missing in narrowing.rs?"
+5. ⏭️ Fix the root cause
+6. ⏭️ Verify all tests pass
+
+**Estimated Complexity**: HIGH (4-6 hours, deep solver tracing)
+
+---
+
+## Phase 2: Nested Discriminants (⏸️ PAUSED - BLOCKED BY PHASE 1)
+
+**Status**: ⏸️ PAUSED - BLOCKED BY PHASE 1
+
+**Implementation Status**:
+- ✅ Code written and reviewed by Gemini
+- ✅ Architecture validated
+- ⏸️ Awaiting test suite stability
+
+**What's Ready** (commit 9add349ee - REVERTED):
+- `discriminant_property_info`: Tracks relative paths for intermediate narrowing targets
+- `discriminant_comparison`: Prioritizes relative_info over base narrowing
+- `discriminant_property`: Uses relative paths when available
+
+**Next Steps** (after Phase 1 complete):
+1. Re-apply the nested discriminant changes
+2. Test with `tests/nested_discriminant.test.ts`
+3. Investigate checker flow to ensure narrowing is requested for intermediate properties
+
+**Estimated Complexity**: MEDIUM (2-3 hours once foundation is stable)
+
+---
+
+## Phase 3: Edge Case Fixes (⏸️ PENDING - BLOCKED BY PHASE 1)
 
 **TypeScript Behavior**:
 ```typescript
