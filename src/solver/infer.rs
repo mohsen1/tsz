@@ -1065,6 +1065,12 @@ impl<'a> InferenceContext<'a> {
                 self.infer_applications(source_app, target_app, priority)?;
             }
 
+            // Task #40: Template literal deconstruction for infer patterns
+            // Handles: source extends `prefix${infer T}suffix` ? true : false
+            (Some(source_key), Some(TypeKey::TemplateLiteral(target_id))) => {
+                self.infer_from_template_literal(source, Some(&source_key), target_id, priority)?;
+            }
+
             // If we can't match structurally, that's okay - it might mean the types are incompatible
             // The Checker will handle this with proper error reporting
             _ => {
@@ -1263,6 +1269,183 @@ impl<'a> InferenceContext<'a> {
         }
 
         Ok(())
+    }
+
+    // =========================================================================
+    // Task #40: Template Literal Deconstruction
+    // =========================================================================
+
+    /// Infer from template literal patterns with `infer` placeholders.
+    ///
+    /// This implements the "Reverse String Matcher" for extracting type information
+    /// from string literals that match template patterns like `user_${infer ID}`.
+    ///
+    /// # Example
+    ///
+    /// ```typescript
+    /// type GetID<T> = T extends `user_${infer ID}` ? ID : never;
+    /// // GetID<"user_123"> should infer ID = "123"
+    /// ```
+    ///
+    /// # Algorithm
+    ///
+    /// The matching is **non-greedy** for all segments except the last:
+    /// 1. Scan through template spans sequentially
+    /// 2. For text spans: match literal text at current position
+    /// 3. For infer type spans: capture text until next literal anchor (non-greedy)
+    /// 4. For the last span: capture all remaining text (greedy)
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - The source type being checked (e.g., `"user_123"`)
+    /// * `source_key` - The TypeKey of the source (cached for efficiency)
+    /// * `target_template` - The template literal pattern to match against
+    /// * `priority` - Inference priority for the extracted candidates
+    fn infer_from_template_literal(
+        &mut self,
+        source: TypeId,
+        source_key: Option<&TypeKey>,
+        target_template: TemplateLiteralId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let spans = self.interner.template_list(target_template);
+
+        // Special case: if source is the intrinsic `string` type, all infer vars get string
+        if matches!(source_key, Some(TypeKey::Intrinsic(IntrinsicKind::String))) {
+            for span in spans.iter() {
+                if let TemplateSpan::Type(type_id) = span {
+                    if let Some(TypeKey::Infer(param_info)) = self.interner.lookup(*type_id) {
+                        if let Some(var) = self.find_type_param(param_info.name) {
+                            // Source is `string`, so infer `string` for all variables
+                            self.add_candidate(var, source, priority);
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        // If source is a union, try to match each member against the template
+        if let Some(TypeKey::Union(source_members)) = source_key {
+            let members = self.interner.type_list(*source_members);
+            for &member in members.iter() {
+                let member_key = self.interner.lookup(member);
+                self.infer_from_template_literal(
+                    member,
+                    member_key.as_ref(),
+                    target_template,
+                    priority,
+                )?;
+            }
+            return Ok(());
+        }
+
+        // For literal string types, perform the actual pattern matching
+        if let Some(source_str) = self.extract_string_literal(source) {
+            if let Some(captures) = self.match_template_pattern(&source_str, &spans) {
+                // Convert captured strings to literal types and add as candidates
+                for (infer_var, captured_string) in captures {
+                    let literal_type = self.interner.literal_string(&captured_string);
+                    self.add_candidate(infer_var, literal_type, priority);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract a string literal value from a TypeId.
+    ///
+    /// Returns None if the type is not a literal string.
+    fn extract_string_literal(&self, type_id: TypeId) -> Option<String> {
+        match self.interner.lookup(type_id) {
+            Some(TypeKey::Literal(LiteralValue::String(s))) => {
+                Some(self.interner.resolve_atom(s).to_string())
+            }
+            _ => None,
+        }
+    }
+
+    /// Match a source string against a template pattern, extracting infer variable bindings.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - The source string to match (e.g., `"user_123"`)
+    /// * `spans` - The template spans (e.g., `[Text("user_"), Type(ID), Text("_")]`)
+    ///
+    /// # Returns
+    ///
+    /// * `Some(bindings)` - Mapping from inference variables to captured strings
+    /// * `None` - The source doesn't match the pattern
+    fn match_template_pattern(
+        &self,
+        source: &str,
+        spans: &[TemplateSpan],
+    ) -> Option<Vec<(InferenceVar, String)>> {
+        let mut bindings = Vec::new();
+        let mut pos = 0;
+
+        for (i, span) in spans.iter().enumerate() {
+            let is_last = i == spans.len() - 1;
+
+            match span {
+                TemplateSpan::Text(text_atom) => {
+                    // Match literal text at current position
+                    let text = self.interner.resolve_atom(*text_atom).to_string();
+                    if !source.get(pos..)?.starts_with(&text) {
+                        return None; // Text doesn't match
+                    }
+                    pos += text.len();
+                }
+
+                TemplateSpan::Type(type_id) => {
+                    // Check if this is an infer variable
+                    if let Some(TypeKey::Infer(param_info)) = self.interner.lookup(*type_id) {
+                        if let Some(var) = self.find_type_param(param_info.name) {
+                            if is_last {
+                                // Last span: capture all remaining text (greedy)
+                                let captured = source[pos..].to_string();
+                                bindings.push((var, captured));
+                                pos = source.len();
+                            } else {
+                                // Non-last span: capture until next literal anchor (non-greedy)
+                                // Find the next text span to use as an anchor
+                                if let Some(anchor_text) = self.find_next_text_anchor(spans, i) {
+                                    let anchor =
+                                        self.interner.resolve_atom(anchor_text).to_string();
+                                    // Find the first occurrence of the anchor (non-greedy)
+                                    let capture_end = source[pos..].find(&anchor)? + pos;
+                                    let captured = source[pos..capture_end].to_string();
+                                    bindings.push((var, captured));
+                                    pos = capture_end;
+                                } else {
+                                    // No more text anchors - shouldn't happen in well-formed templates
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Must have consumed the entire source string
+        if pos == source.len() {
+            Some(bindings)
+        } else {
+            None
+        }
+    }
+
+    /// Find the next text span after a given index to use as a matching anchor.
+    fn find_next_text_anchor(&self, spans: &[TemplateSpan], start_idx: usize) -> Option<Atom> {
+        spans.iter().skip(start_idx + 1).find_map(|span| {
+            if let TemplateSpan::Text(text) = span {
+                Some(*text)
+            } else {
+                None
+            }
+        })
     }
 
     // =========================================================================
