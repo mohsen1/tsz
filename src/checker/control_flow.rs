@@ -763,19 +763,39 @@ impl<'a> FlowAnalyzer<'a> {
         _visited: FxHashSet<FlowNodeId>,
     ) -> TypeId {
         let clause_idx = flow.node;
-        let Some(switch_idx) = self.binder.get_switch_for_clause(clause_idx) else {
+
+        // Check if this is an implicit default (node is the case_block itself)
+        // This happens when a switch has no default clause - we use the case_block
+        // as a marker to represent the implicit "no match" path
+        let is_implicit_default = if let Some(node) = self.arena.get(clause_idx) {
+            node.kind == syntax_kind_ext::BLOCK
+        } else {
+            false
+        };
+
+        // For implicit default, the parent is the switch statement (not tracked in switch_clause_to_switch)
+        let switch_idx = if is_implicit_default {
+            // Get parent of case_block, which should be the switch statement
+            self.arena.get_extended(clause_idx).and_then(|ext| {
+                // The parent of the case_block is the switch statement
+                if ext.parent.is_none() {
+                    None
+                } else {
+                    Some(ext.parent)
+                }
+            })
+        } else {
+            // Normal case/default clause - use the binder's mapping
+            self.binder.get_switch_for_clause(clause_idx)
+        };
+
+        let Some(switch_idx) = switch_idx else {
             return current_type;
         };
         let Some(switch_node) = self.arena.get(switch_idx) else {
             return current_type;
         };
         let Some(switch_data) = self.arena.get_switch(switch_node) else {
-            return current_type;
-        };
-        let Some(clause_node) = self.arena.get(clause_idx) else {
-            return current_type;
-        };
-        let Some(clause) = self.arena.get_case_clause(clause_node) else {
             return current_type;
         };
 
@@ -793,6 +813,26 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             NarrowingContext::new(self.interner)
         };
+
+        // For implicit default, apply default clause narrowing (exclude all case types)
+        if is_implicit_default {
+            return self.narrow_by_default_switch_clause(
+                pre_switch_type,
+                switch_data.expression,
+                switch_data.case_block,
+                reference,
+                &narrowing,
+            );
+        }
+
+        // Normal case/default clause handling
+        let Some(clause_node) = self.arena.get(clause_idx) else {
+            return current_type;
+        };
+        let Some(clause) = self.arena.get_case_clause(clause_node) else {
+            return current_type;
+        };
+
         let clause_type = if clause.expression.is_none() {
             self.narrow_by_default_switch_clause(
                 pre_switch_type,
