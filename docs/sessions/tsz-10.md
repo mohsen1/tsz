@@ -1111,3 +1111,41 @@ Per Gemini's review:
 Task 5 is complete! Discriminant narrowing now works correctly for type aliases.
 Should proceed to remaining tasks in TSZ-10 or ask Gemini for next session priorities.
 
+
+## 2026-02-05 Update (Session Redefinition)
+
+**Gemini Recommendation**: Continue with TSZ-10 Tasks 2 & 3
+
+### Rationale:
+1. **Dependencies**: Tasks 2 & 3 involve complex types/type aliases that now work correctly thanks to Task 5's Database-as-Resolver fix
+2. **Conformance Impact**: `instanceof` and user-defined type guards are foundational - will unlock hundreds of conformance tests
+3. **Momentum**: TypeGuard abstraction is already in place, remaining work is "filling in blanks"
+
+### Task 2: Equality & Instanceof Narrowing (NEXT)
+
+**Focus Areas**:
+- `narrow_by_instanceof` in `src/solver/narrowing.rs`
+- Class hierarchy handling
+- Union filtering for instanceof
+- Equality literal narrowing
+
+**Key Question**: How to handle instanceof when target is a type alias or constructor function? Should use the PropertyAccessEvaluator logic from Task 5.
+
+### Task 3: User-Defined Type Guards (arg is T)
+
+**Focus Areas**:
+- Extract TypePredicate from function signatures in `src/solver/lower.rs`
+- Check call expressions for type guards in `src/checker/expr.rs`
+- Handle `TypeGuard::Custom(target_type)` in `narrowing.rs`
+
+### Task 6: Exhaustiveness Checking
+
+Once Tasks 2-4 are complete, Task 6 becomes trivial - check if final branch narrows to NEVER.
+
+### Mandatory Gemini Workflow:
+
+Before starting Task 2:
+1. **Question 1**: Ask for approach validation on instanceof with type aliases
+2. **Implementation**: Write the code
+3. **Question 2**: Ask for review of instanceof subtyping logic
+
