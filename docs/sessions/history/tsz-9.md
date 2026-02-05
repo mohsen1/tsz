@@ -429,3 +429,32 @@ This is a significant refactoring that needs:
 **Recommendation**: Document current progress, commit findings,
 mark session as needing more time for careful implementation.
 
+
+---
+
+## Session Status: MOVED TO BACKLOG (2026-02-05)
+
+**Reason**: Implementation complexity exceeds available session time.
+
+**Recommendation from Gemini**:
+- Mark TSZ-9 as needing more time
+- Move to more tractable, high-value task
+- Document handover notes for future session
+
+**Handover Notes**:
+1. Correct approach: Visitor Pattern (validated twice by Gemini)
+2. Blocked by: API integration issues (~15 compilation errors)
+3. Needs: Deep investigation of TypeDatabase API, CallableShape structure
+4. Complexity: Double-pass logic with mutable state management
+
+**New Session**: TSZ-10 - Discriminant Narrowing bug fixes
+- High-value, tractable
+- Localized to `src/solver/narrowing.rs`
+- Fixes known regressions from commit `f2d4ae5d5`
+
+**Progress Preserved**:
+- All investigation documented
+- Gemini consultations recorded
+- Implementation attempts saved
+- Clear path for future resumption
+
