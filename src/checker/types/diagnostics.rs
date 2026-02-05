@@ -118,6 +118,9 @@ pub mod diagnostic_messages {
         "Operator '{0}' cannot be applied to types '{1}' and '{2}'.";
     pub const OPERATOR_CANNOT_BE_APPLIED_TO_TYPE: &str =
         "The '{0}' operator cannot be applied to type '{1}'.";
+    /// TS2367: This condition will always return false/true since the types have no overlap
+    pub const TYPES_HAVE_NO_OVERLAP: &str =
+        "This condition will always return '{0}' since the types '{1}' and '{2}' have no overlap.";
 
     // Value cannot be used here (18050)
     pub const VALUE_CANNOT_BE_USED_HERE: &str = "The value '{0}' cannot be used here.";
@@ -444,6 +447,7 @@ pub mod diagnostic_codes {
     pub const DUPLICATE_FUNCTION_IMPLEMENTATION: u32 = 2393; // Duplicate function implementation
     pub const OVERLOAD_SIGNATURE_NOT_COMPATIBLE: u32 = 2394; // This overload signature is not compatible with its implementation signature
     pub const NOT_ALL_CODE_PATHS_RETURN_VALUE: u32 = 2366;
+    pub const TYPES_HAVE_NO_OVERLAP: u32 = 2367; // This condition will always return 'false'/'true' since the types 'X' and 'Y' have no overlap.
     pub const THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE: u32 = 2351; // This expression is not constructable. Type 'X' has no construct signatures.
     pub const ARITHMETIC_OPERAND_MUST_BE_NUMBER: u32 = 2356; // An arithmetic operand must be of type 'any', 'number', 'bigint' or an enum type.
     pub const LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: u32 = 2362; // The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
