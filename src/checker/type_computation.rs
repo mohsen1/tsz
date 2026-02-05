@@ -1486,6 +1486,11 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                         },
                     );
+                } else {
+                    // Computed property name that can't be statically resolved (e.g., { [expr]: value })
+                    // Still type-check the computed expression and the value to catch errors like TS2304
+                    self.check_computed_property_name(prop.name);
+                    self.get_type_of_node(prop.initializer);
                 }
             }
             // Shorthand property: { x } - identifier is both name and value
@@ -1607,6 +1612,10 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                         },
                     );
+                } else {
+                    // Computed method name - still type-check the expression and function body
+                    self.check_computed_property_name(method.name);
+                    self.get_type_of_function(elem_idx);
                 }
             }
             // Accessor: { get foo() {} } or { set foo(v) {} }
@@ -1699,6 +1708,12 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                         },
                     );
+                } else {
+                    // Computed accessor name - still type-check the expression and body
+                    self.check_computed_property_name(accessor.name);
+                    if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        self.get_type_of_function(elem_idx);
+                    }
                 }
             }
             // Spread assignment: { ...obj }
@@ -1723,7 +1738,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            // Skip computed properties for now
+            // Other element types (e.g., unknown AST node kinds) are silently skipped
         }
 
         let properties: Vec<PropertyInfo> = properties.into_values().collect();
