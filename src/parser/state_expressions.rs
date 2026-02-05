@@ -1767,10 +1767,34 @@ impl ParserState {
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
         let text = self.scanner.get_token_value_ref().to_string();
+        let token_flags = self.scanner.get_token_flags();
+
+        // Check for legacy octal literal (e.g., 01, 0777) - TS1121
+        // Legacy octals start with 0 followed by only octal digits (0-7), without 0o/0O prefix
+        // Numbers like 009 start with 0 but contain non-octal digits, so they emit TS1489 instead
+        if (token_flags & TokenFlags::Octal as u32) != 0 {
+            // Verify all digits after the leading 0 are octal (0-7)
+            let all_octal = text.len() > 1 && text[1..].bytes().all(|b| b >= b'0' && b <= b'7');
+            if all_octal {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                // Convert legacy octal to modern octal for the suggestion (e.g., "01" -> "0o1")
+                let suggested = format!("0o{}", &text[1..]);
+                let message = format!(
+                    "Octal literals are not allowed. Use the syntax '{}'.",
+                    suggested
+                );
+                self.parse_error_at(
+                    start_pos,
+                    end_pos - start_pos,
+                    &message,
+                    diagnostic_codes::OCTAL_LITERALS_NOT_ALLOWED,
+                );
+            }
+        }
 
         // Check if this numeric literal has an invalid separator (for TS1351 check)
         let has_invalid_separator =
-            (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidSeparator as u32) != 0;
+            (token_flags & TokenFlags::ContainsInvalidSeparator as u32) != 0;
 
         self.report_invalid_numeric_separator();
         let value = if text.as_bytes().contains(&b'_') {

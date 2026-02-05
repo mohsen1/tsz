@@ -369,6 +369,7 @@ pub mod diagnostic_codes {
     pub const CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS: u32 = 1174;
     pub const IMPLEMENTS_CLAUSE_ALREADY_SEEN: u32 = 1175;
     pub const ONLY_SINGLE_VARIABLE_IN_FOR_IN: u32 = 1091; // Only a single variable declaration is allowed in a 'for...in' statement.
+    pub const OCTAL_LITERALS_NOT_ALLOWED: u32 = 1121; // Octal literals are not allowed. Use the syntax '{0}'.
     pub const VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY: u32 = 1123; // Variable declaration list cannot be empty.
     pub const ONLY_SINGLE_VARIABLE_IN_FOR_OF: u32 = 1188; // Only a single variable declaration is allowed in a 'for...of' statement.
     pub const VARIABLE_DECLARATION_EXPECTED: u32 = 1134;
