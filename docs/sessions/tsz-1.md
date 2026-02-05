@@ -97,26 +97,35 @@ const bad: User = { name: "test", age: 25, extra: true }; // TS2353
 
 **Tasks Completed**:
 - Task #11: Method/Constructor Overload Validation ✅
-- Task #12: Reachability Analysis (TS7027) ✅  
+- Task #12: Reachability Analysis (TS7027) ✅
 - Task #13: Type Narrowing Verification ✅
+- Task #14: Excess Property Checking (TS2353) ✅
 
-**Key Findings**:
-1. Type narrowing (truthiness & typeof) was ALREADY IMPLEMENTED and working
-2. Solver layer: `narrow_by_typeof()` and `narrow_by_truthiness()` exist in src/solver/narrowing.rs
-3. FlowAnalyzer: `get_flow_type()` correctly walks FlowNode graph
-4. Integration: `apply_flow_narrowing()` called from multiple places in checker
-5. Both tsz and tsc produce identical results on narrowing test cases
+**Task #14 Details**:
+Implemented excess property checking for fresh object literals:
+- Added `ExcessProperty` variant to `SubtypeFailureReason` in diagnostics.rs
+- Added `find_excess_property` function in compat.rs
+- Updated `explain_failure` to check for excess properties
+- Added case in error_reporter.rs to emit TS2353
+- Handles Lazy type resolution, intersections, and unions
 
-**What I Did**:
-- Attempted to fix SymbolRef → DefId compilation errors
-- Discovered fix was already done by tsz-4 (commit f9058e153)
-- Verified narrowing is working correctly
+**Testing**:
+✅ Basic case: `{ name: "test", age: 25, extra: true }` → TS2353 on 'extra'
+✅ Valid case: `{ name: "test", age: 25 }` → No error
+✅ Index signature: Target with [key: string] disables excess check
 
-**Known Issues**:
-- 3 control flow tests failing (test_truthiness_false_branch_narrows_to_falsy + 2 array destructuring tests)
-- These failures are pre-existing - fix was reverted in commit 4ba9815c1
-- Not related to my changes
+**Known Limitations**:
+- Does not handle mapped types (e.g., `Partial<User>`)
+- Tracked as Task #15 (Medium priority, +0.5-1% conformance)
 
-**Next Steps**:
-- Ask Gemini for next high-priority task
-- Focus on solver/checker work with Two-Question Rule
+**Gemini Consultation**:
+Asked Gemini for approach validation for Task #15:
+- Requires adding `resolve_mapped` to TypeResolver trait
+- Changing `collect_target_properties` to `&mut self`
+- Handling Mapped, Lazy, and Ref types
+- More complex than Task #14
+
+**Next Session**:
+- Task #15: Mapped Types Property Collection (Medium priority)
+- Or ask Gemini for next high-priority task
+- Continue following Two-Question Rule for solver/checker changes
