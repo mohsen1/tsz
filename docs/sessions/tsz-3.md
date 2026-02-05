@@ -10,26 +10,37 @@ Implement advanced Control Flow Analysis features to achieve 100% TypeScript par
 
 ## Progress
 
-### Phase 1: Bidirectional Narrowing (IN PROGRESS)
+### Phase 1: Bidirectional Narrowing (PAUSED - Needs Architecture Decision)
 
-**Status**: 🟡 STARTING NOW
+**Status**: ⏸️ ANALYSIS COMPLETE, AWAITING ARCHITECTURE DECISION
 
 **Problem**: Implement narrowing for `x === y` where both are references.
 
-**TypeScript Behavior**:
-```typescript
-function foo(x: string | number, y: string) {
-    if (x === y) {
-        x.toLowerCase(); // x should be string (narrowed by y's type)
-    }
-}
-```
+**Analysis Complete**:
+- Current code in `narrow_by_binary_expr` (line ~2362) already has symmetric checks
+- **CRITICAL BUG**: Uses `node_types` (declared types) instead of flow types
+- Example: If `y` was narrowed to `string` in outer scope, `x === y` should narrow `x` to `string`
+- Currently uses `y`'s declared type, not its flow-narrowed type
 
-**Implementation Location**:
-- File: `src/checker/control_flow_narrowing.rs`
-- Function: `narrow_by_binary_expr` (line ~2270)
+**Architectural Challenge**:
+- `narrow_by_binary_expr` doesn't have access to flow context (no flow node ID)
+- Can't query flow type of "other" reference without flow context
+- Passing flow context through entire call chain would be significant refactor
 
-**Next Step**: Ask Gemini (Question 1) to validate approach before implementing.
+**Gemini Guidance**:
+- Need helper method like `get_type_of_reference_at_antecedent(other, flow_id)`
+- Query type from antecedent flow node (state before this comparison)
+- Use `results` cache to look up computed types
+
+**Decision Needed**:
+1. Refactor to pass flow context through call chain?
+2. Create new API to query flow types from within `narrow_by_binary_expr`?
+3. Different architectural approach?
+
+**Next Steps**:
+1. Ask Gemini: How to get flow type in `narrow_by_binary_expr` without major refactor?
+2. Implement the recommended approach
+3. Ask Gemini Question 2 for code review
 
 ---
 
