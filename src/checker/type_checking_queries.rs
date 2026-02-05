@@ -963,58 +963,13 @@ impl<'a> CheckerState<'a> {
         cause: TypeId,
         is_definitely_nullish: bool,
     ) {
-        use crate::checker::types::diagnostics::{
-            diagnostic_codes, diagnostic_messages, format_message,
-        };
-        use crate::scanner::SyntaxKind;
+        use crate::checker::types::diagnostics::diagnostic_codes;
+        
 
-        // TS18050: "The value 'X' cannot be used here" - emitted when value IS null/undefined
-        // This is NOT gated by strictNullChecks because the value is definitively unusable.
-        if is_definitely_nullish {
-            // Check for literal null/undefined keywords for the specific value name
-            let value_name = if let Some(node) = self.ctx.arena.get(idx) {
-                if node.kind == SyntaxKind::NullKeyword as u16 {
-                    Some("null")
-                } else if node.kind == SyntaxKind::Identifier as u16 {
-                    if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                        if ident.escaped_text == "undefined" {
-                            Some("undefined")
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            // Determine the value name from cause type if not a literal keyword
-            let value_name = value_name.unwrap_or_else(|| {
-                if cause == TypeId::NULL {
-                    "null"
-                } else if cause == TypeId::UNDEFINED {
-                    "undefined"
-                } else {
-                    // Union of null | undefined
-                    "null"
-                }
-            });
-
-            let message = format_message(
-                diagnostic_messages::VALUE_CANNOT_BE_USED_HERE,
-                &[value_name],
-            );
-            self.error_at_node(idx, &message, diagnostic_codes::VALUE_CANNOT_BE_USED_HERE);
-            return;
-        }
-
-        // TS2531/2532/2533 require strictNullChecks. When strictNullChecks is off,
-        // null/undefined are assignable to all types and property access is allowed.
-        if !self.ctx.compiler_options.strict_null_checks {
+        // In non-strict mode, if the value is only possibly nullish (not definitely),
+        // we don't report any error because null/undefined are assignable to all types.
+        // However, if it IS definitely nullish, we fall through to error reporting below.
+        if !self.ctx.compiler_options.strict_null_checks && !is_definitely_nullish {
             return;
         }
 

@@ -1508,14 +1508,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS18050: "The value 'X' cannot be used here" for null/undefined operands
+        // TS18050: "The value 'X' cannot be used here" for null/undefined operands (STRICT mode only)
         // TSC emits TS18050 for the null/undefined operand AND TS2362/TS2363 for any OTHER invalid operand
         let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
         let mut emitted_nullish_error = false;
 
+        // Only emit TS18050 for null/undefined operands when strictNullChecks is enabled
+        let should_emit_nullish_error = self.ctx.compiler_options.strict_null_checks;
+
         // Emit TS18050 for null/undefined operands
-        if left_is_nullish {
+        if left_is_nullish && should_emit_nullish_error {
             let value_name = if left_type == TypeId::NULL {
                 "null"
             } else {
@@ -1539,7 +1542,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if right_is_nullish {
+        if right_is_nullish && should_emit_nullish_error {
             let value_name = if right_type == TypeId::NULL {
                 "null"
             } else {
@@ -1563,8 +1566,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // If BOTH operands are null/undefined, we're done (no TS2362/TS2363 needed)
-        if left_is_nullish && right_is_nullish {
+        // If BOTH operands are null/undefined AND we emitted TS18050 for them, we're done (no TS2362/TS2363 needed)
+        if left_is_nullish && right_is_nullish && emitted_nullish_error {
             return;
         }
 
@@ -1672,9 +1675,9 @@ impl<'a> CheckerState<'a> {
 
             if is_arithmetic_context {
                 // Treat as arithmetic operation
-                // Skip operands that already got TS18050 (null/undefined)
+                // Skip operands that already got TS18050 (null/undefined with strictNullChecks)
                 let mut emitted_specific_error = emitted_nullish_error;
-                if !left_is_valid_arithmetic && !left_is_nullish {
+                if !left_is_valid_arithmetic && (!left_is_nullish || !emitted_nullish_error) {
                     if let Some(loc) = self.get_source_location(left_idx) {
                         let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                         self.ctx.diagnostics.push(Diagnostic {
@@ -1689,7 +1692,7 @@ impl<'a> CheckerState<'a> {
                         emitted_specific_error = true;
                     }
                 }
-                if !right_is_valid_arithmetic && !right_is_nullish {
+                if !right_is_valid_arithmetic && (!right_is_nullish || !emitted_nullish_error) {
                     if let Some(loc) = self.get_source_location(right_idx) {
                         let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                         self.ctx.diagnostics.push(Diagnostic {
@@ -1747,9 +1750,9 @@ impl<'a> CheckerState<'a> {
 
         if is_arithmetic {
             // For arithmetic operators, emit specific left/right errors (TS2362, TS2363)
-            // Skip operands that already got TS18050 (null/undefined)
+            // Skip operands that already got TS18050 (null/undefined with strictNullChecks)
             let mut emitted_specific_error = emitted_nullish_error;
-            if !left_is_valid_arithmetic && !left_is_nullish {
+            if !left_is_valid_arithmetic && (!left_is_nullish || !emitted_nullish_error) {
                 if let Some(loc) = self.get_source_location(left_idx) {
                     let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                     self.ctx.diagnostics.push(Diagnostic {
@@ -1764,7 +1767,7 @@ impl<'a> CheckerState<'a> {
                     emitted_specific_error = true;
                 }
             }
-            if !right_is_valid_arithmetic && !right_is_nullish {
+            if !right_is_valid_arithmetic && (!right_is_nullish || !emitted_nullish_error) {
                 if let Some(loc) = self.get_source_location(right_idx) {
                     let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                     self.ctx.diagnostics.push(Diagnostic {
