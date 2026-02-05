@@ -49,7 +49,40 @@ Based on the last conformance run, here are the next low-hanging fruits:
 # TS2339 has 621 extra errors - property access issues
 ./scripts/conformance.sh run --error-code 2339 --verbose --max 50 2>&1
 
-# TS2345 has 334 extra errors - argument type issues  
+# TS2345 has 334 extra errors - argument type issues
 ./scripts/conformance.sh run --error-code 2345 --verbose --max 50 2>&1
 ```
+
+## Known Cache Reliability Issues
+
+**Important**: The TSC cache (`tsc-cache-full.json`) was generated using `tsserver`, which does NOT respect @-directives in test file comments (like `// @target: es6`). This causes many false positives in conformance results.
+
+### Examples of Cache Problems
+
+1. **TS18028 (Private identifiers ES2015)**: Cache expects this error for files with `@target: es6`, but TSC doesn't emit it because ES6 >= ES2015.
+
+2. **TS2705 vs TS1064 (Async function return types)**: Cache expects TS2705 for ES6+ targets, but TSC actually emits TS1064 for ES6+ and TS1055 for ES5.
+
+3. **Missing errors that aren't missing**: Some tests show as "missing" errors when tsz actually matches TSC behavior.
+
+### How to Verify
+
+Always verify mismatches by running tsc directly:
+```bash
+# Create test file with @-directives stripped into tsconfig.json
+cat > /tmp/test_dir/test.ts << 'EOF'
+<test code without @-directives>
+EOF
+cat > /tmp/test_dir/tsconfig.json << 'EOF'
+{ "compilerOptions": { "target": "es6" /* from @target directive */ } }
+EOF
+
+# Compare outputs
+npx tsc --project /tmp/test_dir --noEmit 2>&1
+./.target/release/tsz --project /tmp/test_dir 2>&1
+```
+
+### Future Work
+
+The cache should be regenerated using tsc with proper @-directive parsing, not tsserver. This would significantly improve conformance test accuracy.
 
