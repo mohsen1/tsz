@@ -1149,3 +1149,35 @@ Before starting Task 2:
 2. **Implementation**: Write the code
 3. **Question 2**: Ask for review of instanceof subtyping logic
 
+
+## 2026-02-05 Update (Task 2 Complete)
+
+**Status**: ✅ TASK 2 COMPLETE - Equality & Instanceof Narrowing
+
+Successfully implemented `narrow_by_instanceof` following Gemini's algorithm (commit 3a826b941).
+
+### Implementation Details:
+
+1. **any/unknown Handling**: instanceof DOES narrow these types (unlike equality)
+   - `x instanceof Array` where `x: any` → `x: any[]`
+
+2. **Union Filtering** (positive branch):
+   - Keep members assignable to instance type
+   - Keep members where instance is assignable to member (subclass case)
+   - Use Intersection for interface vs class overlap
+
+3. **Interface Overlap Detection**: Added `are_object_like` helper
+   - Checks for Object, Function, Callable, Application types
+   - Enables Intersection fallback when types aren't assignable but overlap
+
+4. **Negative Branch**: Excludes union members that are subtypes of instance type
+
+### Key Changes:
+- `narrow_by_instanceof` function (lines 751-991): Full implementation
+- `are_object_like` helper (lines 1004-1037): Detects object types for intersection
+- Proper handling of constructor type resolution via `classify_for_instance_type`
+
+### Next: Task 3 - User-Defined Type Guards
+
+Will implement extraction and handling of `TypePredicate` from function signatures for custom type guards like `arg is Type`.
+
