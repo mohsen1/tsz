@@ -1707,13 +1707,15 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
 
-        // Emit header comments AFTER "use strict" but BEFORE helpers
+        // Emit header comments AFTER "use strict" but BEFORE helpers.
+        // Use skip_trivia_forward to find the actual token start since
+        // node.pos may include leading trivia (where comments live).
         let first_stmt_pos = source
             .statements
             .nodes
             .first()
             .and_then(|&idx| self.arena.get(idx))
-            .map(|n| n.pos)
+            .map(|n| self.skip_trivia_forward(n.pos, n.end))
             .unwrap_or(node.end);
 
         if let Some(text) = self.source_text {
@@ -1839,17 +1841,22 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Emit statements with their comments using shared comment_emit_idx.
-        // Inner blocks (via emit_block) advance comment_emit_idx for their contents.
-        // For non-block constructs (classes, etc.), we use stmt_node.end as skip boundary
-        // to prevent inner comments from leaking to the top level.
+        // Emit statements with their leading comments.
+        // In this parser, node.pos includes leading trivia (whitespace + comments).
+        // Between-statement comments are part of the next node's leading trivia.
+        // We find each statement's "actual token start" by scanning forward past
+        // trivia, then emit all comments before that position.
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                // Emit any comments that appear before this statement
+                // Find the actual start of the statement's first token by
+                // scanning forward from node.pos past whitespace and comments
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+
+                // Emit comments whose end position is at or before the actual token start
                 if let Some(text) = self.source_text {
                     while self.comment_emit_idx < self.all_comments.len() {
                         let c_end = self.all_comments[self.comment_emit_idx].end;
-                        if c_end <= stmt_node.pos {
+                        if c_end <= actual_start {
                             let c_pos = self.all_comments[self.comment_emit_idx].pos;
                             let c_trailing =
                                 self.all_comments[self.comment_emit_idx].has_trailing_new_line;
@@ -1877,18 +1884,12 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
 
-            // Skip past comments inside this statement to prevent inner comments
-            // (e.g., inside class bodies) from leaking to the top level.
-            // For statements with blocks (functions, if/while/for), emit_block may have
-            // already advanced comment_emit_idx past these; this ensures we also handle
-            // non-block constructs like classes.
-            if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                while self.comment_emit_idx < self.all_comments.len()
-                    && self.all_comments[self.comment_emit_idx].pos < stmt_node.end
-                {
-                    self.comment_emit_idx += 1;
-                }
-            }
+            // Note: We do NOT skip inner comments here. The "emit comments before
+            // statement" logic (above) uses actual_start which is computed by
+            // skip_trivia_forward. Inner comments (inside function/class bodies)
+            // have positions that are BEFORE the next top-level statement's actual
+            // start, so they won't be emitted at the wrong level. They'll be
+            // naturally consumed when we encounter the statement that contains them.
         }
 
         // Emit remaining trailing comments at the end of file

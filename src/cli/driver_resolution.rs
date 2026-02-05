@@ -1712,6 +1712,16 @@ pub(crate) fn emit_outputs(
                 transforms,
                 options.printer.clone(),
             );
+            // Always set source text for comment preservation and single-line detection
+            if let Some(source_text) = file
+                .arena
+                .get(file.source_file)
+                .and_then(|node| file.arena.get_source_file(node))
+                .map(|source| source.text.as_ref())
+            {
+                printer.set_source_text(source_text);
+            }
+
             let map_info = if options.source_map {
                 map_output_info(&js_path)
             } else {

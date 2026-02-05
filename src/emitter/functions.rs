@@ -176,14 +176,21 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_function_parameters_js(&mut self, params: &[NodeIndex]) {
         let mut first = true;
         for &param_idx in params {
-            if !first {
-                self.write(", ");
-            }
-            first = false;
-
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
             {
+                // Skip `this` parameter - it's TypeScript-only and erased in JS emit
+                if let Some(name_node) = self.arena.get(param.name) {
+                    if name_node.kind == crate::scanner::SyntaxKind::ThisKeyword as u16 {
+                        continue;
+                    }
+                }
+
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+
                 if param.dot_dot_dot_token {
                     self.write("...");
                 }

@@ -43,14 +43,20 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Detect the original quote character used in source text
+    /// Detect the original quote character used in source text.
+    /// Scans forward from node.pos to skip leading trivia (whitespace/comments)
+    /// and find the actual quote character.
     fn detect_original_quote(&self, node: &Node) -> Option<char> {
         let text = self.source_text?;
-        let pos = node.pos as usize;
-        if pos < text.len() {
-            let ch = text.as_bytes()[pos];
-            if ch == b'\'' || ch == b'"' {
-                return Some(ch as char);
+        let bytes = text.as_bytes();
+        let start = node.pos as usize;
+        let end = std::cmp::min(node.end as usize, bytes.len());
+        for i in start..end {
+            match bytes[i] {
+                b'\'' => return Some('\''),
+                b'"' => return Some('"'),
+                b' ' | b'\t' | b'\r' | b'\n' => continue,
+                _ => break,
             }
         }
         None
