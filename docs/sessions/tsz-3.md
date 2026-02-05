@@ -232,3 +232,47 @@ The code preserves literal types (e.g., literal `1` instead of primitive `number
 2. `any` type implementation issues (separate from narrowing)
 
 **Next Steps**: Focus on `any` type propagation fixes, as these are blocking 6 tests and potentially contributing to TS2339 false positives.
+
+### 2026-02-05: Any Type Propagation Fix - COMPLETE
+
+**Status**: ✅ All 38 `any_propagation_tests` passing
+
+**What Was Done**:
+1. Consulted Gemini Flash and Pro for implementation guidance
+2. Fixed flow analysis to preserve `any` and `error` types across assignments
+3. Initially included `unknown` but Gemini review revealed this was incorrect
+4. Corrected fix to only exclude `any` and `error` from assignment narrowing
+
+**Implementation Details**:
+- **File**: `src/checker/control_flow.rs`
+- **Function**: `check_flow` (ASSIGNMENT block)
+- **Key Change**: Added check for `initial_type != TypeId::ANY && initial_type != TypeId::ERROR`
+- **Rationale**: `any` absorbs assignments (stays `any`), `error` persists to prevent cascading errors
+- **Important**: `unknown` was NOT included because it SHOULD be narrowed by assignments
+
+**Test Results**:
+- ✅ All 38 `any_propagation_tests` passing
+- ⚠️ 2 pre-existing test failures (unrelated to this fix):
+  - `test_compound_assignment_clears_narrowing` - compound assignments (`+=`) don't properly narrow
+  - `test_array_mutation_clears_predicate_narrowing` - array mutations don't properly clear predicate narrowing
+
+**Root Cause Fixed**:
+When `let a: any = 42` was used in `let n: never = a`, flow analysis was incorrectly narrowing `a` to the literal type `42` instead of preserving its declared type `any`. The fix ensures that `any` and `error` types are not narrowed by assignments (killing definitions), while still allowing condition narrowing (typeof guards, instanceof).
+
+**Commit**: 8737b4fa6 - "feat(flow-analysis): preserve any/unknown types across assignments"
+
+**Gemini Review Insights**:
+1. First attempt incorrectly included `unknown` - Gemini Pro caught this critical bug
+2. `unknown` SHOULD be narrowed by assignments (e.g., `let x: unknown; x = 123;` narrows to `number`)
+3. Only `any` and `error` should be excluded from assignment narrowing
+
+### 2026-02-05: Session Summary
+
+**Completed Tasks**:
+1. ✅ Phase A: Fixed 3 destructuring regression tests
+2. ✅ Phase B: Confirmed narrowing implementation is correct
+3. ✅ Fixed `any` type propagation (38 tests now passing)
+
+**Known Issues** (Pre-existing, not caused by this session):
+1. `test_compound_assignment_clears_narrowing` - `get_assigned_type` doesn't handle compound assignments (`+=`, `-=`, etc.)
+2. `test_array_mutation_clears_predicate_narrowing` - Array mutations don't properly clear predicate narrowing
