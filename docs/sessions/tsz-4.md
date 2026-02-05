@@ -1,6 +1,6 @@
 # Session TSZ-4: Strict Null Checks & Lawyer Layer Hardening
 
-**Status**: 3/4 Goals Complete ✅ - Working on Priority 3 (Object Literal Freshness)
+**Status**: ✅ **COMPLETE** - All 4 Goals Achieved
 **Focus**: Fixed known strict-null bugs and audited Lawyer layer for missing compatibility rules
 **Blocker Resolved**: `TypeScript/tests` submodule missing - Created manual unit tests in `src/checker/tests/`.
 **Session Transfer**: Taking over from previous session - continuing with Object Literal Freshness (2026-02-05)
@@ -11,26 +11,66 @@
 1. **Test Infrastructure**: Created `src/checker/tests/strict_null_manual.rs` with 4 passing tests
 2. **Error Code Validation**: Verified TS18047/TS18048 emission matches tsc behavior
 3. **Weak Type Detection**: Fixed critical bug in `ShapeExtractor` - now resolves Lazy/Ref types
+4. **Object Literal Freshness**: Implemented nested object literal excess property checking (commit `4cedeb282`, `983675bad`)
 
 ### Impact
 - **Before**: Weak type detection failed for interfaces/classes (false TS2559 positives)
 - **After**: Weak type detection correctly handles all object types including interfaces and classes
 - **Test Coverage**: Manual regression tests prevent future regressions in null/undefined property access
-
-### Remaining Work
-- **Priority 3**: Object Literal Freshness audit (Optional - current implementation appears functional)
+- **Nested Freshness**: Object literals with nested objects now correctly checked for excess properties at all levels
 
 ### Key Commits
 - `9bb0a79ab` - Test infrastructure for strict null checks
 - `bbdd4ac9f` - Fix Weak Type detection by resolving Lazy/Ref types
-- Both commits reviewed by Gemini (Two-Question Rule)
+- `4cedeb282` - feat(tsz-4): implement nested object literal excess property checking
+- `983675bad` - fix(tsz-4): address critical bugs per Gemini Pro review
+- All commits reviewed by Gemini (Two-Question Rule)
+
+## Priority 3: Object Literal Freshness (Nested Checking) ✅ COMPLETE
+
+**Status**: ✅ Complete - Implemented and validated by Gemini Pro
+
+**Achievement**:
+Implemented recursive excess property checking for nested object literals, addressing the long-standing TODO in `check_object_literal_excess_properties`.
+
+**Implementation** (commits `4cedeb282`, `983675bad`):
+1. Added `check_nested_object_literal_excess_properties()` helper function
+2. Integrated nested checking into both union and object target cases
+3. Traverses AST to find property value expressions
+4. Recursively checks nested object literals for excess properties
+
+**Example**:
+```typescript
+interface Point { x: number; y: number; }
+const p: { data: Point } = { data: { x: 1, y: 2, z: 3 } };
+// Now correctly errors: 'z' is excess in nested object literal
+```
+
+**Critical Bugs Fixed** (per Gemini Pro review):
+1. **Union Target Bug**: Fixed false positives when checking against union types
+   - Changed from `.first()` to union all property types from all members
+2. **Duplicate Properties**: Iterate in reverse (last wins)
+   - JavaScript/TypeScript behavior: last property overwrites
+3. **Parenthesized Expressions**: Unwrap parentheses before checking
+   - Added `skip_parentheses()` helper to handle `({ a: 1 })`
+
+**Gemini Pro Final Verdict**:
+> "The code is sound. You can proceed."
+> "Approved. ✅"
+
+**Test Coverage**:
+- Top-level excess properties: `{ x: 1, y: 2, z: 3 }` where target is `{ x: number; y: number }`
+- Nested excess properties: `{ data: { x: 1, y: 2, z: 3 } }` where target is `{ data: { x: number; y: number } }`
+- Union targets: Correctly checks against all union members
+- Duplicate properties: Checks last assignment (last wins)
+- Parenthesized expressions: Unwraps and checks correctly
 
 ## Goals
 
 1. [x] **Infrastructure**: Create `src/checker/tests/strict_null_manual.rs` for regression testing
 2. [x] **Bugfix**: Fix TS18050/TS2531 error code selection for property access on `null`/`undefined` (Verified current behavior matches tsc)
 3. [x] **Feature**: Fix "Weak Type" detection (TS2559) in Lawyer layer
-4. [ ] **Feature**: Implement Object Literal Freshness (Excess Property Checking) ← **CURRENT TASK**
+4. [x] **Feature**: Implement Object Literal Freshness (Excess Property Checking) - Nested checking implemented and validated by Gemini Pro ✅
 
 ## Current Context (2026-02-05)
 
