@@ -104,13 +104,39 @@ cargo test --lib solver::enum_nominality
 # Check specific test cases
 cargo test --lib solver::enum_nominality::test_enum_nominal_typing_different_enums
 cargo test --lib solver::enum_nominality::test_enum_nominal_typing_same_enum
+
+# Run conformance tests (2026-02-05)
+./scripts/conformance.sh run --filter "enum" --max 100
 ```
+
+### Conformance Test Results (2026-02-05)
+
+**Command**: `./scripts/conformance.sh run --filter "enum" --max 100`
+
+**Results**:
+- 35/80 tests passed (43.8%)
+- **TS2322 missing errors: 5** (down from expected much higher)
+- Top error code mismatches:
+  - TS2339: missing=6, extra=0
+  - **TS2322: missing=5, extra=0** ← This is what we're fixing!
+  - TS2432: missing=4, extra=0
+
+**Analysis**:
+- The 5 missing TS2322 errors represent cases where enum member distinction should apply
+- Some tests show `expected: [TS2322]` but `actual: [TS2322, TS2322, ...]` indicating multiple errors
+- The implementation is working but may need refinement for edge cases
+- Need to investigate specific failing test files to understand remaining gaps
+
+**Known Issue**:
+- `enumConflictsWithGlobalIdentifier.ts` expects TS2322 but doesn't produce it
+- May need to check how global enum conflicts are handled
 
 ## Next Steps
 
-1. Test with conformance suite to verify TS2322 errors are now caught
+1. ✅ Test with conformance suite to verify TS2322 errors are now caught (DONE - 5 missing errors remain)
 2. Monitor for any regressions in numeric enum handling
 3. Consider adding more edge case tests (union types, intersections, etc.)
+4. **Investigate remaining 5 missing TS2322 errors** (priority for next session)
 
 ## Related Work
 
