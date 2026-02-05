@@ -79,6 +79,58 @@ Implement member resolution for generic types in three phases:
 - **Unions**: `(T | U).prop` - property must exist in all constituents, result is union of types
 - **Intersections**: `(T & U).prop` - property can exist in any constituent, result is union of found types
 
+## Implementation Guidance (from Gemini Flash 2026-02-05)
+
+### Correct Approach
+
+**File**: `src/solver/operations_property.rs`
+
+**Function**: `resolve_property_access_inner` (NOT `get_property_type`)
+
+**Key Functions**:
+- `resolve_property_access_inner` (main logic around line 641)
+- `resolve_application_property` (handles TypeApplication)
+- `resolve_array_property` (handles Array types, line 1018)
+- `resolve_object_member` (handles Object members, line 968)
+
+### Implementation Sequence
+
+1. **TypeParameter Handling**:
+   - In `resolve_property_access_inner`, handle `TypeKey::TypeParameter`
+   - If `info.constraint` is `Some`, recurse into constraint
+   - If `info.constraint` is `None`, fallback to `Object` members
+   - Use `resolve_object_member` or ask resolver for global `Object` interface
+
+2. **TypeApplication Handling**:
+   - Use existing `resolve_application_property` logic
+   - It already builds `TypeSubstitution` and calls `instantiate_type`
+   - Ensure it handles `Lazy` bases correctly
+
+3. **Array Type Handling**:
+   - `Array` is a `TypeKey::Array(element_type)` (compiler-managed, not TypeApplication)
+   - `resolve_array_property` (line 1018) already handles this
+   - Ensure `resolver.get_array_base_type()` returns global `Array<T>` interface
+   - Use `instantiate_generic` to map `T` to specific `element_type`
+   - Then resolve property on instantiated interface
+
+4. **This Type Substitution**:
+   - Critical for fluent APIs (e.g., `class C { m(): this }`)
+   - Use `substitute_this_type` from `src/solver/instantiate.rs` (line 538)
+   - Substitute `ThisType` with receiver's type
+
+### Edge Cases to Handle
+
+- **Recursive Constraints**: `T extends U, U extends T` - PropertyAccessGuard handles this
+- **Readonly Arrays**: `readonly T[]` - unwrap `ReadonlyType` before checking for `Array`
+- **Numeric Indices**: `arr[0]` vs `arr["0"]` - use `is_numeric_index_name`
+- **Infinite Expansion**: Guard against recursive type aliases with `enter_property_access_guard`
+
+### Potential Pitfalls
+
+- **Missing Resolver**: If `resolver.get_array_base_type()` returns `None`, have graceful fallback
+- **`any` vs `error`**: Never return `TypeId::ANY` on failure - return `PropertyNotFound` or `IsUnknown`
+- **Circular Constraints**: Use `constraint_pairs` pattern from `CallEvaluator` (line 114)
+
 ## Success Criteria
 
 ### Test Case 1: Array Method
