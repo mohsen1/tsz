@@ -195,6 +195,21 @@ pub trait TypeResolver {
         false
     }
 
+    /// Check if a TypeId represents a full Enum type (not a specific member).
+    ///
+    /// Used to distinguish between `enum E` (type) and `enum E.A` (member) for
+    /// assignability rules. Specifically, `number` is assignable to numeric enum
+    /// types but NOT to enum members.
+    ///
+    /// Returns true if the TypeId is:
+    /// - A TypeKey::Enum where the Symbol has ENUM flag but not ENUM_MEMBER flag
+    /// - A Union of TypeKey::Enum members from the same parent enum
+    ///
+    /// Returns false for enum members or non-enum types.
+    fn is_enum_type(&self, _type_id: TypeId, _interner: &dyn TypeDatabase) -> bool {
+        false
+    }
+
     /// Get the base class type for a class/interface type.
     ///
     /// This is used by the Best Common Type (BCT) algorithm to find common base classes.
