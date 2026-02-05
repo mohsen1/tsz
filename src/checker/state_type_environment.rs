@@ -118,107 +118,119 @@ impl<'a> CheckerState<'a> {
 
     // Note: enum_kind and enum_member_type_from_decl are defined in type_checking.rs
 
+    /// Get the enum identity (parent enum symbol) from a type.
+    ///
+    /// This handles both TypeKey::Enum (new nominal representation) and legacy types.
+    /// For enum members, returns the parent enum symbol.
+    /// For enum types, returns the enum symbol itself.
+    fn get_enum_identity(&self, type_id: TypeId) -> Option<SymbolId> {
+        let key = self.ctx.types.lookup(type_id)?;
+        if let TypeKey::Enum(def_id, _) = key {
+            let sym_id = self.ctx.def_to_symbol_id(def_id)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+            if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
+                // For a member, the identity is the parent Enum symbol
+                return Some(symbol.parent);
+            } else if symbol.flags & symbol_flags::ENUM != 0 {
+                // For the enum itself, the identity is its own symbol
+                return Some(sym_id);
+            }
+        }
+        // Fallback for legacy types or symbols not yet migrated to DefId
+        self.enum_symbol_from_type(type_id)
+    }
+
+    /// Check structural assignability between two types.
+    fn check_structural_assignability(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+    ) -> bool {
+        if let Some(env) = env {
+            let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
+            self.ctx.configure_compat_checker(&mut checker);
+            checker.is_assignable(source, target)
+        } else {
+            let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
+            self.ctx.configure_compat_checker(&mut checker);
+            checker.is_assignable(source, target)
+        }
+    }
+
     pub(crate) fn enum_assignability_override(
         &self,
         source: TypeId,
         target: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<bool> {
-        // Fix: Use TypeKey::Enum to distinguish between whole enum types and enum member types
-        // TypeKey::Enum contains (DefId, InnerType) where:
-        // - DefId: Nominal identity of the enum
-        // - InnerType: For whole enum = Union of all members, for member = Literal value
         let source_key = self.ctx.types.lookup(source);
         let target_key = self.ctx.types.lookup(target);
 
-        match (source_key, target_key) {
-            (
-                Some(TypeKey::Enum(source_def, source_inner)),
-                Some(TypeKey::Enum(target_def, target_inner)),
-            ) => {
-                if source_def == target_def {
-                    // Same enum - check structural assignability of inner types
-                    // This correctly handles:
-                    // - Member -> Same Member: Literal(0) -> Literal(0) = true
-                    // - Member -> Diff Member: Literal(0) -> Literal(1) = false
-                    // - Member -> Whole Enum: Literal(0) -> Union(0|1) = true
-                    // - Whole Enum -> Member: Union(0|1) -> Literal(0) = false
-                    let result = if let Some(env) = env {
-                        let mut checker =
-                            crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
-                        self.ctx.configure_compat_checker(&mut checker);
-                        checker.is_assignable(source_inner, target_inner)
-                    } else {
-                        let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
-                        self.ctx.configure_compat_checker(&mut checker);
-                        checker.is_assignable(source_inner, target_inner)
-                    };
-                    return Some(result);
+        // 1. Handle Nominal Identity (Enum vs Enum, Member vs Enum, Member vs Member)
+        if let (Some(TypeKey::Enum(s_def, s_inner)), Some(TypeKey::Enum(t_def, t_inner))) =
+            (source_key, target_key)
+        {
+            if s_def == t_def {
+                // Exact same entity (same member or same enum type)
+                // Check structural assignability of inner types
+                return Some(self.check_structural_assignability(s_inner, t_inner, env));
+            }
+
+            let s_identity = self.get_enum_identity(source);
+            let t_identity = self.get_enum_identity(target);
+
+            if let (Some(s_id), Some(t_id)) = (s_identity, t_identity) {
+                if s_id == t_id {
+                    // Same parent enum, different entities (e.g., Member -> Enum, Member -> Member)
+                    // Check structural assignability of inner types (Literal -> Union, Literal -> Literal)
+                    return Some(self.check_structural_assignability(s_inner, t_inner, env));
+                } else {
+                    // Different enums - Nominally incompatible!
+                    // Fall through to check for Numeric Enum -> number rules below
                 }
-                // Different enums - not nominally compatible
-                // Continue to numeric/string enum handling below
-            }
-            _ => {
-                // One or both types are not enums - continue to numeric/string enum handling
             }
         }
 
-        // Get enum symbols for numeric/string enum handling below
-        let source_enum = self.enum_symbol_from_type(source);
-        let target_enum = self.enum_symbol_from_type(target);
+        // 2. Handle Primitive Compatibility (Rule #7: Numeric Enums <-> number)
+        let source_enum = self.get_enum_identity(source);
+        let target_enum = self.get_enum_identity(target);
 
-        if let Some(source_enum) = source_enum
-            && self.enum_kind(source_enum) == Some(EnumKind::Numeric)
-        {
-            if let Some(env) = env {
-                let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
-                self.ctx.configure_compat_checker(&mut checker);
-                return Some(checker.is_assignable(TypeId::NUMBER, target));
+        // Numeric Enum -> Target (e.g., E.A -> number)
+        if let Some(s_id) = source_enum {
+            if self.enum_kind(s_id) == Some(EnumKind::Numeric) {
+                return Some(self.check_structural_assignability(TypeId::NUMBER, target, env));
             }
-            let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
-            self.ctx.configure_compat_checker(&mut checker);
-            return Some(checker.is_assignable(TypeId::NUMBER, target));
         }
 
-        if let Some(target_enum) = target_enum
-            && self.enum_kind(target_enum) == Some(EnumKind::Numeric)
-        {
-            if let Some(env) = env {
-                let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
-                self.ctx.configure_compat_checker(&mut checker);
-                return Some(checker.is_assignable(source, TypeId::NUMBER));
+        // Source -> Numeric Enum (e.g., number -> E.A)
+        if let Some(t_id) = target_enum {
+            if self.enum_kind(t_id) == Some(EnumKind::Numeric) {
+                return Some(self.check_structural_assignability(source, TypeId::NUMBER, env));
             }
-            let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
-            self.ctx.configure_compat_checker(&mut checker);
-            return Some(checker.is_assignable(source, TypeId::NUMBER));
         }
 
-        // String enum opacity: string literals are NOT assignable to string enum types
-        // This makes string enums more opaque than numeric enums
-        if let Some(target_enum) = target_enum
-            && self.enum_kind(target_enum) == Some(EnumKind::String)
-        {
-            // Only enum members (via Ref) are assignable to string enum types
-            // Direct string literals are not assignable
-            if crate::solver::type_queries::is_literal_type(self.ctx.types, source) {
-                return Some(false);
-            }
-            // STRING is not assignable to string enum
-            if source == TypeId::STRING {
-                return Some(false);
+        // 3. Handle String Enum Opacity
+        if let Some(t_id) = target_enum {
+            if self.enum_kind(t_id) == Some(EnumKind::String) {
+                // String literals/types are NOT assignable to string enums
+                if source == TypeId::STRING
+                    || crate::solver::type_queries::is_literal_type(self.ctx.types, source)
+                {
+                    return Some(false);
+                }
             }
         }
 
         // String enum is NOT assignable to string (different from numeric enum)
-        if let Some(source_enum) = source_enum
-            && self.enum_kind(source_enum) == Some(EnumKind::String)
-        {
-            if target == TypeId::STRING {
+        if let Some(s_id) = source_enum {
+            if self.enum_kind(s_id) == Some(EnumKind::String) && target == TypeId::STRING {
                 return Some(false);
             }
         }
 
-        None
+        None // Not an enum case we handle here
     }
 
     // NOTE: abstract_constructor_assignability_override, constructor_access_level,

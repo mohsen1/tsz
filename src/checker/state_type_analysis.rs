@@ -1232,9 +1232,20 @@ impl<'a> CheckerState<'a> {
 
         // Enum member - determine type from parent enum
         if flags & symbol_flags::ENUM_MEMBER != 0 {
-            // Find the parent enum by walking up to find the containing enum declaration
-            let member_type = self.enum_member_type_from_decl(value_decl);
-            return (member_type, Vec::new());
+            // Get the member's DefId for nominal typing
+            let member_def_id = self.ctx.get_or_create_def_id(sym_id);
+
+            // Get the literal type from the initializer
+            let literal_type = self.enum_member_type_from_decl(value_decl);
+
+            // Wrap in TypeKey::Enum for nominal identity
+            // This ensures E.A is not assignable to E.B (different DefIds)
+            use crate::solver::TypeKey;
+            let enum_type = self
+                .ctx
+                .types
+                .intern(TypeKey::Enum(member_def_id, literal_type));
+            return (enum_type, Vec::new());
         }
 
         // Function - build function type or callable overload set

@@ -1711,50 +1711,56 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get the type of an enum member by finding its parent enum.
+    /// Get the literal type of an enum member from its initializer.
     ///
-    /// Returns the enum type itself (e.g., `MyEnum`) rather than just STRING or NUMBER.
-    /// This is used when enum members are accessed through namespace exports.
+    /// Returns the literal type (e.g., Literal(0), Literal("a")) of the enum member.
+    /// This is used to create TypeKey::Enum(member_def_id, literal_type) for nominal typing.
     pub(crate) fn enum_member_type_from_decl(&self, member_decl: NodeIndex) -> TypeId {
-        // Get the extended node to find parent
-        let Some(ext) = self.ctx.arena.get_extended(member_decl) else {
-            return TypeId::ERROR; // Missing extended node data - propagate error
+        // Get the member node
+        let Some(member_node) = self.ctx.arena.get(member_decl) else {
+            return TypeId::ERROR;
         };
-        let parent_idx = ext.parent;
-        if parent_idx.is_none() {
-            return TypeId::ERROR; // Missing parent - propagate error
-        }
+        let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
+            return TypeId::ERROR;
+        };
 
-        // Walk up to find the enum declaration
-        let mut current = parent_idx;
-        let max_depth = 10; // Prevent infinite loops
-        for _ in 0..max_depth {
-            let Some(parent_node) = self.ctx.arena.get(current) else {
-                break;
+        // Check if member has an explicit initializer
+        if !member.initializer.is_none() {
+            let Some(init_node) = self.ctx.arena.get(member.initializer) else {
+                return TypeId::ERROR;
             };
 
-            // Found the enum declaration
-            if parent_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                // Find the symbol for this enum declaration
-                if let Some(sym_id) = self.ctx.binder.get_node_symbol(current) {
-                    // Return the enum type itself using Lazy with DefId
-                    let def_id = self.ctx.get_or_create_def_id(sym_id);
-                    return self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id));
+            match init_node.kind {
+                k if k == SyntaxKind::StringLiteral as u16 => {
+                    // Get the string literal value
+                    if let Some(lit) = self.ctx.arena.get_literal(init_node) {
+                        return self.ctx.types.literal_string(&lit.text);
+                    }
                 }
-                break;
-            }
-
-            // Move to parent
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            current = ext.parent;
-            if current.is_none() {
-                break;
+                k if k == SyntaxKind::NumericLiteral as u16 => {
+                    // Get the numeric literal value
+                    if let Some(lit) = self.ctx.arena.get_literal(init_node) {
+                        // lit.value is Option<f64>, use it if available
+                        if let Some(value) = lit.value {
+                            return self.ctx.types.literal_number(value);
+                        }
+                        // Fallback: parse from text
+                        if let Ok(value) = lit.text.parse::<f64>() {
+                            return self.ctx.types.literal_number(value);
+                        }
+                    }
+                }
+                _ => {
+                    // Computed value - fall back to NUMBER for numeric enums
+                    // TODO: Evaluate constant expression to get literal value
+                }
             }
         }
 
-        TypeId::ANY
+        // No explicit initializer or computed value
+        // This could be an auto-incremented numeric member
+        // Fall back to NUMBER type (not a specific literal)
+        TypeId::NUMBER
     }
 
     // =========================================================================
