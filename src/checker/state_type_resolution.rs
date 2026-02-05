@@ -88,6 +88,7 @@ impl<'a> CheckerState<'a> {
                 return self.ctx.maybe_create_lazy_from_resolved(type_id);
             }
             // No type arguments provided - check if this generic type requires them
+            // Also, use type_reference_symbol_type to preserve nominal identity for enum members
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_qualified_symbol_in_type_position(type_name_idx)
             {
@@ -98,6 +99,10 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or_else(|| "<unknown>".to_string());
                     self.error_generic_type_requires_type_arguments_at(&name, required_count, idx);
                 }
+
+                // TSZ-4: Use type_reference_symbol_type to preserve nominal identity
+                // This ensures enum members return TypeKey::Enum instead of primitives
+                return self.type_reference_symbol_type(sym_id);
             }
             return self.resolve_qualified_name(type_name_idx);
         }
