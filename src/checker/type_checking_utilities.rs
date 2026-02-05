@@ -534,7 +534,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         keys: &[crate::interner::Atom],
     ) -> Option<TypeId> {
-        use crate::solver::PropertyAccessResult;
+        use crate::solver::operations_property::PropertyAccessResult;
 
         if keys.is_empty() {
             return None;

@@ -516,7 +516,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> TypeId {
-        use crate::solver::PropertyAccessResult;
+        use crate::solver::operations_property::PropertyAccessResult;
 
         let object_type = self.resolve_type_for_property_access(object_type);
         let result_type = match self.resolve_property_access_with_env(object_type, property_name) {
@@ -986,7 +986,7 @@ impl<'a> CheckerState<'a> {
     /// Handles element access with optional chaining, index signatures,
     /// and nullish coalescing.
     pub(crate) fn get_type_of_element_access(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::solver::PropertyAccessResult;
+        use crate::solver::operations_property::PropertyAccessResult;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
