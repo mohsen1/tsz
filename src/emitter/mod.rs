@@ -235,13 +235,6 @@ pub struct Printer<'a> {
     /// Shared index into all_comments, monotonically advancing as comments are emitted.
     /// Used across emit_source_file and emit_block to prevent double-emission.
     pub(super) comment_emit_idx: usize,
-
-    /// TypePrinter for .d.ts declaration emit (optional, for declaration mode)
-    pub(super) type_printer: Option<crate::emitter::type_printer::TypePrinter<'a>>,
-
-    /// Node type cache from Checker for .d.ts declaration emit (optional)
-    pub(super) node_types:
-        Option<&'a std::collections::HashMap<crate::parser::NodeIndex, crate::solver::TypeId>>,
 }
 
 impl<'a> Printer<'a> {
@@ -286,8 +279,6 @@ impl<'a> Printer<'a> {
             emit_recursion_depth: 0,
             all_comments: Vec::new(),
             comment_emit_idx: 0,
-            type_printer: None,
-            node_types: None,
         }
     }
 
@@ -341,23 +332,6 @@ impl<'a> Printer<'a> {
         self.ctx.auto_detect_module = enabled;
     }
 
-    /// Set declaration emit mode (.d.ts generation).
-    /// When enabled, the emitter will strip function bodies and emit type annotations.
-    pub fn set_declaration_emit(&mut self, enabled: bool) {
-        self.ctx.flags.in_declaration_emit = enabled;
-    }
-
-    /// Set type cache for declaration emit (.d.ts generation).
-    /// This allows the emitter to look up inferred types for nodes.
-    pub fn set_type_cache(
-        &mut self,
-        type_printer: crate::emitter::type_printer::TypePrinter<'a>,
-        node_types: &'a std::collections::HashMap<crate::parser::NodeIndex, crate::solver::TypeId>,
-    ) {
-        self.type_printer = Some(type_printer);
-        self.node_types = Some(node_types);
-    }
-
     /// Set the source text (for detecting single-line constructs).
     pub fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
@@ -380,17 +354,6 @@ impl<'a> Printer<'a> {
     /// Generate source map JSON (if enabled).
     pub fn generate_source_map_json(&mut self) -> Option<String> {
         self.writer.generate_source_map_json()
-    }
-
-    /// Get the type for a node (for declaration emit).
-    /// Returns the type string if available, otherwise "any".
-    fn get_node_type_string(&self, node_idx: NodeIndex) -> String {
-        if let (Some(type_printer), Some(node_types)) = (&self.type_printer, &self.node_types) {
-            if let Some(&type_id) = node_types.get(&node_idx) {
-                return type_printer.print_type(type_id);
-            }
-        }
-        "any".to_string()
     }
 
     fn source_text_for_map(&self) -> Option<&'a str> {
