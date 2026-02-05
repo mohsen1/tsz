@@ -1045,6 +1045,32 @@ impl ParserState {
             | SyntaxKind::VoidKeyword
             | SyntaxKind::TypeOfKeyword
             | SyntaxKind::InstanceOfKeyword => true,
+            // Contextual keywords that can be used as identifiers in expression context
+            // These are NOT reserved words and are valid identifiers outside their special contexts
+            SyntaxKind::StaticKeyword
+            | SyntaxKind::AbstractKeyword
+            | SyntaxKind::OverrideKeyword
+            | SyntaxKind::ReadonlyKeyword
+            | SyntaxKind::AccessorKeyword
+            | SyntaxKind::GetKeyword
+            | SyntaxKind::SetKeyword
+            | SyntaxKind::DeclareKeyword
+            | SyntaxKind::PublicKeyword
+            | SyntaxKind::ProtectedKeyword
+            | SyntaxKind::PrivateKeyword
+            | SyntaxKind::OfKeyword
+            | SyntaxKind::SatisfiesKeyword
+            | SyntaxKind::FromKeyword
+            | SyntaxKind::AsKeyword
+            | SyntaxKind::IsKeyword
+            | SyntaxKind::AssertKeyword
+            | SyntaxKind::AssertsKeyword
+            | SyntaxKind::IntrinsicKeyword
+            | SyntaxKind::OutKeyword
+            | SyntaxKind::InferKeyword
+            | SyntaxKind::UsingKeyword
+            | SyntaxKind::KeyOfKeyword
+            | SyntaxKind::UniqueKeyword => true,
             // Private identifiers (e.g., #field in obj)
             SyntaxKind::PrivateIdentifier => true,
             // Unary operators
