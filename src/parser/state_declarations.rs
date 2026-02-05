@@ -2083,7 +2083,35 @@ impl ParserState {
 
         // Check for empty declaration list: for (var in X) or for (let of X)
         // TSC emits TS1123 "Variable declaration list cannot be empty"
-        if self.is_token(SyntaxKind::InKeyword) || self.is_token(SyntaxKind::OfKeyword) {
+        // Special case: 'of' can be a variable name in contexts like `for (var of; ;)`.
+        // Only treat 'of' as the for-of keyword if it's NOT followed by tokens that
+        // indicate it's being used as a variable name (;, ,, =, :, ), in, of).
+        let is_empty_decl = if self.is_token(SyntaxKind::InKeyword) {
+            true
+        } else if self.is_token(SyntaxKind::OfKeyword) {
+            // Look ahead to see if 'of' is used as a variable name
+            let snapshot = self.scanner.save_state();
+            let saved_token = self.current_token;
+            self.next_token(); // skip 'of'
+            let next = self.token();
+            let is_var_name = matches!(
+                next,
+                SyntaxKind::SemicolonToken
+                    | SyntaxKind::CommaToken
+                    | SyntaxKind::EqualsToken
+                    | SyntaxKind::ColonToken
+                    | SyntaxKind::CloseParenToken
+                    | SyntaxKind::InKeyword
+                    | SyntaxKind::OfKeyword
+                    | SyntaxKind::ExclamationToken
+            );
+            self.scanner.restore_state(snapshot);
+            self.current_token = saved_token;
+            !is_var_name // if 'of' is a var name, declaration is NOT empty
+        } else {
+            false
+        };
+        if is_empty_decl {
             use crate::checker::types::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Variable declaration list cannot be empty.",
