@@ -18,6 +18,7 @@ use crate::cli::config::{load_tsconfig, resolve_compiler_options};
 use crate::lsp::code_actions::{
     CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider, ImportCandidateKind,
 };
+use crate::lsp::code_lens::CodeLens;
 use crate::lsp::completions::{CompletionItem, Completions};
 use crate::lsp::definition::GoToDefinition;
 use crate::lsp::dependency_graph::DependencyGraph;
@@ -1774,6 +1775,113 @@ impl Project {
         }
 
         result
+    }
+
+    /// Get code lenses for a file (project-aware).
+    pub fn get_code_lenses(&self, file_name: &str) -> Option<Vec<CodeLens>> {
+        let file = self.files.get(file_name)?;
+
+        use crate::lsp::code_lens::CodeLensProvider;
+        let provider = CodeLensProvider::new(
+            file.arena(),
+            file.binder(),
+            file.line_map(),
+            file.file_name().to_string(),
+            file.source_text(),
+        );
+
+        Some(provider.provide_code_lenses(file.root()))
+    }
+
+    /// Resolve a code lens by computing its command (project-aware).
+    ///
+    /// This uses project-wide find_references for accurate reference counts.
+    pub fn resolve_code_lens(&mut self, file_name: &str, lens: &CodeLens) -> Option<CodeLens> {
+        let _file = self.files.get(file_name)?;
+        let data = lens.data.as_ref()?;
+
+        match data.kind {
+            crate::lsp::code_lens::CodeLensKind::References => {
+                // Use project-wide find_references for accurate counts
+                let position = data.position;
+                let references = self.find_references(file_name, position)?;
+
+                // Count references (subtract 1 if declaration is included)
+                let ref_count = if references.is_empty() {
+                    0
+                } else {
+                    // Check if any reference is at the same position as the declaration
+                    let has_decl_reference = references
+                        .iter()
+                        .any(|r| r.range.start == position && r.range.end == position);
+                    references.len() - if has_decl_reference { 1 } else { 0 }
+                };
+
+                let title = if ref_count == 1 {
+                    "1 reference".to_string()
+                } else {
+                    format!("{} references", ref_count)
+                };
+
+                let command = crate::lsp::code_lens::CodeLensCommand {
+                    title,
+                    command: "editor.action.showReferences".to_string(),
+                    arguments: Some(vec![
+                        serde_json::json!(data.file_path),
+                        serde_json::json!({
+                            "line": data.position.line,
+                            "character": data.position.character
+                        }),
+                        serde_json::json!(
+                            references
+                                .into_iter()
+                                .map(|loc| serde_json::json!({
+                                    "uri": loc.file_path,
+                                    "range": loc.range
+                                }))
+                                .collect::<Vec<_>>()
+                        ),
+                    ]),
+                };
+
+                Some(CodeLens {
+                    range: lens.range,
+                    command: Some(command),
+                    data: None,
+                })
+            }
+            crate::lsp::code_lens::CodeLensKind::Implementations => {
+                // Use project-wide get_implementations
+                let position = data.position;
+                let implementations = self.get_implementations(file_name, position)?;
+
+                let count = implementations.len();
+                let title = if count == 1 {
+                    "1 implementation".to_string()
+                } else {
+                    format!("{} implementations", count)
+                };
+
+                let command = crate::lsp::code_lens::CodeLensCommand {
+                    title,
+                    command: "editor.action.goToImplementation".to_string(),
+                    arguments: Some(vec![
+                        serde_json::json!(data.file_path),
+                        serde_json::json!({
+                            "line": data.position.line,
+                            "character": data.position.character
+                        }),
+                    ]),
+                };
+
+                Some(CodeLens {
+                    range: lens.range,
+                    command: Some(command),
+                    data: None,
+                })
+            }
+            _ => Some(lens.clone()),
+        }
     }
 
     /// Code actions for a file (project-aware).
