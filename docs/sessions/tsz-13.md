@@ -1,8 +1,42 @@
 # Session TSZ-13: Type Inference for Function Calls
 
 **Started**: 2026-02-05
-**Status**: 🔄 PENDING
+**Status**: 🔄 Phase 1 COMPLETE - Phase 2 Pending
 **Focus**: Implement type argument inference from function call value arguments
+
+## Progress Summary
+
+### ✅ Phase 1: Solver Infrastructure (COMPLETE 2026-02-05)
+
+**File**: `src/solver/infer.rs`
+
+**Implemented**:
+1. Core structural type inference algorithm (`infer_from_types`)
+2. Variance handling (contravariant for function parameters, covariant for return types)
+3. Support for: objects, arrays, tuples, functions, unions, intersections, applications
+4. Rest parameter handling in functions
+5. Index signature support in objects
+
+**Critical Fixes** (based on Gemini Pro review):
+- ✅ Added upper bound handling for contravariance (when source is TypeParameter)
+- ✅ Fixed rest parameter inference (was stopping at shortest list)
+- ✅ Added index signature inference
+
+**Commits**:
+1. `feat(solver): implement infer_from_types for structural type inference`
+2. `fix(solver): handle contravariance and rest parameters in type inference`
+
+**Validation**: ✅ Reviewed by Gemini Pro - algorithm correct for TypeScript semantics
+
+### 🔄 Phase 2: Checker Integration (PENDING)
+
+**Next Steps**:
+1. Find `check_call_expression` in `src/checker/state.rs`
+2. Add logic to detect generic functions with no explicit type arguments
+3. Create `InferenceContext` and map type parameters to `InferenceVars`
+4. Call `infer_from_types` for each argument/parameter pair
+5. Resolve constraints with `resolve_all_with_constraints()`
+6. Instantiate signature with inferred types
 
 ## Summary
 
