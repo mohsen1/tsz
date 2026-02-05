@@ -346,8 +346,10 @@ impl<'a> IRPrinter<'a> {
                     return;
                 }
                 // Single-line function body: { return expr; }
-                // Applies to arrow-to-function conversions (is_expression_body)
-                // and regular function expressions that were single-line in source
+                // Applies to:
+                // 1. Arrow-to-function conversions (is_expression_body)
+                // 2. Functions that were single-line in source (is_source_single_line)
+                // 3. Anonymous functions with simple return bodies (callbacks, etc.)
                 let is_source_single_line = body_source_range
                     .and_then(|(pos, end)| {
                         self.source_text.map(|text| {
@@ -361,8 +363,15 @@ impl<'a> IRPrinter<'a> {
                         })
                     })
                     .unwrap_or(false);
+
+                // Check if this is an anonymous function with a simple return
+                // Used for callbacks like array.every(function(val) { return val.isSunk; })
+                let is_simple_anonymous_return = name.is_none()
+                    && body.len() == 1
+                    && matches!(&body[0], IRNode::ReturnStatement(Some(_)));
+
                 if !has_defaults
-                    && (*is_expression_body || is_source_single_line)
+                    && (*is_expression_body || is_source_single_line || is_simple_anonymous_return)
                     && body.len() == 1
                     && let IRNode::ReturnStatement(Some(expr)) = &body[0]
                 {
