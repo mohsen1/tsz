@@ -1323,3 +1323,42 @@ Implemented improvements to template literal type subtyping based on investigati
 **North Star Impact**:
 Enables better union/intersection reduction by detecting disjoint template literals, moving toward O(1) type equality.
 
+---
+
+## Redefined Priorities (2025-02-05 Post-Task #30)
+
+### Priority 1: Task #34 (Intersection Reduction) 📝 NEXT
+**Why**: Completes the simplification suite (Union + Object + Intersection) for North Star canonical forms.
+
+**Implementation Roadmap**:
+1. **Deep Subtype Reduction**: Use full SubtypeChecker (not shallow) in TypeEvaluator
+   - Rule: If B <: A, then A & B = B
+   - Must use `bypass_evaluation` flag to avoid infinite recursion
+
+2. **Distributivity**: A & (B | C) → (A & B) | (A & C)
+   - Best handled in `src/solver/evaluate.rs`
+   - Critical for simplifying complex generic intersections
+
+3. **Discriminant-Based Reduction**: { kind: "A" } & { kind: "B" } → never
+   - Enhance `object_literals_disjoint` in intern.rs
+   - Handle more than just literal values
+
+**Files**:
+- `src/solver/intern.rs`: Deep reduction logic
+- `src/solver/evaluate.rs`: Distributivity
+- `src/solver/subtype_rules/unions.rs`: Enhanced disjointness
+
+---
+
+### Priority 2: Task #32 (Graph Isomorphism) 📝 Planned
+**Why**: "Final Boss" of North Star - structural identity for recursive types.
+
+**Why After Task #34**:
+- Simplified graphs make isomorphism algorithm easier
+- Intersection reduction is prerequisite for correct canonical forms
+
+---
+
+### Priority 3: Task #28 (Circular Extends) 📝 Deferred
+**Why**: Stack overflow in Checker/Resolver layer, outside tsz-1 scope
+
