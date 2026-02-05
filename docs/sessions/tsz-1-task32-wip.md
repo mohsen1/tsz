@@ -1,10 +1,10 @@
 # Task #32 Graph Isomorphism - Work In Progress
 
-## Status: Pattern Match Fixes Required (21 compilation errors)
+## Status: Pattern Match Fixes Complete ✅ (All compilation errors resolved)
 
 ## Completed Work
 
-### 1. Added TypeKey::Recursive(u32) variant (src/solver/types.rs)
+### Phase 1: TypeKey::Recursive(u32) variant ✅ (Previously completed)
 ```rust
 /// Recursive type reference using De Bruijn index.
 ///
@@ -13,89 +13,67 @@
 Recursive(u32),
 ```
 
-### 2. Updated Visitor Pattern (src/solver/visitor.rs)
-- Added `visit_recursive(&mut self, _de_bruijn_index: u32)` to TypeVisitor trait
-- Added Recursive case to accept() method
-- Added Recursive as leaf type in for_each_child() (no children)
-- Added Recursive to TypeKind classification (TypeKind::Reference)
+- Added to src/solver/types.rs
+- Visitor pattern updated (visit_recursive, for_each_child, TypeKind)
+- All pattern matches fixed for Recursive variant
 
-### 3. Fixed Pattern Matches (2 of 21)
-- src/emitter/type_printer.rs: Prints as `T{index}`
-- src/solver/evaluate_rules/infer_pattern.rs: Added as leaf type (first of two locations)
-
-## Remaining Work
-
-### Fix 19 Pattern Match Errors
-
-The pattern matches need to add `TypeKey::Recursive(_)` or `&TypeKey::Recursive(_)` to existing leaf type lists, usually next to `Lazy(_)`.
-
-#### Files and Line Numbers:
-1. **src/solver/evaluate_rules/infer_pattern.rs:342** (1 error)
-2. **src/solver/format.rs:188** (1 error)
-3. **src/solver/infer.rs:555** (1 error)
-4. **src/solver/infer.rs:733** (1 error)
-5. **src/solver/instantiate.rs:245** (1 error)
-6. **src/solver/lower.rs:1496** (1 error)
-7. **src/solver/lower.rs:1834** (1 error)
-8. **src/solver/operations.rs:1454** (1 error)
-9. **src/solver/operations.rs:1621** (1 error)
-10. **src/solver/type_queries.rs:572** (1 error)
-11. **src/solver/type_queries.rs:1043** (1 error)
-12. **src/solver/type_queries.rs:1333** (1 error)
-13. **src/solver/type_queries.rs:1414** (1 error)
-14. **src/solver/type_queries.rs:1566** (1 error)
-15. **src/solver/type_queries.rs:1832** (1 error)
-16. **src/solver/type_queries.rs:1918** (1 error)
-17. **src/solver/type_queries.rs:2023** (1 error)
-18. **src/solver/type_queries.rs:2143** (1 error)
-19. **src/solver/visitor.rs:1400** (1 error)
-20. **src/solver/visitor.rs:1677** (1 error)
-
-#### Pattern to Apply:
-For most matches that look like:
+### Phase 2: TypeKey::BoundParameter(u32) variant ✅ (Just completed)
 ```rust
-TypeKey::Intrinsic(_)
-| TypeKey::Literal(_)
-| TypeKey::Lazy(_)
-| TypeKey::TypeQuery(_)
-// ...
+/// Bound type parameter using De Bruijn index for alpha-equivalence.
+///
+/// When canonicalizing generic types, we replace named type parameters
+/// with positional indices to achieve structural identity.
+BoundParameter(u32),
 ```
 
-Change to:
-```rust
-TypeKey::Intrinsic(_)
-| TypeKey::Literal(_)
-| TypeKey::Lazy(_)
-| TypeKey::Recursive(_)  // <-- ADD THIS LINE
-| TypeKey::TypeQuery(_)
-// ...
+### 3. Fixed Pattern Matches for BoundParameter ✅
+Fixed 11 compilation errors across 2 files:
+
+**src/solver/type_queries.rs** (9 locations):
+- Line 1067: `classify_constructor_type` - NotConstructor case
+- Line 1358: `classify_for_constraint` - NoConstraint case
+- Line 1455: `classify_full_signature_type` - NoSignatures case
+- Line 1586: `classify_full_iterable_type` - NotIterable case
+- Line 1768: `classify_for_property_lookup` - NoProperties case
+- Line 1867: `classify_for_evaluation` - Resolved case
+- Line 1960: `classify_for_property_access` - Resolved case
+- Line 2069: `classify_for_traversal` - Terminal case
+- Line 2162: `classify_for_interface_merge` - Other case
+
+**src/solver/visitor.rs** (2 locations):
+- Line 1417: `visit_key` - Leaf types (nothing to traverse)
+- Line 1699: `check_key` - Leaf types (returns false)
+
+## Next Steps
+
+### 1. Implement get_def_kind() in TypeResolver
+**File**: `src/solver/db.rs`
+**Action**: Add `get_def_kind(def_id: DefId) -> DefKind` to TypeResolver trait
+**Why**: Distinguish TypeAlias (structural) from Interface/Class (nominal)
+
+### 2. MANDATORY Gemini Consultation (Question 1)
+Before implementing Canonicalizer, ask:
+```bash
+./scripts/ask-gemini.mjs --include=src/solver "I am ready to implement the Canonicalizer for Task #32.
+Goal: Transform cyclic TypeAlias graphs into trees using TypeKey::Recursive(u32) and TypeKey::BoundParameter(u32).
+
+My planned approach:
+1. Create Canonicalizer struct in src/solver/intern.rs with stack: Vec<DefId>
+2. Implement intern_canonical(type_id) with De Bruijn index transformation
+3. Add canonical_cache: DashMap<TypeId, TypeId> to TypeInterner
+
+Is this correct? How to handle TypeApplication (generics)?
+Should I canonicalize TypeParameter names for alpha-equivalence?"
 ```
 
-For `&TypeKey` reference patterns, add `&TypeKey::Recursive(_)`.
+### 3. Implement Canonicalizer
+- Based on Gemini's guidance from Question 1
+- Stack-based cycle detection
+- Transform Lazy -> Recursive for TypeAlias only
+- Transform TypeParameter -> BoundParameter for alpha-equivalence
 
-### After Pattern Matches Fixed
-
-1. **Implement Canonicalizer struct in src/solver/intern.rs**
-   ```rust
-   struct Canonicalizer<'a> {
-       interner: &'a TypeInterner,
-       resolver: &'a dyn TypeResolver,
-       stack: Vec<DefId>,
-   }
-   ```
-
-2. **Add intern_canonical() entry point**
-   - DO NOT modify hot path intern() function
-   - Checker/Solver calls intern_canonical() for recursive types
-
-3. **Add canonical_cache to TypeInterner**
-   ```rust
-   canonical_cache: DashMap<TypeId, TypeId, FxBuildHasher>,
-   ```
-
-4. **Implement get_def_kind() in TypeResolver**
-   - Need to distinguish TypeAlias (structural) vs Class/Interface (nominal)
-   - Only canonicalize TypeAlias, preserve nominal types
+### 4. Gemini Question 2 (Pro)
+- Implementation review before integration
 
 ## Context from Gemini
 
@@ -103,13 +81,12 @@ For `&TypeKey` reference patterns, add `&TypeKey::Recursive(_)`.
 
 **Architecture**:
 - Use De Bruijn indices: `Recursive(0)` = immediate self-reference
+- Use De Bruijn indices: `BoundParameter(0)` = most recent type parameter
 - Stack-based cycle detection during unrolling
 - Cache canonical forms to avoid O(N) re-traversal
 - Critical: Check stack BEFORE resolve_lazy to prevent infinite unroll
 
-## Next Session
+## Recent Commits
 
-1. Fix all 19 remaining pattern matches
-2. Compile and test the Recursive variant
-3. Implement Canonicalizer
-4. Ask Gemini Question 2 (Pro) for implementation review
+- 2026-02-05: Fixed all 11 BoundParameter pattern match errors (tsz-1)
+- Previous: Recursive variant and pattern matches completed (other session)

@@ -120,6 +120,15 @@ pub trait TypeVisitor: Sized {
         Self::default_output()
     }
 
+    /// Visit a bound type parameter using De Bruijn index for alpha-equivalence.
+    ///
+    /// This is used for canonicalizing generic types to achieve structural identity,
+    /// where `type F<T> = T` and `type G<U> = U` are considered identical.
+    /// The index represents which parameter in the binding scope (0 = innermost).
+    fn visit_bound_parameter(&mut self, _de_bruijn_index: u32) -> Self::Output {
+        Self::default_output()
+    }
+
     /// Visit a named type reference (interface, class, type alias).
     fn visit_ref(&mut self, _symbol_ref: u32) -> Self::Output {
         Self::default_output()
@@ -248,6 +257,7 @@ pub trait TypeVisitor: Sized {
             TypeKey::Function(id) => self.visit_function(id.0),
             TypeKey::Callable(id) => self.visit_callable(id.0),
             TypeKey::TypeParameter(info) => self.visit_type_parameter(info),
+            TypeKey::BoundParameter(index) => self.visit_bound_parameter(*index),
             TypeKey::Lazy(def_id) => self.visit_lazy(def_id.0),
             TypeKey::Recursive(index) => self.visit_recursive(*index),
             TypeKey::Enum(def_id, member_type) => self.visit_enum(def_id.0, *member_type),
@@ -511,6 +521,7 @@ where
         | TypeKey::Literal(_)
         | TypeKey::Lazy(_)
         | TypeKey::Recursive(_)
+        | TypeKey::BoundParameter(_)
         | TypeKey::TypeQuery(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
@@ -590,7 +601,9 @@ impl TypeKindVisitor {
             TypeKey::Intersection(_) => TypeKind::Intersection,
             TypeKey::Function(_) | TypeKey::Callable(_) => TypeKind::Function,
             TypeKey::Application(_) => TypeKind::Generic,
-            TypeKey::TypeParameter(_) | TypeKey::Infer(_) => TypeKind::TypeParameter,
+            TypeKey::TypeParameter(_) | TypeKey::Infer(_) | TypeKey::BoundParameter(_) => {
+                TypeKind::TypeParameter
+            }
             TypeKey::Conditional(_) => TypeKind::Conditional,
             TypeKey::Lazy(_) | TypeKey::Recursive(_) => TypeKind::Reference,
             TypeKey::Enum(_, _) => TypeKind::Primitive, // enums behave like primitives
@@ -1401,7 +1414,11 @@ impl<'a> RecursiveTypeCollector<'a> {
 
     fn visit_key(&mut self, key: &TypeKey) {
         match key {
-            TypeKey::Intrinsic(_) | TypeKey::Literal(_) | TypeKey::Error | TypeKey::ThisType => {
+            TypeKey::Intrinsic(_)
+            | TypeKey::Literal(_)
+            | TypeKey::Error
+            | TypeKey::ThisType
+            | TypeKey::BoundParameter(_) => {
                 // Leaf types - nothing to traverse
             }
             TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
@@ -1679,9 +1696,11 @@ where
 
     fn check_key(&mut self, key: &TypeKey) -> bool {
         match key {
-            TypeKey::Intrinsic(_) | TypeKey::Literal(_) | TypeKey::Error | TypeKey::ThisType => {
-                false
-            }
+            TypeKey::Intrinsic(_)
+            | TypeKey::Literal(_)
+            | TypeKey::Error
+            | TypeKey::ThisType
+            | TypeKey::BoundParameter(_) => false,
             TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
                 let shape = self.types.object_shape(*shape_id);
                 shape.properties.iter().any(|p| self.check(p.type_id))

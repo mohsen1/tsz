@@ -148,7 +148,7 @@ pub fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         db.lookup(type_id),
-        Some(TypeKey::Lazy(_) | TypeKey::Recursive(_))
+        Some(TypeKey::Lazy(_) | TypeKey::Recursive(_) | TypeKey::BoundParameter(_))
     )
 }
 
@@ -619,6 +619,7 @@ where
             }
             TypeKey::Lazy(_)
             | TypeKey::Recursive(_)
+            | TypeKey::BoundParameter(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => false,
@@ -1063,7 +1064,8 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
         TypeKey::TypeQuery(sym_ref) => ConstructorTypeKind::TypeQuery(sym_ref),
         // All other types cannot be constructors
         TypeKey::Enum(_, _) => ConstructorTypeKind::NotConstructor,
-        TypeKey::Intrinsic(_)
+        TypeKey::BoundParameter(_)
+        | TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Object(_)
         | TypeKey::ObjectWithIndex(_)
@@ -1354,7 +1356,8 @@ pub fn classify_for_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Constr
         },
         TypeKey::KeyOf(operand) => ConstraintTypeKind::KeyOf(operand),
         TypeKey::Literal(_) => ConstraintTypeKind::Resolved(type_id),
-        TypeKey::Intrinsic(_)
+        TypeKey::BoundParameter(_)
+        | TypeKey::Intrinsic(_)
         | TypeKey::Object(_)
         | TypeKey::ObjectWithIndex(_)
         | TypeKey::Array(_)
@@ -1451,7 +1454,8 @@ pub fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> Signat
         | TypeKey::KeyOf(_) => SignatureTypeKind::NeedsEvaluation(type_id),
 
         // All other types don't have callable signatures
-        TypeKey::Intrinsic(_)
+        TypeKey::BoundParameter(_)
+        | TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Object(_)
         | TypeKey::ObjectWithIndex(_)
@@ -1582,7 +1586,8 @@ pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Fu
             FullIterableTypeKind::ComplexType
         }
         // All other types are not directly iterable
-        TypeKey::Intrinsic(_)
+        TypeKey::BoundParameter(_)
+        | TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Lazy(_)
         | TypeKey::Recursive(_)
@@ -1764,7 +1769,8 @@ pub fn classify_for_property_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> P
             PropertyLookupKind::Tuple(elements.to_vec())
         }
         // All other types don't have direct properties for this use case
-        TypeKey::Intrinsic(_)
+        TypeKey::BoundParameter(_)
+        | TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Function(_)
         | TypeKey::Callable(_)
@@ -1863,7 +1869,8 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
         },
         TypeKey::ReadonlyType(inner) => EvaluationNeeded::Readonly(inner),
         // Already resolved types (Lazy needs special handling when DefId lookup is implemented)
-        TypeKey::Intrinsic(_)
+        TypeKey::BoundParameter(_)
+        | TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Object(_)
         | TypeKey::ObjectWithIndex(_)
@@ -1955,8 +1962,10 @@ pub fn classify_for_property_access(
         TypeKey::Conditional(_) | TypeKey::Mapped(_) | TypeKey::KeyOf(_) => {
             PropertyAccessClassification::NeedsEvaluation(type_id)
         }
+        // BoundParameter is a resolved type (leaf node)
+        TypeKey::BoundParameter(_)
         // Primitives and resolved types (Lazy needs special handling when DefId lookup is implemented)
-        TypeKey::Intrinsic(_)
+        | TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Array(_)
         | TypeKey::Tuple(_)
@@ -2065,7 +2074,8 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
         TypeKey::IndexAccess(object, index) => TypeTraversalKind::IndexAccess { object, index },
         TypeKey::KeyOf(inner) => TypeTraversalKind::KeyOf(inner),
         // Terminal types - no nested types to traverse (Lazy needs resolution for traversal)
-        TypeKey::Intrinsic(_)
+        TypeKey::BoundParameter(_)
+        | TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::Lazy(_)
@@ -2158,7 +2168,8 @@ pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> I
         TypeKey::ObjectWithIndex(shape_id) => InterfaceMergeKind::ObjectWithIndex(shape_id),
         TypeKey::Intersection(_) => InterfaceMergeKind::Intersection,
         // All other types cannot be structurally merged for interfaces
-        TypeKey::Intrinsic(_)
+        TypeKey::BoundParameter(_)
+        | TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Union(_)
         | TypeKey::Array(_)

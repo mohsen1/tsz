@@ -175,6 +175,8 @@ impl<'a> TypePrinter<'a> {
 
             TypeKey::Recursive(index) => format!("T{}", index),
 
+            TypeKey::BoundParameter(index) => format!("P{}", index),
+
             TypeKey::Error => "any".to_string(),
         }
     }

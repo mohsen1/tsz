@@ -264,6 +264,7 @@ impl<'a> TypeInstantiator<'a> {
             // Lazy types might resolve to something that needs substitution
             TypeKey::Lazy(_)
             | TypeKey::Recursive(_)
+            | TypeKey::BoundParameter(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => self.interner.intern(key.clone()),

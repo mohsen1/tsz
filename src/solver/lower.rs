@@ -1651,6 +1651,7 @@ impl<'a> TypeLowering<'a> {
             }
             TypeKey::Lazy(_)
             | TypeKey::Recursive(_)
+            | TypeKey::BoundParameter(_)
             | TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::UniqueSymbol(_)
@@ -1985,6 +1986,7 @@ impl<'a> TypeLowering<'a> {
             | TypeKey::Literal(_)
             | TypeKey::Lazy(_)
             | TypeKey::Recursive(_)
+            | TypeKey::BoundParameter(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType
