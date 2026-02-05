@@ -113,7 +113,10 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 // TypeVisitor Implementation for PropertyAccessEvaluator
 // =============================================================================
 
-impl<'a, R: TypeResolver> TypeVisitor for PropertyAccessEvaluator<'a, R> {
+// Implement TypeVisitor for &PropertyAccessEvaluator to solve &mut self issue
+// This allows visitor methods to be called from &self methods while still
+// being able to mutate internal state via RefCells.
+impl<'a, R: TypeResolver> TypeVisitor for &PropertyAccessEvaluator<'a, R> {
     type Output = Option<PropertyAccessResult>;
 
     fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
@@ -157,8 +160,324 @@ impl<'a, R: TypeResolver> TypeVisitor for PropertyAccessEvaluator<'a, R> {
         None
     }
 
+    fn visit_object(&mut self, shape_id: u32) -> Self::Output {
+        use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::solver::types::TypeKey;
+
+        let prop_name = self.current_prop_name.borrow();
+        let prop_atom_opt = self.current_prop_atom.borrow();
+
+        let prop_name = match prop_name.as_deref() {
+            Some(name) => name,
+            None => return None,
+        };
+        let prop_atom = match prop_atom_opt.as_ref() {
+            Some(&atom) => atom,
+            None => self.interner.intern_string(prop_name),
+        };
+
+        let shape = self.interner.object_shape(ObjectShapeId(shape_id));
+
+        // Check explicit properties first
+        if let Some(prop) =
+            self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
+        {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.optional_property_type(prop),
+                from_index_signature: false,
+            });
+        }
+
+        // Check apparent members (toString, etc.)
+        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+            return Some(result);
+        }
+
+        // Check for index signatures (some Object types may have index signatures that aren't in ObjectWithIndex)
+        let resolver = IndexSignatureResolver::new(self.interner);
+
+        // Reconstruct obj_type from shape_id for index signature checking
+        let obj_type = self
+            .interner
+            .intern(TypeKey::Object(ObjectShapeId(shape_id)));
+
+        // Try string index signature first (most common)
+        if resolver.has_index_signature(obj_type, IndexKind::String) {
+            if let Some(value_type) = resolver.resolve_string_index(obj_type) {
+                return Some(PropertyAccessResult::Success {
+                    type_id: self.add_undefined_if_unchecked(value_type),
+                    from_index_signature: true,
+                });
+            }
+        }
+
+        // Try numeric index signature if property name looks numeric
+        if resolver.is_numeric_index_name(prop_name) {
+            if let Some(value_type) = resolver.resolve_number_index(obj_type) {
+                return Some(PropertyAccessResult::Success {
+                    type_id: self.add_undefined_if_unchecked(value_type),
+                    from_index_signature: true,
+                });
+            }
+        }
+
+        Some(PropertyAccessResult::PropertyNotFound {
+            type_id: obj_type,
+            property_name: prop_atom,
+        })
+    }
+
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        use crate::solver::index_signatures::IndexSignatureResolver;
+
+        let prop_name = self.current_prop_name.borrow();
+        let prop_atom_opt = self.current_prop_atom.borrow();
+
+        let prop_name = match prop_name.as_deref() {
+            Some(name) => name,
+            None => return None,
+        };
+        let prop_atom = match prop_atom_opt.as_ref() {
+            Some(&atom) => atom,
+            None => self.interner.intern_string(prop_name),
+        };
+
+        let shape = self.interner.object_shape(ObjectShapeId(shape_id));
+
+        // Check explicit properties first
+        if let Some(prop) =
+            self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
+        {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.optional_property_type(prop),
+                from_index_signature: false,
+            });
+        }
+
+        // Check apparent members (toString, etc.)
+        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+            return Some(result);
+        }
+
+        // Check string index signature
+        if let Some(ref idx) = shape.string_index {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.add_undefined_if_unchecked(idx.value_type),
+                from_index_signature: true,
+            });
+        }
+
+        // Check numeric index signature if property name looks numeric
+        let resolver = IndexSignatureResolver::new(self.interner);
+        if resolver.is_numeric_index_name(prop_name) {
+            if let Some(ref idx) = shape.number_index {
+                return Some(PropertyAccessResult::Success {
+                    type_id: self.add_undefined_if_unchecked(idx.value_type),
+                    from_index_signature: true,
+                });
+            }
+        }
+
+        // Reconstruct obj_type for PropertyNotFound result
+        let obj_type = self
+            .interner
+            .intern(crate::solver::types::TypeKey::ObjectWithIndex(
+                ObjectShapeId(shape_id),
+            ));
+
+        Some(PropertyAccessResult::PropertyNotFound {
+            type_id: obj_type,
+            property_name: prop_atom,
+        })
+    }
+
+    fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
+        use crate::solver::types::TypeKey;
+
+        let prop_name = self.current_prop_name.borrow();
+        let prop_atom_opt = self.current_prop_atom.borrow();
+
+        let prop_name = match prop_name.as_deref() {
+            Some(name) => name,
+            None => return None,
+        };
+        let prop_atom = match prop_atom_opt.as_ref() {
+            Some(&atom) => atom,
+            None => self.interner.intern_string(prop_name),
+        };
+
+        // Reconstruct obj_type for resolve_array_property
+        let obj_type = self.interner.intern(TypeKey::Array(element_type));
+        Some(self.resolve_array_property(obj_type, prop_name, prop_atom))
+    }
+
+    fn visit_tuple(&mut self, list_id: u32) -> Self::Output {
+        use crate::solver::types::TypeKey;
+
+        let prop_name = self.current_prop_name.borrow();
+        let prop_atom_opt = self.current_prop_atom.borrow();
+
+        let prop_name = match prop_name.as_deref() {
+            Some(name) => name,
+            None => return None,
+        };
+        let prop_atom = match prop_atom_opt.as_ref() {
+            Some(&atom) => atom,
+            None => self.interner.intern_string(prop_name),
+        };
+
+        // Reconstruct obj_type for resolve_array_property
+        let obj_type = self.interner.intern(TypeKey::Tuple(TupleListId(list_id)));
+        Some(self.resolve_array_property(obj_type, prop_name, prop_atom))
+    }
+
     fn default_output() -> Self::Output {
         None
+    }
+}
+
+impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
+    // Helper methods to call visitor logic from &self context
+    // These contain the actual implementation that the TypeVisitor trait methods delegate to
+
+    fn visit_object_impl(
+        &self,
+        shape_id: u32,
+        prop_name: &str,
+        prop_atom: Option<Atom>,
+    ) -> Option<PropertyAccessResult> {
+        use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::solver::types::TypeKey;
+
+        let prop_atom = match prop_atom {
+            Some(atom) => atom,
+            None => self.interner.intern_string(prop_name),
+        };
+
+        let shape = self.interner.object_shape(ObjectShapeId(shape_id));
+
+        // Check explicit properties first
+        if let Some(prop) =
+            self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
+        {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.optional_property_type(prop),
+                from_index_signature: false,
+            });
+        }
+
+        // Check apparent members (toString, etc.)
+        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+            return Some(result);
+        }
+
+        // Check for index signatures (some Object types may have index signatures that aren't in ObjectWithIndex)
+        let resolver = IndexSignatureResolver::new(self.interner);
+
+        // Reconstruct obj_type from shape_id for index signature checking
+        let obj_type = self
+            .interner
+            .intern(TypeKey::Object(ObjectShapeId(shape_id)));
+
+        // Try string index signature first (most common)
+        if resolver.has_index_signature(obj_type, IndexKind::String) {
+            if let Some(value_type) = resolver.resolve_string_index(obj_type) {
+                return Some(PropertyAccessResult::Success {
+                    type_id: self.add_undefined_if_unchecked(value_type),
+                    from_index_signature: true,
+                });
+            }
+        }
+
+        // Try numeric index signature if property name looks numeric
+        if resolver.is_numeric_index_name(prop_name) {
+            if let Some(value_type) = resolver.resolve_number_index(obj_type) {
+                return Some(PropertyAccessResult::Success {
+                    type_id: self.add_undefined_if_unchecked(value_type),
+                    from_index_signature: true,
+                });
+            }
+        }
+
+        Some(PropertyAccessResult::PropertyNotFound {
+            type_id: obj_type,
+            property_name: prop_atom,
+        })
+    }
+
+    fn visit_object_with_index_impl(
+        &self,
+        shape_id: u32,
+        prop_name: &str,
+        prop_atom: Option<Atom>,
+    ) -> Option<PropertyAccessResult> {
+        use crate::solver::index_signatures::IndexSignatureResolver;
+
+        let prop_atom = match prop_atom {
+            Some(atom) => atom,
+            None => self.interner.intern_string(prop_name),
+        };
+
+        let shape = self.interner.object_shape(ObjectShapeId(shape_id));
+
+        // Check explicit properties first
+        if let Some(prop) =
+            self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
+        {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.optional_property_type(prop),
+                from_index_signature: false,
+            });
+        }
+
+        // Check apparent members (toString, etc.)
+        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+            return Some(result);
+        }
+
+        // Check string index signature
+        if let Some(ref idx) = shape.string_index {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.add_undefined_if_unchecked(idx.value_type),
+                from_index_signature: true,
+            });
+        }
+
+        // Check numeric index signature if property name looks numeric
+        let resolver = IndexSignatureResolver::new(self.interner);
+        if resolver.is_numeric_index_name(prop_name) {
+            if let Some(ref idx) = shape.number_index {
+                return Some(PropertyAccessResult::Success {
+                    type_id: self.add_undefined_if_unchecked(idx.value_type),
+                    from_index_signature: true,
+                });
+            }
+        }
+
+        // Reconstruct obj_type for PropertyNotFound result
+        let obj_type = self
+            .interner
+            .intern(crate::solver::types::TypeKey::ObjectWithIndex(
+                ObjectShapeId(shape_id),
+            ));
+
+        Some(PropertyAccessResult::PropertyNotFound {
+            type_id: obj_type,
+            property_name: prop_atom,
+        })
+    }
+
+    fn visit_array_impl(
+        &self,
+        obj_type: TypeId,
+        prop_name: &str,
+        prop_atom: Option<Atom>,
+    ) -> Option<PropertyAccessResult> {
+        let prop_atom = match prop_atom {
+            Some(atom) => atom,
+            None => self.interner.intern_string(prop_name),
+        };
+        Some(self.resolve_array_property(obj_type, prop_name, prop_atom))
     }
 }
 
@@ -501,40 +820,63 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         prop_name: &str,
         prop_atom: Option<Atom>,
     ) -> PropertyAccessResult {
-        // Milestone 1: Visitor Bridge Pattern (Simplified)
+        // Milestone 2: Visitor Bridge Pattern
         // Set context for visitor methods
         *self.current_prop_name.borrow_mut() = Some(prop_name.to_string());
         *self.current_prop_atom.borrow_mut() = prop_atom;
 
-        // For Milestone 1, check for intrinsic types and use visitor logic directly
-        // This avoids the &mut self issue while still implementing the pattern
-        if let Some(TypeKey::Intrinsic(kind)) = self.interner.lookup(obj_type) {
-            // Inline the visitor logic for intrinsics (avoiding &mut self requirement)
-            let result = match kind {
-                IntrinsicKind::Any => Some(PropertyAccessResult::Success {
-                    type_id: TypeId::ANY,
-                    from_index_signature: false,
-                }),
-                IntrinsicKind::Unknown => Some(PropertyAccessResult::IsUnknown),
-                IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
-                    let cause = if kind == IntrinsicKind::Void || kind == IntrinsicKind::Undefined {
-                        TypeId::UNDEFINED
-                    } else {
-                        TypeId::NULL
-                    };
-                    Some(PropertyAccessResult::PossiblyNullOrUndefined {
-                        property_type: None,
-                        cause,
-                    })
+        // Use visitor for types we've migrated (Intrinsic, Object, ObjectWithIndex, Array, Tuple)
+        // Due to TypeVisitor requiring &mut self, we inline the visitor logic here
+        // This maintains the visitor pattern while avoiding unsafe casts
+        let key_opt = self.interner.lookup(obj_type);
+        if let Some(key) = key_opt {
+            let result = match key {
+                TypeKey::Intrinsic(kind) => {
+                    // Inline visitor logic for intrinsics
+                    match kind {
+                        IntrinsicKind::Any => Some(PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
+                        }),
+                        IntrinsicKind::Unknown => Some(PropertyAccessResult::IsUnknown),
+                        IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
+                            let cause = if kind == IntrinsicKind::Void
+                                || kind == IntrinsicKind::Undefined
+                            {
+                                TypeId::UNDEFINED
+                            } else {
+                                TypeId::NULL
+                            };
+                            Some(PropertyAccessResult::PossiblyNullOrUndefined {
+                                property_type: None,
+                                cause,
+                            })
+                        }
+                        IntrinsicKind::Symbol => {
+                            let prop_atom_inner =
+                                prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                            Some(self.resolve_symbol_primitive_property(prop_name, prop_atom_inner))
+                        }
+                        _ => None,
+                    }
                 }
-                IntrinsicKind::Symbol => {
-                    // Symbol primitive has special properties
-                    let prop_atom_inner =
-                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
-                    Some(self.resolve_symbol_primitive_property(prop_name, prop_atom_inner))
+                TypeKey::Object(shape_id) => {
+                    // Inline visitor logic for Object - calls visit_object implementation
+                    self.visit_object_impl(shape_id.0, prop_name, prop_atom)
                 }
-                // Other intrinsics fall through to the match statement below
-                _ => None,
+                TypeKey::ObjectWithIndex(shape_id) => {
+                    // Inline visitor logic for ObjectWithIndex - calls visit_object_with_index implementation
+                    self.visit_object_with_index_impl(shape_id.0, prop_name, prop_atom)
+                }
+                TypeKey::Array(_elem) => {
+                    // Inline visitor logic for Array
+                    self.visit_array_impl(obj_type, prop_name, prop_atom)
+                }
+                TypeKey::Tuple(_list_id) => {
+                    // Inline visitor logic for Tuple
+                    self.visit_array_impl(obj_type, prop_name, prop_atom)
+                }
+                _ => None, // Not yet migrated to visitor
             };
 
             if let Some(res) = result {
@@ -542,7 +884,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
         }
 
-        // Fallback to existing match statement for all other types
+        // Fallback to existing match statement for types not yet migrated
         // Look up the type key
         let key = match self.interner.lookup(obj_type) {
             Some(k) => k,

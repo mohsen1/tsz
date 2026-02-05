@@ -66,7 +66,14 @@ Implement property access resolution for Union and Intersection types using Visi
 - **Completed**: 2026-02-05
 - **Notes**: Used inline visitor pattern to avoid &mut self casting issues
 
-### Milestone 2: Core Types (MEDIUM Complexity) - NEXT
+### Milestone 2: Core Types (MEDIUM Complexity) ✅ COMPLETE
+- Implement `visit_object` ✅
+- Implement `visit_array` ✅
+- Move Object/Array logic from match to visitor ✅
+- **Completed**: 2026-02-05
+- **Notes**: Refactored to implement TypeVisitor for &PropertyAccessEvaluator, added helper methods
+
+### Milestone 3: Composite Types (HIGH Complexity) - NEXT
 - Implement `visit_object`
 - Implement `visit_array`
 - Move Object/Array logic from match to visitor
