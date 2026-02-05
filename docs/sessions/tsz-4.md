@@ -15,15 +15,19 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 **Test Results**: `./scripts/emit/run.sh --max=100`
 - JavaScript Emit: **8.2%** pass rate (5/61 tests passed, 56 failed, 39 skipped)
 - Declaration Emit: **Working** (Separate `DeclarationEmitter` class, tested via `--dts-only`)
-- Overall: Infrastructure for namespace/class merging var suppression in place
+- Overall: Variable transformation infrastructure now in place
 
 **Recent Discovery:**
-- Need to detect sibling context to suppress `var` when namespace merges with class/function/enum
-- This requires architectural changes to pass context to NamespaceES5Transformer
+- Variable declarations in namespaces were using ASTRef which failed to emit initializers
+- Created proper IR transformation for variables (commit 56382fc38)
 
 **Recent Work:**
+- Variable transformation in namespaces (commit 56382fc38) - **COMPLETED**
+  - Added `convert_variable_declarations()` helper function
+  - Variables now emit as `IRNode::VarDecl` with proper structure
+  - Known limitation: Initializers emit as `undefined` due to source_text not being available in IR printer path
 - Function transformation in namespaces (commit 43dd1dc8e) - **COMPLETED**
-- Namespace var suppression infrastructure (commit 026fb2cac) - **IN PROGRESS**
+- Namespace var suppression infrastructure (commit 026fb2cac) - **PAUSED**
   - Added `should_declare_var` field to IRNode::NamespaceIIFE
   - Updated IRPrinter to respect the flag
   - Still need to implement sibling context detection
