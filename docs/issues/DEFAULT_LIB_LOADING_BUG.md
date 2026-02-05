@@ -2,100 +2,107 @@
 
 **Status**: NEEDS FIX
 **Discovered**: 2026-02-05
-**Component**: CLI (config.rs, driver.rs)
+**Component**: CLI (config.rs, driver.rs), Binder (symbol merging)
 **Conformance Impact**: Many TS2339, TS2349, TS2488 errors
 
 ## Problem
 
-When using `--target es6` (or other ES versions), tsz does not properly load the default lib files for that target. The `Symbol` global is not available, causing errors when using ES6+ features like iterators, generators, and well-known symbols.
+When using `--target es6` (or other ES versions), tsz loads the lib files but the symbol types are incorrect. The `Symbol` variable is resolved to the `Symbol` interface type instead of `SymbolConstructor`.
 
-### Test Case
+When using `--lib es6`, lib symbols are not found at all and fall back to `ANY`, which silently suppresses errors.
+
+### Test Cases
 
 ```typescript
-// test_symbol.ts
-let s = Symbol();
-console.log(Symbol.iterator);
+// test.ts
+const s: SymbolConstructor = Symbol;  // Should pass, but fails with --target es6
+const x = Symbol.iterator;             // Property 'iterator' not found
 ```
 
-```bash
-# Works with explicit --lib
-./.target/release/tsz test_symbol.ts --noEmit --target es6 --lib es6
-# Exit code: 0
+| Command | Result | Explanation |
+|---------|--------|-------------|
+| `--target es6` | TS2322, TS2339 | Symbol found but has wrong type (interface Symbol instead of SymbolConstructor) |
+| `--lib es6` | No errors | Symbol NOT found, falls back to ANY, suppresses all property errors |
+| TSC equivalent | No errors | Correctly resolves Symbol to SymbolConstructor |
 
-# Fails without --lib
-./.target/release/tsz test_symbol.ts --noEmit --target es6
-# error TS2349: Type 'Symbol' has no call signatures.
-# error TS2339: Property 'iterator' does not exist on type 'Symbol'.
+## Root Cause Analysis (Updated)
+
+### Investigation Findings
+
+Debug tracing revealed:
+
+```
+# With --target es6:
+[RESOLVE] 'Symbol' FOUND in scope at depth 0 (id=258)
+Property 'iterator' does not exist on type 'Symbol'.
+
+# With --lib es6:
+[RESOLVE] 'Symbol' NOT FOUND - searched scopes, file_locals, and 0 lib binders
+(Type = ANY, no property errors reported)
 ```
 
-### Comparison with TSC
+### Two Distinct Issues
 
-```bash
-# TSC loads lib files automatically based on target
-npx tsc test_symbol.ts --noEmit --target es6 --listFiles
-# Lists 18 lib files including lib.es2015.symbol.d.ts
-```
+1. **`--target es6` Problem**: Symbol is found in scope (merged into binder) but has the wrong type
+   - The lib files ARE loaded and parsed correctly (16 files for ES2015)
+   - Symbols ARE merged into the main binder
+   - But `declare var Symbol: SymbolConstructor` resolves to interface `Symbol` instead of `SymbolConstructor`
+   - Likely a bug in `compute_type_of_symbol` or type annotation resolution for lib symbols
 
-## Root Cause Analysis
+2. **`--lib es6` Problem**: Lib symbols are not found at all
+   - The alias "es6" -> "es2015.full" requires a file that doesn't exist (`lib.es2015.full.d.ts`)
+   - Falls back to embedded libs which may not be loading correctly
+   - Results in 0 lib binders, so symbols default to ANY
+   - This masks type errors rather than fixing them
 
-The issue appears to be in the lib resolution chain:
+### Type Resolution Bug
 
-1. `resolve_compiler_options(None)` (no tsconfig):
-   - Sets `lib_files = resolve_default_lib_files(DEFAULT_TARGET)` (ES5)
-   - Sets `lib_is_default = true`
+For `declare var Symbol: SymbolConstructor`, the expected flow is:
+1. Find Symbol variable symbol (flags = VARIABLE)
+2. Get type annotation node (`SymbolConstructor`)
+3. Resolve `SymbolConstructor` to its interface type
+4. Return that as the variable's type
 
-2. `apply_cli_overrides`:
-   - Updates `printer.target` to ES2015 (from `--target es6`)
-   - Line 2748-2749: Should call `resolve_default_lib_files(ES2015)` but may not be working
+But tsz appears to return the `Symbol` interface type instead, possibly:
+- Confusing the Symbol interface with the Symbol variable
+- Not properly handling type annotation resolution for lib symbols
+- Using the wrong symbol when both interface and variable exist with same name
 
-3. `resolve_default_lib_files`:
-   - Tries to find lib files via `default_lib_dir()`
-   - Falls back to `materialize_embedded_libs` if disk libs not found
-
-### Potential Issues
-
-1. **Lib directory not found**: `default_lib_dir()` may fail, returning empty Vec before embedded libs fallback kicks in
-
-2. **Embedded libs cache issue**: The `/tmp/tsz-embedded-libs` cache may be stale or incomplete
-
-3. **Resolution order issue**: The `resolve_lib_files_with_options` function may be short-circuiting before trying the embedded libs path
-
-### Key Files
+## Key Files
 
 - `src/cli/config.rs`:
   - `resolve_default_lib_files()` (line 777)
-  - `default_lib_dir()` (line 948)
-  - `default_libs_for_target()` (line 820)
-  - `materialize_embedded_libs()` (line 1131)
+  - `default_libs_for_target()` (line 820) - list looks correct
 
 - `src/cli/driver.rs`:
-  - `apply_cli_overrides()` (line 2645)
-  - `load_lib_files_for_contexts()` (line 1634)
+  - `load_lib_files_for_contexts()` (line 1658)
+  - `merge_lib_contexts_into_binder()` call at line 1721
 
-### Debugging Steps
+- `src/binder/state.rs`:
+  - `merge_lib_contexts_into_binder()` (line 1183) - symbol merging logic
 
-1. Add logging to `resolve_default_lib_files` to see what libs are being resolved
-2. Check if `default_lib_dir()` is failing
-3. Verify `materialize_embedded_libs` is being called and returning correct libs
-4. Check if lib_files Vec is being properly passed to `load_lib_files_for_contexts`
+- `src/checker/state_type_analysis.rs`:
+  - `compute_type_of_symbol()` (line 988) - type resolution for variables
 
 ## Expected Behavior
 
 When `--target es6` is specified:
-1. Default libs should include: es5, es2015.core, es2015.symbol, es2015.symbol.wellknown, etc.
-2. The `Symbol` global should be available
-3. `Symbol.iterator` and other well-known symbols should resolve
+1. Lib files should load (WORKS)
+2. Symbols should merge into binder (WORKS)
+3. `Symbol` variable should have type `SymbolConstructor` (BROKEN)
+4. `Symbol.iterator` should resolve to the `iterator` property (BROKEN)
 
-## Related Issues
+## Recommended Fix Approach
 
-- Many conformance tests fail due to this issue
-- TS2488 errors (Symbol.iterator required for spread/for-of)
-- TS2349 errors (Symbol() not recognized as callable)
-- TS2339 errors (Symbol.iterator property missing)
+1. Investigate `compute_type_of_symbol` for VARIABLE symbols from lib files
+2. Ensure type annotation (`SymbolConstructor`) is resolved in lib context
+3. May need to ensure value_resolver is properly set when lowering lib types
+4. Check symbol flag merging when interface and variable have same name
 
 ## Workaround
 
-Users can explicitly specify `--lib es6` to work around the issue:
-```bash
-tsz file.ts --target es6 --lib es6
-```
+Currently there is no reliable workaround:
+- `--lib es6` avoids the error but only because it falls back to ANY
+- `--target es6 --lib es6` might work but has same issues
+
+For now, code using Symbol requires `noLib` and manual type declarations.
