@@ -18,9 +18,9 @@ Previous tsz-3 Phase 1 successfully delivered:
 
 ---
 
-## Phase 1: Nested Discriminants (🔄 ACTIVE - ARCHITECTURAL INVESTIGATION)
+## Phase 1: Nested Discriminants (🔄 ACTIVE - INVESTIGATION PAUSED)
 
-**Status**: 🟡 IN PROGRESS - ARCHITECTURAL INVESTIGATION
+**Status**: 🟡 IN PROGRESS - INVESTIGATION PAUSED DUE TO PRE-EXISTING TEST FAILURES
 
 **Problem**: Support narrowing for nested discriminant paths like `action.payload.kind`.
 
@@ -40,23 +40,35 @@ function reducer(action: Action) {
 }
 ```
 
-**Current Limitation**:
-- `discriminant_property_info` only returns immediate parent property
-- Need to recursively walk `PropertyAccessExpression` to build full path
+**Implementation Attempt (2026-02-05)**:
 
-**Implementation Plan**:
-1. Modify `discriminant_property_info` to build `property_path: Vec<Atom>`
-2. Update `narrow_by_discriminant` to handle paths of any length
-3. Handle optional chaining (a?.b.c) in the path
-4. Test with nested patterns 3-4 levels deep
+Modified `discriminant_property_info` to track relative paths:
+- Added `relative_path_info` tracking for intermediate narrowing targets
+- Check `is_matching_reference(current, target)` BEFORE adding segment to path
+- Returns 4-tuple with relative info: `Option<(Vec<Atom>, bool, NodeIndex, Option<(Vec<Atom>, bool, NodeIndex)>)>`
 
-**Root Cause from Previous Attempt**:
-The check `if self.is_matching_reference(base, target)` prevents nested narrowing:
-- For `action.payload.kind === 'item'`: `base` is `action`, `target` is `action.payload.kind`
-- They are NOT the same reference, so discriminant guard is not created
-- Removing the check broke other narrowing cases
+Modified `discriminant_comparison`:
+- Prioritizes relative_info for nested narrowing
+- Falls back to base narrowing for root-level narrowing
+- Returns `None` when `rel_path.is_empty()` (target is leaf)
 
-**Requires**: AccessPath/FlowContainer abstraction or alternative approach
+**Issue Encountered**:
+- Commit broke 4 pre-existing tests (unrelated to nested discriminants)
+- Tests were already failing before the changes
+- Reverted commit (f4cbae3c8) to avoid compounding issues
+
+**Root Cause Analysis Needed**:
+The following tests are failing (pre-existing, NOT caused by nested discriminant work):
+1. `test_asserts_type_predicate_narrows_true_branch` - Expects `TypeId(9)` but gets `TypeId(130)`
+2. `test_truthiness_false_branch_narrows_to_falsy`
+3. `test_array_destructuring_assignment_clears_narrowing`
+4. `test_array_destructuring_default_initializer_clears_narrowing`
+
+**Next Steps**:
+1. ⚠️ **BLOCKER**: Fix pre-existing test failures before continuing nested discriminant work
+2. Ask Gemini to investigate the test failures
+3. Once tests pass, re-implement nested discriminant narrowing
+4. Investigate checker flow to ensure narrowing is requested for intermediate properties
 
 ---
 
