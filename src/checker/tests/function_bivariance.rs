@@ -24,7 +24,15 @@ interface IArguments {}
 "#;
 
 fn test_function_variance(source: &str, expected_error_code: u32) {
-    let source = format!("{}\n{}", GLOBAL_TYPE_MOCKS, source);
+    // Prepend @strictFunctionTypes comment BEFORE GLOBAL_TYPE_MOCKS
+    // because the parser stops at the first non-comment line
+    // Remove any existing @strictFunctionTypes from source to avoid duplication
+    let source_clean = source.replace("// @strictFunctionTypes: true", "");
+    let source_clean = source_clean.trim();
+    let source = format!(
+        "// @strictFunctionTypes: true\n{}\n{}",
+        GLOBAL_TYPE_MOCKS, source_clean
+    );
 
     let ctx = TestContext::new();
 
@@ -75,7 +83,15 @@ fn test_function_variance(source: &str, expected_error_code: u32) {
 }
 
 fn test_no_errors(source: &str) {
-    let source = format!("{}\n{}", GLOBAL_TYPE_MOCKS, source);
+    // Prepend @strictFunctionTypes comment BEFORE GLOBAL_TYPE_MOCKS
+    // because the parser stops at the first non-comment line
+    // Remove any existing @strictFunctionTypes from source to avoid duplication
+    let source_clean = source.replace("// @strictFunctionTypes: true", "");
+    let source_clean = source_clean.trim();
+    let source = format!(
+        "// @strictFunctionTypes: true\n{}\n{}",
+        GLOBAL_TYPE_MOCKS, source_clean
+    );
 
     let ctx = TestContext::new();
 
@@ -166,7 +182,7 @@ fn test_function_property_contravariance() {
     // Should fail - function properties are contravariant
     test_function_variance(
         r#"
-        // @strictFunctionTypes
+        // @strictFunctionTypes: true: true
         interface A {
             prop: (x: number | string) => void;
         }
@@ -186,7 +202,7 @@ fn test_arrow_function_property_contravariance() {
     // Should fail - arrow functions are properties, not methods
     test_function_variance(
         r#"
-        // @strictFunctionTypes
+        // @strictFunctionTypes: true: true
         interface A {
             prop: (x: number) => void;
         }
@@ -206,7 +222,7 @@ fn test_method_shorthand_bivariant() {
     // Should pass - method shorthand is bivariant
     test_no_errors(
         r#"
-        // @strictFunctionTypes
+        // @strictFunctionTypes: true
         interface A {
             method(x: number): void;
         }
@@ -225,7 +241,7 @@ fn test_method_bivariance_strict_mode() {
     // Should pass - methods are bivariant even in strict mode
     test_no_errors(
         r#"
-        // @strictFunctionTypes
+        // @strictFunctionTypes: true
         interface A {
             method(x: number): void;
         }
@@ -244,7 +260,7 @@ fn test_function_property_contravariance_strict_mode() {
     // Should fail - function properties are contravariant in strict mode
     test_function_variance(
         r#"
-        // @strictFunctionTypes
+        // @strictFunctionTypes: true
         interface A {
             prop: (x: number | string) => void;
         }
