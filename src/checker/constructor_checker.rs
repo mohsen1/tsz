@@ -731,9 +731,6 @@ impl<'a> CheckerState<'a> {
         new_expr_idx: crate::parser::NodeIndex,
         constructor_type: TypeId,
     ) {
-        
-        
-
         // Skip check for `any` and `error` types
         if constructor_type == TypeId::ANY || constructor_type == TypeId::ERROR {
             return;
@@ -832,31 +829,39 @@ impl<'a> CheckerState<'a> {
         let mut current = idx;
 
         while let Some(ext) = self.ctx.arena.get_extended(current) {
+            // Check if parent exists and get the node
             let parent_idx = ext.parent;
             if parent_idx.is_none() {
                 break;
             }
-            let parent_node = self.ctx.arena.get(parent_idx)?;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
 
-            // Arrow functions capture the class context, so skip them
-            // Check for arrow function syntax kind
-            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
-                current = parent_idx;
-                continue;
-            }
-
-            // Found the enclosing class
+            // Check for Class Declaration or Expression
             if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
             {
-                // Get the class symbol
-                return self.ctx.binder.get_node_symbol(parent_idx).or_else(|| {
-                    // Try to get symbol by class name
-                    let class_data = self.ctx.arena.get_class(parent_node)?;
-                    let name_node = self.ctx.arena.get(class_data.name)?;
-                    let ident = self.ctx.arena.get_identifier(name_node)?;
-                    self.ctx.binder.file_locals.get(&ident.escaped_text)
-                });
+                let class_data = self.ctx.arena.get_class(parent_node)?;
+
+                // PRIORITY 1: Look up symbol on the Class Name (Identifier)
+                // This is where Binder attaches symbols for named classes
+                let name_idx = class_data.name;
+                if let Some(sym_id) = self.ctx.binder.get_node_symbol(name_idx) {
+                    return Some(sym_id);
+                }
+
+                // PRIORITY 2: Look up symbol on the Class Node itself
+                // This handles:
+                // 1. Default exports: `export default class { ... }`
+                // 2. Anonymous class expressions: `const C = class { ... }` (sometimes)
+                if let Some(sym_id) = self.ctx.binder.get_node_symbol(parent_idx) {
+                    return Some(sym_id);
+                }
+
+                // If we found a class node but couldn't resolve its symbol,
+                // we can't perform accessibility checks against it.
+                return None;
             }
 
             current = parent_idx;
