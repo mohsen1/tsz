@@ -1769,16 +1769,23 @@ impl ParserState {
         let text = self.scanner.get_token_value_ref().to_string();
         let token_flags = self.scanner.get_token_flags();
 
-        // Check for legacy octal literal (e.g., 01, 0777) - TS1121
-        // Legacy octals start with 0 followed by only octal digits (0-7), without 0o/0O prefix
-        // Numbers like 009 start with 0 but contain non-octal digits, so they emit TS1489 instead
+        // Check for legacy octal literal (e.g., 01, 0777, 01.0) - TS1121
+        // Legacy octals start with 0 followed by octal digits (0-7), without 0o/0O prefix
+        // Numbers like 009 start with 0 but contain non-octal digits 8-9, so they emit TS1489 instead
         if (token_flags & TokenFlags::Octal as u32) != 0 {
-            // Verify all digits after the leading 0 are octal (0-7)
-            let all_octal = text.len() > 1 && text[1..].bytes().all(|b| b >= b'0' && b <= b'7');
-            if all_octal {
+            // Find the integer part (before any decimal point or exponent)
+            let integer_part = text
+                .split(|c: char| c == '.' || c == 'e' || c == 'E')
+                .next()
+                .unwrap_or(&text);
+            // Verify the integer part digits after the leading 0 are all octal (0-7)
+            // Skip leading 0 and check remaining digits don't contain 8 or 9
+            let has_non_octal =
+                integer_part.len() > 1 && integer_part[1..].bytes().any(|b| b == b'8' || b == b'9');
+            if !has_non_octal && integer_part.len() > 1 {
                 use crate::checker::types::diagnostics::diagnostic_codes;
                 // Convert legacy octal to modern octal for the suggestion (e.g., "01" -> "0o1")
-                let suggested = format!("0o{}", &text[1..]);
+                let suggested = format!("0o{}", &integer_part[1..]);
                 let message = format!(
                     "Octal literals are not allowed. Use the syntax '{}'.",
                     suggested
