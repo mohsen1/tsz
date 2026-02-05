@@ -53,6 +53,43 @@ impl<'a> CheckerState<'a> {
     // Assignment Expression Checking
     // =========================================================================
 
+    /// Check if a node is a valid assignment target (variable, property access, element access,
+    /// or destructuring pattern).
+    ///
+    /// Returns false for literals, call expressions, and other non-assignable expressions.
+    /// Used to emit TS2364: "The left-hand side of an assignment expression must be a variable
+    /// or a property access."
+    fn is_valid_assignment_target(&self, idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => true,
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                // Check the inner expression
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.is_valid_assignment_target(paren.expression)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
     /// Check an assignment expression (=).
     ///
     /// ## Contextual Typing:
@@ -70,6 +107,15 @@ impl<'a> CheckerState<'a> {
         right_idx: NodeIndex,
         expr_idx: NodeIndex,
     ) -> TypeId {
+        // TS2364: The left-hand side of an assignment expression must be a variable or a property access.
+        if !self.is_valid_assignment_target(left_idx) {
+            self.error_at_node(
+                left_idx,
+                "The left-hand side of an assignment expression must be a variable or a property access.",
+                2364,
+            );
+        }
+
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);
 
@@ -210,6 +256,15 @@ impl<'a> CheckerState<'a> {
         operator: u16,
         expr_idx: NodeIndex,
     ) -> TypeId {
+        // TS2364: The left-hand side of an assignment expression must be a variable or a property access.
+        if !self.is_valid_assignment_target(left_idx) {
+            self.error_at_node(
+                left_idx,
+                "The left-hand side of an assignment expression must be a variable or a property access.",
+                2364,
+            );
+        }
+
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);
 
