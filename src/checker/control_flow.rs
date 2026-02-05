@@ -2613,19 +2613,33 @@ if (x) {}
             FlowNodeId::NONE,
         );
 
-        let falsy_string = types.literal_string("");
-        let falsy_number = types.literal_number(0.0);
-        let falsy_boolean = types.literal_boolean(false);
+        let falsy_boolean = TypeId::BOOLEAN_FALSE;
 
         match classify_for_union_members(&types, narrowed) {
             UnionMembersKind::Union(members) => {
-                assert!(members.contains(&falsy_string));
-                assert!(members.contains(&falsy_number));
-                assert!(members.contains(&falsy_boolean));
-                assert!(members.contains(&TypeId::NULL));
-                assert!(members.contains(&TypeId::UNDEFINED));
+                // NOTE: TypeScript does NOT narrow string/number to their falsy literals
+                // string remains string, number remains number
+                assert!(
+                    members.contains(&TypeId::STRING),
+                    "string should remain as string"
+                );
+                assert!(
+                    members.contains(&TypeId::NUMBER),
+                    "number should remain as number"
+                );
+                // boolean DOES narrow to false (because boolean = true | false)
+                assert!(
+                    members.contains(&falsy_boolean),
+                    "boolean should narrow to false, got members: {:?}",
+                    members
+                );
+                assert!(members.contains(&TypeId::NULL), "null should be included");
+                assert!(
+                    members.contains(&TypeId::UNDEFINED),
+                    "undefined should be included"
+                );
             }
-            UnionMembersKind::NotUnion => panic!("Expected falsy union"),
+            UnionMembersKind::NotUnion => panic!("Expected falsy union, got NotUnion"),
         }
     }
 
