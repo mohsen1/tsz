@@ -1775,7 +1775,7 @@ impl ParserState {
         if (token_flags & TokenFlags::Octal as u32) != 0 {
             // Find the integer part (before any decimal point or exponent)
             let integer_part = text
-                .split(|c: char| c == '.' || c == 'e' || c == 'E')
+                .split(['.', 'e', 'E'])
                 .next()
                 .unwrap_or(&text);
             // Verify the integer part digits after the leading 0 are all octal (0-7)

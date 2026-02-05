@@ -9,6 +9,7 @@ use crate::solver::def::DefId;
 use crate::solver::element_access::{ElementAccessEvaluator, ElementAccessResult};
 use crate::solver::intern::TypeInterner;
 use crate::solver::narrowing;
+use crate::solver::operations_property::PropertyAccessResult;
 use crate::solver::subtype::TypeResolver;
 use crate::solver::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
@@ -20,6 +21,7 @@ use crate::solver::types::{
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 /// Query interface for the solver.
@@ -332,10 +334,10 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     }
 
     fn evaluate_index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
-        crate::solver::evaluate::evaluate_index_access(
-            self.as_type_database(),
+        self.evaluate_index_access_with_options(
             object_type,
             index_type,
+            self.no_unchecked_indexed_access(),
         )
     }
 
@@ -355,6 +357,20 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
         crate::solver::evaluate::evaluate_type(self.as_type_database(), type_id)
+    }
+
+    fn evaluate_type_with_options(
+        &self,
+        type_id: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> TypeId {
+        if !no_unchecked_indexed_access {
+            return self.evaluate_type(type_id);
+        }
+
+        let mut evaluator = crate::solver::evaluate::TypeEvaluator::new(self.as_type_database());
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator.evaluate(type_id)
     }
 
     fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
@@ -378,13 +394,30 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         prop_name: &str,
     ) -> crate::solver::operations_property::PropertyAccessResult;
 
+    fn resolve_property_access_with_options(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+        no_unchecked_indexed_access: bool,
+    ) -> crate::solver::operations_property::PropertyAccessResult;
+
     fn property_access_type(
         &self,
         object_type: TypeId,
         prop_name: &str,
     ) -> crate::solver::operations_property::PropertyAccessResult {
-        self.resolve_property_access(object_type, prop_name)
+        self.resolve_property_access_with_options(
+            object_type,
+            prop_name,
+            self.no_unchecked_indexed_access(),
+        )
     }
+
+    fn no_unchecked_indexed_access(&self) -> bool {
+        false
+    }
+
+    fn set_no_unchecked_indexed_access(&self, _enabled: bool) {}
 
     fn contextual_property_type(&self, expected: TypeId, prop_name: &str) -> Option<TypeId> {
         let ctx =
@@ -609,17 +642,33 @@ impl QueryDatabase for TypeInterner {
         let evaluator = crate::solver::operations_property::PropertyAccessEvaluator::new(self);
         evaluator.resolve_property_access(object_type, prop_name)
     }
+
+    fn resolve_property_access_with_options(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+        no_unchecked_indexed_access: bool,
+    ) -> crate::solver::operations_property::PropertyAccessResult {
+        let mut evaluator = crate::solver::operations_property::PropertyAccessEvaluator::new(self);
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator.resolve_property_access(object_type, prop_name)
+    }
 }
+
+type EvalCacheKey = (TypeId, bool);
+type PropertyAccessCacheKey = (TypeId, Atom, bool);
 
 /// Query database wrapper with basic caching.
 pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
-    eval_cache: RwLock<FxHashMap<TypeId, TypeId>>,
+    eval_cache: RwLock<FxHashMap<EvalCacheKey, TypeId>>,
     subtype_cache: RwLock<FxHashMap<RelationCacheKey, bool>>,
     /// CRITICAL: Separate cache for assignability to prevent cache poisoning.
     /// This ensures that loose assignability results (e.g., any is assignable to number)
     /// don't contaminate strict subtype checks.
     assignability_cache: RwLock<FxHashMap<RelationCacheKey, bool>>,
+    property_cache: RwLock<FxHashMap<PropertyAccessCacheKey, PropertyAccessResult>>,
+    no_unchecked_indexed_access: AtomicBool,
 }
 
 impl<'a> QueryCache<'a> {
@@ -629,6 +678,8 @@ impl<'a> QueryCache<'a> {
             eval_cache: RwLock::new(FxHashMap::default()),
             subtype_cache: RwLock::new(FxHashMap::default()),
             assignability_cache: RwLock::new(FxHashMap::default()),
+            property_cache: RwLock::new(FxHashMap::default()),
+            no_unchecked_indexed_access: AtomicBool::new(false),
         }
     }
 
@@ -643,6 +694,10 @@ impl<'a> QueryCache<'a> {
             Err(e) => e.into_inner().clear(),
         }
         match self.assignability_cache.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        match self.property_cache.write() {
             Ok(mut cache) => cache.clear(),
             Err(e) => e.into_inner().clear(),
         }
@@ -672,6 +727,14 @@ impl<'a> QueryCache<'a> {
         }
     }
 
+    #[cfg(test)]
+    pub fn property_cache_len(&self) -> usize {
+        match self.property_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        }
+    }
+
     /// Helper to check a cache with poisoned lock handling.
     fn check_cache(
         &self,
@@ -694,6 +757,24 @@ impl<'a> QueryCache<'a> {
         match cache.write() {
             Ok(mut c) => {
                 c.insert(key, result);
+            }
+            Err(e) => {
+                e.into_inner().insert(key, result);
+            }
+        }
+    }
+
+    fn check_property_cache(&self, key: PropertyAccessCacheKey) -> Option<PropertyAccessResult> {
+        match self.property_cache.read() {
+            Ok(cache) => cache.get(&key).cloned(),
+            Err(e) => e.into_inner().get(&key).cloned(),
+        }
+    }
+
+    fn insert_property_cache(&self, key: PropertyAccessCacheKey, result: PropertyAccessResult) {
+        match self.property_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(key, result);
             }
             Err(e) => {
                 e.into_inner().insert(key, result);
@@ -935,23 +1016,34 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
+        self.evaluate_type_with_options(type_id, self.no_unchecked_indexed_access())
+    }
+
+    fn evaluate_type_with_options(
+        &self,
+        type_id: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> TypeId {
+        let key = (type_id, no_unchecked_indexed_access);
         // Handle poisoned locks gracefully
         let cached = match self.eval_cache.read() {
-            Ok(cache) => cache.get(&type_id).copied(),
-            Err(e) => e.into_inner().get(&type_id).copied(),
+            Ok(cache) => cache.get(&key).copied(),
+            Err(e) => e.into_inner().get(&key).copied(),
         };
 
         if let Some(result) = cached {
             return result;
         }
 
-        let result = crate::solver::evaluate::evaluate_type(self.as_type_database(), type_id);
+        let mut evaluator = crate::solver::evaluate::TypeEvaluator::new(self.as_type_database());
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        let result = evaluator.evaluate(type_id);
         match self.eval_cache.write() {
             Ok(mut cache) => {
-                cache.insert(type_id, result);
+                cache.insert(key, result);
             }
             Err(e) => {
-                e.into_inner().insert(type_id, result);
+                e.into_inner().insert(key, result);
             }
         }
         result
@@ -1041,9 +1133,41 @@ impl QueryDatabase for QueryCache<'_> {
         object_type: TypeId,
         prop_name: &str,
     ) -> crate::solver::operations_property::PropertyAccessResult {
-        // QueryCache doesn't have full TypeResolver capability, so delegate to TypeInterner
-        self.interner
-            .resolve_property_access(object_type, prop_name)
+        self.resolve_property_access_with_options(
+            object_type,
+            prop_name,
+            self.no_unchecked_indexed_access(),
+        )
+    }
+
+    fn resolve_property_access_with_options(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+        no_unchecked_indexed_access: bool,
+    ) -> crate::solver::operations_property::PropertyAccessResult {
+        // QueryCache doesn't have full TypeResolver capability, so use PropertyAccessEvaluator
+        // with the current QueryDatabase.
+        let prop_atom = self.interner.intern_string(prop_name);
+        let key = (object_type, prop_atom, no_unchecked_indexed_access);
+        if let Some(result) = self.check_property_cache(key) {
+            return result;
+        }
+
+        let mut evaluator = crate::solver::operations_property::PropertyAccessEvaluator::new(self);
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        let result = evaluator.resolve_property_access(object_type, prop_name);
+        self.insert_property_cache(key, result.clone());
+        result
+    }
+
+    fn no_unchecked_indexed_access(&self) -> bool {
+        self.no_unchecked_indexed_access.load(Ordering::Relaxed)
+    }
+
+    fn set_no_unchecked_indexed_access(&self, enabled: bool) {
+        self.no_unchecked_indexed_access
+            .store(enabled, Ordering::Relaxed);
     }
 }
 
@@ -1338,12 +1462,21 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
+        self.evaluate_type_with_options(type_id, self.query_cache.no_unchecked_indexed_access())
+    }
+
+    fn evaluate_type_with_options(
+        &self,
+        type_id: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> TypeId {
         use crate::solver::evaluate::TypeEvaluator;
 
+        let key = (type_id, no_unchecked_indexed_access);
         // Handle poisoned locks gracefully
         let cached = match self.query_cache.eval_cache.read() {
-            Ok(cache) => cache.get(&type_id).copied(),
-            Err(e) => e.into_inner().get(&type_id).copied(),
+            Ok(cache) => cache.get(&key).copied(),
+            Err(e) => e.into_inner().get(&key).copied(),
         };
 
         if let Some(result) = cached {
@@ -1353,15 +1486,16 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         // CRITICAL: Use TypeEvaluator with SELF as resolver (since we implemented TypeResolver)
         // This ensures Lazy types are resolved using the TypeEnvironment
         let mut evaluator = TypeEvaluator::with_resolver(self.as_type_database(), self);
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
 
         let result = evaluator.evaluate(type_id);
 
         match self.query_cache.eval_cache.write() {
             Ok(mut cache) => {
-                cache.insert(type_id, result);
+                cache.insert(key, result);
             }
             Err(e) => {
-                e.into_inner().insert(type_id, result);
+                e.into_inner().insert(key, result);
             }
         }
         result
@@ -1402,6 +1536,19 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
             .resolve_property_access(object_type, prop_name)
     }
 
+    fn resolve_property_access_with_options(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+        no_unchecked_indexed_access: bool,
+    ) -> crate::solver::operations_property::PropertyAccessResult {
+        self.query_cache.resolve_property_access_with_options(
+            object_type,
+            prop_name,
+            no_unchecked_indexed_access,
+        )
+    }
+
     fn property_access_type(
         &self,
         object_type: TypeId,
@@ -1429,6 +1576,14 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
     ) -> bool {
         self.query_cache
             .is_readonly_index_signature(object_type, wants_string, wants_number)
+    }
+
+    fn no_unchecked_indexed_access(&self) -> bool {
+        self.query_cache.no_unchecked_indexed_access()
+    }
+
+    fn set_no_unchecked_indexed_access(&self, enabled: bool) {
+        self.query_cache.set_no_unchecked_indexed_access(enabled);
     }
 
     fn resolve_element_access(

@@ -578,7 +578,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
             let remapped = instantiate_type(self.interner(), name_type, &subst);
-            let remapped = evaluate_type(self.interner(), remapped);
+            let remapped = self
+                .db
+                .evaluate_type_with_options(remapped, self.no_unchecked_indexed_access);
             if remapped == TypeId::NEVER {
                 // Key is filtered out by `as never`
                 return Some(PropertyAccessResult::PropertyNotFound {
@@ -592,7 +594,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let mut subst = TypeSubstitution::new();
         subst.insert(mapped.type_param.name, key_literal);
         let property_type = instantiate_type(self.interner(), mapped.template, &subst);
-        let property_type = evaluate_type(self.interner(), property_type);
+        let property_type = self
+            .db
+            .evaluate_type_with_options(property_type, self.no_unchecked_indexed_access);
 
         // Step 4: Apply optional modifier
         let final_type = match mapped.optional_modifier {
@@ -648,7 +652,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let mut subst = TypeSubstitution::new();
         subst.insert(mapped.type_param.name, number_type);
         let mapped_element = instantiate_type(self.interner(), mapped.template, &subst);
-        let mapped_element = evaluate_type(self.interner(), mapped_element);
+        let mapped_element = self
+            .db
+            .evaluate_type_with_options(mapped_element, self.no_unchecked_indexed_access);
 
         // Create the resulting array type
         let array_type = self.interner().intern(TypeKey::Array(mapped_element));
@@ -714,7 +720,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         use crate::solver::types::{LiteralValue, TypeKey};
 
         // Evaluate the constraint to try to reduce it
-        let evaluated = evaluate_type(self.interner(), constraint);
+        let evaluated = self
+            .db
+            .evaluate_type_with_options(constraint, self.no_unchecked_indexed_access);
 
         let Some(key) = self.interner().lookup(evaluated) else {
             return false;
@@ -786,7 +794,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Evaluate keyof if needed
         let evaluated = if let Some(TypeKey::KeyOf(operand)) = self.interner().lookup(constraint) {
             let keyof_type = self.interner().intern(TypeKey::KeyOf(operand));
-            evaluate_type(self.interner(), keyof_type)
+            self.db
+                .evaluate_type_with_options(keyof_type, self.no_unchecked_indexed_access)
         } else {
             constraint
         };
@@ -1414,7 +1423,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     }
                 };
 
-                let evaluated = evaluate_type(self.interner(), obj_type);
+                let evaluated = self
+                    .db
+                    .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
                 if evaluated != obj_type {
                     // Successfully evaluated - resolve property on the concrete type
                     self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
@@ -1434,7 +1445,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // TypeQuery types: typeof queries that need resolution to their structural form
             TypeKey::TypeQuery(_) => {
-                let evaluated = evaluate_type(self.interner(), obj_type);
+                let evaluated = self
+                    .db
+                    .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
                 if evaluated != obj_type {
                     // Successfully evaluated - resolve property on the concrete type
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
@@ -1471,7 +1484,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     }
                 };
 
-                let evaluated = evaluate_type(self.interner(), obj_type);
+                let evaluated = self
+                    .db
+                    .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
                 if evaluated != obj_type {
                     // Successfully evaluated - resolve property on the concrete type
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
@@ -1508,7 +1523,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     }
                 };
 
-                let evaluated = evaluate_type(self.interner(), obj_type);
+                let evaluated = self
+                    .db
+                    .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
                 if evaluated != obj_type {
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
@@ -1528,7 +1545,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // KeyOf types need evaluation
             TypeKey::KeyOf(_) => {
-                let evaluated = evaluate_type(self.interner(), obj_type);
+                let evaluated = self
+                    .db
+                    .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
                 if evaluated != obj_type {
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
@@ -1738,9 +1757,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // We only handle Lazy types (def_id references)
         let TypeKey::Lazy(def_id) = base_key else {
             // For non-Lazy bases (e.g., TypeParameter), fall back to structural evaluation
-            let evaluated = evaluate_type(
-                self.interner(),
+            let evaluated = self.db.evaluate_type_with_options(
                 self.interner().application(app.base, app.args.clone()),
+                self.no_unchecked_indexed_access,
             );
             return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
         };
@@ -1750,9 +1769,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             Some(id) => id,
             None => {
                 // Can't convert def_id to symbol_id - fall back to structural evaluation
-                let evaluated = evaluate_type(
-                    self.interner(),
+                let evaluated = self.db.evaluate_type_with_options(
                     self.interner().application(app.base, app.args.clone()),
+                    self.no_unchecked_indexed_access,
                 );
                 return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
             }
@@ -1771,9 +1790,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         let Some(body_type) = body_type else {
             // Resolution failed - fall back to structural evaluation
-            let evaluated = evaluate_type(
-                self.interner(),
+            let evaluated = self.db.evaluate_type_with_options(
                 self.interner().application(app.base, app.args.clone()),
+                self.no_unchecked_indexed_access,
             );
             return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
         };
@@ -1871,9 +1890,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
             // For non-Object body types (e.g., type aliases to unions), fall back to evaluation
             _ => {
-                let evaluated = evaluate_type(
-                    self.interner(),
+                let evaluated = self.db.evaluate_type_with_options(
                     self.interner().application(app.base, app.args.clone()),
+                    self.no_unchecked_indexed_access,
                 );
                 self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
             }
