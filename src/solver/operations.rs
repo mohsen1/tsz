@@ -669,7 +669,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 &var_map,
                 return_type_with_placeholders, // source
                 ctx_type,                      // target
-                crate::solver::infer::InferencePriority::Contextual,
+                crate::solver::types::InferencePriority::ReturnType,
             );
         }
 
@@ -719,7 +719,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 &var_map,
                 arg_type,
                 target_type,
-                crate::solver::infer::InferencePriority::Argument,
+                crate::solver::types::InferencePriority::NakedTypeVariable,
             );
         }
         if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
@@ -728,7 +728,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 &var_map,
                 tuple_type,
                 target_type,
-                crate::solver::infer::InferencePriority::Argument,
+                crate::solver::types::InferencePriority::NakedTypeVariable,
             );
         }
 
@@ -1355,7 +1355,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: TypeId,
         target: TypeId,
-        priority: crate::solver::infer::InferencePriority,
+        priority: crate::solver::types::InferencePriority,
     ) {
         if !self.constraint_pairs.borrow_mut().insert((source, target)) {
             return;
@@ -1385,7 +1385,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: TypeId,
         target: TypeId,
-        priority: crate::solver::infer::InferencePriority,
+        priority: crate::solver::types::InferencePriority,
     ) {
         if source == target {
             return;
@@ -1910,7 +1910,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source_props: &[PropertyInfo],
         target_props: &[PropertyInfo],
-        priority: crate::solver::infer::InferencePriority,
+        priority: crate::solver::types::InferencePriority,
     ) {
         let mut source_idx = 0;
         let mut target_idx = 0;
@@ -1986,7 +1986,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: &FunctionShape,
         target: &CallSignature,
-        priority: crate::solver::infer::InferencePriority,
+        priority: crate::solver::types::InferencePriority,
     ) {
         for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
             self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
@@ -2009,7 +2009,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: &CallSignature,
         target: &FunctionShape,
-        priority: crate::solver::infer::InferencePriority,
+        priority: crate::solver::types::InferencePriority,
     ) {
         for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
             self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
@@ -2032,7 +2032,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: &CallSignature,
         target: &CallSignature,
-        priority: crate::solver::infer::InferencePriority,
+        priority: crate::solver::types::InferencePriority,
     ) {
         for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
             self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
@@ -2113,7 +2113,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source_signatures: &[CallSignature],
         target_signatures: &[CallSignature],
         is_constructor: bool,
-        priority: crate::solver::infer::InferencePriority,
+        priority: crate::solver::types::InferencePriority,
     ) {
         if source_signatures.is_empty() || target_signatures.is_empty() {
             return;
@@ -2197,7 +2197,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source_props: &[PropertyInfo],
         target: &ObjectShape,
-        priority: crate::solver::infer::InferencePriority,
+        priority: crate::solver::types::InferencePriority,
     ) {
         let string_index = target.string_index.as_ref();
         let number_index = target.number_index.as_ref();
@@ -2227,7 +2227,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: &ObjectShape,
         target_props: &[PropertyInfo],
-        priority: crate::solver::infer::InferencePriority,
+        priority: crate::solver::types::InferencePriority,
     ) {
         let string_index = source.string_index.as_ref();
         let number_index = source.number_index.as_ref();
@@ -2265,7 +2265,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: &[TupleElement],
         target: &[TupleElement],
-        priority: crate::solver::infer::InferencePriority,
+        priority: crate::solver::types::InferencePriority,
     ) {
         for (i, t_elem) in target.iter().enumerate() {
             if t_elem.rest {

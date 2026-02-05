@@ -26,20 +26,9 @@ use crate::solver::TypeInterner;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InferenceVar(pub u32);
 
-/// Priority of an inference candidate (matches TypeScript).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum InferencePriority {
-    /// Inferred from a return type (lowest).
-    ReturnType,
-    /// Inferred from contextual typing (a hint, can be overridden by arguments).
-    Contextual,
-    /// Inferred from a circular dependency.
-    Circular,
-    /// Inferred from an argument (standard).
-    Argument,
-    /// Inferred from a literal type (highest, subject to widening).
-    Literal,
-}
+// Phase 7a Task 2: Use TypeScript-standard InferencePriority from types.rs
+// The old simplified InferencePriority enum has been removed
+// See: src/solver/types.rs for the new priority levels
 
 /// A candidate type for an inference variable.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -911,9 +900,10 @@ impl<'a> InferenceContext<'a> {
     // =========================================================================
 
     /// Add a lower bound constraint: ty <: var
-    /// This is used when an argument type flows into a type parameter.
+    /// Phase 7a Task 2: This is used when an argument type flows into a type parameter.
+    /// Updated to use NakedTypeVariable (highest priority) for direct argument inference.
     pub fn add_lower_bound(&mut self, var: InferenceVar, ty: TypeId) {
-        self.add_candidate(var, ty, InferencePriority::Argument);
+        self.add_candidate(var, ty, InferencePriority::NakedTypeVariable);
     }
 
     /// Add an inference candidate for a variable.
@@ -1174,16 +1164,23 @@ impl<'a> InferenceContext<'a> {
         self.best_common_type(&widened)
     }
 
+    /// Phase 7a Task 2: Filter candidates by priority using NEW InferencePriority.
+    ///
+    /// CRITICAL FIX: In the new enum, LOWER values = HIGHER priority (processed earlier).
+    /// - NakedTypeVariable (1) is highest priority
+    /// - ReturnType (32) is lower priority
+    ///
+    /// Therefore we use `.min()` instead of `.max()` to find the highest priority candidate.
     fn filter_candidates_by_priority(
         &self,
         candidates: &[InferenceCandidate],
     ) -> Vec<InferenceCandidate> {
-        let Some(max_priority) = candidates.iter().map(|c| c.priority).max() else {
+        let Some(best_priority) = candidates.iter().map(|c| c.priority).min() else {
             return Vec::new();
         };
         candidates
             .iter()
-            .filter(|candidate| candidate.priority == max_priority)
+            .filter(|candidate| candidate.priority == best_priority)
             .cloned()
             .collect()
     }
@@ -1193,9 +1190,11 @@ impl<'a> InferenceContext<'a> {
         candidates
             .iter()
             .map(|candidate| {
+                // Phase 7a Task 2: Fresh literals are widened UNLESS they're highest priority
+                // In the new system, NakedTypeVariable (1) is highest priority
                 if should_widen
                     && candidate.is_fresh_literal
-                    && candidate.priority != InferencePriority::Literal
+                    && candidate.priority != InferencePriority::NakedTypeVariable
                 {
                     self.get_base_type(candidate.type_id)
                         .unwrap_or(candidate.type_id)
