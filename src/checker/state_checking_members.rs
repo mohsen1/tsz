@@ -376,28 +376,6 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
-            } else {
-                // Multiple method implementations -> TS2393 for implementations only
-                for ((&idx, &is_prop), &has_body) in info
-                    .indices
-                    .iter()
-                    .zip(info.is_property.iter())
-                    .zip(info.method_has_body.iter())
-                {
-                    if !is_prop && has_body {
-                        let member_node = self.ctx.arena.get(idx);
-                        let error_node = member_node
-                            .and_then(|n| self.ctx.arena.get_method_decl(n))
-                            .map(|m| m.name)
-                            .filter(|idx| !idx.is_none())
-                            .unwrap_or(idx);
-                        self.error_at_node(
-                            error_node,
-                            "Duplicate function implementation.",
-                            diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                        );
-                    }
-                }
             }
             // else: Only method signatures + at most 1 implementation = valid overloads
         }
