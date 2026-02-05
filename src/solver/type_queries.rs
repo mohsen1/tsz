@@ -257,8 +257,32 @@ pub fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 // These functions provide TypeKey-free checking for intrinsic types.
 // Checker code should use these instead of matching on TypeKey::Intrinsic.
 //
-// Note: These are shallow queries that do NOT resolve Lazy/Ref.
-// The Checker is responsible for resolving types before calling these.
+// ## Important Usage Notes
+//
+// These are TYPE IDENTITY checks, NOT compatibility checks:
+//
+// - Identity: `is_string_type(TypeId::STRING)` -> TRUE
+// - Identity: `is_string_type(literal "hello")` -> FALSE (literal, not intrinsic)
+// - Identity: `is_string_type(string & {tag: 1})` -> FALSE (intersection, not intrinsic)
+//
+// For assignability/compatibility checks, use Solver subtyping:
+// - `solver.is_subtype_of(literal, TypeId::STRING)` -> TRUE
+// - `solver.is_subtype_of(branded, TypeId::STRING)` -> TRUE (if assignable)
+//
+// ### When to use these helpers
+// - Checking if a type annotation is explicitly the intrinsic keyword
+// - Validating type constructor arguments
+// - Distinguishing `void` from `undefined` in return types
+//
+// ### When NOT to use these helpers
+// - Assignment/compatibility checks -> Use `is_subtype_of` instead
+// - Type narrowing -> Use Solver's narrowing analysis
+// - Checking if a value IS a string (not literal) -> Use `is_subtype_of`
+//
+// ## Implementation Notes
+// - Shallow queries: do NOT resolve Lazy/Ref (caller's responsibility)
+// - Defensive pattern: check both TypeId constants AND TypeKey::Intrinsic
+// - Fast-path O(1) using TypeId integer comparison
 
 use crate::solver::types::IntrinsicKind;
 
