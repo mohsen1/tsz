@@ -187,32 +187,37 @@ function foo(x: unknown) {
 
 **Status**: 🔄 IN PROGRESS - Simple aliases ✅, Generic aliases ❌ (BLOCKS Task 6)
 
-**Updated Session Structure** (Gemini Redefinition, 2026-02-05):
+**FINAL Session Redefinition** (Gemini, 2026-02-05):
 
-**Decision**: CONTINUE with Task 5.5 - Fix generic alias expansion in evaluate.rs
+**NEW FINDING**: `evaluate_application()` ALREADY has logic to handle type aliases!
+- Located in `src/solver/evaluate.rs` lines 410-492
+- Resolves Lazy(DefId), gets type params, instantiates, evaluates
+- This suggests the fix might already be implemented
 
-**Why**:
-1. **Fundamental Correctness Issue**: If TypeKey::Application doesn't expand for type aliases,
-   ALL downstream features (narrowing, assignability, inference) fail for generic types
-2. **Architecture Alignment**: Solver is "single source of truth" (NORTH_STAR 3.1).
-   If truth is wrong (alias not expanded), Checker cannot be right
-3. **Not a Landmine**: Fixing now prevents confusing bugs in every subsequent session
+**REVISED HYPOTHESIS**:
+The narrowing logic might not be *calling* `evaluate_application()`.
+Narrowing code likely inspects types *before* evaluation, seeing `Application` instead of `Union`.
 
-**Sub-Tasks**:
-- [x] 5.1: Implement basic discriminant check
-- [x] 5.2: Handle simple type aliases
-- [ ] **5.3 (CRITICAL): Fix Generic Type Alias Expansion**
-  - *Context*: `evaluate_type` treats `Application` as opaque
-  - *Action*: Modify `src/solver/evaluate.rs` to expand `TYPE_ALIAS` symbols via `instantiate()`
-  - *Protocol*: **MANDATORY GEMINI REVIEW** (Question 5) after implementation
-- [ ] 5.4: Verify generic narrowing (`type Result<T> = ...`)
+**PHASE 1: Stabilization (CURRENT)**
+- [ ] **5.3.1 (BLOCKER)**: Fix compilation error in `src/solver/db.rs:368`
+  - Error: `new_no_resolver` not found for `PropertyAccessEvaluator`
+  - From commit `5188f4d01`
+  - **Action**: Ask Gemini for fix using mandatory workflow
+- [ ] **5.3.2 (CRITICAL)**: Verify generic alias behavior
+  - Create test: `type Result<T> = { success: true, value: T } | { success: false, error: string };`
+  - Run: `cargo run -- tests/test_generic_alias.ts`
+  - Outcome A: Works → Task 5.3 DONE ✅
+  - Outcome B: Fails → Proceed to Phase 2
 
-**Root Cause Identified** (Question 4, 2026-02-05):
-**The Problem**: `evaluate_type()` in `src/solver/evaluate.rs` treats `TypeKey::Application` as a final type
-rather than eagerly expanding **Type Aliases**.
+**PHASE 2: Implementation (IF TEST FAILS)**
+- [ ] **5.3.3**: Fix narrowing to expand generic types
+  - Locate where narrowing inspects types
+  - Add `solver.evaluate()` call before checking discriminants
+  - Consult Gemini: "Where should I inject evaluate call in narrowing logic?"
 
-- **Interfaces/Classes**: Opaque/nominal - `Box<number>` stays as `Box<number>`
-- **Type Aliases**: Transparent - `Result<number>` MUST expand to `Union` for narrowing
+**Root Cause Analysis** (Updated):
+**NOT** missing implementation in evaluate.rs
+**LIKELY** missing expansion call in narrowing logic (narrowing.rs or flow_analysis.rs)
 
 **Required Fix**:
 Modify `src/solver/evaluate.rs` to detect `SymbolFlags::TYPE_ALIAS` and call `instantiate()`
