@@ -112,7 +112,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 left_idx,
                 "The left-hand side of an assignment expression must be a variable or a property access.",
-                2364,
+                diagnostic_codes::INVALID_LEFT_HAND_SIDE_OF_ASSIGNMENT,
             );
         }
 
@@ -261,7 +261,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 left_idx,
                 "The left-hand side of an assignment expression must be a variable or a property access.",
-                2364,
+                diagnostic_codes::INVALID_LEFT_HAND_SIDE_OF_ASSIGNMENT,
             );
         }
 
