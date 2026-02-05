@@ -2,21 +2,110 @@
 
 **Session ID**: tsz-1
 **Last Updated**: 2025-02-05
-**Focus**: Missing Diagnostic Codes Implementation
+**Focus**: Core Type Relations & Structural Diagnostics (The "Judge" Layer)
+
+## Session Redefined (2025-02-05)
+
+**Strategic Position**: While tsz-2 refactors the interface (Solver-First) and tsz-4 handles the Lawyer (nominality/quirks), **tsz-1 focuses on the Judge** (Structural Soundness).
+
+**Core Responsibility**: Ensure core set-theoretic operations (Intersections, Overlap, Subtyping) are mathematically correct.
+
+**Why This Matters**: If the Judge is wrong, the Lawyer (tsz-4) cannot make correct decisions. This is foundational work.
+
+### Coordination Map
+
+| Session | Layer | Responsibility | Interaction with tsz-1 |
+|:---|:---|:---|:---|
+| **tsz-2** | **Interface** | Removing TypeKey from Checker | **Constraint**: Must use Solver APIs, not TypeKey inspection |
+| **tsz-3** | **LSP** | DX Features | No overlap |
+| **tsz-4** | **Lawyer** | Nominality & Quirks | **Dependency**: tsz-4 relies on tsz-1's PropertyCollector |
+| **tsz-1** | **Judge** | **Structural Soundness** | **Foundation**: Provides core logic everyone uses |
 
 ## New Focus: Diagnostic Gap Analysis (2025-02-05)
 
 **Strategic Shift**: After consulting with Gemini, shifting focus to implementing critical missing TypeScript diagnostic codes that would most improve conformance.
 
-### Top Priority Missing Diagnostics
+## Task Breakdown (Priority Order per Gemini Redefinition)
 
-| Priority | Code | Description | Impact |
+### Priority 1: Task #16 - Robust Intersection & Property Infrastructure ⚡ CRITICAL
+**Status**: 🔄 In Progress
+**Why First**: Foundation for all object-based checks. tsz-4's nominality checks depend on this.
+
+**Subtasks**:
+1. **Task 16.1**: Low-level Intersection Infrastructure
+   - File: `src/solver/intern.rs`
+   - Implement `intersect_types_raw()` and `intersect_types_raw2()`
+   - Prevents infinite recursion in property merging
+   - Estimate: 30 minutes
+
+2. **Task 16.2**: Property Collection Visitor
+   - File: `src/solver/objects.rs`
+   - Create `PropertyCollector` struct/visitor
+   - Handles Lazy, Ref, and Intersection types systematically
+   - Estimate: 1 hour
+
+3. **Task 16.3**: Judge Integration
+   - File: `src/solver/subtype.rs`
+   - Replace manual property loop with PropertyCollector
+   - North Star Rule: Judge asks Lawyer for effective property set
+   - Estimate: 1 hour
+
+**Dependencies**:
+- Task 16.2 DEPENDS ON 16.1
+- Task 16.3 DEPENDS ON 16.2
+
+---
+
+### Priority 2: Task #17 - TS2367 Comparison Overlap Detection
+**Status**: 📋 Planned
+**Why Second**: High impact on control flow conformance
+
+**Constraint**: Must NOT inspect TypeKey in Checker (tsz-2's rule)
+
+**Implementation Plan**:
+1. Add `are_types_overlapping(a, b)` to `src/solver/subtype.rs`
+2. Add thin query to `src/solver/mod.rs` (e.g., `solver.compare_overlap()`)
+3. Update `src/checker/expr.rs` to call query and report TS2367
+4. Add reporting logic to `src/checker/error_reporter.rs`
+
+**Example**:
+```typescript
+if (1 === "one") {  // TS2367: This condition will always return false
+    // ...
+}
+```
+
+---
+
+### Priority 3: TS2416 - Signature Override Mismatch
+**Status**: 📝 Planned
+**Why**: Critical for class hierarchy and interface implementation tests
+
+**Implementation**:
+1. Implement `is_signature_assignable_to` in Solver
+2. Add check to `src/checker/declarations.rs` for class heritage
+
+---
+
+### Priority 4: TS2366 - Not All Code Paths Return
+**Status**: 📝 Planned
+**Why**: Essential for function conformance
+
+**Implementation**:
+1. Leverage existing `reachability_checker.rs`
+2. Check if end-of-function is reachable when return value required
+
+---
+
+## Previously Identified Missing Diagnostics (For Reference)
+
+| Priority | Code | Description | Status |
 |:---|:---|:---|:---|
-| **1** | **TS2367** | Comparison overlap check ("This condition will always return false") | High - Essential for control flow conformance |
-| **2** | **TS2300** | Duplicate Identifier | High - Fundamental to block scoping |
-| **3** | **TS2352** | Invalid Type Assertion ("Conversion may be a mistake") | Medium - Required for type cast tests |
-| **4** | **TS2416** | Signature Override Mismatch | Medium - Critical for class hierarchy |
-| **5** | **TS2366** | Not all code paths return | Medium - Control flow analysis |
+| **1** | **TS2367** | Comparison overlap check | ✅ Task #17 created |
+| **2** | TS2300 | Duplicate Identifier | 📝 Lower priority |
+| **3** | TS2352 | Invalid Type Assertion | 📝 Lower priority |
+| **4** | TS2416 | Signature Override Mismatch | ✅ Priority 3 |
+| **5** | TS2366 | Not all code paths return | ✅ Priority 4 |
 
 ### Already Implemented Diagnostics
 
@@ -152,13 +241,17 @@ if (x === y) { }  // where x and y could be same type
 
 ---
 
-## NEXT IMMEDIATE ACTIONS
-1. ✅ Update session file (this file)
-2. ⏭️ Execute Task 16.1: Implement `intersect_types_raw()` in intern.rs
-3. ⏭️ Ask Gemini Question 2: Review the implementation
-4. ⏭️ Execute Task 16.2: Create PropertyCollector
-5. ⏭️ Ask Gemini Question 2: Review PropertyCollector
-6. ⏭️ Complete Tasks 16.3 and 16.4
+## NEXT IMMEDIATE ACTIONS (Per Gemini Redefinition)
+
+1. ✅ Update session file with new priorities (DONE)
+2. ⏭️ **Execute Task 16.1**: Implement `intersect_types_raw()` in `src/solver/intern.rs`
+3. ⏭️ **Ask Gemini Question 2**: Review the intersection infrastructure implementation
+4. ⏭️ **Execute Task 16.2**: Create PropertyCollector in `src/solver/objects.rs`
+5. ⏭️ **Ask Gemini Question 2**: Review PropertyCollector implementation
+6. ⏭️ **Execute Task 16.3**: Integrate into SubtypeChecker (the Judge)
+7. ⏭️ **Move to Task #17** (TS2367) after Task #16 completion
+
+**Critical Constraint**: Follow Two-Question Rule for ALL solver/checker changes
 **Status**: Pending
 **Priority**: High
 **Estimated Impact**: +2-3% conformance
