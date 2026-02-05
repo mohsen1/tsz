@@ -166,6 +166,7 @@ fn test_function_property_contravariance() {
     // Should fail - function properties are contravariant
     test_function_variance(
         r#"
+        // @strictFunctionTypes
         interface A {
             prop: (x: number | string) => void;
         }
@@ -185,13 +186,14 @@ fn test_arrow_function_property_contravariance() {
     // Should fail - arrow functions are properties, not methods
     test_function_variance(
         r#"
-        class A {
-            prop = (x: number) => {};
+        // @strictFunctionTypes
+        interface A {
+            prop: (x: number) => void;
         }
-        class B {
-            prop = (x: number | string) => {};
+        interface B {
+            prop: (x: number | string) => void;
         }
-        let b: B = new B();
+        let b: B = { prop: (x: number) => {} };
         let a: A = b;
         "#,
         2322, // Type error
@@ -204,13 +206,14 @@ fn test_method_shorthand_bivariant() {
     // Should pass - method shorthand is bivariant
     test_no_errors(
         r#"
-        class A {
-            method(x: number): void {}
+        // @strictFunctionTypes
+        interface A {
+            method(x: number): void;
         }
-        class B {
-            method(x: number | string): void {}
+        interface B {
+            method(x: number | string): void;
         }
-        let b: B = new B();
+        let b: B = { method: (x: number | string) => {} };
         let a: A = b;
         "#,
     );
