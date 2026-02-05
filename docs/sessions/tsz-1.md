@@ -27,33 +27,61 @@
 
 ## Task Breakdown (Priority Order per Gemini Redefinition - 2025-02-05 POST-TS2416)
 
-### Priority 1: Index Signature Structural Compatibility (The Judge)
+### Priority 1: Index Signature Structural Compatibility ✅ ALREADY IMPLEMENTED
+**Status**: ✅ Complete (Discovered 2025-02-05)
+**Why**: Core structural operation - discovered to be already fully implemented
+
+**Discovery**:
+Index signature checking logic is ALREADY FULLY IMPLEMENTED in `src/solver/subtype_rules/objects.rs`.
+
+**Implemented Functions**:
+- `check_string_index_compatibility` (lines 290-331)
+- `check_number_index_compatibility` (lines 343-372)
+- `check_object_with_index_subtype` (lines 383-431)
+- `check_object_with_index_to_object` (lines 440-500)
+- `check_object_to_indexed` (lines 635-655)
+- `check_properties_against_index_signatures` (lines 575-627)
+- `check_missing_property_against_index_signatures` (lines 508-568)
+
+**All Features Present**:
+- String indexer subtyping (covariant)
+- Number indexer subtyping (covariant)
+- Property-to-index compatibility checking
+- Readonly constraint enforcement
+- Numeric property name handling
+- Method variance checking
+- Property optionality handling
+
+---
+
+### Priority 1: Refined Object Overlap Detection (TS2367) 🚀 NEW PRIORITY 1
 **Status**: 📝 NEXT TASK
-**Why**: Core structural operation - currently a "blind spot" in the Judge's checks
+**Why**: Most immediate "Judge" task - TS2367 was implemented as MVP with Known Gaps
 
 **Description**:
-Ensure `is_subtype_of` correctly handles index signatures in structural subtyping.
+Complete the TS2367 overlap detection to properly handle object property overlap using PropertyCollector.
+
+**Current Gap**:
+From Task #17 Known Gaps: "Object property overlap - needs PropertyCollector integration"
 
 **Implementation Goals**:
-1. Property-to-Index Signature compatibility
-   - If target has string indexer, check all source properties against it
-   - If target has number indexer, check all source numeric properties against it
-2. Index-to-Index Signature compatibility
-   - String indexer must be broader than Number indexer
-3. Integration with PropertyCollector
-   - Collect index signatures from across intersections
-   - Handle inherited index signatures
+1. **Property-Based Overlap**: Use PropertyCollector to extract all properties from both types
+2. **Discriminant Detection**: Common property with disjoint literal types = no overlap
+   - Example: `{ kind: "a" }` vs `{ kind: "b" }` = zero overlap
+3. **Index Signature Overlap**: Check if properties are compatible with index signatures
+4. **Recursive Overlap**: Handle recursive types using cycle_stack
 
-**Files**: `src/solver/subtype.rs`, `src/solver/objects.rs`
+**Files**: `src/solver/subtype.rs` (function `do_object_properties_overlap`)
 
 **Two-Question Plan**:
-1. Ask Gemini Flash: "How should `is_subtype_of` handle string/number indexers and explicit properties to match `tsc`?"
+1. Ask Gemini Flash: "How should I handle object overlap detection using PropertyCollector?"
 2. Implement based on guidance
 3. Ask Gemini Pro to review implementation
 
 ---
 
-### Priority 2: Refined Object Overlap Detection (TS2367)
+### Priority 2: Structural Intersection/Union Simplification
+**Status**: 📝 Planned
 **Status**: 📝 Planned
 **Why**: PropertyCollector is now complete (Task #16), enabling proper object overlap detection
 
