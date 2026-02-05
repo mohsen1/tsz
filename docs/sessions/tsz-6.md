@@ -1,7 +1,7 @@
 # Session TSZ-6: Member Resolution on Generic and Placeholder Types
 
 **Started**: 2026-02-05
-**Status**: 🔄 Active
+**Status**: 🔄 Phase 1 Complete - Moving to Phase 2
 **Focus**: Implement member resolution for Type Parameters, Type Applications, and Union/Intersection types
 
 ## Summary
@@ -52,6 +52,20 @@ Implement member resolution for generic types in three phases:
 2. If yes, check if it has a `constraint`
 3. If yes, recurse into the constraint to find the property
 4. If no constraint, fall back to `Object` members (TypeScript behavior)
+
+**Status**: ✅ COMPLETE (2026-02-05)
+
+**Implementation** (src/solver/operations_property.rs:856-872):
+- Modified `resolve_property_access_inner` TypeParameter case
+- If constraint exists: recurse into constraint
+- If no constraint: fallback to `resolve_object_member` (Object members)
+- Matches TypeScript behavior for unconstrained type parameters
+
+**Test Results**:
+- `getId<T extends { id: string }>(obj)` - ✅ Resolves from constraint
+- `toString<T>(obj)` - ✅ Resolves Object.toString() method
+
+**Commit**: `feat(solver): add Object fallback for unconstrained TypeParameters`
 
 ### Phase 2: Generic Member Projection
 
