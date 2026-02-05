@@ -1,6 +1,6 @@
 # TS1038: 'declare' modifier in already ambient context
 
-**Status**: NOT IMPLEMENTED
+**Status**: FIXED
 **Discovered**: 2026-02-05
 **Component**: Checker / Grammar Checker
 **Conformance Impact**: ~2 parser tests fail

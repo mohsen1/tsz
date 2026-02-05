@@ -2064,6 +2064,75 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check for TS1038: 'declare' modifier in already ambient context
+    /// Scans module body for declarations with 'declare' modifiers
+    fn check_declare_modifiers_in_ambient_body(&mut self, body_idx: NodeIndex) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+        use crate::parser::syntax_kind_ext;
+
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+
+        if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+            return;
+        }
+
+        let Some(block) = self.ctx.arena.get_module_block(body_node) else {
+            return;
+        };
+
+        let Some(ref statements) = block.statements else {
+            return;
+        };
+
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            // Check different declaration types for 'declare' modifier
+            let modifiers = match stmt_node.kind {
+                syntax_kind_ext::FUNCTION_DECLARATION => {
+                    self.ctx.arena.get_function(stmt_node).map(|f| &f.modifiers)
+                }
+                syntax_kind_ext::VARIABLE_STATEMENT => {
+                    self.ctx.arena.get_variable(stmt_node).map(|v| &v.modifiers)
+                }
+                syntax_kind_ext::CLASS_DECLARATION => {
+                    self.ctx.arena.get_class(stmt_node).map(|c| &c.modifiers)
+                }
+                syntax_kind_ext::INTERFACE_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_interface(stmt_node)
+                    .map(|i| &i.modifiers),
+                syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_type_alias(stmt_node)
+                    .map(|t| &t.modifiers),
+                syntax_kind_ext::ENUM_DECLARATION => {
+                    self.ctx.arena.get_enum(stmt_node).map(|e| &e.modifiers)
+                }
+                syntax_kind_ext::MODULE_DECLARATION => {
+                    self.ctx.arena.get_module(stmt_node).map(|m| &m.modifiers)
+                }
+                _ => None,
+            };
+
+            if let Some(mods) = modifiers {
+                if let Some(declare_mod) = self.get_declare_modifier(mods) {
+                    self.error_at_node(
+                        declare_mod,
+                        "A 'declare' modifier cannot be used in an already ambient context.",
+                        diagnostic_codes::DECLARE_MODIFIER_IN_AMBIENT_CONTEXT,
+                    );
+                }
+            }
+        }
+    }
+
     // Note: is_derived_property_redeclaration, find_containing_class are in type_checking.rs
 }
 
@@ -2492,6 +2561,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 let is_ambient = self.has_declare_modifier(&module.modifiers);
                 if !module.body.is_none() && !is_ambient {
                     self.check_module_body(module.body);
+                }
+
+                // TS1038: Check for 'declare' modifiers inside ambient module/namespace
+                // Even if we don't fully check the body, we still need to emit TS1038
+                if is_ambient && !module.body.is_none() {
+                    self.check_declare_modifiers_in_ambient_body(module.body);
                 }
             }
         }
