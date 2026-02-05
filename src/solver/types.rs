@@ -1191,6 +1191,108 @@ pub fn is_compiler_managed_type(name: &str) -> bool {
     )
 }
 
+// =============================================================================
+// Variance Types (Task #41)
+// =============================================================================
+
+bitflags::bitflags! {
+    /// Variance of a type parameter in a generic type.
+    ///
+    /// Variance determines how subtyping of generic types relates to subtyping
+    /// of their type arguments. This is critical for O(1) generic assignability.
+    ///
+    /// ## Variance Kinds
+    ///
+    /// - **Covariant** (COVARIANT): T<U> <: T<V> iff U <: V
+    ///   - Example: `Array`, `ReadonlyArray`, `Promise`
+    /// - Most common for immutable containers
+    ///
+    /// - **Contravariant** (CONTRAVARIANT): T<U> <: T<V> iff V <: U (reversed)
+    ///   - Example: Function parameters (in strict mode)
+    /// - Rare in practice, mostly for function types
+    ///
+    /// - **Invariant** (COVARIANT | CONTRAVARIANT): T<U> <: T<V> iff U === V
+    ///   - Example: Mutable properties, `Box<T>` with read/write
+    /// - Requires both directions to hold
+    ///
+    /// - **Independent** (empty): Type parameter not used in variance position
+    ///   - Example: Type parameter only used in non-variance positions
+    /// - Can be skipped in subtype checks (always compatible)
+    ///
+    /// ## Examples
+    ///
+    /// ```typescript
+    /// // Covariant: Array< Dog > <: Array< Animal >
+    /// type Covariant<T> = { readonly get(): T };
+    ///
+    /// // Contravariant: Writer< Animal > <: Writer< Dog >
+    /// type Contravariant<T> = { write(x: T): void };
+    ///
+    /// // Invariant: Box<Dog> NOT <: Box<Animal> (mutable!)
+    /// type Invariant<T> = { get(): T; set(x: T): void };
+    /// ```
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+    pub struct Variance: u8 {
+        /// Covariant position (e.g., function return types)
+        const COVARIANT = 1 << 0;
+        /// Contravariant position (e.g., function parameters)
+        const CONTRAVARIANT = 1 << 1;
+    }
+}
+
+impl Variance {
+    /// Check if this is an independent type parameter (not used in variance position).
+    pub fn is_independent(&self) -> bool {
+        self.is_empty()
+    }
+
+    /// Check if this is covariant only.
+    pub fn is_covariant(&self) -> bool {
+        self.contains(Self::COVARIANT) && !self.contains(Self::CONTRAVARIANT)
+    }
+
+    /// Check if this is contravariant only.
+    pub fn is_contravariant(&self) -> bool {
+        self.contains(Self::CONTRAVARIANT) && !self.contains(Self::COVARIANT)
+    }
+
+    /// Check if this is invariant (both covariant and contravariant).
+    pub fn is_invariant(&self) -> bool {
+        self.contains(Self::COVARIANT | Self::CONTRAVARIANT)
+    }
+
+    /// Compose two variances (for nested generics).
+    ///
+    /// Rules:
+    /// - Independent × anything = Independent
+    /// - Covariant × Covariant = Covariant
+    /// - Covariant × Contravariant = Contravariant
+    /// - Contravariant × Covariant = Contravariant
+    /// - Contravariant × Contravariant = Covariant
+    /// - Invariant × anything = Invariant
+    pub fn compose(&self, other: Variance) -> Variance {
+        if self.is_invariant() || other.is_invariant() {
+            return Variance::COVARIANT | Variance::CONTRAVARIANT;
+        }
+        if self.is_independent() || other.is_independent() {
+            return Variance::empty();
+        }
+
+        // XOR for covariance composition
+        let is_covariant = self.is_covariant() == other.is_covariant();
+        let is_contravariant = !is_covariant;
+
+        let mut result = Variance::empty();
+        if is_covariant {
+            result |= Variance::COVARIANT;
+        }
+        if is_contravariant {
+            result |= Variance::CONTRAVARIANT;
+        }
+        result
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/types_tests.rs"]
 mod tests;
