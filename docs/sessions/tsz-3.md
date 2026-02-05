@@ -15,18 +15,18 @@ Implementing `workspace/willRenameFiles` to update import statements when files 
 **Value**: When renaming `utils.ts` to `src/utils.ts`, all `import { ... } from './utils'` statements across the project automatically update.
 
 **Implementation Plan** (from Gemini review):
-- Phase 1: Path utilities (relative path calculation) - IN PROGRESS
-- Phase 2: FileRenameProvider (find import nodes in AST)
-- Phase 3: Orchestration in Project (coordinate with DependencyGraph)
-- Phase 4: Directory renames (handle folder moves)
+- ✅ Phase 1: Path utilities (relative path calculation) - COMPLETE
+- 🔄 Phase 2: FileRenameProvider (find import nodes in AST) - IN PROGRESS
+- ⏳ Phase 3: Orchestration in Project (coordinate with DependencyGraph)
+- ⏳ Phase 4: Directory renames (handle folder moves)
 
 **Files to Create/Modify**:
-- `src/lsp/file_rename.rs` (new)
-- `src/lsp/utils.rs` (add path utilities)
+- ✅ `src/lsp/utils.rs` (added calculate_new_relative_path) - Commit c0e1bec5a
+- `src/lsp/file_rename.rs` (next - create FileRenameProvider)
 - `src/lsp/project.rs` (handle_will_rename_files method)
 - `src/lsp/mod.rs` (exports)
 
-**Status**: Starting Phase 1 - Path utilities
+**Status**: Phase 1 complete, starting Phase 2
 
 ## Completed Work
 
