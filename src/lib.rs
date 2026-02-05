@@ -2681,3 +2681,13 @@ mod generic_inference_manual;
 #[cfg(test)]
 #[path = "checker/tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
+
+// Private brand nominality tests
+#[cfg(test)]
+#[path = "checker/tests/private_brands.rs"]
+mod private_brands;
+
+// Constructor accessibility tests
+#[cfg(test)]
+#[path = "checker/tests/constructor_accessibility.rs"]
+mod constructor_accessibility;
