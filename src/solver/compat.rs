@@ -455,7 +455,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let source_shape = self.interner.object_shape(source_shape_id);
 
-        // Get target shape - resolve Lazy types first
+        // Get target shape - resolve Lazy, Mapped, and Application types
         let target_key = self.interner.lookup(target);
         let resolved_target = match target_key {
             Some(TypeKey::Lazy(def_id)) => {
@@ -465,6 +465,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 } else {
                     return None;
                 }
+            }
+            Some(TypeKey::Mapped(_)) | Some(TypeKey::Application(_)) => {
+                // Evaluate mapped and application types
+                self.subtype.evaluate_type(target)
             }
             _ => target,
         };
@@ -501,7 +505,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     ///
     /// For intersections: property exists if it's in ANY member
     /// For unions: property exists if it's in ALL members
-    fn collect_target_properties(&self, type_id: TypeId) -> rustc_hash::FxHashSet<Atom> {
+    fn collect_target_properties(&mut self, type_id: TypeId) -> rustc_hash::FxHashSet<Atom> {
+        // Handle Mapped and Application types by evaluating them to concrete types
+        // We resolve before matching so the existing logic handles the result.
+        let type_id = match self.interner.lookup(type_id) {
+            Some(TypeKey::Mapped(_)) | Some(TypeKey::Application(_)) => {
+                self.subtype.evaluate_type(type_id)
+            }
+            _ => type_id,
+        };
+
         let mut properties = rustc_hash::FxHashSet::default();
 
         match self.interner.lookup(type_id) {
