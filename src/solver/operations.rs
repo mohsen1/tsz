@@ -841,6 +841,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // 4. Resolve inference variables
+        // CRITICAL: Strengthen inter-parameter constraints before resolution
+        // This ensures SCC-based cycle unification happens (commit c3ede45a9)
+        if let Err(_) = infer_ctx.strengthen_constraints() {
+            // Cycle unification failed - this indicates a circularity that cannot be resolved
+            // Fall back to resolving without unification (may result in less precise types)
+        }
+
         let mut final_subst = TypeSubstitution::new();
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             let has_constraints = infer_ctx
