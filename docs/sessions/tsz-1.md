@@ -344,28 +344,65 @@ See detailed description at top of file.
 
 ## Next Steps
 
-### 1. Type Narrowing (CFA) - NEW PRIMARY FOCUS
+### 1. User-Defined Type Guards (PRIORITY TASK)
 
-**Why**: Massive conformance impact. Narrowing affects almost every TypeScript file, unlike TS2564 which only affects classes.
+**Why**: Massive conformance impact. Without this, tsz cannot narrow types using utility functions (e.g., `isString(val)`). This is ubiquitous in TypeScript codebases.
 
-**Focus Areas** (per Gemini consultation):
-1. **Truthiness narrowing**: `if (val)` for all primitive types
-2. **Typeof narrowing**: `typeof x === 'string'` with edge cases
-3. **Instanceof narrowing**: `obj instanceof Class` pattern
+**Implementation** (per Gemini consultation):
+1. **Solver**: Ensure `TypeKey::Function` or `Signature` can store `TypePredicate`
+2. **Checker/Flow**: In `src/checker/flow_analysis.rs`, detect call expressions in conditions
+   - Check if function's return type is `TypePredicate`
+   - Apply narrowing to argument
 
-**Impact**:
-- Affects nearly all logic-heavy conformance tests
-- Uses existing FlowNode infrastructure (already available in function bodies)
-- Core of Flow Analysis work
+**Impact**: High - unlocks narrowing for thousands of tests
 
-**Quick Win First**: TS2564 Parameter Properties
-- Handle `constructor(public x: number)` pattern
-- Very common in modern TypeScript
-- Quick to implement (treat as "pre-assigned")
+**Example**:
+```typescript
+function isString(val: unknown): val is string {
+    return typeof val === 'string';
+}
+
+if (isString(x)) {
+    // x should be narrowed to string
+}
+```
 
 ---
 
-### 2. TS2564 Property Initialization - MOSTLY COMPLETE
+### 2. `in` Operator Narrowing
+
+**Why**: Primary way TypeScript handles narrowing for non-discriminated objects. Essential for structural typing conformance.
+
+**Implementation**:
+1. **Solver**: Implement `narrow_by_property_presence(type, property_name, exists: bool)`
+2. **Checker**: Detect `BinaryExpression` with `SyntaxKind::InKeyword`
+
+**Impact**: High - essential for object type narrowing
+
+**Example**:
+```typescript
+if ('a' in obj) {
+    // obj should be narrowed to types with property 'a'
+}
+```
+
+---
+
+### 3. Union Callable Resolution
+
+**Why**: Supports calling unions of functions with appropriate argument types.
+
+**Implementation**:
+- **File**: `src/solver/operations.rs`
+- **Function**: `resolve_callable_call`
+- Modify to handle `TypeKey::Union` where members are callables
+- Find "intersection" of parameters, "union" of return types
+
+**Impact**: Medium-High - fixes callable errors in complex type tests
+
+---
+
+### 4. TS2564 Property Initialization - MOSTLY COMPLETE
 
 **Status**: Core working, remaining gaps are edge cases with diminishing returns.
 
