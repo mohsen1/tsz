@@ -226,4 +226,52 @@ The solution is to model the "implicit default" path in the control flow graph. 
 
 **Key Insight**: Don't explicitly check "is exhaustive". Instead, model the "else" path. If the switch is exhaustive, the type on the "else" path becomes `never` automatically.
 
-**Next**: Implement the changes following Gemini's guidance.
+### Implementation Status: IN PROCEEDING - NOT YET WORKING
+
+**What Was Implemented** (commit 2f0c908f0):
+
+1. **FlowGraphBuilder changes**:
+   - Added `has_default_clause` tracking in `build_switch_statement`
+   - Create implicit default flow node when no default clause exists
+   - Use `switch_data.case_block` as node marker for implicit default
+   - Connect implicit default to `end_label` with `FlowNodeId::NONE` (no fallthrough)
+
+2. **FlowAnalyzer changes**:
+   - Detect implicit default by checking `clause_idx.kind == BLOCK`
+   - Get parent switch via `arena.get_extended(clause_idx).parent`
+   - Apply `narrow_by_default_switch_clause` for implicit defaults
+
+**Current Problem**: Exhaustiveness checking not working. Test case:
+```typescript
+type Shape = { kind: "circle" } | { kind: "square" };
+function test(shape: Shape) {
+    switch (shape.kind) {
+        case "circle": return 1;
+        case "square": return 2;
+    }
+    const x: never = shape; // Should work - shape is never
+}
+```
+- TypeScript: Accepts (correct - exhaustive)
+- TSZ: Reports error "Shape is not assignable to never" (incorrect)
+
+**Investigation Needed**:
+The implicit default flow node appears to not be created or processed during normal type checking. Debug messages showed:
+- Only 2 CASE_CLAUSE nodes (297) being processed
+- No BLOCK nodes (242) which would indicate the implicit default
+- No flow_graph debug output, suggesting `build_switch_statement` may not be called or case_block is None
+
+**Possible Issues**:
+1. Flow graph may be built at a different phase than expected
+2. The case_block may be None in some code path
+3. The implicit default creation code may not be reached
+4. Flow graph construction might happen in binder, not checker
+
+**Next Steps**:
+1. Investigate when and where flow graph is built in the type checking pipeline
+2. Trace through a simple switch statement to understand flow graph construction
+3. Verify the implicit default node is actually created in the flow graph
+4. If created, verify it's being processed by FlowAnalyzer
+
+**Session Status**: Implementation incomplete, needs investigation into flow graph construction timing and mechanism.
+
