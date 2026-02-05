@@ -856,8 +856,12 @@ impl<'a> IRPrinter<'a> {
                 }
             }
             IRNode::Sequence(nodes) => {
-                for node in nodes {
+                for (i, node) in nodes.iter().enumerate() {
                     self.emit_node(node);
+                    // Add newline between sequence items (but not after the last one)
+                    if i < nodes.len() - 1 {
+                        self.write_line();
+                    }
                 }
             }
             IRNode::ASTRef(idx) => {
