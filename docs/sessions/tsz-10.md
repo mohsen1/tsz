@@ -246,3 +246,43 @@ Following the mandatory Two-Question Rule from `AGENTS.md`:
 
 **Pre-Session Audit**:
 Before starting, verify that no TypeKey pattern matching is happening in the Checker. If found, refactor to use TypeResolver.
+
+---
+
+## Phase 1 Progress: typeof Narrowing
+
+**Date**: 2026-02-05
+**Status**: 🟡 IN PROGRESS (Gemini consultation complete)
+
+### Question 1 (Pre-Implementation): ✅ COMPLETE
+
+**Consultation Result**: Algorithm validation from Gemini Pro
+
+**Key Findings**:
+
+1. **Algorithm Structure**: Two-part approach
+   - **Extraction** (Checker): `src/checker/control_flow_narrowing.rs`
+   - **Application** (Solver): `src/solver/narrowing.rs`
+
+2. **Functions to Modify**:
+   - `extract_type_guard` in `src/checker/control_flow_narrowing.rs`
+   - `narrow_by_typeof` in `src/solver/narrowing.rs`
+   - `narrow_by_typeof_negation` for `!==` cases
+
+3. **Critical Edge Cases**:
+   - `typeof null === "object"` → Must include null in "object" narrowing
+   - `typeof function` → Functions return "function", not "object"
+   - Generics → Must preserve generic identity: `T & string`, not just `string`
+   - `any` → Does not narrow
+
+4. **Algorithm Summary**:
+   ```
+   1. Map tag to target type
+   2. Handle unknown → concrete type mapping
+   3. Filter union members by typeof tag
+   4. Handle generics with intersection
+   ```
+
+**Next Steps**: Proceed with implementation following Gemini's guidance.
+
+**Ready for Question 2** (Post-Implementation Review) after code changes.
