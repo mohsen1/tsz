@@ -73,30 +73,44 @@ Implement property access resolution for Union and Intersection types using Visi
 - **Completed**: 2026-02-05
 - **Notes**: Refactored to implement TypeVisitor for &PropertyAccessEvaluator, added helper methods
 
-### Milestone 3: Composite Types (HIGH Complexity) - IN PROGRESS
+### Milestone 3: Composite Types (HIGH Complexity) - READY FOR IMPLEMENTATION
 
-**Status**: Implementation plan ready, code location identified
+**Status**: Gemini consultation complete, implementation validated
 **Estimated**: 4-6 hours
 **Next Implementation**: visit_union and visit_intersection
+
+**Gemini Validation Results** (from Question 1):
+- ✅ Logic confirmed correct: Union = "All Must Have", Intersection = "Any Can Have"
+- ✅ Edge cases clarified (any, error, never, unknown handling)
+- ✅ Index signature flag behavior defined
+- ✅ Helper functions identified: `self.interner.union()` and `self.interner.intersection()`
 
 **Implementation Location**:
 - Union logic: src/solver/operations_property.rs lines 1010-1164 (TypeKey::Union match arm)
 - Intersection logic: src/solver/operations_property.rs lines 1166-1265 (TypeKey::Intersection match arm)
 
-**Implementation Strategy**:
-1. Create helper methods (visit_union_impl, visit_intersection_impl) similar to Object/Array pattern
-2. Implement TypeVisitor methods (visit_union, visit_intersection) that delegate to helpers
-3. Update bridge pattern to dispatch to these visitors
-4. Test with union/intersection property access cases
+**Detailed Edge Cases** (from Gemini):
 
-**Key Edge Cases** (from Gemini):
-- Union short-circuits: `any` or `error` → immediate success
-- Unknown filtering: Only return IsUnknown if ALL members are unknown
-- All Must Have: PropertyNotFound if ANY member lacks the property
-- Nullable partitioning: Separate valid results from nullable causes
-- Index signature contagion: Propagate `from_index_signature` flag
-- Union fallback: Check union-level index signatures if all members fail
-- Intersection aggregation: Collect results from ALL members that have the property
+**Unions**:
+- `any` in union → immediate success (returns `any`)
+- `error` in union → immediate success (returns `error`)
+- `never` → filter out (empty union, but shouldn't happen in practice)
+- `unknown` → PropertyNotFound UNLESS property is on Object prototype (toString, etc.)
+- `null`/`undefined` → collect into PossiblyNullOrUndefined result
+- `from_index_signature`: CONTAGIOUS (if ANY member uses index, flag is true)
+
+**Intersections**:
+- `never` in intersection → return `never` immediately
+- Collect results from ALL members that have the property
+- `from_index_signature`: RESTRICTIVE (true ONLY if all members used index signatures)
+- If no named properties found, check union-level index signatures as fallback
+
+**Implementation Steps**:
+1. Create helper methods (visit_union_impl, visit_intersection_impl)
+2. Implement TypeVisitor methods (visit_union, visit_intersection)
+3. Update bridge pattern to dispatch to these visitors
+4. Use `self.interner.union()` and `self.interner.intersection()` for final types
+5. Handle PropertyAccessGuard for recursion protection
 - Implement `visit_object`
 - Implement `visit_array`
 - Move Object/Array logic from match to visitor
