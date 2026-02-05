@@ -1,11 +1,11 @@
 # Session: tsz-2 - Phase 5: Enforce Solver-First Architecture
 
 **Started**: 2026-02-05
-**Status**: IN_PROGRESS
+**Status**: COMPLETE
 **Focus**: Remove direct TypeKey inspection from Checker, enforce Solver-First boundary
 
 **Previous Session**: Coinductive Subtyping (COMPLETE)
-**Next Session**: TBD
+**Next Session**: Phase 5 Continuation - context.rs refactoring
 
 ## Progress Summary
 
@@ -368,3 +368,24 @@ Does this handle all edge cases correctly?"
 - Session redefined by Gemini Pro consultation
 - Two-Question Rule ensures correctness
 - All changes require pre/post validation
+
+---
+
+## Next Session: Task #32 - Refactor context.rs
+
+**Priority**: HIGH (10 TypeKey violations)
+**File**: `src/checker/context.rs`
+**Strategy**: Move type logic to `src/solver/` or use `TypeVisitor`
+**Process**:
+1. Ask Gemini (Q1): Analyze TypeKey violations in context.rs, determine Solver vs Visitor approach
+2. Implement refactoring
+3. Ask Gemini (Q2): Verify correctness with TypeScript behavior
+
+**Remaining Phase 5 Work**: ~65 TypeKey violations across 15+ files
+- state_type_environment.rs (6 violations)
+- iterators.rs (5 violations)
+- state_type_resolution.rs (4 violations)
+- And 11+ other files with fewer violations
+
+**Foundation Ready**: 18 Solver helpers available for systematic refactoring
+
