@@ -684,11 +684,10 @@ impl<'a> NarrowingContext<'a> {
             span!(Level::TRACE, "narrow_by_typeof", source_type = source_type.0, %typeof_result)
                 .entered();
 
-        if source_type == TypeId::ANY {
-            return TypeId::ANY;
-        }
-
-        if source_type == TypeId::UNKNOWN {
+        // CRITICAL FIX: Narrow `any` for typeof checks
+        // TypeScript narrows `any` for typeof/instanceof/Array.isArray/user-defined guards
+        // But NOT for equality/truthiness/in operator
+        if source_type == TypeId::UNKNOWN || source_type == TypeId::ANY {
             return match typeof_result {
                 "string" => TypeId::STRING,
                 "number" => TypeId::NUMBER,
@@ -734,12 +733,6 @@ impl<'a> NarrowingContext<'a> {
             sense
         )
         .entered();
-
-        // Handle ANY and UNKNOWN special cases
-        if source_type == TypeId::ANY {
-            trace!("Source type is ANY, returning unchanged");
-            return TypeId::ANY;
-        }
 
         // CRITICAL: Resolve Lazy types for both source and constructor
         // This ensures type aliases are resolved to their actual types
