@@ -2,7 +2,7 @@
 
 **Goal**: Complete the generic inference engine with multi-pass resolution and support advanced contextual markers.
 
-**Status**: 🟡 PLANNING (2026-02-05)
+**Status**: 🟡 IN PROGRESS (2026-02-05)
 
 ---
 
@@ -14,33 +14,44 @@ Session `tsz-3` established the infrastructure for bidirectional inference and p
 
 ## Phase 7b: Multi-Pass Resolution Logic (CRITICAL)
 
-**Goal**: Implement priority-gated constraint collection in generic call resolution. This prevents lower-priority constraints (like loose contextual types) from polluting inference when higher-priority candidates (like explicit arguments) exist.
+**⚠️ CRITICAL FINDING FROM GEMINI PRO (2026-02-05):**
 
-### Task 7.2.1: Multi-Pass Loop in `resolve_generic_call`
+**TypeScript does NOT iterate through priority passes!**
+
+The algorithm is:
+1. **Collect ALL constraints** from arguments (NakedTypeVariable priority) and context (ReturnType priority)
+2. **Solve ONCE** - the InferenceContext.resolve() handles priority filtering internally
+3. **No loop needed** - priority is metadata attached to candidates, not a multi-pass iteration
+
+**Key Insight**: The name "Multi-Pass" was misleading. It's "Collect All -> Solve Once", where the solver uses priority to pick the best candidate.
+
+### Task 7.2.1: Priority-Aware Constraint Collection ✅ COMPLETE
 **File**: `src/solver/operations.rs`
 **Priority**: HIGH
-**Status**: 🟡 READY TO START
+**Status**: ✅ COMPLETE (Already implemented in tsz-3 Phase 7a)
 
-**Description**: Refactor `resolve_generic_call_inner` to iterate through inference priorities.
+**Discovery**: This functionality was ALREADY implemented during tsz-3 Phase 7a when we refactored `constrain_types` signatures!
 
-**Requirements**:
-1. **Priority Loop**: Iterate from highest priority to lowest.
-2. **Gated Collection**: In each pass, only collect constraints that match the current priority.
-3. **State Management**: Decide whether to accumulate constraints or reset between passes (Ask Gemini).
-4. **Circular Handling**: Implement the "Circular" priority logic to break infinite inference loops.
+**Implementation Verification**:
+1. ✅ **Line 667-673**: Contextual type constraints with `InferencePriority::ReturnType`
+2. ✅ **Line 717-723**: Argument constraints with `InferencePriority::NakedTypeVariable`
+3. ✅ **Line 726-732**: Rest tuple constraints with `InferencePriority::NakedTypeVariable`
+4. ✅ **Line 1178**: `filter_candidates_by_priority` uses `.min()` to find highest priority
+5. ✅ **Line 1143**: `resolve_from_candidates` uses priority filtering
 
-**Mandatory Gemini Prompt** (Two-Question Rule - Question 1):
-```bash
-./scripts/ask-gemini.mjs --pro --include=src/solver/operations.rs --include=src/solver/infer.rs \
-"I am implementing the multi-pass generic resolution loop in resolve_generic_call_inner.
-I have the InferencePriority enum and the constrain_types signature ready.
-
-Please explain the exact algorithm:
-1. What is the order of passes? (e.g., ReturnType -> Homomorphic -> etc.)
-2. Do we solve constraints after *every* pass, or collect all then solve?
-3. How does TypeScript handle the 'Circular' priority?
-4. Provide a pseudocode skeleton for the loop."
+**Test Verification**:
+```typescript
+// Test: NakedTypeVariable (argument) should override ReturnType (context)
+function identity<T>(x: T): T { return x; }
+const result1: string = identity(42);
+//    ^^^^^^ Correctly infers 'number' from argument (higher priority)
+// Error: TS2322: Type 'number' is not assignable to type 'string' ✅
 ```
+
+**Critical Implementation Notes**:
+- `constrain_types` must downgrade priority when entering mapped types (NakedTypeVariable → HomomorphicMappedType)
+- `Circular` priority is handled internally by InferenceContext, not in resolve_generic_call
+- No while loop needed for basic cases (TypeScript has one only for flow-sensitive typing edge cases)
 
 ---
 
