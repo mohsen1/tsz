@@ -723,6 +723,52 @@ These are pre-existing bugs unrelated to the sense inversion refactor.
 2. Fix or disable pre-existing test failures
 3. Continue with Task 2 (Equality & Instanceof) once discriminant narrowing works
 
+### 2026-02-05: Union Resolution Bug Investigation (Question 1)
+
+**Context**: Following AGENTS.md mandatory workflow, asked Gemini Question 1 for
+approach validation on fixing the union resolution bug.
+
+**Root Cause Identified** (Gemini analysis):
+
+The bug is in `src/solver/narrowing.rs::get_type_at_path` (line 324):
+```rust
+let evaluator = PropertyAccessEvaluator::new(self.db); // Uses NoopResolver
+```
+
+**Problem**: `PropertyAccessEvaluator::new()` uses `NoopResolver` which always
+fails to resolve `Lazy` types (type aliases). This causes property access on
+union members to return `ANY` (Type 4) instead of the actual property type.
+
+**Why This Matters**:
+- When `Shape` type alias is narrowed, `resolve_type` is called to unwrap Lazy
+- But when accessing the `kind` property on union members, the evaluator uses
+  `NoopResolver` which can't resolve the Lazy type
+- The property access fails and returns `ANY`
+- Since `ANY` is a subtype of every literal, all union members are excluded
+- Result: Union narrows to `NEVER` instead of the correct member
+
+**Architecture Discovery**:
+
+1. **Two PropertyAccessEvaluator Constructors**:
+   - `.new(interner)` - Uses `NoopResolver` (operations_property.rs:81-90)
+   - `.with_resolver(interner, resolver)` - Uses provided resolver (operations_property.rs:95-104)
+
+2. **TypeEvaluator vs TypeDatabase**:
+   - `TypeEnvironment::evaluate_type` (db.rs:1200) - Uses `self` as resolver ✅
+   - `QueryDatabase::evaluate_type` (db.rs:300) - No resolver, just calls evaluate ❌
+   - `NarrowingContext` only has `QueryDatabase`, not `TypeEnvironment`
+
+3. **The Fix Strategy**:
+   - `NarrowingContext` needs a `TypeResolver` to properly evaluate Lazy types
+   - OR: Checker should pre-resolve types before passing to Solver
+   - OR: Modify `PropertyAccessEvaluator` call to use a proper resolver
+
+**Gemini's Recommendation**: Fix the resolver issue in `get_type_at_path` by
+ensuring Lazy types are resolved before property access, OR by passing a proper
+resolver to `PropertyAccessEvaluator`.
+
+**Next**: Ask Gemini Question 2 for implementation approach.
+
 ### 2026-02-05: Further Fixes Based on Gemini Guidance (DefId Migration)
 
 **Context**: After discovering discriminant narrowing was completely broken, asked Gemini for focused debugging guidance.
