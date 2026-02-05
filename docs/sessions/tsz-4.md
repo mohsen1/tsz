@@ -8,8 +8,10 @@
 - ✅ Priority 1: Enum Nominality (COMPLETE)
 - ✅ Priority 2: Private Brand Checking (COMPLETE)
 - ✅ Priority 3: Constructor Accessibility (COMPLETE)
-- 🔄 Priority 4: Literal Type Widening (IN PROGRESS)
-- 📝 Priority 5: Function Bivariance (PLANNED)
+- 🔄 Priority 4: Function Bivariance (ACTIVE - renamed from Priority 5)
+- 📝 Priority 5: Literal Type Widening (DEFERRED - not Lawyer Layer, requires Type Inference work)
+
+**Note**: Per Gemini Flash guidance (2026-02-05), skipped Literal Type Widening as it belongs in Type Inference layer (`src/solver/infer.rs`), not Lawyer Layer (`src/solver/compat.rs`). Function Bivariance promoted to Priority 4 as it's explicitly listed in NORTH_STAR.md Section 3.3 as a core Lawyer responsibility.
 
 ## Previous Session (COMPLETE)
 
@@ -107,45 +109,52 @@ Fixing these will resolve hundreds of conformance failures.
 - `src/solver/compat.rs` - Replace string matching with SymbolId comparison
 - `src/checker/symbol_resolver.rs` - Extract symbol flags to check for `private`/`protected`
 
-#### Priority 4: Literal Type Widening (Freshness Counterpart) 🔄 IN PROGRESS
-**Goal**: Ensure that when a "fresh" object literal is assigned to a non-literal type, its internal literal types widen to their base primitives
-- `"a"` widens to `string` when target requires it
-- This is the INVERSE of the freshness work completed in previous session
-- Ensures object literals don't have overly specific types after assignment
-- Critical for preventing false positives in subsequent type checks
-
-**Files**:
-- `src/solver/compat.rs` - Add widening override in CompatChecker
-- `src/solver/lawyer.rs` - Document widening in QUIRKS section
-
-**Key Questions** (to ask Gemini):
-1. Is CompatChecker the right place for widening, or should this happen during Type Inference?
-2. How does TypeScript distinguish between `const` widening (which doesn't happen) and `let` widening (which does)?
-3. Are there edge cases with Union types (e.g., `"a" | "b"` widening to `string`)?
-4. What function handles the actual "stripping" of freshness after the first assignment?
-
-#### Priority 5: Function Bivariance (The Method Quirk) 📝 PLANNED
+#### Priority 4: Function Bivariance (The Method Quirk) 🔄 ACTIVE
 **Goal**: Implement the rule where methods are checked bivariantly, while function properties are checked contravariantly
-- Methods (`method(arg: T): void`) are bivariant for legacy compatibility
+- Methods (`method(arg: T): void`) are bivariant for parameters (legacy compatibility)
 - Function properties (`prop: (arg: T) => void`) are contravariant (sound)
-- This is a high-impact conformance gap
+- This is a high-impact conformance gap mentioned in NORTH_STAR.md Section 3.3
 
 **Files**:
 - `src/solver/compat.rs` - Add bivariance override in CompatChecker
 - `src/checker/symbol_resolver.rs` - Check SymbolFlags to distinguish methods from properties
+- `src/solver/lawyer.rs` - Document bivariance in QUIRKS section
+
+**Key Logic**:
+- If target is a Method, allow bivariant parameter checking (either direction)
+- If target is a Function Property, use Judge's strict contravariance
+- Must handle --strictFunctionTypes compiler flag
 
 **Key Questions** (to ask Gemini):
-1. How do we distinguish methods from function properties in the type system?
-2. Should bivariance apply to all methods or only instance methods?
-3. Are there exceptions (e.g., generic methods, overloaded methods)?
+1. How do I reliably distinguish a Method from a Function Property in the TypeKey/Symbol system?
+2. Does bivariance apply only to top-level parameters, or should it be recursive for nested function types?
+3. Are there specific flags (e.g., --strictFunctionTypes) that should toggle this behavior?
+4. What happens with overloads? Do all signatures in a method's CallableShape become bivariant?
+
+#### Priority 5: Literal Type Widening (Freshness Counterpart) 📝 DEFERRED
+**Status**: DEFERRED to future session - not a Lawyer Layer task
+
+**Why Deferred**:
+Per Gemini Pro guidance: "Widening is a Type Inference problem, not an Assignability problem."
+- CompatChecker answers "Is Type A assignable to Type B?"
+- Widening determines what Type A *is* during inference
+- Belongs in `src/solver/infer.rs` or `src/checker/expr.rs`, NOT `src/solver/compat.rs`
+
+**For Future Session**:
+When implementing, modify Type Inference layer:
+- Implement `get_widened_type()` function
+- Apply to object properties when constructing object type
+- Handle const vs let widening rules
+- Handle union type edge cases (`"a" | "b"` → `string`)
 
 ### Success Criteria
 - [x] `Enum A` assigned to `Enum B` produces a diagnostic ✅
 - [x] `Class A { private x }` assigned to `Class B { private x }` produces a diagnostic ✅
 - [x] `new C()` where `C` has a private constructor produces a diagnostic ✅
-- [ ] Literal types in object literals widen correctly after assignment
-- [ ] Methods are bivariant, function properties are contravariant
+- [ ] Methods are bivariant for parameters, function properties are contravariant
 - [ ] No regressions in existing tests
+
+**Note**: Literal Type Widening removed from success criteria - deferred to future session (not Lawyer Layer work)
 
 ---
 
