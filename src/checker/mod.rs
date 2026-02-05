@@ -106,6 +106,9 @@ mod control_flow_tests;
 #[path = "tests/const_assertion_tests.rs"]
 mod const_assertion_tests;
 #[cfg(test)]
+#[path = "tests/freshness_stripping_tests.rs"]
+mod freshness_stripping_tests;
+#[cfg(test)]
 #[path = "tests/global_type_tests.rs"]
 mod global_type_tests;
 #[cfg(test)]
