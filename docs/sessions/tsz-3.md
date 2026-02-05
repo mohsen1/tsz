@@ -8,25 +8,36 @@
 
 Implement LSP features that improve developer experience without requiring deep Solver/Checker architecture expertise.
 
-## Current Work: File Rename Handling
+## Completed Work
 
-Implementing `workspace/willRenameFiles` to update import statements when files are renamed.
+### File Rename Handling (2026-02-05)
+**Status**: ✅ COMPLETE - Commit 460b19435
 
-**Value**: When renaming `utils.ts` to `src/utils.ts`, all `import { ... } from './utils'` statements across the project automatically update.
+Implemented full `workspace/willRenameFiles` support:
+- Phase 1: Path utilities (c0e1bec5a)
+- Phase 2: FileRenameProvider (9041b49b5)
+- Phase 3: Project orchestration (460b19435)
 
-**Implementation Plan** (from Gemini review):
-- ✅ Phase 1: Path utilities (relative path calculation) - Commit c0e1bec5a
-- ✅ Phase 2: FileRenameProvider (find import nodes in AST) - Commit 9041b49b5
-- 🔄 Phase 3: Orchestration in Project (coordinate with DependencyGraph) - IN PROGRESS
-- ⏳ Phase 4: Directory renames (handle folder moves)
+**Implementation**:
+- Added `dependency_graph` field to Project struct
+- `extract_imports()` handles imports AND re-exports
+- `is_import_pointing_to_file()` filters imports correctly
+- `handle_will_rename_files()` orchestrates full flow
+- Fixed two critical bugs per Gemini Pro review
 
-**Files to Create/Modify**:
-- ✅ `src/lsp/utils.rs` (added calculate_new_relative_path)
-- ✅ `src/lsp/file_rename.rs` (created FileRenameProvider)
-- 🔄 `src/lsp/project.rs` (handle_will_rename_files method) - NEXT
-- ✅ `src/lsp/mod.rs` (exports added)
+**Value**: When files are renamed, all import statements across the project automatically update.
 
-**Status**: Phase 2 complete, starting Phase 3
+### JSX Linked Editing (2026-02-05)
+**Status**: ✅ COMPLETE - Commit e5f6bcee7
+
+Implemented `textDocument/linkedEditingRange` for JSX/TSX files.
+When editing an opening JSX tag (e.g., `<div>`), the closing tag (`</div>`) automatically syncs.
+
+### Assertion Function Fix (2026-02-05)
+**Status**: ✅ COMPLETE - Commit 137b82c62
+
+Fixed false branch narrowing for assertion functions in src/solver/narrowing.rs.
+Reviewed and approved by Gemini.
 
 ## Completed Work
 
