@@ -102,34 +102,32 @@ const x: number = await expr; // expr should get number | PromiseLike<number>
 - Recursive unwrapping works ✅
 - Contextual typing works ✅
 
-#### Task 4: Overload Context Investigation (HIGH) 🔄 IN PROGRESS
-**File**: `src/checker/call_checker.rs` (`resolve_call_expression`)
+#### Task 4: Overload Context Investigation (HIGH) ✅ COMPLETE
+**File**: `src/checker/call_checker.rs` (`resolve_overloaded_call_with_signatures`)
 
-**Goal**: Investigate and implement contextual typing for overloaded function arguments.
+**Status**: ✅ Complete with union-based approach
 
-**Problem**: When a function is overloaded, the contextual type of arguments depends on which signature is being targeted. This is a "chicken and egg" problem.
+**Implementation** (commit `69587f373`):
+- Changed from re-collecting argument types for each signature (incorrect)
+- To collecting ONCE with union of all overload signatures (correct)
+- Matches TypeScript behavior: arguments get union of parameter types
+- ContextualTypeContext already handles unions correctly (distributes over members)
 
-**Example**:
-```typescript
-declare function set(handler: (x: string) => void): void;
-declare function set(handler: (x: number) => void): void;
-set(x => x.toString()); // 'x' should get contextual type from candidate signatures
-```
+**Critical Fixes from Gemini Pro Review**:
+1. **Excess Property Checking**: Uses MATCHED signature, not union
+   - Prevents false negatives where properties from other overloads are allowed
+   - Bug: `f({ a: 1, b: 2 })` where only `{ a: number }` allows `b`
+2. **State Corruption**: Removed `std::mem::take` in failure path
+   - Was emptying `node_types` cache for subsequent iterations
+   - Caused intermediate logic to operate on detached/empty state
 
-**Approach** (from Gemini Flash 2026-02-05):
-1. Write test case with overloaded functions and arrow function arguments
-2. Use `tsz-tracing` to see if arguments get `unknown` or `any`
-3. Modify `call_checker.rs` to propagate context from candidate signatures
-4. Ensure parameter types from candidate signatures are pushed into `ctx.contextual_type`
+**Test Cases Verified**:
+- Simple overloads (string vs number) ✅
+- Different parameter counts ✅
+- Generic overloads ✅
+- Excess property checking ✅
 
-**Ask Gemini First** (Two-Question Rule - MANDATORY):
-```bash
-./scripts/ask-gemini.mjs --include=src/checker/call_checker.rs \
-  "I need to implement contextual typing for overloaded functions.
-  When resolve_call_expression iterates through signatures, how should it provide contextual types to arguments?
-  Does tsc use the first signature, or does it try to match based on argument structure first?
-  Where should I hook into the signature selection loop to set the contextual type?"
-```
+**Key Insight**: Resolves the "chicken and egg" problem where overload selection depends on argument types, but argument types depend on overload context. The solution is to use a **union of all candidate signatures** as the contextual type, then try each signature against the pre-collected types.
 
 ---
 
