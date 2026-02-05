@@ -979,20 +979,25 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Compute type of a symbol (internal, not cached).
+    /// Delegate symbol resolution to a checker using the correct arena.
     ///
-    /// Uses TypeLowering to bridge symbol declarations to solver types.
-    /// Returns the computed type and the type parameters used (if any).
-    /// IMPORTANT: The type params returned must be the same ones used when lowering
-    /// the type body, so that instantiation works correctly.
-    pub(crate) fn compute_type_of_symbol(
+    /// When a symbol's arena differs from the current arena (cross-file symbol),
+    /// we create a child checker with the correct arena and delegate the resolution.
+    /// This ensures symbols are resolved in their original context.
+    ///
+    /// ## Returns:
+    /// - `Some((type_id, params))`: Delegation occurred, use this result
+    /// - `None`: Symbol is in the local arena, proceed with local computation
+    ///
+    /// ## Critical Behavior:
+    /// - Removes the "in-progress" ERROR marker from cache before delegation
+    /// - Shares the parent's cache via `with_parent_cache` (fixes Cache Isolation Bug)
+    /// - Copies lib_contexts for global symbol resolution (Array, Promise, etc.)
+    /// - Copies resolution sets for cross-file cycle detection
+    fn delegate_cross_arena_symbol_resolution(
         &mut self,
         sym_id: SymbolId,
-    ) -> (TypeId, Vec<crate::solver::TypeParamInfo>) {
-        use crate::solver::TypeLowering;
-
-        // Handle cross-file symbol resolution: if this symbol's arena is different
-        // from the current arena, delegate to a checker using the correct arena.
+    ) -> Option<(TypeId, Vec<crate::solver::TypeParamInfo>)> {
         let opt_symbol_arena = self.ctx.binder.symbol_arenas.get(&sym_id);
         if let Some(symbol_arena) = opt_symbol_arena
             && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
@@ -1028,7 +1033,106 @@ impl<'a> CheckerState<'a> {
             }
             // Use get_type_of_symbol to ensure proper cycle detection
             let result = checker.get_type_of_symbol(sym_id);
-            return (result, Vec::new());
+            return Some((result, Vec::new()));
+        }
+
+        None
+    }
+
+    /// Compute the type of a class symbol.
+    ///
+    /// Returns the class constructor type, merging with namespace exports
+    /// when the class is merged with a namespace. Also caches the instance
+    /// type for TYPE position resolution.
+    fn compute_class_symbol_type(
+        &mut self,
+        sym_id: SymbolId,
+        flags: u32,
+        value_decl: NodeIndex,
+        declarations: &[NodeIndex],
+    ) -> (TypeId, Vec<crate::solver::TypeParamInfo>) {
+        let decl_idx = if !value_decl.is_none() {
+            value_decl
+        } else {
+            declarations.first().copied().unwrap_or(NodeIndex::NONE)
+        };
+
+        if !decl_idx.is_none()
+            && let Some(node) = self.ctx.arena.get(decl_idx)
+            && let Some(class) = self.ctx.arena.get_class(node)
+        {
+            // Compute both constructor and instance types
+            let ctor_type = self.get_class_constructor_type(decl_idx, class);
+            let instance_type = self.get_class_instance_type(decl_idx, class);
+
+            // Cache instance type for TYPE position resolution
+            self.ctx.symbol_instance_types.insert(sym_id, instance_type);
+
+            if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
+                let merged = self.merge_namespace_exports_into_constructor(sym_id, ctor_type);
+                return (merged, Vec::new());
+            }
+            return (ctor_type, Vec::new());
+        }
+        (TypeId::UNKNOWN, Vec::new())
+    }
+
+    /// Compute the type of an enum member symbol.
+    ///
+    /// Returns a TypeKey::Enum type with the member's literal type and DefId
+    /// for nominal identity (ensures E.A is not assignable to E.B).
+    fn compute_enum_member_symbol_type(
+        &mut self,
+        sym_id: SymbolId,
+        value_decl: NodeIndex,
+    ) -> (TypeId, Vec<crate::solver::TypeParamInfo>) {
+        use crate::solver::TypeKey;
+
+        // Get the member's DefId for nominal typing
+        let member_def_id = self.ctx.get_or_create_def_id(sym_id);
+
+        // Get the literal type from the initializer
+        let literal_type = self.enum_member_type_from_decl(value_decl);
+
+        // Wrap in TypeKey::Enum for nominal identity
+        // This ensures E.A is not assignable to E.B (different DefIds)
+        let enum_type = self
+            .ctx
+            .types
+            .intern(TypeKey::Enum(member_def_id, literal_type));
+        (enum_type, Vec::new())
+    }
+
+    /// Compute the type of a namespace or module symbol.
+    ///
+    /// Returns a Lazy type with the DefId for deferred resolution.
+    /// This is skipped for functions (handled separately) and enums (must come first).
+    fn compute_namespace_symbol_type(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> (TypeId, Vec<crate::solver::TypeParamInfo>) {
+        use crate::solver::TypeKey;
+
+        // Create DefId and use Lazy type
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        (self.ctx.types.intern(TypeKey::Lazy(def_id)), Vec::new())
+    }
+
+    /// Compute type of a symbol (internal, not cached).
+    ///
+    /// Uses TypeLowering to bridge symbol declarations to solver types.
+    /// Returns the computed type and the type parameters used (if any).
+    /// IMPORTANT: The type params returned must be the same ones used when lowering
+    /// the type body, so that instantiation works correctly.
+    pub(crate) fn compute_type_of_symbol(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> (TypeId, Vec<crate::solver::TypeParamInfo>) {
+        use crate::solver::TypeLowering;
+
+        // Handle cross-file symbol resolution via delegation
+        if let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id) {
+            return result;
         }
 
         // Use get_symbol_globally to find symbols in lib files and other files
@@ -1049,29 +1153,7 @@ impl<'a> CheckerState<'a> {
         // Class - return class constructor type (merging namespace exports when present)
         // Also compute and cache instance type for TYPE position resolution
         if flags & symbol_flags::CLASS != 0 {
-            let decl_idx = if !value_decl.is_none() {
-                value_decl
-            } else {
-                declarations.first().copied().unwrap_or(NodeIndex::NONE)
-            };
-            if !decl_idx.is_none()
-                && let Some(node) = self.ctx.arena.get(decl_idx)
-                && let Some(class) = self.ctx.arena.get_class(node)
-            {
-                // Compute both constructor and instance types
-                let ctor_type = self.get_class_constructor_type(decl_idx, class);
-                let instance_type = self.get_class_instance_type(decl_idx, class);
-
-                // Cache instance type for TYPE position resolution
-                self.ctx.symbol_instance_types.insert(sym_id, instance_type);
-
-                if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
-                    let merged = self.merge_namespace_exports_into_constructor(sym_id, ctor_type);
-                    return (merged, Vec::new());
-                }
-                return (ctor_type, Vec::new());
-            }
-            return (TypeId::UNKNOWN, Vec::new());
+            return self.compute_class_symbol_type(sym_id, flags, value_decl, &declarations);
         }
 
         // Enum - return TypeKey::Enum with DefId for nominal identity checking.
@@ -1212,28 +1294,12 @@ impl<'a> CheckerState<'a> {
         if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
             && flags & symbol_flags::FUNCTION == 0
         {
-            use crate::solver::TypeKey;
-            // Create DefId and use Lazy type
-            let def_id = self.ctx.get_or_create_def_id(sym_id);
-            return (self.ctx.types.intern(TypeKey::Lazy(def_id)), Vec::new());
+            return self.compute_namespace_symbol_type(sym_id);
         }
 
         // Enum member - determine type from parent enum
         if flags & symbol_flags::ENUM_MEMBER != 0 {
-            // Get the member's DefId for nominal typing
-            let member_def_id = self.ctx.get_or_create_def_id(sym_id);
-
-            // Get the literal type from the initializer
-            let literal_type = self.enum_member_type_from_decl(value_decl);
-
-            // Wrap in TypeKey::Enum for nominal identity
-            // This ensures E.A is not assignable to E.B (different DefIds)
-            use crate::solver::TypeKey;
-            let enum_type = self
-                .ctx
-                .types
-                .intern(TypeKey::Enum(member_def_id, literal_type));
-            return (enum_type, Vec::new());
+            return self.compute_enum_member_symbol_type(sym_id, value_decl);
         }
 
         // Function - build function type or callable overload set
