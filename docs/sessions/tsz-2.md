@@ -59,6 +59,29 @@ const myReducer: Reducer<State, Action> = (state, action) => state;
 - [ ] No "Any poisoning" from opaque Application types
 - [ ] Conformance test pass rate increases measurably
 
+## Progress
+
+### 2026-02-05
+
+1. **Investigation Phase**:
+   - Read `src/solver/evaluate.rs` and found existing `evaluate_application` function (lines 404-451)
+   - Found existing `ApplicationEvaluator` in `src/solver/application.rs`
+   - Found unit tests in `src/solver/tests/evaluate_tests.rs` that document expected behavior
+
+2. **Consultation with Gemini**:
+   - Asked for guidance on correct approach for Application type expansion
+   - Gemini confirmed: focus on `evaluate.rs:evaluate_application`
+   - Key insight: Application types are treated as opaque instead of being transparently expanded
+
+3. **Test Infrastructure Cleanup**:
+   - Fixed PropertyInfo and FunctionShape struct field issues (36 → 11 errors)
+   - Fixed TypeGuard::Discriminant property_name → property_path (11 → 9 errors)
+   - Remaining 9 errors (E0283, E0308) are in unrelated modules (expression_ops.rs)
+
+4. **Next Steps**:
+   - Implement Application expansion in `evaluate_application` based on Gemini's guidance
+   - The key is to: resolve Lazy base → get type params → evaluate args → instantiate → recurse
+
 ## Session History
 
 *Created 2026-02-05 following Gemini consultation after tsz-1 conclusion.*
