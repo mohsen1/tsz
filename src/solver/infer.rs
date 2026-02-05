@@ -1493,12 +1493,10 @@ impl<'a> InferenceContext<'a> {
         candidates
             .iter()
             .map(|candidate| {
-                // Phase 7a Task 2: Fresh literals are widened UNLESS they're highest priority
-                // In the new system, NakedTypeVariable (1) is highest priority
-                if should_widen
-                    && candidate.is_fresh_literal
-                    && candidate.priority != InferencePriority::NakedTypeVariable
-                {
+                // Fix: Always widen fresh literals when we have multiple candidates,
+                // regardless of priority. Const type parameters are protected by
+                // the is_const check in resolve_from_candidates.
+                if should_widen && candidate.is_fresh_literal {
                     self.get_base_type(candidate.type_id)
                         .unwrap_or(candidate.type_id)
                 } else {

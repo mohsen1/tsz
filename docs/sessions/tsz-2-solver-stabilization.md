@@ -15,7 +15,8 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 - ✅ **Fixed intersection normalization** - Added `null & object = never` rule
 - ✅ **Fixed property access for Array/Tuple** - Added type substitution for generic applications
 - ✅ **Fixed function variance tests** - Fixed test bugs (missing strict_function_types, incorrect any expectation)
-- Reduced test failures from 37 → 31 → 22 → 20 → 13 → 11
+- ✅ **Fixed constraint resolution** - Fixed widen_candidate_types to widen literals with multiple candidates
+- Reduced test failures from 37 → 31 → 22 → 20 → 13 → 11 → 9
 
 ## Redefined Priorities (2026-02-05 by Gemini Pro)
 
@@ -76,7 +77,28 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 
 ---
 
-### Priority 4: Generic Inference & Constraints (2 tests) ⚪
+### ✅ Priority 4: Generic Inference & Constraints (2 tests) - COMPLETED
+**Fixed**: Removed priority check in `widen_candidate_types` that prevented literal widening
+
+**Tests**:
+- ✅ `test_constraint_satisfaction_multiple_candidates`
+- ✅ `test_resolve_multiple_lower_bounds_union`
+
+**Root Cause**: `widen_candidate_types` had a check `candidate.priority != InferencePriority::NakedTypeVariable` that prevented widening for NakedTypeVariable candidates. But `add_lower_bound` uses `NakedTypeVariable` priority for all candidates.
+
+**Example**: For `T extends string | number` with lower bounds `literal "hello"` and `literal 42`:
+- Candidates: `[InferenceCandidate { type_id: "hello", priority: NakedTypeVariable, is_fresh_literal: true }, ...]`
+- `widen_candidate_types` skipped widening because `priority == NakedTypeVariable`
+- Result: `"hello" | 42` (union of literals) instead of `string | number` (union of widened types)
+
+**Fix**: Removed the `candidate.priority != InferencePriority::NakedTypeVariable` check. The `is_const` parameter in `resolve_from_candidates` already protects const type parameters from unwanted widening.
+
+**Files Modified**:
+- `src/solver/infer.rs` - Fixed `widen_candidate_types` function
+
+---
+
+### Priority 5: Weak Types & Others (9 tests) - REMAINING ⚪
 **Tests**:
 - `test_constraint_satisfaction_multiple_candidates`
 - `test_resolve_multiple_lower_bounds_union`
