@@ -2631,7 +2631,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // Calculate the "no-match" type (what type the discriminant would have
         // if none of the case clauses match)
-        let no_match_type = analyzer.narrow_by_default_switch_clause(
+        let _no_match_type = analyzer.narrow_by_default_switch_clause(
             discriminant_type,
             expression,
             case_block,
@@ -2639,9 +2639,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             &narrowing,
         );
 
-        // If the no-match type is not `never`, the switch is not exhaustive
-        if no_match_type != crate::solver::TypeId::NEVER {
-            // TODO: Emit diagnostic (TS2366 or custom error)
-        }
+        // The no_match_type is used for narrowing within the flow analyzer.
+        // The actual "not all code paths return" error (TS2366) should be
+        // reported at the FUNCTION level in control flow analysis, not here.
+        //
+        // This is because:
+        // 1. Code after the switch might handle missing cases
+        // 2. The return type might accept undefined (e.g., number | undefined)
+        // 3. Exhaustiveness must be checked in the context of the entire function
+        //
+        // The FlowAnalyzer uses no_match_type to correctly narrow types within
+        // subsequent code blocks, but the error emission happens elsewhere.
     }
 }
