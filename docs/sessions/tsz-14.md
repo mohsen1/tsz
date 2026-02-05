@@ -1,14 +1,14 @@
-# Session TSZ-14: Fix Literal Type Widening in Type Aliases
+# Session TSZ-14: Fix Literal Type Widening in Object Literal Expression Inference
 
 **Started**: 2026-02-05
 **Status**: 🔄 PENDING
-**Focus**: Fix type alias lowering to preserve literal types instead of widening to primitives
+**Focus**: Fix object literal expression inference to respect contextual types
 
 ## Problem Statement
 
 **Discovered during tsz-1 investigation**:
 
-Literal types in type alias definitions are being incorrectly widened to their primitive types.
+Object literal expressions are being inferred without considering the contextual type from function parameters, causing literals to be widened to their primitive types.
 
 ### Test Case
 ```typescript
@@ -22,15 +22,45 @@ function test(obj: A | B) {
 }
 ```
 
+### Actual Investigation Findings (2026-02-05)
+
+**IMPORTANT**: The bug is NOT in type alias lowering!
+
+1. **Type Alias Lowering (SOLVER)**: ✅ Working correctly
+   - `lower_literal_type` in `src/solver/lower.rs` creates literal types correctly
+   - Debug confirms: `StringLiteral found, text='a', creating literal`
+   - Type alias `A` is correctly stored as `{ kind: "a" }`
+
+2. **Expression Inference (CHECKER)**: ❌ Bug is here
+   - Argument expression `{ kind: "a" }` is inferred as `{ kind: string }`
+   - Error message: `Argument of type '{ kind: string }' is not assignable to parameter of type 'A'`
+   - The object literal is inferred WITHOUT considering the contextual type from parameter `A`
+
 ### Current (Buggy) Behavior
-- Type `A` has `kind: string` instead of `kind: "a"`
-- Type `B` has `kind: string` instead of `kind: "b"`
-- Discriminant narrowing fails because both members match the literal "a"
+- Object literal `{ kind: "a" }` is inferred as `{ kind: string }` (widened)
+- Inference ignores the contextual type from function parameter `A`
+- Assignment fails because `{ kind: string }` doesn't match `{ kind: "a" }`
 
 ### Expected Behavior (matches tsc)
-- Type `A` should have `kind: "a"` (literal type)
-- Type `B` should have `kind: "b"` (literal type)
-- Discriminant narrowing should work correctly
+- Object literal `{ kind: "a" }` should be inferred as `{ kind: "a" }` (literal preserved)
+- Inference should respect the contextual type from function parameter `A`
+- Assignment should succeed because types match
+
+## Why This Matters
+
+TypeScript preserves literal types in expressions when there's a contextual type:
+
+```typescript
+type A = { kind: "a" };
+function test(obj: A) {}
+
+test({ kind: "a" }); // Should work - { kind: "a" } inferred, not { kind: string }
+```
+
+If expressions don't respect contextual types:
+1. **Literal types are lost** - even when target type expects literals
+2. **Type safety is reduced** - expressions become less precise
+3. **Compatibility with tsc breaks** - TypeScript preserves literals in contextual inference
 
 ## Why This Matters
 
