@@ -697,6 +697,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 | TypeKey::TemplateLiteral(_)
                 | TypeKey::ReadonlyType(_)
                 | TypeKey::StringIntrinsic { .. }
+                | TypeKey::ThisType // Context-dependent polymorphic type
         )
     }
 
@@ -773,6 +774,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Fast-path: if any member is any, entire union becomes any
         // (But we don't modify members, just skip simplification - the interner will handle it)
         if members.iter().any(|&id| id.is_any()) {
+            return;
+        }
+
+        // Fast-path: if any member is unknown, entire union becomes unknown
+        // (Interner handles the collapse, we just stop simplification)
+        if members.iter().any(|&id| id.is_unknown()) {
             return;
         }
 
