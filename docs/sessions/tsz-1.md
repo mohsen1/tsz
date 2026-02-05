@@ -1,5 +1,63 @@
 # TSZ-1: Active Tasks
 
+## Session Summary 2026-02-05
+
+### ✅ Major Accomplishments
+
+**Fixes Implemented:**
+1. **TS2393 False Positive Fix** (commit e15963ec9)
+   - Removed duplicate TS2393 reporting in `check_duplicate_class_members`
+   - Valid method overloads (signatures + 1 implementation) no longer report duplicate errors
+   - Clean diagnostic quality improvement
+
+2. **TS2564 Property Initialization Improvements** (commit 6c368aa6d)
+   - Performance: HashSet → FxHashSet (rustc_hash)
+   - ElementAccessExpression support: `this["x"] = 1` now recognized
+   - Fixed compilation issues
+
+3. **Session Redefinition** (commit 4c5580ca3 & 9f27d130c)
+   - Pivoted from TS2564 edge cases to Type Narrowing (CFA)
+   - After investigation: Found narrowing features already implemented
+   - Redefined to method overload validation and flow analysis tasks
+
+**Investigation Results - Features Already Complete:**
+1. **TS2564 Parameter Properties** - Architecturally separate, working correctly
+2. **User-Defined Type Guards** - Fully implemented in `src/checker/control_flow_narrowing.rs`
+3. **`in` Operator Narrowing** - Fully implemented with `TypeGuard::InProperty`
+4. **Union Callable Resolution** - Not valid TypeScript (overloads used instead)
+5. **Type Narrowing (unknown/instanceof)** - Matches tsc behavior correctly
+
+**Commits Pushed:**
+- e15963ec9: TS2393 false positive fix
+- 6c368aa6d: TS2564 HashSet→FxHashSet + element access
+- 4c5580ca3: Session redefinition to Type Narrowing
+- 9f27d130c: Updated priorities after investigation
+
+### 🎯 New Priorities (Per Gemini Latest Consultation)
+
+**1. Unblock Method/Constructor Overload Validation (PRIORITY)**
+- Blockage: `get_type_of_node(method_node)` returns ERROR
+- Solution: Build Signature from AST nodes manually
+- File: `src/checker/state_checking_members.rs`
+
+**2. Reachability Analysis (TS7027)**
+- Detect unreachable code via flow analysis
+- File: `src/checker/flow_analysis.rs`
+
+**3. Exhaustiveness Checking (TS2366/TS7030)**
+- Validate all code paths return values
+- File: `src/checker/flow_analysis.rs`
+
+**4. instanceof Narrowing**
+- Complete object narrowing trilogy
+- Files: `src/solver/narrowing.rs`, `src/checker/flow_analysis.rs`
+
+**5. Discriminated Union Review**
+- Verify correctness of complex narrowing cases
+- File: `src/solver/narrowing.rs`
+
+---
+
 ## Completed Tasks
 
 ### ✅ ASI (Automatic Semicolon Insertion) Fix - Completed 2026-02-05
