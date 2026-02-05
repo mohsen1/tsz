@@ -15,24 +15,26 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 **Test Results**: `./scripts/emit/run.sh --max=100`
 - JavaScript Emit: **24.9%** pass rate (110/442 tests passed, 332 failed, 10,911 skipped)
 - Declaration Emit: Working (Separate DeclarationEmitter class)
-- Overall: Major progress on declaration merging!
+- Overall: Completed declaration merging phase!
 
-**Recent Work (Session 14):**
-- Variable transformation in namespaces - **COMPLETED** (commit d45c25fa3)
-  - Fixed source_text propagation for variable initializers
-  - Variables now emit correctly: `var x = 42;`
-- Function transformation in namespaces - **COMPLETED** (commit 43dd1dc8e)
-  - Functions emit as ES5 with type annotations stripped
+**Recent Work (Session 15):**
 - Namespace/class/function/enum merging - **COMPLETED** (commit 22483fdef)
   - Eliminates extra `var` declaration when namespace merges with class/function/enum
   - Added `should_declare_var` flag tracked via LoweringPass
   - **Result: Pass rate increased from 8.2% to 24.9% (3x improvement!)**
+  - CLI now uses LoweringPass for transform directives
 
-**Remaining Issues:**
-- Many formatting/structural differences (332 failing tests)
-- Nested namespace handling
-- Advanced declaration merging scenarios
-- Various ES5 edge cases
+**New Focus (Session 16+): ES5 Downleveling & Helper Infrastructure**
+
+**Next Milestone: ES6+ Syntax Downleveling**
+- Implement helper function infrastructure (`__values`, `__assign`, `__spreadArray`)
+- Transform for-of statements to ES5 iterator protocol
+- Handle spread/rest elements in arrays and functions
+
+**Three-Step Approach (Per Gemini):**
+1. **Quick Win**: Array literal formatting (2dArrays) - src/emitter/expressions.rs
+2. **Foundation**: Helper Infrastructure - src/emitter/helpers.rs (HelperManager)
+3. **Main Task**: For-of downleveling - src/transforms/es5_helpers.rs
 
 ## Progress Log
 
@@ -726,10 +728,45 @@ var A = /** @class */ (function () {
 - `src/cli/driver_resolution.rs` - Use LoweringPass in CLI emit path
 
 **Next Steps:**
-Per Gemini's guidance, remaining priorities:
-1. For-of downleveling (ES3/ES5) - Medium priority
-2. Array literal formatting (2dArrays) - Low priority/quick win
-3. Complex declaration merging scenarios - Investigate specific failures
+Three-step approach for ES5 downleveling:
+1. Fix array literal formatting (quick win)
+2. Build HelperManager infrastructure (foundation)
+3. Implement for-of downleveling (high value, hundreds of tests)
+
+### 2025-02-05 Session 16: Strategic Pivot to ES5 Downleveling
+
+**Gemini Consultation Result:**
+After completing the namespace/class merging milestone (8.2% → 24.9%), consulted Gemini
+on the next strategic direction.
+
+**Recommendation:**
+Shift focus from namespace merging to **ES6+ Syntax Downleveling & Helper Infrastructure**.
+
+**Rationale:**
+Many TypeScript conformance tests default to or specifically test ES5 output. Without robust
+downleveling for modern syntax, we'll hit a ceiling regardless of how well namespaces merge.
+
+**New Three-Phase Plan:**
+
+**Phase A: Quick Win - Array Literal Formatting**
+- File: `src/emitter/expressions.rs`
+- Fix nested array indentation and trailing comma behavior
+- Validates: `tests/cases/conformance/expressions/arrayLiterals/`
+- Purpose: Removes "diff noise" from test results
+
+**Phase B: Foundation - Helper Infrastructure**
+- Create/Expand `src/emitter/helpers.rs`
+- Implement `HelperManager` to track `EmitHelperKind` enums
+- Ensure `Printer` can emit helper definitions at file top
+- Purpose: Prerequisite for all ES5 downleveling
+
+**Phase C: Main Task - For-Of Downleveling**
+- Files: `src/transforms/es5_helpers.rs`, `src/transforms/ir.rs`
+- Transform `for-of` to iterator protocol with `try/finally`
+- Validates: `tests/cases/conformance/statements/for-ofStatements/`
+- Purpose: High-value feature appearing in hundreds of tests
+
+**Status:** Session redefined with new strategic direction. Ready to begin Phase A.
 
 ### 2025-02-05 Session 14: Strategic Pivot - Triage for Quick Wins
 
