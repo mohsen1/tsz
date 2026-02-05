@@ -1310,13 +1310,15 @@ impl<'a> InferenceContext<'a> {
     ) -> Result<(), InferenceError> {
         let spans = self.interner.template_list(target_template);
 
-        // Special case: if source is the intrinsic `string` type, all infer vars get string
-        if matches!(source_key, Some(TypeKey::Intrinsic(IntrinsicKind::String))) {
+        // Special case: if source is `any` or the intrinsic `string` type, all infer vars get that type
+        if source == TypeId::ANY
+            || matches!(source_key, Some(TypeKey::Intrinsic(IntrinsicKind::String)))
+        {
             for span in spans.iter() {
                 if let TemplateSpan::Type(type_id) = span {
                     if let Some(TypeKey::Infer(param_info)) = self.interner.lookup(*type_id) {
                         if let Some(var) = self.find_type_param(param_info.name) {
-                            // Source is `string`, so infer `string` for all variables
+                            // Source is `any` or `string`, so infer that for all variables
                             self.add_candidate(var, source, priority);
                         }
                     }
@@ -1419,8 +1421,10 @@ impl<'a> InferenceContext<'a> {
                                     bindings.push((var, captured));
                                     pos = capture_end;
                                 } else {
-                                    // No more text anchors - shouldn't happen in well-formed templates
-                                    return None;
+                                    // No text anchor found (e.g., `${infer A}${infer B}`)
+                                    // Capture empty string for non-greedy match and continue
+                                    bindings.push((var, String::new()));
+                                    // pos remains unchanged - next infer var starts here
                                 }
                             }
                         }
