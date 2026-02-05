@@ -1789,10 +1789,7 @@ impl ParserState {
 
         if is_leading_zero_number {
             // Find the integer part (before any decimal point or exponent)
-            let integer_part = text
-                .split(['.', 'e', 'E'])
-                .next()
-                .unwrap_or(&text);
+            let integer_part = text.split(['.', 'e', 'E']).next().unwrap_or(&text);
             // Check if any digit after the leading 0 is 8 or 9
             let has_non_octal =
                 integer_part.len() > 1 && integer_part[1..].bytes().any(|b| b == b'8' || b == b'9');

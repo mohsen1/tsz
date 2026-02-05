@@ -375,8 +375,9 @@ fn test_any_in_function_parameters_strict_mode() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    // Enable strict any propagation
+    // Enable strict any propagation AND strict function types
     checker.set_strict_any_propagation(true);
+    checker.set_strict_function_types(true);
 
     // Create function types: (x: any) => void and (x: number) => void
     let any_param = create_function_type(
@@ -778,10 +779,11 @@ fn test_function_variance_with_return_types() {
         "() => string should be assignable to () => any (covariant return types)"
     );
 
-    // But () => any is NOT assignable to () => string
+    // any is assignable to everything in TypeScript, even in strict mode
+    // So () => any IS assignable to () => string
     assert!(
-        !checker.is_assignable(returns_any, returns_string),
-        "() => any should NOT be assignable to () => string (covariant return types)"
+        checker.is_assignable(returns_any, returns_string),
+        "() => any should be assignable to () => string (any is assignable to everything)"
     );
 }
 
