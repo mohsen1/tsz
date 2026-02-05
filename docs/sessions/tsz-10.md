@@ -855,3 +855,39 @@ Discriminant narrowing requires deeper investigation. The Solver layer fixes are
 - Tasks 6-7: Not started
 
 The foundational work on type resolution (Lazy/Ref/Application) is complete and will benefit all narrowing operations once the flow analysis pipeline is fixed.
+
+### 2026-02-05: Union Resolution Fix Attempt - Blocked on Rust Type System
+
+**Context**: Attempted to implement the resolver architecture per Gemini's guidance
+from Question 2, but hit Rust type system limitations.
+
+**Approaches Tried**:
+
+1. **Option<&dyn TypeResolver>**: Failed - trait object is unsized, `PropertyAccessEvaluator<R>`
+   requires sized type parameter
+
+2. **Generic Parameter R: TypeResolver**: Failed - cascaded through entire codebase:
+   - `NarrowingContext<'a, R>`
+   - `FlowAnalyzer<'a, R>`
+   - All call sites need generic parameter
+   - Lifetime complexity with NoopResolver vs TypeEnvironment
+
+3. **Box<dyn TypeResolver>**: Not attempted due to performance overhead and complexity
+
+**Root Issue**: `PropertyAccessEvaluator` is generic over `R: TypeResolver`, and Rust's type
+system makes it difficult to store trait objects or mix generic/non-generic code.
+
+**Current Status**: Added TODO marker in `src/solver/narrowing.rs:345` indicating where fix is needed
+(commit e051705e9).
+
+**Alternative Strategies**:
+1. **Pre-resolve in Checker**: Have Checker call `db.evaluate_type()` before passing to Solver
+2. **Helper Function**: Add non-generic helper to create evaluator with trait object
+3. **Different Layer**: Fix in Checker's `FlowAnalyzer` rather than Solver's `NarrowingContext`
+4. **Architectural Change**: Modify `PropertyAccessEvaluator` to support trait objects
+
+**Recommendation**: Next session should ask Gemini for the SIMPLEST possible fix that:
+- Minimizes architectural changes
+- Maintains backward compatibility
+- Fixes type alias discriminant narrowing
+- Avoids complex generics or trait object gymnastics
