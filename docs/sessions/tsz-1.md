@@ -7,22 +7,36 @@
 ## Active Tasks
 
 ### Task #15: Mapped Types Property Collection
-**Status**: Pending
-**Priority**: Medium
+**Status**: ⚠️ Blocked - Architecture Issue Found
+**Priority**: Medium (lowered due to complexity)
 **Estimated Impact**: +0.5-1% conformance
 
 **Description**:
-Extend `collect_target_properties` in `src/solver/compat.rs` to handle mapped types like `Partial<T>`.
-Currently, basic excess property checking works for interfaces, but mapped types need special handling.
+Make excess property checking (TS2353) work for mapped types like `Partial<T>`.
 
-**Gemini Guidance**:
-> "Mapped types are handled by the evaluate_rules module. You need to either:
-> 1. Resolve mapped types to their base types before checking
-> 2. Or teach collect_target_properties to walk the mapped type structure"
+**Investigation Findings**:
+1. `Partial<User>` is a Type APPLICATION, not a Mapped type directly
+2. The checker's `check_object_literal_excess_properties` uses `get_object_shape` which returns `None` for Application types
+3. My solver-layer implementation in `explain_failure` only runs when assignments FAIL
+4. For `Partial<User>` with optional properties, assignments often PASS, so `explain_failure` is never called
+5. This is an ARCHITECTURE mismatch - excess property checks need to happen in CHECKER layer (before assignability), not SOLVER layer (after failure)
 
-**Prerequisites**:
-- Understand how evaluate_rules module handles mapped types
-- Follow Two-Question Rule (ask Gemini BEFORE implementing)
+**Root Cause**:
+- `check_object_literal_excess_properties` (checker) runs before assignability - correct layer, but doesn't handle Application types
+- `find_excess_property` (solver) runs in `explain_failure` - wrong layer (only runs on failure), and doesn't help for passing assignments
+
+**Possible Solutions**:
+1. Update `get_object_shape` to evaluate Application types - high complexity
+2. Update `check_object_literal_excess_properties` to use `evaluate_type` before `get_object_shape` - medium complexity
+3. Make assignments with excess properties FAIL - would break many valid TypeScript patterns
+
+**Recommendation**:
+Defer this task. It requires significant refactoring of the checker-layer excess property checking logic.
+Focus on higher-priority tasks with better ROI.
+
+**Gemini Consultation**:
+Asked Gemini for approach guidance - confirmed this is more complex than initially estimated.
+Requires understanding Application type evaluation and checker architecture.
 
 ## Completed Tasks
 
