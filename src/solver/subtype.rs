@@ -334,6 +334,10 @@ pub struct TypeEnvironment {
     /// Set of DefIds that correspond to numeric enums.
     /// Used for Rule #7 (Open Numeric Enums) where number types are assignable to/from numeric enums.
     numeric_enums: std::collections::HashSet<u32>,
+    /// Maps DefIds to their DefKind (Task #32: Graph Isomorphism).
+    /// Used by the Canonicalizer to distinguish structural types (TypeAlias)
+    /// from nominal types (Interface/Class/Enum).
+    def_kinds: std::collections::HashMap<u32, crate::solver::def::DefKind>,
 }
 
 impl TypeEnvironment {
@@ -349,6 +353,7 @@ impl TypeEnvironment {
             def_to_symbol: std::collections::HashMap::new(),
             symbol_to_def: std::collections::HashMap::new(),
             numeric_enums: std::collections::HashSet::new(),
+            def_kinds: std::collections::HashMap::new(),
         }
     }
 
@@ -462,6 +467,23 @@ impl TypeEnvironment {
     }
 
     // =========================================================================
+    // DefKind Storage (Task #32: Graph Isomorphism)
+    // =========================================================================
+
+    /// Register a DefId's DefKind.
+    ///
+    /// Used by the Canonicalizer to distinguish structural types (TypeAlias)
+    /// from nominal types (Interface/Class/Enum).
+    pub fn insert_def_kind(&mut self, def_id: DefId, kind: crate::solver::def::DefKind) {
+        self.def_kinds.insert(def_id.0, kind);
+    }
+
+    /// Get a DefId's DefKind.
+    pub fn get_def_kind(&self, def_id: DefId) -> Option<crate::solver::def::DefKind> {
+        self.def_kinds.get(&def_id.0).copied()
+    }
+
+    // =========================================================================
     // DefId <-> SymbolId Bridge (Phase 3.2, 3.4)
     // =========================================================================
 
@@ -525,6 +547,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
         self.symbol_to_def.get(&symbol.0).copied()
+    }
+
+    fn get_def_kind(&self, def_id: DefId) -> Option<crate::solver::def::DefKind> {
+        TypeEnvironment::get_def_kind(self, def_id)
     }
 
     fn is_numeric_enum(&self, def_id: DefId) -> bool {

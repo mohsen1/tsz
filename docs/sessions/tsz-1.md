@@ -1334,9 +1334,10 @@ Enables better union/intersection reduction by detecting disjoint template liter
 
 **Completed Foundation**:
 - ✅ TypeKey::Recursive(u32) variant added
-- ✅ Visitor pattern integrated
-- ✅ All 21 pattern matches fixed
-- ✅ All tests pass (Commit: dca01dde7)
+- ✅ TypeKey::BoundParameter(u32) variant added
+- ✅ Visitor pattern integrated (both Recursive and BoundParameter)
+- ✅ All pattern matches fixed (Recursive: 21, BoundParameter: 11)
+- ✅ All tests pass (Commit: a0917e439)
 
 **Implementation Roadmap**:
 

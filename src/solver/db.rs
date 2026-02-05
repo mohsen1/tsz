@@ -1291,6 +1291,10 @@ impl TypeResolver for BinderTypeDatabase<'_> {
     fn get_base_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> Option<TypeId> {
         self.type_env.borrow().get_base_type(type_id, interner)
     }
+
+    fn get_def_kind(&self, def_id: DefId) -> Option<crate::solver::def::DefKind> {
+        self.type_env.borrow().get_def_kind(def_id)
+    }
 }
 
 impl QueryDatabase for BinderTypeDatabase<'_> {
