@@ -263,6 +263,253 @@ pub trait TypeVisitor: Sized {
 }
 
 // =============================================================================
+// Type Traversal Helpers
+// =============================================================================
+
+/// Invoke a function on each immediate child TypeId of a TypeKey.
+///
+/// This function provides a simple way to traverse the type graph without
+/// requiring the full Visitor pattern. It's useful for operations like:
+/// - Populating caches (ensuring all nested types are resolved)
+/// - Collecting dependencies
+/// - Type environment population
+///
+/// # Parameters
+///
+/// * `db` - The type database to look up type structures
+/// * `key` - The TypeKey whose children should be visited
+/// * `f` - Function to call for each child TypeId
+///
+/// # Examples
+///
+/// ```rust
+/// use crate::solver::visitor::for_each_child;
+///
+/// for_each_child(types, &type_key, |child_id| {
+///     // Process each nested type
+/// });
+/// ```
+///
+/// # TypeKey Variants Handled
+///
+/// This function handles ALL TypeKey variants to ensure complete traversal:
+/// - **Single nested types**: Array, ReadonlyType, KeyOf, etc.
+/// - **Multiple members**: Union, Intersection
+/// - **Structured types**: Object, Tuple, Function, Callable
+/// - **Complex types**: Application, Conditional, Mapped, IndexAccess
+/// - **Template literals**: Iterates over template spans
+/// - **String intrinsics**: Visits type argument
+/// - **Leaf types**: Intrinsic, Literal, Lazy, TypeQuery, etc. (no children)
+pub fn for_each_child<F>(db: &dyn TypeDatabase, key: &TypeKey, mut f: F)
+where
+    F: FnMut(TypeId),
+{
+    match key {
+        // Single nested type
+        TypeKey::Array(inner) | TypeKey::ReadonlyType(inner) | TypeKey::KeyOf(inner) => {
+            f(*inner);
+        }
+
+        // Composite types with multiple members
+        TypeKey::Union(list_id) | TypeKey::Intersection(list_id) => {
+            for &member in db.type_list(*list_id).iter() {
+                f(member);
+            }
+        }
+
+        // Object types with properties and index signatures
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+            let shape = db.object_shape(*shape_id);
+            for prop in &shape.properties {
+                f(prop.type_id);
+                f(prop.write_type); // IMPORTANT: Must visit both read and write types
+            }
+            if let Some(ref sig) = shape.string_index {
+                f(sig.key_type);
+                f(sig.value_type);
+            }
+            if let Some(ref sig) = shape.number_index {
+                f(sig.key_type);
+                f(sig.value_type);
+            }
+        }
+
+        // Tuple types
+        TypeKey::Tuple(tuple_id) => {
+            for elem in db.tuple_list(*tuple_id).iter() {
+                f(elem.type_id);
+            }
+        }
+
+        // Function types
+        TypeKey::Function(func_id) => {
+            let sig = db.function_shape(*func_id);
+            f(sig.return_type);
+            if let Some(this_type) = sig.this_type {
+                f(this_type);
+            }
+            if let Some(ref type_predicate) = sig.type_predicate {
+                if let Some(type_id) = type_predicate.type_id {
+                    f(type_id);
+                }
+            }
+            for param in &sig.params {
+                f(param.type_id);
+            }
+            for type_param in &sig.type_params {
+                if let Some(constraint) = type_param.constraint {
+                    f(constraint);
+                }
+                if let Some(default) = type_param.default {
+                    f(default);
+                }
+            }
+        }
+
+        // Callable types
+        TypeKey::Callable(callable_id) => {
+            let callable = db.callable_shape(*callable_id);
+            for sig in &callable.call_signatures {
+                f(sig.return_type);
+                if let Some(this_type) = sig.this_type {
+                    f(this_type);
+                }
+                if let Some(ref type_predicate) = sig.type_predicate {
+                    if let Some(type_id) = type_predicate.type_id {
+                        f(type_id);
+                    }
+                }
+                for param in &sig.params {
+                    f(param.type_id);
+                }
+                for type_param in &sig.type_params {
+                    if let Some(constraint) = type_param.constraint {
+                        f(constraint);
+                    }
+                    if let Some(default) = type_param.default {
+                        f(default);
+                    }
+                }
+            }
+            for sig in &callable.construct_signatures {
+                f(sig.return_type);
+                if let Some(this_type) = sig.this_type {
+                    f(this_type);
+                }
+                if let Some(ref type_predicate) = sig.type_predicate {
+                    if let Some(type_id) = type_predicate.type_id {
+                        f(type_id);
+                    }
+                }
+                for param in &sig.params {
+                    f(param.type_id);
+                }
+                for type_param in &sig.type_params {
+                    if let Some(constraint) = type_param.constraint {
+                        f(constraint);
+                    }
+                    if let Some(default) = type_param.default {
+                        f(default);
+                    }
+                }
+            }
+            // Visit prototype properties
+            for prop in &callable.properties {
+                f(prop.type_id);
+                f(prop.write_type);
+            }
+            if let Some(ref sig) = callable.string_index {
+                f(sig.key_type);
+                f(sig.value_type);
+            }
+            if let Some(ref sig) = callable.number_index {
+                f(sig.key_type);
+                f(sig.value_type);
+            }
+        }
+
+        // Type applications
+        TypeKey::Application(app_id) => {
+            let app = db.type_application(*app_id);
+            f(app.base);
+            for &arg in &app.args {
+                f(arg);
+            }
+        }
+
+        // Conditional types
+        TypeKey::Conditional(cond_id) => {
+            let cond = db.conditional_type(*cond_id);
+            f(cond.check_type);
+            f(cond.extends_type);
+            f(cond.true_type);
+            f(cond.false_type);
+        }
+
+        // Mapped types
+        TypeKey::Mapped(mapped_id) => {
+            let mapped = db.mapped_type(*mapped_id);
+            if let Some(constraint) = mapped.type_param.constraint {
+                f(constraint);
+            }
+            if let Some(default) = mapped.type_param.default {
+                f(default);
+            }
+            f(mapped.constraint);
+            f(mapped.template);
+            if let Some(name_type) = mapped.name_type {
+                f(name_type);
+            }
+        }
+
+        // Index access types
+        TypeKey::IndexAccess(obj, idx) => {
+            f(*obj);
+            f(*idx);
+        }
+
+        // Template literal types
+        TypeKey::TemplateLiteral(template_id) => {
+            for span in db.template_list(*template_id).iter() {
+                match span {
+                    crate::solver::types::TemplateSpan::Text(_) => {}
+                    crate::solver::types::TemplateSpan::Type(type_id) => {
+                        f(*type_id);
+                    }
+                }
+            }
+        }
+
+        // String intrinsics
+        TypeKey::StringIntrinsic { type_arg, .. } => {
+            f(*type_arg);
+        }
+
+        // Type parameters with constraints
+        TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+            if let Some(constraint) = info.constraint {
+                f(constraint);
+            }
+        }
+
+        // Enum types
+        TypeKey::Enum(_def_id, member_type) => {
+            f(*member_type);
+        }
+
+        // Leaf types - no children to visit
+        TypeKey::Intrinsic(_)
+        | TypeKey::Literal(_)
+        | TypeKey::Lazy(_)
+        | TypeKey::TypeQuery(_)
+        | TypeKey::UniqueSymbol(_)
+        | TypeKey::ThisType
+        | TypeKey::ModuleNamespace(_)
+        | TypeKey::Error => {}
+    }
+}
+
+// =============================================================================
 // Common Visitor Implementations
 // =============================================================================
 
@@ -1077,11 +1324,14 @@ impl<'a> RecursiveTypeCollector<'a> {
                 let shape = self.types.object_shape(*shape_id);
                 for prop in shape.properties.iter() {
                     self.visit(prop.type_id);
+                    self.visit(prop.write_type);
                 }
                 if let Some(ref idx) = shape.string_index {
+                    self.visit(idx.key_type);
                     self.visit(idx.value_type);
                 }
                 if let Some(ref idx) = shape.number_index {
+                    self.visit(idx.key_type);
                     self.visit(idx.value_type);
                 }
             }
@@ -1109,6 +1359,19 @@ impl<'a> RecursiveTypeCollector<'a> {
                 if let Some(this_type) = shape.this_type {
                     self.visit(this_type);
                 }
+                if let Some(ref type_predicate) = shape.type_predicate {
+                    if let Some(type_id) = type_predicate.type_id {
+                        self.visit(type_id);
+                    }
+                }
+                for type_param in shape.type_params.iter() {
+                    if let Some(constraint) = type_param.constraint {
+                        self.visit(constraint);
+                    }
+                    if let Some(default) = type_param.default {
+                        self.visit(default);
+                    }
+                }
             }
             TypeKey::Callable(shape_id) => {
                 let shape = self.types.callable_shape(*shape_id);
@@ -1117,15 +1380,56 @@ impl<'a> RecursiveTypeCollector<'a> {
                         self.visit(param.type_id);
                     }
                     self.visit(sig.return_type);
+                    if let Some(this_type) = sig.this_type {
+                        self.visit(this_type);
+                    }
+                    if let Some(ref type_predicate) = sig.type_predicate {
+                        if let Some(type_id) = type_predicate.type_id {
+                            self.visit(type_id);
+                        }
+                    }
+                    for type_param in sig.type_params.iter() {
+                        if let Some(constraint) = type_param.constraint {
+                            self.visit(constraint);
+                        }
+                        if let Some(default) = type_param.default {
+                            self.visit(default);
+                        }
+                    }
                 }
                 for sig in shape.construct_signatures.iter() {
                     for param in sig.params.iter() {
                         self.visit(param.type_id);
                     }
                     self.visit(sig.return_type);
+                    if let Some(this_type) = sig.this_type {
+                        self.visit(this_type);
+                    }
+                    if let Some(ref type_predicate) = sig.type_predicate {
+                        if let Some(type_id) = type_predicate.type_id {
+                            self.visit(type_id);
+                        }
+                    }
+                    for type_param in sig.type_params.iter() {
+                        if let Some(constraint) = type_param.constraint {
+                            self.visit(constraint);
+                        }
+                        if let Some(default) = type_param.default {
+                            self.visit(default);
+                        }
+                    }
                 }
                 for prop in shape.properties.iter() {
                     self.visit(prop.type_id);
+                    self.visit(prop.write_type);
+                }
+                if let Some(ref sig) = shape.string_index {
+                    self.visit(sig.key_type);
+                    self.visit(sig.value_type);
+                }
+                if let Some(ref sig) = shape.number_index {
+                    self.visit(sig.key_type);
+                    self.visit(sig.value_type);
                 }
             }
             TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
@@ -1158,6 +1462,12 @@ impl<'a> RecursiveTypeCollector<'a> {
             }
             TypeKey::Mapped(mapped_id) => {
                 let mapped = self.types.mapped_type(*mapped_id);
+                if let Some(constraint) = mapped.type_param.constraint {
+                    self.visit(constraint);
+                }
+                if let Some(default) = mapped.type_param.default {
+                    self.visit(default);
+                }
                 self.visit(mapped.constraint);
                 self.visit(mapped.template);
                 if let Some(name_type) = mapped.name_type {
@@ -1345,7 +1655,17 @@ where
             }
             TypeKey::Mapped(mapped_id) => {
                 let mapped = self.types.mapped_type(*mapped_id);
-                self.check(mapped.constraint)
+                mapped
+                    .type_param
+                    .constraint
+                    .map(|c| self.check(c))
+                    .unwrap_or(false)
+                    || mapped
+                        .type_param
+                        .default
+                        .map(|d| self.check(d))
+                        .unwrap_or(false)
+                    || self.check(mapped.constraint)
                     || self.check(mapped.template)
                     || mapped.name_type.map(|n| self.check(n)).unwrap_or(false)
             }
