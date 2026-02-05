@@ -97,10 +97,13 @@ Implemented full `workspace/willRenameFiles` support:
 - Added `build_auto_import_edit()` public method to `CodeActionProvider`
 - Wraps existing `build_import_edit()` logic
 
-### Step 3: SymbolIndex optimization (DEFERRED)
-- Would require adding `symbol_index` field to `Project` struct
-- Can be added as separate performance improvement later
-- Current implementation still works (iterates all files)
+### Step 3: SymbolIndex optimization (COMPLETE)
+- Added `symbol_index: SymbolIndex` field to `Project` struct
+- Integrated into file lifecycle: `set_file`, `update_file`, `remove_file`
+- Optimized `collect_import_candidates_for_name` to use symbol_index for named exports
+- Added smart fallback for default/namespace exports (where import name can differ from export name)
+- Performance: O(N) → O(1) for named exports (where N = number of files)
+- All 65 project tests passing
 
 ### Step 4: Wired up auto-import edits in `Project::get_completions` (`src/lsp/project.rs`)
 - Creates `CodeActionProvider` for the file
@@ -112,28 +115,54 @@ Implemented full `workspace/willRenameFiles` support:
 - ✅ Updated test to verify `additionalTextEdits` are present on completion items
 - ✅ All 65 project tests passing
 
-**Value**: When users type an undefined name, completions now include auto-import suggestions that automatically insert the import statement when accepted.
+**Value**: When users type an undefined name, completions now include auto-import suggestions that automatically insert the import statement when accepted. Performance is optimized for the common case (named exports).
 
-**Known Limitations**:
-- Current implementation iterates all files to find import candidates (O(n) where n = number of files)
-- SymbolIndex integration would improve performance to O(1) lookup, but deferred for future work
+## Completed Work Summary
+
+### SymbolIndex Integration (2026-02-05)
+**Status**: ✅ COMPLETE - Commit 1dc6d3f38
+
+Integrated `SymbolIndex` into `Project` for O(1) auto-import candidate lookup.
+
+**Implementation** (`src/lsp/project.rs`):
+- Added `symbol_index: SymbolIndex` field to `Project` struct
+- Updated `set_file()` to call `symbol_index.index_file()`
+- Updated `update_file()` to call `symbol_index.update_file()`
+- Updated `remove_file()` to call `symbol_index.remove_file()`
+
+**Implementation** (`src/lsp/project_operations.rs`):
+- Optimized `collect_import_candidates_for_name()` to use symbol_index for named exports
+- Added smart fallback for default/namespace exports (where import name can differ from export name)
+- For named exports: O(N) → O(1) lookup via `symbol_index.get_files_with_symbol()`
+- For default/namespace exports: Falls back to checking all files (necessary for correctness)
+
+**Testing**:
+- ✅ All 65 project tests passing
+- ✅ Auto-import tests verify `additionalTextEdits` are generated
+- ✅ Default export and re-export tests work correctly
+
+**Value**: Auto-import completions now scale efficiently to large projects for the common case (named exports).
 
 ## Session Status
 
-Per Gemini consultation, recommended path is:
-1. ✅ Write tests for File Rename (COMPLETE)
-2. ✅ Add dynamic import support (COMPLETE)
-3. ✅ Implement Auto-Import Completions (COMPLETE)
+**Status**: 🔄 ACTIVE - Ready for next feature
 
-**Completed LSP Features**:
-- ✅ File Rename (with directory support and dynamic imports)
-- ✅ Auto-Import Completions (with additionalTextEdits)
+**Completed LSP Features** (all working with SymbolIndex optimization):
+- ✅ File Rename (with directory support, dynamic imports, and require calls)
+- ✅ Auto-Import Completions (with additionalTextEdits and O(1) lookup for named exports)
 - ✅ JSX Linked Editing
+- ✅ SymbolIndex integration (O(1) auto-import candidate lookup)
 
-**Next Options**:
-1. Performance optimization: Integrate SymbolIndex for O(1) import candidate lookup
-2. Additional LSP features (Workspace Symbols, Prefix Matching, etc.)
-3. Move to next session area (Solver/Checker work or other LSP features)
+**Next Options** (per Gemini consultation):
+1. **Implement Workspace Symbols** - Use existing SymbolIndex + WorkspaceSymbolsProvider to enable `workspace/symbol` LSP request
+2. **Add Prefix Matching** - Suggest completions for partial matches (e.g., `Lis` → `List`)
+3. **Index Transitive Re-exports** - Enhance SymbolIndex to track wildcard reexports (`export * from './mod'`)
+4. **Move to different session** - Solver/Checker work, coordination work, or other LSP features
+
+**Previous Blocked Work** (CFA):
+- Assertion functions narrowing - COMPLETE (safe to keep)
+- Truthiness narrowing fix - REVERTED (breaks circular extends)
+- Requires deep Solver architecture expertise to resolve circular dependency issue
 
 ### JSX Linked Editing (2026-02-05)
 **Status**: ✅ COMPLETE - Commit e5f6bcee7
