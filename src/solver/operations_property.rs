@@ -919,6 +919,10 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
 
             TypeKey::Array(_) => {
+                eprintln!(
+                    "[PROP-INNER] Array case reached: obj_type={:?}, prop_name={}",
+                    obj_type, prop_name
+                );
                 let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                 self.resolve_array_property(obj_type, prop_name, prop_atom)
             }
@@ -1238,12 +1242,93 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
         };
 
+        let base_type_name = if let TypeKey::Callable(_) = base_key {
+            "Callable".to_string()
+        } else if let TypeKey::Lazy(_) = base_key {
+            "Lazy".to_string()
+        } else {
+            format!("{:?}", base_key)
+        };
+
+        eprintln!(
+            "[APP-PROP] app.base={:?}, base_key={} ({:?}), prop_name={:?}",
+            app.base, base_type_name, base_key, prop_name
+        );
+
+        // Handle Callable types (e.g., Array constructor with instance methods as properties)
+        if let TypeKey::Callable(shape_id) = base_key {
+            eprintln!("[APP-PROP] Handling Callable base with properties");
+            let shape = self.interner.callable_shape(shape_id);
+
+            // Try to find the property in the Callable's properties
+            if let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom) {
+                eprintln!(
+                    "[APP-PROP] Found property on Callable: name={:?}, type_id={:?}",
+                    prop.name, prop.type_id
+                );
+                // For Callable properties, we need to substitute type parameters
+                // The Array Callable has properties that reference the type parameter T
+                // We need to substitute T with the element_type from app.args[0]
+
+                // Create substitution: map the Callable's type parameters to the application's arguments
+                // For Array, this means T -> element_type
+                let type_params = self.resolver.get_array_base_type_params();
+
+                eprintln!(
+                    "[APP-PROP] type_params: {} params, app.args: {} args",
+                    type_params.len(),
+                    app.args.len()
+                );
+                for (i, p) in type_params.iter().enumerate() {
+                    eprintln!(
+                        "[APP-PROP]   type_param[{}]: name={:?}, constraint={:?}",
+                        i,
+                        self.interner.resolve_atom(p.name),
+                        p.constraint
+                    );
+                }
+                for (i, arg) in app.args.iter().enumerate() {
+                    eprintln!("[APP-PROP]   app.args[{}]: {:?}", i, arg);
+                }
+
+                if type_params.is_empty() {
+                    // No type params available, return the property type as-is
+                    eprintln!("[APP-PROP] No type params, returning property as-is");
+                    return PropertyAccessResult::Success {
+                        type_id: prop.type_id,
+                        from_index_signature: false,
+                    };
+                }
+
+                // TEMPORARY: Return property as-is without instantiation
+                // The instantiate_type call exceeds recursion depth on Callables
+                // Need to find a better approach for substituting type parameters in Callables
+                eprintln!("[APP-PROP] Returning Callable without instantiation (temporary)");
+                return PropertyAccessResult::Success {
+                    type_id: prop.type_id,
+                    from_index_signature: false,
+                };
+            }
+
+            eprintln!("[APP-PROP] Property not found on Callable");
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: self.interner.application(app.base, app.args.clone()),
+                property_name: prop_atom,
+            };
+        }
+
         // We only handle Lazy types (def_id references)
         let TypeKey::Lazy(def_id) = base_key else {
             // For non-Lazy bases (e.g., TypeParameter), fall back to structural evaluation
+            eprintln!("[APP-PROP] base is NOT Lazy, falling back to evaluate_type");
             let evaluated = evaluate_type(
                 self.interner,
                 self.interner.application(app.base, app.args.clone()),
+            );
+            eprintln!(
+                "[APP-PROP] evaluated={:?}, evaluated_key={:?}",
+                evaluated,
+                self.interner.lookup(evaluated)
             );
             return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
         };
@@ -1514,25 +1599,40 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
+        eprintln!(
+            "[ARRAY-PROP] Function called: array_type={:?}, prop_name={}",
+            array_type, prop_name
+        );
+
         let element_type = self.array_element_type(array_type);
+        eprintln!("[ARRAY-PROP] element_type={:?}", element_type);
 
         // Try to use the Array<T> interface from lib.d.ts
-        if let Some(array_base) = self.resolver.get_array_base_type() {
-            let type_params = self.resolver.get_array_base_type_params();
-            if !type_params.is_empty() {
-                // Instantiate Array<T> with T = element_type
-                use crate::solver::instantiate::instantiate_generic;
-                let instantiated =
-                    instantiate_generic(self.interner, array_base, type_params, &[element_type]);
+        let array_base = self.resolver.get_array_base_type();
+        eprintln!("[ARRAY-PROP] array_base={:?}", array_base);
 
-                // Resolve the property on the instantiated interface
-                let result =
-                    self.resolve_property_access_inner(instantiated, prop_name, Some(prop_atom));
+        if let Some(array_base) = array_base {
+            // Create TypeApplication: Array<element_type>
+            // This triggers resolve_application_property which handles substitution correctly
+            let app_type = self.interner.application(array_base, vec![element_type]);
 
-                // If we found the property, return it
-                if !matches!(result, PropertyAccessResult::PropertyNotFound { .. }) {
-                    return result;
-                }
+            eprintln!(
+                "[ARRAY-PROP] array_type={:?}, element_type={:?}, array_base={:?}, app_type={:?}, app_type_key={:?}",
+                array_type,
+                element_type,
+                array_base,
+                app_type,
+                self.interner.lookup(app_type)
+            );
+
+            // Resolve property on the application type
+            let result = self.resolve_property_access_inner(app_type, prop_name, Some(prop_atom));
+
+            eprintln!("[ARRAY-PROP] result={:?}", result);
+
+            // If we found the property, return it
+            if !matches!(result, PropertyAccessResult::PropertyNotFound { .. }) {
+                return result;
             }
         }
 
