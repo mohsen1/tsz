@@ -331,3 +331,58 @@ These MUST be addressed in Task 5 (Discriminant Union Refinement).
 **Next Task**: Task 1 - Truthiness & Type-of Narrowing
 
 **Commit**: Session file created
+
+### 2026-02-05: Task 1 Approach Validation (Mandatory Gemini Consultation)
+
+**Context**: Following AGENTS.md mandatory workflow, asked Gemini for approach validation before implementing Task 1.
+
+**Gemini Guidance Received**:
+
+**Architecture Validation**:
+- Architectural split is CORRECT
+- Use existing `src/checker/control_flow_narrowing.rs` abstraction
+- Modify `extract_type_guard` to recognize typeof/truthiness patterns
+- Delegate to `solver.narrow_type(source_type, &guard, sense)`
+
+**Critical Finding - Must Fix Task 5 Bugs First**:
+- YES, address "Missing type resolution" bug immediately as part of Task 1
+- The bugs affect ALL narrowing, not just discriminants
+- Current narrowing engine is "blind" to Lazy and Intersection types
+- Example: `type StringOrNumber = string | number; if (typeof x === "string")` fails without fix
+
+**Handling Lazy/Intersection/Union Types**:
+- **Lazy**: Use `resolve_type` helper which calls `db.evaluate_type(type_id)`
+- **Intersection**: Narrow both A and B, return new intersection (NEVER if either is NEVER)
+- **Union**: Filter members by recursively calling narrowing logic
+
+**Specific Functions to Modify**:
+- `src/checker/control_flow_narrowing.rs` - `extract_type_guard`
+- `src/checker/flow_analysis.rs` - `narrow_type_by_condition_inner`
+- `src/solver/narrowing.rs` - `narrow_type`, `narrow_by_typeof`, `narrow_by_truthiness`, `narrow_to_falsy`
+
+**TypeScript Behaviors to Match**:
+
+**typeof Narrowing:**
+- `any` and `unknown` MUST be narrowed (unlike other types)
+- `typeof null` is `"object"` - must handle null correctly
+- `function` narrows to callable types
+- Exclusion: `typeof x !== "string"` removes string and string literals
+
+**Truthiness Narrowing:**
+- Falsy values: null, undefined, false, 0, -0, 0n, "", NaN
+- True branch: Removes null/undefined/void, narrows boolean to true, 0|1 to 1
+- False branch: Narrows to falsy component (e.g., `"" | 0`)
+- NaN: No `LiteralValue::NaN`, so number narrowing results in number
+
+**Potential Pitfalls:**
+1. Infinite recursion when resolving Lazy/traversing Intersections (use visited set)
+2. Over-narrowing type parameters (use `db.intersection2` for type params)
+3. Naked type parameters - handle `never` correctly in union filtering
+
+**Next Steps**:
+1. Fix Lazy/Intersection resolution in narrowing.rs FIRST
+2. Implement `extract_type_guard` for typeof/truthiness
+3. Implement `narrow_by_typeof` and `narrow_by_truthiness`
+4. Ask Gemini for implementation review (Question 2) before committing
+
+**Status**: Ready to implement with clear architectural guidance
