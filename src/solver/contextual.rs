@@ -160,20 +160,24 @@ impl<'a> ThisTypeMarkerExtractor<'a> {
     fn is_this_type_application(&self, app_id: u32) -> bool {
         let app = self.db.type_application(TypeApplicationId(app_id));
 
-        // Resolve the base type to check if it's the global ThisType interface
-        // For now, we check the name. In the future, we might want to check
-        // the symbol ID directly if we have a way to reference the global ThisType.
-        if let Some(TypeKey::Lazy(_def_id)) = self.db.lookup(app.base) {
-            // Check if this is the lib.d.ts ThisType interface
-            // The def_id should point to the global ThisType declaration
-            // For now, we'll check if the name contains "ThisType"
-            // TODO: Use symbol equality check when we have access to global symbols
-            return true; // Assume all Application types in this context are ThisType
-        }
+        // CRITICAL: We must NOT return true for all Lazy types!
+        // Doing so would break ALL generic type aliases (Partial<T>, Readonly<T>, etc.)
+        // We must check if the base type is specifically "ThisType"
 
+        // Check TypeParameter case first (easier - has name directly)
         if let Some(TypeKey::TypeParameter(tp)) = self.db.lookup(app.base) {
             let name = self.db.resolve_atom_ref(tp.name);
             return name.as_ref() == "ThisType";
+        }
+
+        // For Lazy types (type aliases), we need to resolve the def_id to a name
+        // This is harder without access to the symbol table. For now, we fail safe
+        // and return false rather than breaking all type aliases.
+        // TODO: When we have access to symbol resolution, check if def_id points to lib.d.ts ThisType
+        if let Some(TypeKey::Lazy(_def_id)) = self.db.lookup(app.base) {
+            // Cannot safely identify ThisType without symbol table access
+            // Return false to avoid breaking other type aliases
+            return false;
         }
 
         false
@@ -245,8 +249,12 @@ impl<'a> TypeVisitor for ThisTypeMarkerExtractor<'a> {
         // (A & ThisType<X>) | (B & ThisType<Y>) should try each member
         let members = self.db.type_list(TypeListId(list_id));
 
-        // For now, just collect the first ThisType we find
-        // In the future, we might want to return all of them and let the checker decide
+        // TODO: This blindly picks the first ThisType.
+        // Correct behavior requires narrowing the contextual type based on
+        // the object literal shape BEFORE determining which this type to use.
+        // Example: If context is (A & ThisType<X>) | (B & ThisType<Y>) and
+        // the literal is { type: 'b' }, we should pick ThisType<Y>, not ThisType<X>.
+        // This is acceptable for Phase 1, but should be improved in Phase 2.
         members
             .iter()
             .find_map(|&member_id| self.visit_type(self.db, member_id))
