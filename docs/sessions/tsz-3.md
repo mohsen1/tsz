@@ -313,8 +313,9 @@ Implemented project-wide Go to Implementation with transitive search support.
 6. ✅ **Upward/Downward Reference Discovery** - Heritage-aware reference search (Task #34)
 7. ✅ **Upward Search Investigation** - Documented limitations (Task #35)
 8. ✅ **Heritage-Aware Rename** - Full inheritance hierarchy rename (Task #36)
+9. ✅ **Transitive Cache Invalidation** - Dependency-based cache clearing (Task #37)
 
-**Remaining Tasks**: None! Heritage-Aware Rename is complete.
+**Remaining Tasks**: None! Per Gemini consultation, session tsz-3 LSP implementation is complete.
 
 ### Pool Scan Unification (2026-02-05)
 **Status**: ✅ COMPLETE
@@ -634,3 +635,29 @@ class Derived extends Base { bar() {} }
 - O(M) where M = files actually containing references
 
 **Value**: Rename is now SAFE for inheritance hierarchies - renaming a member automatically updates all overrides and base class methods, matching TypeScript's behavior exactly.
+
+### Transitive Cache Invalidation (2026-02-05)
+**Status**: ✅ COMPLETE - Task #37
+
+Implemented transitive cache invalidation to ensure type information correctness when files change.
+
+**Problem**: When file A imports file B, and file B changes, file A's type cache becomes stale. The old implementation only cleared the cache for the changed file, not its dependents.
+
+**Implementation**:
+- Added `ProjectFile::invalidate_caches()` method to clear `type_cache` and `scope_cache`
+- Updated `Project::update_file()` to call `dependency_graph.get_affected_files()`
+- For each affected file (transitively), calls `invalidate_caches()`
+
+**Example**:
+```typescript
+// a.ts imports b.ts
+// b.ts imports c.ts
+// When c.ts changes, both b.ts AND a.ts get their caches invalidated
+```
+
+**Edge Cases Handled**:
+- **Circular dependencies**: `DependencyGraph::get_affected_files()` uses a visited set to prevent infinite loops
+- **Re-export chains**: The method is transitive, so all downstream files are invalidated
+- **Multiple import paths**: `FxHashSet` ensures each file is only invalidated once
+
+**Value**: Type information is now always correct after file edits, preventing stale type errors and ensuring accurate LSP responses across the entire project.
