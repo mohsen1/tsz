@@ -2417,68 +2417,6 @@ impl<'a> CheckerState<'a> {
         use crate::solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
 
         match classify_namespace_member(self.ctx.types, object_type) {
-            // Handle Ref types (direct namespace/module references)
-            NamespaceMemberKind::SymbolRef(sym_ref) => {
-                let sym_id = sym_ref.0;
-                let symbol = self.ctx.binder.get_symbol(SymbolId(sym_id))?;
-                if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
-                    return None;
-                }
-
-                // Check direct exports first
-                if let Some(exports) = symbol.exports.as_ref()
-                    && let Some(member_id) = exports.get(property_name)
-                {
-                    // Follow re-export chains to get the actual symbol
-                    let resolved_member_id = if let Some(member_symbol) =
-                        self.ctx.binder.get_symbol(member_id)
-                        && member_symbol.flags & symbol_flags::ALIAS != 0
-                    {
-                        let mut visited_aliases = Vec::new();
-                        self.resolve_alias_symbol(member_id, &mut visited_aliases)
-                            .unwrap_or(member_id)
-                    } else {
-                        member_id
-                    };
-
-                    if let Some(member_symbol) = self.ctx.binder.get_symbol(resolved_member_id)
-                        && member_symbol.flags & symbol_flags::VALUE == 0
-                        && member_symbol.flags & symbol_flags::ALIAS == 0
-                    {
-                        return None;
-                    }
-                    return Some(self.get_type_of_symbol(resolved_member_id));
-                }
-
-                // Check for re-exports from other modules
-                // This handles cases like: export { foo } from './bar'
-                if let Some(ref module_specifier) = symbol.import_module {
-                    let mut visited_aliases = Vec::new();
-                    if let Some(reexported_sym) = self.resolve_reexported_member_symbol(
-                        module_specifier,
-                        property_name,
-                        &mut visited_aliases,
-                    ) {
-                        if let Some(member_symbol) = self.ctx.binder.get_symbol(reexported_sym)
-                            && member_symbol.flags & symbol_flags::VALUE == 0
-                            && member_symbol.flags & symbol_flags::ALIAS == 0
-                        {
-                            return None;
-                        }
-                        return Some(self.get_type_of_symbol(reexported_sym));
-                    }
-                }
-
-                if symbol.flags & symbol_flags::ENUM != 0
-                    && let Some(member_type) =
-                        self.enum_member_type_for_name(SymbolId(sym_id), property_name)
-                {
-                    return Some(member_type);
-                }
-
-                None
-            }
-
             // Handle Lazy types (type aliases stored with DefId)
             NamespaceMemberKind::Lazy(def_id) => {
                 // Resolve the DefId to a SymbolId and reuse the SymbolRef logic
@@ -2612,51 +2550,6 @@ impl<'a> CheckerState<'a> {
         use crate::solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
 
         match classify_namespace_member(self.ctx.types, object_type) {
-            // Handle Ref types (direct namespace/module references)
-            NamespaceMemberKind::SymbolRef(sym_ref) => {
-                let sym_id = sym_ref.0;
-                let symbol = match self.ctx.binder.get_symbol(SymbolId(sym_id)) {
-                    Some(symbol) => symbol,
-                    None => return false,
-                };
-
-                if symbol.flags & symbol_flags::MODULE == 0 {
-                    return false;
-                }
-
-                let exports = match symbol.exports.as_ref() {
-                    Some(exports) => exports,
-                    None => return false,
-                };
-
-                let member_id = match exports.get(property_name) {
-                    Some(member_id) => member_id,
-                    None => return false,
-                };
-
-                // Follow alias chains to determine if the ultimate target is type-only
-                let resolved_member_id = if let Some(member_symbol) =
-                    self.ctx.binder.get_symbol(member_id)
-                    && member_symbol.flags & symbol_flags::ALIAS != 0
-                {
-                    let mut visited_aliases = Vec::new();
-                    self.resolve_alias_symbol(member_id, &mut visited_aliases)
-                        .unwrap_or(member_id)
-                } else {
-                    member_id
-                };
-
-                let member_symbol = match self.ctx.binder.get_symbol(resolved_member_id) {
-                    Some(member_symbol) => member_symbol,
-                    None => return false,
-                };
-
-                let has_value =
-                    (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
-                let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
-                has_type && !has_value
-            }
-
             // Handle Lazy types (type aliases stored with DefId)
             NamespaceMemberKind::Lazy(def_id) => {
                 // Resolve the DefId to a SymbolId and check if it has type-only members

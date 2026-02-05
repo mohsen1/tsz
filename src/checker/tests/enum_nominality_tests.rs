@@ -112,6 +112,26 @@ const x: E.A = 1;  // ERROR: number to enum member
 }
 
 #[test]
+fn test_number_to_numeric_enum_type() {
+    // number SHOULD be assignable to numeric enum type (but not literal values)
+    let source = r#"
+enum E { A = 0 }
+const x: E = 1;  // OK: number to enum type
+"#;
+    test_enum_assignability(source, 0);
+}
+
+#[test]
+fn test_number_literal_to_numeric_enum_type() {
+    // number literal SHOULD be assignable to numeric enum type
+    let source = r#"
+enum E { A = 0 }
+const x: E = 0;  // OK: literal to enum type
+"#;
+    test_enum_assignability(source, 0);
+}
+
+#[test]
 fn test_string_enum_opacity() {
     // String literal should NOT be assignable to string enum
     let source = r#"
