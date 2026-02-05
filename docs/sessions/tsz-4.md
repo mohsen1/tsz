@@ -916,3 +916,76 @@ Modify **Type Inference** logic in `src/solver/infer.rs` or `src/checker/expr.rs
 4. DO NOT modify CompatChecker for this feature
 
 **Status**: Priority 4 - ARCHITECTURE INVESTIGATION COMPLETE 🟡
+
+### Priority 4 Architecture Investigation: Function Bivariance
+
+**Gemini Pro Guidance (2026-02-05)**
+
+#### Q1: Distinguishing Methods from Properties
+**Answer**: Cannot distinguish by TypeKey alone. Must use `SymbolFlags` stored in `PropertyInfo`:
+- Methods have `SymbolFlags::Method`
+- Properties have `SymbolFlags::Property`
+
+**Implementation**:
+```rust
+// src/solver/types.rs
+pub struct PropertyInfo {
+    pub name: Atom,
+    pub type_id: TypeId,
+    pub optional: bool,
+    pub readonly: bool,
+    pub is_method: bool,  // Derived from SymbolFlags::Method during lowering
+}
+```
+
+When CompatChecker/SubtypeChecker checks object properties, it reads `is_method` on the **target** property.
+
+#### Q2: Bivariance Scope
+**Answer**: Applies ONLY to top-level parameters, NOT recursive.
+
+**Example**:
+```typescript
+interface A {
+    method(cb: (n: number) => void): void;
+}
+```
+- Comparing `method`: Bivariant (because it's a method)
+- Comparing `cb`: Contravariant (standard rule, `cb` is just a function type)
+
+**Rule**: "Method Bivariance" is a shallow switch that flips variance for that signature, then reverts to standard rules for constituents.
+
+#### Q3: Compiler Flag Control
+**Answer**: Controlled by `strictFunctionTypes` in CompilerOptions.
+
+**Logic Matrix**:
+| `strictFunctionTypes` | Target is Method | Target is Property | Behavior |
+|---|---|---|---|
+| **False** | (Any) | (Any) | **Bivariant** (Legacy) |
+| **True** | **Yes** | No | **Bivariant** (Method Exception) |
+| **True** | No | **Yes** | **Contravariant** (Strict) |
+
+**Implementation**:
+```rust
+let use_bivariance = !self.strict_function_types || target_prop.is_method;
+```
+
+#### Q4: Overloads
+**Answer**: YES, all signatures in a method's CallableShape become bivariant.
+
+When assignability check iterates through signatures, every signature comparison for a method treats parameters bivariantly.
+
+#### Implementation Plan
+1. Ensure `PropertyInfo` in `src/solver/types.rs` carries `is_method` boolean
+2. In `src/solver/subtype.rs` (likely `compare_object_properties`):
+   - Access target property's `PropertyInfo`
+   - Determine variance mode: `!self.strict_function_types || target_prop.is_method`
+   - Pass mode when comparing property types
+
+#### Next Steps
+1. Ask follow-up question: Verify `is_method` approach for PropertyInfo
+2. Implement PropertyInfo.is_method field
+3. Implement bivariance logic in SubtypeChecker
+4. Add tests for method vs property variance
+5. Test with --strictFunctionTypes flag
+
+**Status**: Architecture complete, ready for implementation 🟡
