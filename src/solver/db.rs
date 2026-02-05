@@ -317,7 +317,11 @@ impl TypeResolver for TypeInterner {
     }
 
     fn get_array_base_type(&self) -> Option<TypeId> {
-        None
+        self.get_array_base_type()
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        self.get_array_base_type_params()
     }
 }
 

@@ -13,7 +13,8 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 - ✅ Fixed interface lowering (Object vs ObjectWithIndex)
 - ✅ **Fixed generic inference in Round 2** - Preserved placeholder connections for unresolved type parameters
 - ✅ **Fixed intersection normalization** - Added `null & object = never` rule
-- Reduced test failures from 37 → 31 → 22 → 20
+- ✅ **Fixed property access for Array/Tuple** - Added type substitution for generic applications
+- Reduced test failures from 37 → 31 → 22 → 20 → 13
 
 ## Redefined Priorities (2026-02-05 by Gemini Pro)
 
@@ -25,23 +26,31 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 
 ---
 
-### Priority 2: Property Access: Arrays & Tuples (7 tests) - NEXT 🔴
+### ✅ Priority 2: Property Access: Arrays & Tuples (7 tests) - COMPLETED
+**Fixed**: Added type substitution for `TypeKey::Application` with `Object` and `ObjectWithIndex` base types
+**Root Cause**: `resolve_application_property` only handled `Callable` and `Lazy` base types, missing the test setup which uses `Object`
+**Solution**: Added handlers for `TypeKey::Object` and `TypeKey::ObjectWithIndex` that:
+1. Get type params from `self.db.get_array_base_type_params()`
+2. Create substitution with `TypeSubstitution::from_args()`
+3. Instantiate property type with `instantiate_type_with_infer()`
+4. Handle `this` types with `substitute_this_type()`
+
 **Tests**:
-- `test_property_access_array_at_returns_optional_element`
-- `test_property_access_array_entries_returns_tuple_array`
-- `test_property_access_array_map_signature`
-- `test_property_access_array_push_with_env_resolver`
-- `test_property_access_array_reduce_callable`
-- `test_property_access_readonly_array`
-- `test_property_access_tuple_length`
+- ✅ `test_property_access_array_at_returns_optional_element`
+- ✅ `test_property_access_array_entries_returns_tuple_array`
+- ✅ `test_property_access_array_map_signature`
+- ✅ `test_property_access_array_push_with_env_resolver`
+- ✅ `test_property_access_array_reduce_callable`
+- ✅ `test_property_access_readonly_array`
+- ✅ `test_property_access_tuple_length`
 
-**Hypothesis**: Single root cause in how solver synthesizes properties for Array/Tuple intrinsics
-
-**Files**: Property lookup logic for `TypeKey::Array` and `TypeKey::Tuple`
+**Files Modified**:
+- `src/solver/operations_property.rs` - Added `Object`/`ObjectWithIndex` handlers in `resolve_application_property`
+- `src/solver/tests/operations_tests.rs` - Fixed test to call `interner.set_array_base_type()`
 
 ---
 
-### Priority 3: Function Variance (2 tests) 🟢
+### Priority 3: Function Variance (2 tests) - NEXT 🔴
 **Tests**:
 - `test_any_in_function_parameters_strict_mode`
 - `test_function_variance_with_return_types`

@@ -893,6 +893,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // Inline visitor logic for Tuple
                     self.visit_array_impl(obj_type, prop_name, prop_atom)
                 }
+                // Note: TypeKey::Application is handled in the fallback section with proper type substitution
                 _ => None, // Not yet migrated to visitor
             };
 
@@ -1699,6 +1700,98 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 };
             }
         };
+
+        // Handle Object types (e.g., test array interface setup)
+        if let TypeKey::Object(shape_id) = base_key {
+            let shape = self.interner().object_shape(shape_id);
+
+            // Try to find the property in the Object's properties
+            if let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom) {
+                // Get type params from the array base type (stored during test setup)
+                let type_params = self.db.get_array_base_type_params();
+
+                if type_params.is_empty() {
+                    // No type params available, return the property type as-is
+                    return PropertyAccessResult::Success {
+                        type_id: prop.type_id,
+                        from_index_signature: false,
+                    };
+                }
+
+                // Create substitution: map type params to application args
+                let substitution =
+                    TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+
+                // Instantiate the property type with substitution
+                use crate::solver::instantiate::instantiate_type_with_infer;
+                let instantiated_prop_type =
+                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution);
+
+                // Handle `this` types
+                let app_type = self.interner().application(app.base, app.args.clone());
+                use crate::solver::instantiate::substitute_this_type;
+                let final_type =
+                    substitute_this_type(self.interner(), instantiated_prop_type, app_type);
+
+                return PropertyAccessResult::Success {
+                    type_id: final_type,
+                    from_index_signature: false,
+                };
+            }
+
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: self.interner().application(app.base, app.args.clone()),
+                property_name: prop_atom,
+            };
+        }
+
+        // Handle ObjectWithIndex types
+        if let TypeKey::ObjectWithIndex(shape_id) = base_key {
+            let shape = self.interner().object_shape(ObjectShapeId(shape_id.0));
+
+            // Try to find the property in the ObjectWithIndex's properties
+            if let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom) {
+                // Get type params
+                let type_params = self.db.get_array_base_type_params();
+
+                if type_params.is_empty() {
+                    return PropertyAccessResult::Success {
+                        type_id: prop.type_id,
+                        from_index_signature: false,
+                    };
+                }
+
+                let substitution =
+                    TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+
+                use crate::solver::instantiate::instantiate_type_with_infer;
+                let instantiated_prop_type =
+                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution);
+
+                let app_type = self.interner().application(app.base, app.args.clone());
+                use crate::solver::instantiate::substitute_this_type;
+                let final_type =
+                    substitute_this_type(self.interner(), instantiated_prop_type, app_type);
+
+                return PropertyAccessResult::Success {
+                    type_id: final_type,
+                    from_index_signature: false,
+                };
+            }
+
+            // Check index signatures if property not found
+            if let Some(ref idx) = shape.string_index {
+                return PropertyAccessResult::Success {
+                    type_id: self.add_undefined_if_unchecked(idx.value_type),
+                    from_index_signature: true,
+                };
+            }
+
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: self.interner().application(app.base, app.args.clone()),
+                property_name: prop_atom,
+            };
+        }
 
         // Handle Callable types (e.g., Array constructor with instance methods as properties)
         if let TypeKey::Callable(shape_id) = base_key {
