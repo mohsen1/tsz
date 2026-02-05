@@ -149,6 +149,26 @@ pub trait TypeResolver {
         None
     }
 
+    /// Get the DefKind for a DefId (Task #32: Graph Isomorphism).
+    ///
+    /// This is used by the Canonicalizer to distinguish between structural types
+    /// (TypeAlias - should be canonicalized with Recursive indices) and nominal
+    /// types (Interface/Class/Enum - must remain as Lazy(DefId) for nominal identity).
+    ///
+    /// ## Structural vs Nominal Types
+    ///
+    /// - **TypeAlias**: Structural - `type A = { x: A }` and `type B = { x: B }`
+    ///   should canonicalize to the same type with Recursive(0)
+    /// - **Interface/Class**: Nominal - Different interfaces are incompatible even
+    ///   if structurally identical, so they must keep their Lazy(DefId) reference
+    ///
+    /// Returns None if the DefId doesn't exist or the implementation doesn't
+    /// support DefKind lookup. Implementations should override this to support
+    /// canonicalization of recursive types.
+    fn get_def_kind(&self, _def_id: DefId) -> Option<crate::solver::def::DefKind> {
+        None
+    }
+
     /// Get the boxed interface type for a primitive intrinsic (Rule #33).
     /// For example, IntrinsicKind::Number -> TypeId of the Number interface.
     /// This enables primitives to be subtypes of their boxed interfaces.

@@ -2135,7 +2135,7 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
             return false;
         };
 
-        // Check if any member has a string literal initializer
+        /// Check if any member has a string literal initializer
         let mut has_string_member = false;
 
         for &member_idx in &enum_decl.members.nodes {
@@ -2159,6 +2159,21 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
 
         // It's a numeric enum if no string members were found
         !has_string_member
+    }
+
+    /// Get the DefKind for a DefId (Task #32: Graph Isomorphism).
+    ///
+    /// This enables the Canonicalizer to distinguish between structural types
+    /// (TypeAlias) and nominal types (Interface/Class/Enum).
+    ///
+    /// ## Structural vs Nominal
+    ///
+    /// - **TypeAlias**: Structural - `type A = { x: A }` and `type B = { x: B }`
+    ///   should canonicalize to the same type with Recursive(0)
+    /// - **Interface/Class**: Nominal - Different interfaces are incompatible even
+    ///   if structurally identical, so they must keep their Lazy(DefId) reference
+    fn get_def_kind(&self, def_id: crate::solver::DefId) -> Option<crate::solver::def::DefKind> {
+        self.definition_store.get_kind(def_id)
     }
 
     /// Check if a TypeId represents a full Enum type (not a specific member).
