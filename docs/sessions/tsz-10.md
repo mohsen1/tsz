@@ -6,7 +6,106 @@
 
 ---
 
-## Context
+## Root Cause Identified (2026-02-05)
+
+### The Bug: discriminant_comparison matches incorrectly
+
+**Problem**: In `narrow_by_default_switch_clause`, we're narrowing the discriminant type (`'circle' | 'square'`), but `discriminant_comparison` thinks we're narrowing the object type (`Shape`).
+
+**Call Chain**:
+```
+check_switch_exhaustiveness
+  -> get_type_of_node(expression)  // Returns type of shape.kind = 'circle' | 'square'
+  -> narrow_by_default_switch_clause(discriminant_type, ...)
+     -> narrow_by_binary_expr(type_id, ..., target, ...)
+        -> discriminant_comparison(bin.left, bin.right, target)
+```
+
+**Parameters**:
+- `type_id` = `'circle' | 'square'` (the discriminant type we want to narrow)
+- `bin.left` = `shape.kind` (the AST node for property access)
+- `bin.right` = `'circle'` (the literal case)
+- `target` = `shape.kind` (also the AST node)
+
+**What Happens**:
+1. `discriminant_comparison` calls `discriminant_property_info(left, target)`
+2. `discriminant_property_info` extracts the base (`shape`) from the property access
+3. It returns `Some((prop, literal, is_optional, base=shape))`
+4. `discriminant_comparison` returns this without checking if `base == target`
+5. `narrow_by_discriminant_for_type` is called with `type_id='circle'|'square'` and tries to narrow it as an object type!
+6. This fails because `'circle'|'square'` is a literal union, not an object union
+
+**The Fix**:
+Add a check in `discriminant_comparison` to ensure that when we're doing discriminant narrowing, the `target` should match the `base` (the object), not the property access.
+
+**Expected Behavior**:
+- If `target == shape.kind` (the property access), use `literal_comparison` instead
+- If `target == shape` (the base object), use `discriminant_comparison`
+- This way:
+  - `narrow_by_default_switch_clause` uses literal comparison to narrow `'circle'|'square'` → `never`
+  - Normal narrowing uses discriminant comparison to narrow `Shape` → `{ kind: 'circle', radius }`
+
+---
+
+**Test Case**:
+```typescript
+type Shape = { kind: 'circle', radius: number } | { kind: 'square', side: number };
+
+function area(shape: Shape): number {
+    switch (shape.kind) {
+        case 'circle': return Math.PI * shape.radius ** 2;
+        case 'square': return shape.side ** 2;
+    }
+    // Error: Not all code paths return a value
+}
+```
+
+**Debug Output Analysis**:
+```
+DEBUG check_switch_exhaustiveness: Discriminant type=TypeId(8429)
+DEBUG narrow_by_default_switch_clause: type_id=8429
+DEBUG narrow_by_default_switch_clause: calling narrow_by_binary_expr with narrowed=8429
+DEBUG check_switch_exhaustiveness: No-match type=TypeId(8429)  // SAME as input!
+DEBUG: Switch statement is NOT exhaustive (no-match type != NEVER)
+```
+
+**Problem Identified**:
+- `narrow_by_default_switch_clause` calls `narrow_by_binary_expr` for each case
+- But the type isn't being narrowed - no-match type equals discriminant type
+- Expected: After narrowing by `'circle'` and `'square'`, remaining should be `NEVER`
+- Actual: Type stays as the original union type
+
+**Working Correctly**:
+- ✅ `narrow_by_discriminant` narrows within each case clause
+- ✅ `check_switch_exhaustiveness` is called and logs correctly
+- ✅ Default clause causes exhaustive check to be skipped
+- ✅ TS2366 error emitted for missing return (by reachability, not exhaustiveness check)
+
+### Root Cause Investigation Needed
+
+The issue is in `narrow_by_default_switch_clause` (src/checker/control_flow.rs:1648):
+
+```rust
+for &clause_idx in &case_block.statements.nodes {
+    // ... extract clause ...
+    let binary = BinaryExprData {
+        left: switch_expr,
+        operator_token: SyntaxKind::EqualsEqualsEqualsToken,
+        right: clause.expression,
+    };
+    narrowed = self.narrow_by_binary_expr(narrowed, &binary, target, false, narrowing);
+}
+```
+
+**Hypothesis**: `narrow_by_binary_expr` may not be handling discriminant narrowing correctly, or the `sense=false` parameter is wrong.
+
+### Next Steps
+
+1. **Investigate narrow_by_binary_expr**: Why isn't it narrowing the discriminant union?
+2. **Ask Gemini (Question 2)**: How should `narrow_by_default_switch_clause` correctly narrow?
+3. **Fix the narrowing logic**: Ensure no-match type becomes NEVER for exhaustive switches
+
+---
 
 Sessions **tsz-3**, **tsz-8**, and **tsz-9** have established robust type system infrastructure:
 - ✅ Contextual typing and bidirectional inference
