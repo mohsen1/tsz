@@ -39,44 +39,38 @@
 
 ## New Priorities: Performance Optimization
 
-### Priority 1: Task #41 - Variance Calculation ✅ PHASE 1 COMPLETE
-**Status**: 📋 INTEGRATION PENDING
+### Priority 1: Task #41 - Variance Calculation ✅ PHASE 2 COMPLETE
+**Status**: 📋 PHASE 3 PENDING
 **Why**: Critical for North Star O(1) performance targets. Enables skipping structural recursion for generic types.
 
 **Phase 1 Completed** (Commit: `e800bb82d`):
 1. ✅ **Variance Types**: Added `Variance` bitflags type in `types.rs` with COVARIANT, CONTRAVARIANT flags
 2. ✅ **VarianceVisitor**: Created `src/solver/variance.rs` with visitor that traverses types with polarity tracking
-3. ✅ **All TypeKey Variants**: Properly handles all variants with correct polarity rules:
-   - Function parameters: contravariant (flip polarity)
-   - Function returns: covariant (preserve polarity)
-   - Conditional types: check_type covariant, extends_type contravariant
-   - Mapped types: constraint contravariant, template covariant
-   - Mutable properties: invariant (visit both polarities)
-   - Readonly properties: covariant
-   - Methods: bivariant parameters (skip variance check)
-   - Generic applications: conservative invariance (both polarities)
-   - Infer declarations: excluded (not usages of outer type params)
+3. ✅ **All TypeKey Variants**: Properly handles all variants with correct polarity rules
 
-**Critical Fixes** (per Gemini Pro review):
-1. ✅ Mutable properties now correctly marked as invariant (not covariant)
-2. ✅ Generic applications safely assume invariance (not unsound covariance)
-3. ✅ Method bivariance supported by skipping parameter variance
-4. ✅ Conditional check_type polarity fixed (covariant, not contravariant)
-5. ✅ Infer declarations excluded (declarations are not usages)
+**Phase 2 Completed** (Commit: `f5167b61c`):
+1. ✅ **QueryDatabase Integration**: Added `get_type_param_variance` to `QueryDatabase` trait
+2. ✅ **Variance Cache**: Added `variance_cache` to `QueryCache` for memoization
+3. ✅ **TypeResolver Integration**: Added `get_type_param_variance` to `TypeResolver` trait
+4. ✅ **SubtypeChecker Integration**: Modified `check_application_to_application_subtype` to use variance-aware checking
 
-**Phase 2 Pending** (Integration):
-- Add variance query to `QueryDatabase` trait
-- Implement variance memoization cache
-- Integrate variance mask into `check_application_to_application_subtype` in `generics.rs`
+**Variance Rules Implemented**:
+- **Covariant**: Check `s_arg <: t_arg` (e.g., `Array<T>`)
+- **Contravariant**: Check `t_arg <: s_arg` (e.g., function parameters)
+- **Invariant**: Check both directions (e.g., mutable properties)
+- **Independent**: Skip check (type parameter not used)
 
-**Key Edge Cases**:
-- **Polarity Flipping**: Covariant × Contravariant = Contravariant
-- **Mutable Properties**: read/write properties immediately promote to Invariant
-- **Circular References**: Track visiting set of (TypeId, Polarity) pairs
-- **Private Members**: Often treated as Independent for structural subtyping
-- **Conditional Types**: extends clause is contravariant position
+**Phase 3 Pending** (Recursive Variance):
+1. ⏳ **Lazy Type Resolution**: `VarianceVisitor.visit_lazy` currently does nothing - must resolve `Lazy(DefId)` types
+2. ⏳ **Recursive Variance**: `visit_application` assumes invariance - should query base type's variance and compose it
+3. ⏳ **Variance Composition**: Implement proper variance composition when one generic wraps another
+4. ⏳ **Unit Tests**: Add tests for nested generics, polarity flipping, and invariance
 
-**Files**: `src/solver/variance.rs` (NEW), `src/solver/types.rs`, `src/solver/db.rs`, `src/solver/subtype.rs`
+**Critical Issues** (per Gemini review):
+- `type Box<T> = { value: T }` returns `Independent` because body is `Lazy` and visitor doesn't resolve it
+- `type Wrapper<T> = Box<T>` returns `Invariant` even though `Box` is covariant (should compose)
+
+**Files**: `src/solver/variance.rs`, `src/solver/types.rs`, `src/solver/db.rs`, `src/solver/subtype.rs`, `src/solver/subtype_rules/generics.rs`
 
 ---
 
