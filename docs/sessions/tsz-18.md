@@ -132,12 +132,17 @@ Found **6 confirmed bugs** where tsz rejects code that tsc accepts:
    - Test: `type TNum = `${0.000001}``
 
 **Next Steps**:
-1. Pick one bug to fix (start with mapped types since 4/6 bugs are there)
-2. Ask Gemini for implementation guidance
-3. Implement fix
-4. Ask Gemini for code review
-5. Verify fix works
-6. Move to next bug
+1. ✅ Found 6 confirmed bugs
+2. ⏸️ Started debugging Bug #1 (Key remapping)
+   - Discovered even simple identity remapping fails
+   - Attempted to trace through instantiate_type logic
+   - Gemini Pro hit MAX_TOKENS during debugging session
+3. 🔜 Need alternative approach:
+   - Add debug logging to mapped.rs
+   - Or examine existing tests for mapped types
+   - Or check if there's a known issue with key remapping
+
+**Session Status**: Good progress - broke the "already implemented" loop and found actionable bugs. Ready to fix them with more investigation or alternative debugging approach.
 
 ## Next Steps
 
