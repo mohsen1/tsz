@@ -2290,3 +2290,110 @@ pub fn get_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId>
         }
     }
 }
+
+// =============================================================================
+// Promise and Iterable Type Queries (Phase 5 - Anti-Pattern 8.1 Removal)
+// =============================================================================
+
+use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+use crate::solver::subtype::TypeResolver;
+
+/// Check if a type is "promise-like" (has a callable 'then' method).
+///
+/// This is used to detect thenable types for async iterator handling.
+/// A type is promise-like if it has a 'then' property that is callable.
+///
+/// # Arguments
+///
+/// * `db` - The type database/interner
+/// * `resolver` - Type resolver for handling Lazy/Ref types
+/// * `type_id` - The type to check
+///
+/// # Returns
+///
+/// * `true` - If the type is promise-like (has callable 'then')
+/// * `false` - Otherwise
+///
+/// # Examples
+///
+/// ```ignore
+/// // Promise<T> is promise-like
+/// assert!(is_promise_like(&db, &resolver, promise_type));
+///
+/// // any is always promise-like
+/// assert!(is_promise_like(&db, &resolver, TypeId::ANY));
+///
+/// // Objects with 'then' method are promise-like
+/// // { then: (fn: (value: T) => void) => void }
+/// ```
+pub fn is_promise_like<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> bool {
+    // The 'any' trap: any is always promise-like
+    if type_id == TypeId::ANY {
+        return true;
+    }
+
+    // Use PropertyAccessEvaluator to find 'then' property
+    // This handles Lazy/Ref/Intersection/Readonly correctly
+    let evaluator = PropertyAccessEvaluator::with_resolver(db, resolver);
+    match evaluator.resolve_property_access(type_id, "then") {
+        PropertyAccessResult::Success {
+            type_id: then_type, ..
+        } => {
+            // 'then' must be callable to be "thenable"
+            is_callable_type(db, then_type)
+        }
+        _ => false,
+    }
+}
+
+/// Check if a type is a valid target for for...in loops.
+///
+/// In TypeScript, for...in loops work on object types, arrays, and type parameters.
+/// This function validates that a type can be used in a for...in statement.
+///
+/// # Arguments
+///
+/// * `db` - The type database/interner
+/// * `type_id` - The type to check
+///
+/// # Returns
+///
+/// * `true` - If valid for for...in (Object, Array, TypeParameter, Any)
+/// * `false` - Otherwise
+///
+/// # Examples
+///
+/// ```ignore
+/// // Objects are valid
+/// assert!(is_valid_for_in_target(&db, object_type));
+///
+/// // Arrays are valid
+/// assert!(is_valid_for_in_target(&db, array_type));
+///
+/// // Type parameters are valid (generic constraints)
+/// assert!(is_valid_for_in_target(&db, type_param_type));
+///
+/// // Primitives (except any) are not valid
+/// assert!(!is_valid_for_in_target(&db, TypeId::STRING));
+/// ```
+pub fn is_valid_for_in_target(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Any is always valid
+    if type_id == TypeId::ANY {
+        return true;
+    }
+
+    match db.lookup(type_id) {
+        // Object types are valid (for...in iterates properties)
+        Some(TypeKey::Object(_) | TypeKey::ObjectWithIndex(_)) => true,
+        // Array types are valid (for...in iterates indices)
+        Some(TypeKey::Array(_)) => true,
+        // Type parameters are valid (we don't know the constraint)
+        Some(TypeKey::TypeParameter(_)) => true,
+        // Everything else is not valid for for...in
+        _ => false,
+    }
+}
