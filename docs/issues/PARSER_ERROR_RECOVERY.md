@@ -11,7 +11,7 @@ tsz's parser error recovery produces different (usually more) errors than TSC wh
 
 ## Conformance Stats (Updated 2026-02-05)
 
-- Parser tests: 52.9% pass rate (458/865)
+- Parser tests: 53.1% pass rate (460/867)
 - Scanner tests: 50.0% pass rate (21/42)
 - Top error mismatches:
   - TS2304: missing=35, extra=88 (cannot find name) - mostly lib loading bug
