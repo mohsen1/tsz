@@ -1939,4 +1939,74 @@ impl Project {
         let provider = WorkspaceSymbolsProvider::new(&self.symbol_index);
         provider.find_symbols(query)
     }
+
+    /// Prepare type hierarchy for a symbol (project-aware).
+    pub fn prepare_type_hierarchy(
+        &self,
+        file_name: &str,
+        position: Position,
+    ) -> Option<crate::lsp::type_hierarchy::TypeHierarchyItem> {
+        let file = self.files.get(file_name)?;
+
+        use crate::lsp::type_hierarchy::TypeHierarchyProvider;
+        let provider = TypeHierarchyProvider::new(
+            file.arena(),
+            file.binder(),
+            file.line_map(),
+            file.file_name().to_string(),
+            file.source_text(),
+        );
+
+        provider.prepare(file.root(), position)
+    }
+
+    /// Get supertypes for a symbol (file-local only for now).
+    ///
+    /// TODO: Extend to search across all files using SymbolIndex.
+    pub fn supertypes(
+        &self,
+        file_name: &str,
+        position: Position,
+    ) -> Vec<crate::lsp::type_hierarchy::TypeHierarchyItem> {
+        let file = match self.files.get(file_name) {
+            Some(f) => f,
+            None => return Vec::new(),
+        };
+
+        use crate::lsp::type_hierarchy::TypeHierarchyProvider;
+        let provider = TypeHierarchyProvider::new(
+            file.arena(),
+            file.binder(),
+            file.line_map(),
+            file.file_name().to_string(),
+            file.source_text(),
+        );
+
+        provider.supertypes(file.root(), position)
+    }
+
+    /// Get subtypes for a symbol (file-local only for now).
+    ///
+    /// TODO: Extend to search across all files using SymbolIndex heritage clauses.
+    pub fn subtypes(
+        &self,
+        file_name: &str,
+        position: Position,
+    ) -> Vec<crate::lsp::type_hierarchy::TypeHierarchyItem> {
+        let file = match self.files.get(file_name) {
+            Some(f) => f,
+            None => return Vec::new(),
+        };
+
+        use crate::lsp::type_hierarchy::TypeHierarchyProvider;
+        let provider = TypeHierarchyProvider::new(
+            file.arena(),
+            file.binder(),
+            file.line_map(),
+            file.file_name().to_string(),
+            file.source_text(),
+        );
+
+        provider.subtypes(file.root(), position)
+    }
 }
