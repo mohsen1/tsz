@@ -1,180 +1,248 @@
-# Session TSZ-10: Fix Discriminant Narrowing Regressions
+# Session tsz-10: Control Flow Analysis & Comprehensive Narrowing
 
-**Started**: 2026-02-05
-**Status**: Active
-**Goal**: Fix 3 critical bugs in discriminant narrowing identified in AGENTS.md
+**Goal**: Implement the full CFA pipeline from Binder flow nodes to Solver narrowing logic.
 
-## Problem Statement
-
-From AGENTS.md evidence (2026-02-04 investigation):
-
-Recent implementation of discriminant narrowing (commit `f2d4ae5d5`) introduced **3 critical bugs**:
-
-1. **Reversed subtype check** - Asking `is_subtype_of(property_type, literal)` instead of `is_subtype_of(literal, property_type)`
-2. **Missing type resolution** - Not handling `Lazy`, `Ref`, `Intersection` types within narrowing logic
-3. **Optional property failures** - Breaking on `{ prop?: "a" }` cases
-
-**Impact**:
-- Breaks type narrowing for discriminant properties
-- Causes incorrect type inference in conditional branches
-- Blocks valid TypeScript code from working correctly
-
-## Technical Details
-
-**Files**:
-- `src/solver/narrowing.rs` - Discriminant narrowing implementation
-- `src/solver/visitor.rs` - Type visitor infrastructure
-- `src/solver/types.rs` - Type structures (Lazy, Ref, Intersection)
-
-**Root Causes**:
-- Subtype check arguments were reversed
-- Type resolution not called before subtype checks
-- Optional properties not handled in discriminant matching
-
-## Implementation Strategy
-
-### Phase 1: Test Cases (Pre-Implementation)
-1. Create failing test cases demonstrating each bug
-2. Add to `src/checker/tests/` or manual test file
-3. Verify tests fail with current code
-
-### Phase 2: Fix Bug #1 - Reversed Subtype Check
-1. Locate the reversed subtype check in `narrowing.rs`
-2. Reverse arguments: `is_subtype_of(literal, property_type)`
-3. Add test to verify fix
-
-### Phase 3: Fix Bug #2 - Missing Type Resolution
-1. Add type resolution calls before subtype checks
-2. Handle `TypeKey::Lazy(DefId)` - resolve to structural type
-3. Handle `TypeKey::Ref(SymbolRef)` - resolve to definition
-4. Handle `TypeKey::Intersection` - resolve all members
-5. Add test to verify fix
-
-### Phase 4: Fix Bug #3 - Optional Properties
-1. Add optional property handling in discriminant matching
-2. Test case: `{ type?: "stop", speed: number }`
-3. Verify optional discriminants work correctly
-
-### Phase 5: Validation
-1. Run all tests to verify no regressions
-2. Ask Gemini Pro to review implementation
-3. Document fixes in session file
-
-## Success Criteria
-
-- [ ] Discriminant narrowing works for literal properties
-- [ ] Type resolution handles Lazy/Ref/Intersection types
-- [ ] Optional properties in discriminants work correctly
-- [ ] All existing tests still pass
-- [ ] No regressions introduced
-
-## Session History
-
-*Created 2026-02-05 after TSZ-9 encountered implementation complexity.*
-*Recommended by Gemini as high-value, tractable task.*
-*Focuses on fixing known regressions in localized code area.*
+**Status**: 🟡 PLANNING (2026-02-05)
 
 ---
 
-## Investigation Results (2026-02-05)
+## Context
 
-### Code Review: narrowing.rs
+Sessions **tsz-3**, **tsz-8**, and **tsz-9** have established robust type system infrastructure:
+- ✅ Contextual typing and bidirectional inference
+- ✅ Priority-based generic inference
+- ✅ ThisType<T> marker support
+- ✅ Conditional type evaluation (840 lines, production-ready)
 
-**Good News**: Bug #1 (Reversed Subtype Check) is **ALREADY FIXED**! ✅
+The **next critical priority** is Control Flow Analysis (CFA) and narrowing. This is the "missing link" that connects the Binder's flow graph to the Solver's type logic, enabling TypeScript's sophisticated type narrowing features.
 
-Location: `src/solver/narrowing.rs`, line 437
-```rust
-let matches = is_subtype_of(self.db, literal_value, prop_type);
-```
+---
 
-Comment on lines 435-436 explicitly states:
-```rust
-// CRITICAL: Use is_subtype_of(literal_value, property_type)
-// NOT the reverse! This was the bug in the reverted commit.
-```
+## Why This Matters
 
-**Existing Implementation Also Has**:
-- ✅ Lazy type resolution (line 306, 411)
-- ✅ Union type property handling (lines 309-324)
-- ✅ Intersection type handling (lines 414-421)
-- ✅ Function `get_type_at_path` for property path traversal
+Control Flow Analysis is essential for TypeScript's type safety:
+- **Type Guards**: `typeof x === "string"` narrows `x` to `string`
+- **Truthiness**: `if (x)` narrows `x` to non-null/non-undefined
+- **Property Access**: `if (user.address)` narrows to objects with `address` property
+- **Assignment Narrowing**: `let x = ...; if (cond) x = ...;` tracks type changes
+- **Exhaustiveness**: Switch statements must handle all union members
 
-### Remaining Issue: Bug #3 - Optional Properties
+Without comprehensive CFA, the compiler cannot catch many type errors that tsc would catch.
 
-**Location**: `src/solver/narrowing.rs`, line 330
+---
 
-**Current Code**:
-```rust
-let prop = shape.properties.iter().find(|p| p.name == prop_name)?;
-```
+## Phase 1: Type Guard Narrowing (HIGH PRIORITY)
 
-**Problem**: This only finds properties that exist. For optional properties 
-(`prop?.type`), we need to handle them differently:
-- If property is optional AND doesn't exist on object, still match
-- Use the optional property's type for the subtype check
+**Goal**: Implement `typeof` and `instanceof` narrowing in the Solver.
 
-**Example**:
+### Task 1.1: `typeof` Narrowing
+**File**: `src/solver/narrowing.rs`
+**Priority**: HIGH
+**Status**: ⏸️ READY TO START
+
+**Description**: Implement narrowing based on `typeof` type guards.
+
+**Examples**:
 ```typescript
-type Opt = { type?: "stop", speed: number } | { type: "go", speed: number };
-function test(o: Opt) {
-    if (o.type === "stop") {
-        // Should narrow to { type?: "stop", speed: number }
-        // even though 'type' is optional
+function foo(x: string | number) {
+    if (typeof x === "string") {
+        x.toLowerCase(); // x is string
+    } else {
+        x.toFixed(2);    // x is number
     }
 }
 ```
 
-### Updated Assessment
+**Mandatory Pre-Implementation Question** (Two-Question Rule):
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/narrowing.rs --include=src/checker \
+"I am implementing typeof narrowing for TypeScript.
 
-**Bugs Status**:
-1. ✅ Reversed subtype check - ALREADY FIXED
-2. ✅ Missing type resolution - ALREADY IMPLEMENTED
-3. ⚠️ Optional properties - NEEDS FIX
+CURRENT STATE:
+- src/solver/narrowing.rs exists with some narrowing functions
+- Binder creates flow nodes with type guard information
 
-**Action Plan Update**:
-- Focus on fixing optional property handling in `get_type_at_path`
-- Single, focused fix in one location
-- Much more tractable than originally thought
+PLANNED APPROACH:
+1. Extract typeof check information from flow nodes
+2. Narrow union types based on typeof result
+3. Handle string/number/boolean/symbol/undefined/object
 
+QUESTIONS:
+1. What is the exact algorithm for narrowing based on typeof?
+2. How do I handle 'object' (matches everything except primitives)?
+3. Where do I integrate with the flow analysis?
+4. Provide the implementation structure."
+```
+
+### Task 1.2: `instanceof` Narrowing
+**File**: `src/solver/narrowing.rs`
+**Priority**: HIGH
+**Status**: ⏸️ DEFERRED (after Task 1.1)
+
+**Description**: Implement narrowing based on `instanceof` type guards.
+
+**Examples**:
+```typescript
+function foo(x: string | Date) {
+    if (x instanceof Date) {
+        x.getTime(); // x is Date
+    } else {
+        x.toLowerCase(); // x is string
+    }
+}
+```
+
+**Mandatory Pre-Implementation Question**:
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/narrowing.rs \
+"I am implementing instanceof narrowing.
+
+QUESTIONS:
+1. How do I check if a type is an instance of a class?
+2. What about interfaces (instanceof doesn't work)?
+3. How do I handle class hierarchies (Dog extends Animal)?
+4. Provide the algorithm."
+```
 
 ---
 
-## Status Update: SESSION NEARLY COMPLETE ✅ (2026-02-05)
+## Phase 2: Property Access & Assignment Narrowing (HIGH PRIORITY)
 
-**Surprising Discovery**: Investigation reveals that the 'critical bugs' from AGENTS.md
-have already been fixed in the current codebase!
+**Goal**: Implement narrowing for property existence checks and variable reassignments.
 
-### What Was Fixed
+### Task 2.1: Property Access Narrowing
+**File**: `src/solver/narrowing.rs`
+**Priority**: HIGH
+**Status**: ⏸️ DEFERRED (after Phase 1)
 
-All 3 bugs mentioned in AGENTS.md commit `f2d4ae5d5`:
+**Description**: Implement narrowing when checking for property existence.
 
-1. ✅ **Reversed Subtype Check** - FIXED
-   - Correct implementation at line 437
-   - Code comment confirms bug was reverted
+**Examples**:
+```typescript
+function foo(x: { a: number } | { b: string }) {
+    if ('a' in x) {
+        x.a; // x is { a: number }
+    } else {
+        x.b; // x is { b: string }
+    }
+}
+```
 
-2. ✅ **Missing Type Resolution** - IMPLEMENTED
-   - Lazy type resolution at lines 306, 411
-   - Union type property handling at lines 309-324
-   - Intersection type handling at lines 414-421
+### Task 2.2: Assignment Narrowing
+**File**: `src/checker/control_flow.rs`, `src/solver/narrowing.rs`
+**Priority**: MEDIUM-HIGH
+**Status**: ⏸️ DEFERRED (after Task 2.1)
 
-3. ⚠️ **Optional Properties** - PARTIALLY ADDRESSED
-   - Main fix still needed in `get_type_at_path`
-   - Single, focused change required
+**Description**: Track type changes across variable reassignments.
 
-### Session Status
+**Examples**:
+```typescript
+let x: string | number;
+x = "hello";
+if (typeof x === "string") {
+    // x is string (from assignment, not just typeof)
+}
+x = 42;
+// x is now number
+```
 
-**Original Goal**: Fix 3 critical narrowing bugs
-**Actual State**: 2/3 bugs already fixed, 1 remaining
+---
 
-**Recommendation**:
-- Mark session as nearly complete
-- Only optional property handling remains
-- Much simpler than expected
+## Phase 3: Truthiness & Falsiness Narrowing (MEDIUM PRIORITY)
 
-### Next Steps
+**Goal**: Implement narrowing based on truthiness checks.
 
-Ask Gemini: Should I:
-1. Implement the optional property fix and complete the session?
-2. Mark session complete (2/3 bugs fixed is significant progress)?
-3. Move to a different task?
+### Task 3.1: Truthiness Narrowing
+**File**: `src/solver/narrowing.rs`
+**Priority**: MEDIUM
+**Status**: ⏸️ DEFERRED (after Phase 2)
 
+**Description**: Narrow types in truthy/falsy branches.
+
+**Examples**:
+```typescript
+function foo(x: string | null | undefined) {
+    if (x) {
+        x.toLowerCase(); // x is string (not null/undefined)
+    }
+}
+```
+
+**Note**: TypeScript's truthiness narrowing is complex - it doesn't narrow primitive types, only literals and unions.
+
+---
+
+## Phase 4: Exhaustiveness Checking (MEDIUM PRIORITY)
+
+**Goal**: Ensure switch statements handle all union members.
+
+### Task 4.1: Switch Exhaustiveness
+**File**: `src/checker/`
+**Priority**: MEDIUM
+**Status**: ⏸️ DEFERRED (after Phase 3)
+
+**Description**: Check that switches cover all union members.
+
+**Examples**:
+```typescript
+type Shape = { kind: 'circle', radius: number } | { kind: 'square', side: number };
+
+function area(shape: Shape) {
+    switch (shape.kind) {
+        case 'circle': return Math.PI * shape.radius ** 2;
+        case 'square': return shape.side ** 2;
+        // Error: Not all code paths return a value (missing default)
+    }
+}
+```
+
+---
+
+## Coordination Notes
+
+**tsz-1, tsz-2, tsz-4, tsz-5, tsz-6, tsz-7**: Check docs/sessions/ for status.
+
+**tsz-3, tsz-8, tsz-9**: Complete (contextual typing, ThisType, conditional types)
+
+**Priority**: This session (CFA & Narrowing) is **HIGH PRIORITY** because it's essential for matching tsc's type safety.
+
+---
+
+## Complexity Assessment
+
+**Overall Complexity**: **VERY HIGH**
+
+**Why Very High**:
+- CFA requires deep integration between Binder (flow graph) and Solver (narrowing)
+- Many edge cases in type narrowing (intersections, unions, generics)
+- Assignment narrowing requires tracking variable state across control flow
+- High risk of subtle bugs (reversed subtype checks, incorrect narrowing)
+
+**Mitigation**:
+- Follow Two-Question Rule strictly for ALL changes
+- Test with real TypeScript codebases
+- Incremental implementation with thorough testing
+
+---
+
+## Gemini Consultation Plan
+
+Following the mandatory Two-Question Rule from `AGENTS.md`:
+
+### For Each Major Task:
+1. **Question 1** (Pre-Implementation): Algorithm validation
+2. **Question 2** (Post-Implementation): Code review
+
+**CRITICAL**: Type narrowing bugs are subtle and can cause false negatives (missing errors). Use Gemini Pro for all reviews.
+
+---
+
+## Architectural Notes
+
+**From NORTH_STAR.md**:
+- **Solver-First Architecture**: Narrowing logic belongs in the Solver
+- **TypeKey Pattern Matching**: Checker should NOT pattern match on TypeKey (Rule 3.2.1)
+- **Flow Nodes**: Binder creates flow graph, Solver uses it for narrowing
+
+**Pre-Session Audit**:
+Before starting, verify that no TypeKey pattern matching is happening in the Checker. If found, refactor to use TypeResolver.
