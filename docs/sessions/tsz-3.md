@@ -128,9 +128,27 @@ Implemented full `workspace/willRenameFiles` support:
   - Calls `build_auto_import_edit()` to generate `Vec<TextEdit>`
   - Attaches edits to completion item via `with_additional_edits()`
 
-**Next**: Add multi-file integration test to verify auto-import functionality works end-to-end.
+**Next Steps** (per Gemini consultation, in priority order):
 
-## Next Steps
+### Immediate: Integration Tests for Auto-Import
+Write test cases in `src/lsp/tests/project_tests.rs` to verify:
+1. Named Export: `export const foo = 1` results in auto-import
+2. Default Export: `export default function foo() {}` works correctly
+3. Re-exports: `export { x } from './mod'` is discoverable
+4. Existing Import Check: Already-imported symbols don't reappear
+5. Type-only Imports: Type positions generate `import type`
+
+### Later: Performance Optimization
+Integrate `SymbolIndex` into `Project` for O(1) candidate lookup:
+- Add `symbol_index: SymbolIndex` field to Project struct
+- Hook into file lifecycle (set_file, update_file, remove_file)
+- Update `collect_import_candidates_for_name` to use index
+
+### Future: Additional Enhancements
+- Workspace Symbols: Use existing SymbolIndex + WorkspaceSymbolsProvider
+- Prefix Matching: Suggest completions for partial matches (e.g., `Lis` → `List`)
+
+## Session Status
 
 Per Gemini consultation, recommended path is:
 1. ✅ Write tests for File Rename (COMPLETE)
