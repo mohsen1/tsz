@@ -14,8 +14,8 @@ use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::solver as solver_narrowing;
-use crate::solver::type_queries::{PromiseTypeKind, classify_promise_type, get_union_members};
 use crate::solver::TypeId;
+use crate::solver::type_queries::{PromiseTypeKind, classify_promise_type, get_union_members};
 
 // =============================================================================
 // Promise and Async Type Checking Methods

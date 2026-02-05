@@ -1879,7 +1879,6 @@ impl<'a> CheckerState<'a> {
             // 2. `function f<T>(ctor: T)` then `class B extends ctor` where ctor has a constructor type
             // 3. `class C extends Object` where Object is declared as ObjectConstructor interface
             ConstructorCheckKind::Lazy(def_id) => {
-                
                 let symbol_id = match self.ctx.def_to_symbol_id(def_id) {
                     Some(id) => id,
                     None => return false,
