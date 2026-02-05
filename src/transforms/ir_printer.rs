@@ -346,9 +346,8 @@ impl<'a> IRPrinter<'a> {
                     return;
                 }
                 // Single-line function body: { return expr; }
-                // Applies to:
-                // 1. Arrow-to-function conversions (is_expression_body)
-                // 2. Functions that were single-line in source (is_source_single_line)
+                // Applies to arrow-to-function conversions (is_expression_body)
+                // and regular function expressions that were single-line in source
                 let is_source_single_line = body_source_range
                     .and_then(|(pos, end)| {
                         self.source_text.map(|text| {
@@ -362,28 +361,15 @@ impl<'a> IRPrinter<'a> {
                         })
                     })
                     .unwrap_or(false);
-                let is_simple_return =
-                    body.len() == 1 && matches!(&body[0], IRNode::ReturnStatement(Some(_)));
-
-                // Only emit single-line if:
-                // 1. No parameter defaults
-                // 2. Single return statement
-                // 3. AND (expression body OR source was single-line)
-                //
-                // Special case: Anonymous functions (callbacks) with single return
-                // should be single-line to match TypeScript behavior. This handles
-                // cases like: .every(function (val) { return val.isSunk; })
-                let should_be_single_line = *is_expression_body
-                    || is_source_single_line
-                    || (name.is_none() && is_simple_return);
-
-                if !has_defaults && is_simple_return && should_be_single_line {
-                    if let IRNode::ReturnStatement(Some(expr)) = &body[0] {
-                        self.write("{ return ");
-                        self.emit_node(expr);
-                        self.write("; }");
-                        return;
-                    }
+                if !has_defaults
+                    && (*is_expression_body || is_source_single_line)
+                    && body.len() == 1
+                    && let IRNode::ReturnStatement(Some(expr)) = &body[0]
+                {
+                    self.write("{ return ");
+                    self.emit_node(expr);
+                    self.write("; }");
+                    return;
                 }
                 self.emit_function_body_with_defaults(parameters, body);
             }
@@ -1151,31 +1137,19 @@ impl<'a> IRPrinter<'a> {
             return;
         }
 
-        // Check if this is a single simple return statement (for callback formatting)
-        let is_simple_return =
-            stmts.len() == 1 && matches!(&stmts[0], IRNode::ReturnStatement(Some(_)));
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
 
-        if is_simple_return {
-            // Emit single-line: { return expr; }
-            self.write("{ ");
-            self.emit_node(&stmts[0]);
-            self.write(" }");
-        } else {
-            // Multi-line block
-            self.write("{");
-            self.write_line();
-            self.increase_indent();
-
-            for stmt in stmts {
-                self.write_indent();
-                self.emit_node(stmt);
-                self.write_line();
-            }
-
-            self.decrease_indent();
+        for stmt in stmts {
             self.write_indent();
-            self.write("}");
+            self.emit_node(stmt);
+            self.write_line();
         }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
     }
 
     /// Emit function body with default parameter checks prepended (ES5 style)
