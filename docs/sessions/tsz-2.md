@@ -39,32 +39,40 @@ When comparing `A` and `B` where both contain references to themselves, the naiv
 
 **Result**: Build compiles successfully. Runtime shows stack overflow - the exact problem Coinductive Subtyping will solve.
 
-### Phase B: Coinductive Subtyping (Judge Phase)
-**Goal**: Implement Greatest Fixed Point (GFP) logic for recursive types
+### Phase B: Coinductive Subtyping Implementation 🔄 IN PROGRESS
+**Root Cause**: Expansive recursion - `type T = Box<T>` produces new TypeId on each evaluation, bypassing cycle detection
 
-1. **Create failing test** (src/solver/tests/subtype_tests.rs):
-   ```typescript
-   type A = { next: A };
-   // A should be assignable to A
-   ```
+**Step 1: Confirm Recursion Location** ⏳
+```bash
+TSZ_LOG=trace cargo nextest run --test_name
+```
 
-2. **Audit check_subtype** (src/solver/subtype.rs):
-   - Verify `in_progress.insert(pair)` happens BEFORE `evaluate_type(source)`
-   - Critical: If evaluate happens first, expansive types bypass cycle detection
+**Step 2: Implement Coinductive Subtyping**
+**A. Fix src/solver/subtype.rs:**
+- Ensure `depth` check returns `SubtypeResult::DepthExceeded`
+- Review `in_progress` cycle detection
 
-3. **Implement seen_defs/seen_refs logic**:
-   - Use `seen_defs: FxHashSet<(DefId, DefId)>` for definition-level cycles
-   - Check cycles in `check_lazy_lazy_subtype` before expansion
-   - **MANDATORY**: Ask Gemini to validate implementation before writing
+**B. Fix src/solver/evaluate.rs:**
+- Detect recursive type alias expansion
+- Enforce `MAX_EVALUATE_DEPTH` strictly
+- Implement "Lazy" evaluation (one level at a time)
 
-4. **Verify with tracing**:
-   - Run: `TSZ_LOG=debug cargo test test_recursive_assignability`
-   - Check for "Cycle detected" log
+**Step 3: MANDATORY Pre-Implementation Question** ⏳
+```bash
+./scripts/ask-gemini.mjs --include=src/solver/subtype.rs --include=src/solver/evaluate.rs "
+I am seeing a stack overflow in check_subtype. I suspect expansive recursion.
+How should I modify check_subtype and evaluate_type to implement coinductive
+subtyping and prevent infinite expansion?
+"
+```
 
-### Phase C: Validation
-1. Run conformance tests to verify no regressions
-2. Test with complex recursive types (linked lists, trees)
-3. Ask Gemini Pro to review implementation
+**Step 4: Verify Fix** ⏳
+- Test should pass or fail with type error (not crash)
+
+### Phase C: Validation ⏳
+1. Run conformance tests
+2. Test with complex recursive types
+3. Ask Gemini Pro to review
 
 ## Success Criteria
 
@@ -77,3 +85,43 @@ When comparing `A` and `B` where both contain references to themselves, the naiv
 ## Session History
 
 *Created 2026-02-05 after completing Application type expansion.*
+
+**Phase A Complete** (commit eae3bd048): Fixed all compilation errors. Build compiles successfully. Runtime shows stack overflow.
+
+**Current Status**: Phase B - Coinductive Subtyping Implementation
+
+### Root Cause Analysis (from Gemini Pro)
+The stack overflow is caused by **expansive recursion** during type evaluation:
+1. `type T = Box<T>` produces new TypeId on each evaluation
+2. Cycle detection fails because `T[]` ≠ `T` (different TypeId)
+3. Infinite recursion until stack overflow
+
+### Next Session TODOs (from Gemini Pro)
+
+**Step 1: Confirm Recursion Location**
+```bash
+TSZ_LOG=trace cargo nextest run --test_name
+```
+Look for repeated calls to `check_subtype` or `evaluate_type` with growing structures.
+
+**Step 2: Implement Coinductive Subtyping**
+**A. Fix src/solver/subtype.rs:**
+- Ensure `depth` check is strict and returns `SubtypeResult::DepthExceeded`
+- Review `in_progress` cycle detection for non-expansive recursion
+
+**B. Fix src/solver/evaluate.rs:**
+- Modify `evaluate` to detect recursive type alias expansion
+- Enforce `MAX_EVALUATE_DEPTH` strictly
+- Implement "Lazy" evaluation - one level at a time during subtyping
+
+**Step 3: MANDATORY Pre-Implementation Question**
+```bash
+./scripts/ask-gemini.mjs --include=src/solver/subtype.rs --include=src/solver/evaluate.rs "
+I am seeing a stack overflow in check_subtype. I suspect expansive recursion (e.g. type T = Box<T>).
+How should I modify check_subtype and evaluate_type to correctly implement coinductive
+subtyping and prevent infinite expansion? Please review the current depth handling.
+"
+```
+
+**Step 4: Verify Fix**
+Run the test that was overflowing. Should pass or fail with type error (not crash).
