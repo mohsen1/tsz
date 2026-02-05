@@ -12,7 +12,7 @@ Session `tsz-3` established the infrastructure for bidirectional inference and p
 
 ---
 
-## Phase 7b: Multi-Pass Resolution Logic (CRITICAL)
+## Phase 7b: Multi-Pass Resolution Logic ✅ COMPLETE
 
 **⚠️ CRITICAL FINDING FROM GEMINI PRO (2026-02-05):**
 
@@ -27,7 +27,6 @@ The algorithm is:
 
 ### Task 7.2.1: Priority-Aware Constraint Collection ✅ COMPLETE
 **File**: `src/solver/operations.rs`
-**Priority**: HIGH
 **Status**: ✅ COMPLETE (Already implemented in tsz-3 Phase 7a)
 
 **Discovery**: This functionality was ALREADY implemented during tsz-3 Phase 7a when we refactored `constrain_types` signatures!
@@ -48,25 +47,22 @@ const result1: string = identity(42);
 // Error: TS2322: Type 'number' is not assignable to type 'string' ✅
 ```
 
-**Critical Implementation Notes**:
-- `constrain_types` must downgrade priority when entering mapped types (NakedTypeVariable → HomomorphicMappedType)
-- `Circular` priority is handled internally by InferenceContext, not in resolve_generic_call
-- No while loop needed for basic cases (TypeScript has one only for flow-sensitive typing edge cases)
-
 ---
 
-## Phase 8: Advanced Markers
+## Phase 8: Advanced Markers (ACTIVE)
 
 **Goal**: Support `ThisType<T>` for object literal context, enabling "Options API" patterns.
 
+**Why This Matters**: Essential for Vue 2, Pinia, and other libraries using the "Options API" pattern where `this` type is inferred from contextual markers rather than the object structure.
+
 ### Task 8.1: `ThisType<T>` Detection & Context
-**Files**: `src/checker/type_computation.rs`, `src/checker/context.rs`
-**Priority**: MEDIUM-HIGH
-**Status**: ⏸️ DEFERRED (after Phase 7b)
+**Files**: `src/checker/type_computation.rs`, `src/checker/context.rs`, `src/solver/types.rs`
+**Priority**: HIGH
+**Status**: 🟡 IN PROGRESS (Awaiting Gemini validation)
 
 **Description**:
 1. **Detection**: In `get_type_of_object_literal`, check if the contextual type contains `ThisType<T>` (usually via intersection).
-2. **Extraction**: Extract the type argument `T`.
+2. **Extraction**: Extract the type argument `T` using Solver utilities.
 3. **Propagation**: Push `T` onto a `this_type_stack` in `CheckerContext` before checking properties.
 4. **Resolution**: When checking `this` expressions, consult the stack.
 
@@ -84,6 +80,32 @@ makeObject({
     }
 });
 ```
+
+**Mandatory Pre-Implementation Question (Two-Question Rule)**:
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver --include=src/checker \
+"I am starting Phase 8: ThisType<T> support.
+Problem: Object literals need to resolve 'this' based on the ThisType<T> marker in the contextual type.
+
+Planned Approach:
+1. Solver: Ensure TypeKey::ThisType is correctly handled in the visitor and interner.
+2. Checker: In 'get_type_of_object_literal', use a visitor to find 'ThisType<T>' within the contextual type.
+3. Checker: If found, extract 'T' and push it onto a 'this_context_stack' in CheckerContext.
+4. Checker: When checking MethodDeclarations or FunctionExpressions within that object, resolve 'this' from the stack.
+
+Questions:
+1. Is this the correct way to detect ThisType (especially when nested in Intersections/Unions)?
+2. Should the Solver handle the extraction of T from ThisType<T>, or should the Checker do it?
+3. Are there edge cases with generic ThisType<T> where T is still being inferred?"
+
+Please provide architectural guidance and any edge cases I should handle.
+```
+
+**Architectural Notes** (from Gemini):
+- **The "Where" (Checker)**: Object literal checking should identify the marker
+- **The "What" (Solver)**: Should provide utility to find/extract ThisType from complex types
+- **The "Who" (Binder)**: Handles `this` symbol, but Checker overrides its type based on context
+- **Warning**: Be careful with inference - if `ThisType<T>` contains a type parameter being inferred from the same object, ensure inference happens before applying the `this` type
 
 ---
 
