@@ -1382,6 +1382,20 @@ impl ParserState {
         is_property_name
     }
 
+    /// Check if there is a line break between the current keyword and the next token.
+    /// Used to detect ASI in type member contexts where `protected\n p` means two properties.
+    pub(crate) fn look_ahead_has_line_break_after_keyword(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token();
+        let has_line_break = self.scanner.has_preceding_line_break();
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        has_line_break
+    }
+
     /// Check if current token is a keyword that can be used as a property name
     pub(crate) fn is_property_name_keyword(&self) -> bool {
         matches!(

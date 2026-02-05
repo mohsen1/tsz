@@ -873,6 +873,17 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1108: A 'return' statement can only be used within a function body.
+        if self.current_return_type().is_none() {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                stmt_idx,
+                "A 'return' statement can only be used within a function body.",
+                diagnostic_codes::RETURN_OUTSIDE_FUNCTION,
+            );
+            return;
+        }
+
         // Get the expected return type from the function context
         let expected_type = self.current_return_type().unwrap_or(TypeId::UNKNOWN);
 

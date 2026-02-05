@@ -331,6 +331,27 @@ impl ParserState {
                     self.parse_expression_statement()
                 }
             }
+            // Modifier keywords used before declarations at top level
+            // e.g., `public interface I {}`, `protected class C {}`, `static class C {}`
+            // These should emit TS1044 and then parse the declaration
+            SyntaxKind::StaticKeyword
+            | SyntaxKind::PublicKeyword
+            | SyntaxKind::ProtectedKeyword
+            | SyntaxKind::PrivateKeyword
+            | SyntaxKind::OverrideKeyword
+            | SyntaxKind::ReadonlyKeyword => {
+                if self.look_ahead_is_modifier_before_declaration() {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Modifier cannot be used here.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+                    );
+                    self.next_token();
+                    self.parse_statement()
+                } else {
+                    self.parse_expression_statement()
+                }
+            }
             SyntaxKind::DefaultKeyword => {
                 self.error_unexpected_token();
                 self.next_token();
@@ -397,6 +418,34 @@ impl ParserState {
                 }
             }
         }
+    }
+
+    /// Look ahead to see if a modifier keyword (public, protected, private, static, etc.)
+    /// is followed by a declaration keyword like class, interface, function, etc.
+    /// Used to detect `public interface I {}` or `static class C {}` patterns at module level.
+    pub(crate) fn look_ahead_is_modifier_before_declaration(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token(); // skip the modifier keyword
+        let is_decl = matches!(
+            self.token(),
+            SyntaxKind::ClassKeyword
+                | SyntaxKind::InterfaceKeyword
+                | SyntaxKind::EnumKeyword
+                | SyntaxKind::NamespaceKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::FunctionKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::ConstKeyword
+                | SyntaxKind::VarKeyword
+                | SyntaxKind::LetKeyword
+                | SyntaxKind::TypeKeyword
+        );
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_decl
     }
 
     /// Look ahead to see if we have "async function"
