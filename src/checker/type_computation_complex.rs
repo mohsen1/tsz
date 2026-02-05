@@ -44,10 +44,79 @@ fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) -> bool {
             }
         }
 
-        // TODO: Object and array literals should also be contextually sensitive
-        // but we need to add the getter methods to node_access.rs first
-        k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => false,
-        k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => false,
+        // Object Literals: Sensitive if any property is sensitive
+        k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+            if let Some(obj) = state.ctx.arena.get_literal_expr(node) {
+                for &element_idx in &obj.elements.nodes {
+                    if let Some(element) = state.ctx.arena.get(element_idx) {
+                        match element.kind {
+                            // Standard property: check initializer
+                            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                                if let Some(prop) = state.ctx.arena.get_property_assignment(element)
+                                {
+                                    if is_contextually_sensitive(state, prop.initializer) {
+                                        return true;
+                                    }
+                                }
+                            }
+                            // Shorthand: check for assignment initializer
+                            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                                if let Some(shorthand) =
+                                    state.ctx.arena.get_shorthand_property(element)
+                                {
+                                    // object_assignment_initializer is a NodeIndex (not optional)
+                                    // It represents the expression in destructuring patterns like `{ x = 1 }`
+                                    if is_contextually_sensitive(
+                                        state,
+                                        shorthand.object_assignment_initializer,
+                                    ) {
+                                        return true;
+                                    }
+                                }
+                            }
+                            // Spread: check the expression being spread
+                            k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                                if let Some(spread) = state.ctx.arena.get_spread(element) {
+                                    if is_contextually_sensitive(state, spread.expression) {
+                                        return true;
+                                    }
+                                }
+                            }
+                            // Methods and Accessors are function-like (always sensitive)
+                            k if k == syntax_kind_ext::METHOD_DECLARATION
+                                || k == syntax_kind_ext::GET_ACCESSOR
+                                || k == syntax_kind_ext::SET_ACCESSOR =>
+                            {
+                                return true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            false
+        }
+
+        // Array Literals: Sensitive if any element is sensitive
+        k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+            if let Some(arr) = state.ctx.arena.get_literal_expr(node) {
+                for &element_idx in &arr.elements.nodes {
+                    if is_contextually_sensitive(state, element_idx) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+
+        // Spread Elements (in arrays)
+        k if k == syntax_kind_ext::SPREAD_ELEMENT => {
+            if let Some(spread) = state.ctx.arena.get_spread(node) {
+                is_contextually_sensitive(state, spread.expression)
+            } else {
+                false
+            }
+        }
 
         _ => false,
     }
