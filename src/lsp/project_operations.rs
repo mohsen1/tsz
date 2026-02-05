@@ -1239,7 +1239,10 @@ impl Project {
         let use_optimized = !candidate_files.is_empty();
 
         let files_to_check: Vec<String> = if use_optimized {
-            candidate_files
+            // Check both: files that directly define the symbol + all files (for wildcard re-exports)
+            // We need to check all files because wildcard re-exports (export * from './mod')
+            // aren't tracked in the SymbolIndex
+            self.files.keys().cloned().collect()
         } else {
             // Fallback to checking all files for default/namespace exports
             // (where import name can be different from export name)
