@@ -514,6 +514,14 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Whether rest parameters of any/unknown should be treated as bivariant.
     /// See https://github.com/microsoft/TypeScript/issues/20007.
     pub allow_bivariant_rest: bool,
+    /// When true, skip the evaluate_type() call in check_subtype.
+    /// This prevents infinite recursion when TypeEvaluator calls SubtypeChecker
+    /// for simplification, since TypeEvaluator has already evaluated the types.
+    pub bypass_evaluation: bool,
+    /// Maximum recursion depth for subtype checking.
+    /// Used by TypeEvaluator simplification to prevent stack overflow.
+    /// Default: MAX_SUBTYPE_DEPTH (100)
+    pub max_depth: u32,
     /// Whether required parameter count mismatches are allowed for bivariant methods.
     pub allow_bivariant_param_count: bool,
     /// Whether optional properties are exact (exclude implicit `undefined`).
@@ -567,6 +575,8 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,
+            bypass_evaluation: false,
+            max_depth: MAX_SUBTYPE_DEPTH,
         }
     }
 }
@@ -595,6 +605,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,
+            bypass_evaluation: false,
+            max_depth: MAX_SUBTYPE_DEPTH,
         }
     }
 
@@ -1156,7 +1168,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Depth Check (stack overflow prevention)
         // =========================================================================
 
-        if self.depth > MAX_SUBTYPE_DEPTH {
+        if self.depth > self.max_depth {
             // Recursion too deep - return DepthExceeded (treat as false for soundness)
             // This prevents incorrectly accepting unsound expansive recursive types
             // Valid finite cyclic types won't hit this limit
@@ -1266,24 +1278,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Evaluate meta-types (KeyOf, Conditional, etc.)
         // Note: This happens AFTER cycle detection is set up, so expansive types
         // that produce fresh TypeIds will be caught by the cycle detection above.
-        let source_eval = self.evaluate_type(source);
-        let target_eval = self.evaluate_type(target);
-
-        // If evaluation changed anything, recurse with the simplified types
-        // The cycle detection is already set up for the original pair
-        let result = if source_eval != source || target_eval != target {
-            self.check_subtype(source_eval, target_eval)
-        } else {
-            // =========================================================================
-            // Post-evaluation fast paths
-            // =========================================================================
-
-            // Nothing (except never) is assignable to never
+        //
+        // When bypass_evaluation is true (TypeEvaluator simplification mode),
+        // skip evaluation to prevent infinite recursion. TypeEvaluator has already
+        // evaluated all members before calling the simplifier.
+        let result = if self.bypass_evaluation {
+            // Skip evaluation - go straight to structural check
             if target == TypeId::NEVER {
                 SubtypeResult::False
             } else {
-                // Do the actual structural check
                 self.check_subtype_inner(source, target)
+            }
+        } else {
+            let source_eval = self.evaluate_type(source);
+            let target_eval = self.evaluate_type(target);
+
+            // If evaluation changed anything, recurse with the simplified types
+            // The cycle detection is already set up for the original pair
+            if source_eval != source || target_eval != target {
+                self.check_subtype(source_eval, target_eval)
+            } else {
+                // =========================================================================
+                // Post-evaluation fast paths
+                // =========================================================================
+
+                // Nothing (except never) is assignable to never
+                if target == TypeId::NEVER {
+                    SubtypeResult::False
+                } else {
+                    // Do the actual structural check
+                    self.check_subtype_inner(source, target)
+                }
             }
         };
 

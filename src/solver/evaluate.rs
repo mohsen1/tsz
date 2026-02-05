@@ -672,6 +672,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             evaluated_members.push(self.evaluate(member));
         }
 
+        // Deep structural simplification using SubtypeChecker
+        self.simplify_intersection_members(&mut evaluated_members);
+
         self.interner.intersection(evaluated_members)
     }
 
@@ -689,7 +692,135 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             evaluated_members.push(self.evaluate(member));
         }
 
+        // Deep structural simplification using SubtypeChecker
+        self.simplify_union_members(&mut evaluated_members);
+
         self.interner.union(evaluated_members)
+    }
+
+    /// Simplify union members by removing redundant types using deep subtype checks.
+    /// If A <: B, then A | B = B (A is redundant in the union).
+    ///
+    /// This uses SubtypeChecker with bypass_evaluation=true to prevent infinite
+    /// recursion, since TypeEvaluator has already evaluated all members.
+    ///
+    /// Performance: O(N²) where N is the number of members. We skip simplification
+    /// if the union has more than 25 members to avoid excessive computation.
+    ///
+    /// NOTE: Currently DISABLED due to stack overflow issues with recursive types.
+    /// The SubtypeChecker can still recurse deeply even with bypass_evaluation=true.
+    /// TODO: Re-enable with a non-recursive simplification algorithm.
+    #[allow(dead_code)]
+    fn simplify_union_members(&mut self, _members: &mut Vec<TypeId>) {
+        // Disabled to prevent stack overflow
+        /*
+        // Performance guard: skip large unions
+        if members.len() > 25 {
+            return;
+        }
+
+        // Skip simplification if union contains types that require full resolution
+        let has_complex = members.iter().any(|&id| {
+            matches!(
+                self.interner.lookup(id),
+                Some(TypeKey::TypeParameter(_) | TypeKey::Lazy(_))
+            )
+        });
+        if has_complex {
+            return;
+        }
+
+        // Use SubtypeChecker with bypass_evaluation=true to prevent infinite recursion
+        use crate::solver::subtype::SubtypeChecker;
+        let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
+        checker.bypass_evaluation = true;
+        checker.max_depth = 10; // Low limit for simplification to prevent stack overflow
+        checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+
+        let mut i = 0;
+        while i < members.len() {
+            let mut redundant = false;
+            for j in 0..members.len() {
+                if i == j {
+                    continue;
+                }
+                // If members[i] <: members[j], members[i] is redundant in the union
+                // Example: "a" | string => "a" is redundant (result: string)
+                if checker.is_subtype_of(members[i], members[j]) {
+                    redundant = true;
+                    break;
+                }
+            }
+            if redundant {
+                members.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+        */
+    }
+
+    /// Simplify intersection members by removing redundant types using deep subtype checks.
+    /// If A <: B, then A & B = A (B is redundant in the intersection).
+    ///
+    /// This uses SubtypeChecker with bypass_evaluation=true to prevent infinite
+    /// recursion, since TypeEvaluator has already evaluated all members.
+    ///
+    /// Performance: O(N²) where N is the number of members. We skip simplification
+    /// if the intersection has more than 25 members to avoid excessive computation.
+    ///
+    /// NOTE: Currently DISABLED due to stack overflow issues with recursive types.
+    /// The SubtypeChecker can still recurse deeply even with bypass_evaluation=true.
+    /// TODO: Re-enable with a non-recursive simplification algorithm.
+    #[allow(dead_code)]
+    fn simplify_intersection_members(&mut self, _members: &mut Vec<TypeId>) {
+        // Disabled to prevent stack overflow
+        /*
+        // Performance guard: skip large intersections
+        if members.len() > 25 {
+            return;
+        }
+
+        // Skip simplification if intersection contains types that require full resolution
+        let has_complex = members.iter().any(|&id| {
+            matches!(
+                self.interner.lookup(id),
+                Some(TypeKey::TypeParameter(_) | TypeKey::Lazy(_))
+            )
+        });
+        if has_complex {
+            return;
+        }
+
+        // Use SubtypeChecker with bypass_evaluation=true to prevent infinite recursion
+        use crate::solver::subtype::SubtypeChecker;
+        let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
+        checker.bypass_evaluation = true;
+        checker.max_depth = 10; // Low limit for simplification to prevent stack overflow
+        checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+
+        let mut i = 0;
+        while i < members.len() {
+            let mut redundant = false;
+            for j in 0..members.len() {
+                if i == j {
+                    continue;
+                }
+                // If members[j] <: members[i], members[i] is redundant in the intersection
+                // Example: { a: string } & { a: string; b: number } => { a: string; b: number }
+                // The supertype is redundant, we keep the more specific type
+                if checker.is_subtype_of(members[j], members[i]) {
+                    redundant = true;
+                    break;
+                }
+            }
+            if redundant {
+                members.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+        */
     }
 }
 
