@@ -516,10 +516,16 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
     /// Type query: not handled (would need symbol resolution).
     fn visit_type_query(&mut self, _symbol_ref: u32) {}
 
-    /// Keyof: operand is at current polarity.
+    /// Keyof: operand is CONTRAVARIANT.
+    ///
+    /// keyof reverses the variance relationship:
+    /// - If T <: U (T is subtype of U), then keyof T has MORE properties than keyof U
+    /// - Therefore keyof T is NOT a subtype of keyof U (it's a supertype)
+    /// - Example: { a: 1, b: 2 } <: { a: 1 }, but "a" | "b" is NOT <: "a"
     fn visit_keyof(&mut self, type_id: TypeId) {
         let current_polarity = self.get_current_polarity();
-        self.visit_with_polarity(type_id, current_polarity);
+        // keyof T reverses the variance (contravariant position)
+        self.visit_with_polarity(type_id, !current_polarity);
     }
 
     /// Readonly types: inner type is at current polarity.
