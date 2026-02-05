@@ -1272,8 +1272,6 @@ pub fn classify_for_contains_traversal(db: &dyn TypeDatabase, type_id: TypeId) -
 /// Classification for namespace member resolution.
 #[derive(Debug, Clone)]
 pub enum NamespaceMemberKind {
-    #[deprecated(note = "Lazy types don't use SymbolRef")]
-    SymbolRef(crate::solver::types::SymbolRef),
     Lazy(DefId),
     Callable(crate::solver::types::CallableShapeId),
     Other,
