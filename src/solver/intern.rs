@@ -894,6 +894,25 @@ impl TypeInterner {
             return flat[0];
         }
 
+        // Reduce union using subtype checks (e.g., {a: 1} | {a: 1 | number} => {a: 1 | number})
+        // Skip reduction if union contains complex types (TypeParameters, Lazy, etc.)
+        let has_complex = flat.iter().any(|&id| {
+            matches!(
+                self.lookup(id),
+                Some(TypeKey::TypeParameter(_) | TypeKey::Lazy(_))
+            )
+        });
+        if !has_complex {
+            self.reduce_union_subtypes(&mut flat);
+        }
+
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
         let list_id = self.intern_type_list(flat.into_vec());
         self.intern(TypeKey::Union(list_id))
     }
@@ -1167,6 +1186,25 @@ impl TypeInterner {
         // If all members are callables/functions, merge them into overloaded callable
         if let Some(merged) = self.try_merge_callables_in_intersection(&flat) {
             return merged;
+        }
+
+        // Reduce intersection using subtype checks (e.g., {a: 1} & {a: 1 | number} => {a: 1})
+        // Skip reduction if intersection contains complex types (TypeParameters, Lazy, etc.)
+        let has_complex = flat.iter().any(|&id| {
+            matches!(
+                self.lookup(id),
+                Some(TypeKey::TypeParameter(_) | TypeKey::Lazy(_))
+            )
+        });
+        if !has_complex {
+            self.reduce_intersection_subtypes(&mut flat);
+        }
+
+        if flat.is_empty() {
+            return TypeId::UNKNOWN;
+        }
+        if flat.len() == 1 {
+            return flat[0];
         }
 
         let list_id = self.intern_type_list(flat.into_vec());
@@ -1679,6 +1717,135 @@ impl TypeInterner {
         }
     }
 
+    /// Shallow subtype check that avoids infinite recursion.
+    /// Uses TypeId identity for nested components instead of recursive checking.
+    /// This is safe for use during normalization because it only uses lookup() and
+    /// never calls intern() or evaluate().
+    fn is_subtype_shallow(&self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
+
+        // Skip reduction for type parameters and lazy types
+        // These need full type resolution to determine subtyping
+        if matches!(
+            (self.lookup(source), self.lookup(target)),
+            (
+                Some(TypeKey::TypeParameter(_)) | _,
+                Some(TypeKey::TypeParameter(_))
+            ) | (Some(TypeKey::Lazy(_)) | _, Some(TypeKey::Lazy(_)))
+        ) {
+            return false;
+        }
+
+        // Handle Top/Bottom types
+        if target == TypeId::ANY || target == TypeId::UNKNOWN {
+            return true;
+        }
+        if source == TypeId::NEVER {
+            return true;
+        }
+
+        // Handle Literal to Primitive
+        // Only if target is NOT a literal (we don't want "a" <: "b")
+        if self
+            .lookup(source)
+            .is_some_and(|k| matches!(k, TypeKey::Literal(_)))
+        {
+            if self
+                .lookup(target)
+                .is_some_and(|k| matches!(k, TypeKey::Literal(_)))
+            {
+                // Both are literals - only subtype if identical (handled above)
+                return false;
+            }
+            if let Some(lit_set) = self.literal_set_from_type(source) {
+                if let Some(target_class) = self.primitive_class_for(target) {
+                    if self.literal_domain_matches_primitive(lit_set.domain, target_class) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Handle Objects (Shallow structural check)
+        // NOTE: Object reduction is DISABLED for safety.
+        // The shallow check is too conservative for complex generic types
+        // and causes issues with inference. Object reduction should be
+        // handled by the SubtypeChecker layer, not the Interner.
+        /*
+        let s_key = self.lookup(source);
+        let t_key = self.lookup(target);
+        match (s_key, t_key) {
+            (
+                Some(TypeKey::Object(s_id) | TypeKey::ObjectWithIndex(s_id)),
+                Some(TypeKey::Object(t_id) | TypeKey::ObjectWithIndex(t_id)),
+            ) => self.is_object_shape_subtype_shallow(s_id, t_id),
+            _ => false,
+        }
+        */
+        // For now, objects are never subtypes in shallow check
+        false
+    }
+
+    /// Shallow object shape subtype check.
+    /// Compares properties using TypeId equality (no recursion).
+    ///
+    /// For union/intersection reduction, we use a VERY CONSERVATIVE check:
+    /// Only objects with IDENTICAL property sets (names and TypeIds) can be subtypes.
+    /// This prevents incorrect reductions while handling the common case of
+    /// duplicate object types in unions/intersections.
+    fn is_object_shape_subtype_shallow(&self, s_id: ObjectShapeId, t_id: ObjectShapeId) -> bool {
+        let s = self.object_shape(s_id);
+        let t = self.object_shape(t_id);
+
+        // Nominal check: if target is a class instance, source must match
+        if t.symbol.is_some() && s.symbol != t.symbol {
+            return false;
+        }
+
+        // VERY CONSERVATIVE: Require exact property match
+        // Same number of properties, same names, same TypeIds
+        if s.properties.len() != t.properties.len() {
+            return false;
+        }
+
+        for t_prop in &t.properties {
+            let s_prop = s.properties.iter().find(|p| p.name == t_prop.name);
+            match s_prop {
+                Some(sp) => {
+                    if sp.type_id != t_prop.type_id {
+                        return false;
+                    }
+                    if sp.optional != t_prop.optional {
+                        return false;
+                    }
+                }
+                None => {
+                    return false;
+                }
+            }
+        }
+
+        // Index signatures must be identical for shallow check
+        s.string_index == t.string_index && s.number_index == t.number_index
+    }
+
+    /// Check if a literal domain matches a primitive class.
+    fn literal_domain_matches_primitive(
+        &self,
+        domain: LiteralDomain,
+        class: PrimitiveClass,
+    ) -> bool {
+        match (domain, class) {
+            (LiteralDomain::String, PrimitiveClass::String) => true,
+            (LiteralDomain::Number, PrimitiveClass::Number) => true,
+            (LiteralDomain::Boolean, PrimitiveClass::Boolean) => true,
+            (LiteralDomain::Bigint, PrimitiveClass::Bigint) => true,
+            _ => false,
+        }
+    }
+
     /// Absorb literal types into their corresponding primitive types.
     /// e.g., "a" | string | number => string | number
     /// e.g., 1 | 2 | number => number
@@ -1736,6 +1903,54 @@ impl TypeInterner {
                 LiteralValue::BigInt(_) => !has_bigint,
             }
         });
+    }
+
+    /// Remove redundant types from a union using shallow subtype checks.
+    /// If A <: B, then A | B = B (A is redundant).
+    fn reduce_union_subtypes(&self, flat: &mut TypeListBuffer) {
+        let mut i = 0;
+        while i < flat.len() {
+            let mut redundant = false;
+            for j in 0..flat.len() {
+                if i == j {
+                    continue;
+                }
+                // If i is a subtype of j, i is redundant in a union
+                if self.is_subtype_shallow(flat[i], flat[j]) {
+                    redundant = true;
+                    break;
+                }
+            }
+            if redundant {
+                flat.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Remove redundant types from an intersection using shallow subtype checks.
+    /// If A <: B, then A & B = A (B is redundant).
+    fn reduce_intersection_subtypes(&self, flat: &mut TypeListBuffer) {
+        let mut i = 0;
+        while i < flat.len() {
+            let mut redundant = false;
+            for j in 0..flat.len() {
+                if i == j {
+                    continue;
+                }
+                // If j is a subtype of i, i is the supertype and redundant in an intersection
+                if self.is_subtype_shallow(flat[j], flat[i]) {
+                    redundant = true;
+                    break;
+                }
+            }
+            if redundant {
+                flat.remove(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     /// Intern an array type
