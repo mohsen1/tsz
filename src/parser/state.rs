@@ -18,8 +18,8 @@ use crate::parser::{
     node::{IdentifierData, NodeArena},
     syntax_kind_ext,
 };
-use crate::scanner::SyntaxKind;
-use crate::scanner_impl::ScannerState;
+use crate::scanner::{SyntaxKind, token_is_keyword};
+use crate::scanner_impl::{ScannerState, TokenFlags};
 // =============================================================================
 // Parser Context Flags
 // =============================================================================
@@ -207,6 +207,33 @@ impl ParserState {
         self.current_token
     }
 
+    /// Consume a keyword token, checking for TS1260 (keywords cannot contain escape characters).
+    /// Call this instead of next_token() when consuming a keyword in a keyword position.
+    pub(crate) fn consume_keyword(&mut self) {
+        self.check_keyword_with_escape();
+        self.next_token();
+    }
+
+    /// Check if current token is a keyword with unicode escape and emit TS1260 if so.
+    /// Only call this when consuming a token that is expected to be a keyword.
+    fn check_keyword_with_escape(&mut self) {
+        // Skip if not a keyword
+        if !token_is_keyword(self.current_token) {
+            return;
+        }
+        // Check for UnicodeEscape flag
+        let flags = self.scanner.get_token_flags();
+        if (flags & TokenFlags::UnicodeEscape as u32) != 0 {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at(
+                self.scanner.get_token_start() as u32,
+                (self.scanner.get_token_end() - self.scanner.get_token_start()) as u32,
+                "Keywords cannot contain escape characters.",
+                diagnostic_codes::KEYWORDS_CANNOT_CONTAIN_ESCAPE_CHARACTERS,
+            );
+        }
+    }
+
     /// Check if current token matches kind
     #[inline]
     pub(crate) fn is_token(&self, kind: SyntaxKind) -> bool {
@@ -342,6 +369,10 @@ impl ParserState {
     /// Parse optional token, returns true if found
     pub fn parse_optional(&mut self, kind: SyntaxKind) -> bool {
         if self.is_token(kind) {
+            // Check for TS1260 if consuming a keyword
+            if token_is_keyword(kind) {
+                self.check_keyword_with_escape();
+            }
             self.next_token();
             true
         } else {
@@ -354,6 +385,10 @@ impl ParserState {
     /// (to prevent cascading errors from sequential parse_expected calls)
     pub fn parse_expected(&mut self, kind: SyntaxKind) -> bool {
         if self.is_token(kind) {
+            // Check for TS1260 if consuming a keyword
+            if token_is_keyword(kind) {
+                self.check_keyword_with_escape();
+            }
             self.next_token();
             true
         } else {

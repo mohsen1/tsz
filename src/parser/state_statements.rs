@@ -710,29 +710,30 @@ impl ParserState {
         let start_pos = self.token_pos();
 
         // Consume var/let/const/using/await using and get flags
+        // Use consume_keyword() for TS1260 check (keywords cannot contain escape characters)
         let flags: u16 = match self.token() {
             SyntaxKind::LetKeyword => {
-                self.next_token();
+                self.consume_keyword();
                 node_flags::LET as u16
             }
             SyntaxKind::ConstKeyword => {
-                self.next_token();
+                self.consume_keyword();
                 node_flags::CONST as u16
             }
             SyntaxKind::UsingKeyword => {
-                self.next_token();
+                self.consume_keyword();
                 node_flags::USING as u16
             }
             SyntaxKind::AwaitKeyword => {
                 // await using declaration
-                self.next_token(); // consume 'await'
+                self.consume_keyword(); // consume 'await'
                 self.parse_expected(SyntaxKind::UsingKeyword); // consume 'using'
                 node_flags::AWAIT_USING as u16
             }
             _ => {
-                self.next_token();
+                self.consume_keyword(); // var
                 0
-            } // var
+            }
         };
 
         // Parse declarations with enhanced error recovery
