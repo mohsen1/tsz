@@ -539,10 +539,15 @@ impl<'a> FlowAnalyzer<'a> {
                     self.assignment_targets_reference_node(flow.node, reference);
 
                 if targets_reference {
+                    // Check if this is a destructuring assignment (widens literals to primitives)
+                    let is_destructuring = self.is_destructuring_assignment(flow.node);
+
                     // CRITICAL FIX: Try to get assigned type for ALL assignments, including destructuring
                     // Previously: Only direct assignments (x = ...) worked
                     // Now: Destructuring ([x] = ...) also works because get_assigned_type handles it
-                    if let Some(assigned_type) = self.get_assigned_type(flow.node, reference) {
+                    if let Some(assigned_type) =
+                        self.get_assigned_type(flow.node, reference, is_destructuring)
+                    {
                         // Killing definition: replace type with RHS type and stop traversal
                         assigned_type
                     } else {
@@ -1172,10 +1177,73 @@ impl<'a> FlowAnalyzer<'a> {
         type_id // Non-literal types are preserved
     }
 
+    /// Check if an assignment node represents a destructuring assignment.
+    /// Destructuring assignments widen literals to primitives, unlike direct assignments.
+    fn is_destructuring_assignment(&self, node: NodeIndex) -> bool {
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+
+        match node_data.kind {
+            syntax_kind_ext::BINARY_EXPRESSION => {
+                let Some(bin) = self.arena.get_binary_expr(node_data) else {
+                    return false;
+                };
+                // Check if left side is a binding pattern OR array/object literal (for destructuring)
+                let left_is_binding = self.is_binding_pattern(bin.left);
+                let left_is_literal = self.contains_destructuring_pattern(bin.left);
+                left_is_binding || left_is_literal
+            }
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                let Some(decl) = self.arena.get_variable_declaration(node_data) else {
+                    return false;
+                };
+                // Check if name is a binding pattern (destructuring in variable declaration)
+                self.is_binding_pattern(decl.name)
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a node is a binding pattern (array or object destructuring pattern)
+    fn is_binding_pattern(&self, node: NodeIndex) -> bool {
+        if node.is_none() {
+            return false;
+        }
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+        matches!(
+            node_data.kind,
+            syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
+        )
+    }
+
+    /// Check if a node contains a destructuring pattern (array/object literal with binding elements).
+    /// This handles cases like `[x] = [1]` where the left side is an array literal containing binding patterns.
+    ///
+    /// Note: In TypeScript, if an array or object literal appears on the left side of an assignment,
+    /// it's ALWAYS a destructuring pattern, regardless of what elements it contains.
+    fn contains_destructuring_pattern(&self, node: NodeIndex) -> bool {
+        if node.is_none() {
+            return false;
+        }
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+
+        // If this is an array or object literal, it's a destructuring pattern when on the left side of an assignment
+        matches!(
+            node_data.kind,
+            syntax_kind_ext::ARRAY_LITERAL_EXPRESSION | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        )
+    }
+
     pub(crate) fn get_assigned_type(
         &self,
         assignment_node: NodeIndex,
         target: NodeIndex,
+        widen_literals_for_destructuring: bool,
     ) -> Option<TypeId> {
         let Some(node) = self.arena.get(assignment_node) else {
             return None;
@@ -1186,46 +1254,10 @@ impl<'a> FlowAnalyzer<'a> {
             // This ensures that `x = 42` narrows to literal 42.0, not just NUMBER
             // This matches TypeScript's behavior where control flow analysis preserves literal types
             if let Some(literal_type) = self.literal_type_from_node(rhs) {
-                // CRITICAL: Check if this literal is from a destructuring context
-                // For destructuring (array or object), widen literals to primitives to match TypeScript
+                // For destructuring contexts, widen literals to primitives to match TypeScript
                 // Example: [x] = [1] widens to number, ({ x } = { x: 1 }) widens to number
-                //
-                // Note: For object properties, the parent is PROPERTY_ASSIGNMENT, so we check grandparent
-                let is_destructuring_element = self
-                    .arena
-                    .get_extended(rhs)
-                    .and_then(|ext| {
-                        // First check if parent is array/object literal
-                        if let Some(parent) = self.arena.get(ext.parent) {
-                            if parent.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                || parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            {
-                                return Some(true);
-                            }
-                            // For object properties, check grandparent
-                            if parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                                if let Some(ext2) =
-                                    self.arena.get_extended(NodeIndex::from(ext.parent))
-                                {
-                                    if let Some(grandparent) = self.arena.get(ext2.parent) {
-                                        return Some(
-                                            grandparent.kind
-                                                == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        None
-                    })
-                    .unwrap_or(false);
-
-                eprintln!(
-                    "DEBUG: literal_type={:?}, is_destructuring_element={}",
-                    literal_type, is_destructuring_element
-                );
-
-                if is_destructuring_element {
+                // Also handles default values: [x = 2] = [] widens to number
+                if widen_literals_for_destructuring {
                     return Some(self.widen_to_primitive(literal_type));
                 }
                 return Some(literal_type);
@@ -1341,6 +1373,17 @@ impl<'a> FlowAnalyzer<'a> {
 
         if !rhs.is_none() && self.is_matching_reference(pattern, target) {
             return Some(rhs);
+        }
+
+        // Handle default values: when RHS is empty, check for default value in pattern element
+        if rhs.is_none() && self.assignment_targets_reference_internal(pattern, target) {
+            if let Some(node) = self.arena.get(pattern) {
+                if let Some(binding) = self.arena.get_binding_element(node) {
+                    if !binding.initializer.is_none() {
+                        return Some(binding.initializer);
+                    }
+                }
+            }
         }
 
         let node = self.arena.get(pattern)?;
