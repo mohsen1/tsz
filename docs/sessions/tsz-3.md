@@ -61,31 +61,73 @@ Previous tsz-3 Phase 1 successfully delivered:
 
 ---
 
-## Phase 1: Fix CFA Regressions (🔄 ACTIVE - BLOCKS ALL OTHER WORK)
+## Phase 1: Fix CFA Regressions (🔄 ACTIVE - COMPLEX INTERACTION)
 
-**Status**: 🟡 IN PROVESTIGATION - USE TRACING TO FIND ROOT CAUSE
+**Status**: 🟡 IN PROVESTIGATION - FOUND FIX BUT BREAKS OTHER TESTS
 
 **Test Failures**:
-```bash
-# Run individual test with debug output
-TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo test test_asserts_type_predicate_narrows_true_branch
 
-# Run all failing tests
-cargo test test_asserts_type_predicate_narrows_true_branch \
-  test_truthiness_false_branch_narrows_to_falsy \
-  test_array_destructuring_assignment_clears_narrowing \
-  test_array_destructuring_default_initializer_clears_narrowing
+### Fixed (but reverted due to circular extends failures):
+1. ✅ `test_asserts_type_predicate_narrows_true_branch` - **FIXED** but reverted
+
+### Still Failing:
+2. ❌ `test_truthiness_false_branch_narrows_to_falsy`
+3. ❌ `test_array_destructuring_assignment_clears_narrowing`
+4. ❌ `test_array_destructuring_default_initializer_clears_narrowing`
+
+### Circular Extends Tests (BLOCKER):
+5. ❌ `test_circular_extends_chain_with_endpoint_bound`
+6. ❌ `test_circular_extends_conflicting_lower_bounds`
+7. ❌ `test_circular_extends_with_literal_types`
+8. ❌ `test_circular_extends_with_concrete_upper_and_lower`
+9. ❌ `test_circular_extends_three_way_with_one_lower_bound`
+
+**Root Cause Identified** (2026-02-05):
+
+The assertion test failure was in `src/solver/narrowing.rs:1784`:
+```rust
+TypeGuard::Predicate { type_id, asserts } => {
+    match type_id {
+        Some(target_type) => {
+            if sense {
+                self.narrow_to_type(source_type, *target_type)
+            } else {
+                self.narrow_excluding_type(source_type, *target_type)  // ❌ BUG
+            }
+        }
+    }
+}
 ```
 
-**Investigation Steps**:
-1. ✅ Confirmed tests were failing before nested discriminant work
-2. ✅ Asked Gemini about `is_matching_reference` behavior (it's working correctly)
-3. ⏭️ **NEXT**: Use `tsz-tracing` skill to trace type resolution
-4. ⏭️ Ask Gemini Question 1: "Where is type resolution missing in narrowing.rs?"
-5. ⏭️ Fix the root cause
-6. ⏭️ Verify all tests pass
+**Problem**: The code doesn't check the `asserts` flag before narrowing in the false branch.
 
-**Estimated Complexity**: HIGH (4-6 hours, deep solver tracing)
+**Fix Applied** (commit c25830407 - REVERTED):
+```rust
+TypeGuard::Predicate { type_id, asserts } => {
+    // CRITICAL: asserts predicates only narrow in the true branch
+    if *asserts && !sense {
+        return source_type;  // Don't narrow in false branch for assertions
+    }
+
+    match type_id {
+        Some(target_type) => {
+            if sense {
+                self.narrow_to_type(source_type, *target_type)
+            } else {
+                self.narrow_excluding_type(source_type, *target_type)
+            }
+        }
+    }
+}
+```
+
+**Issue**: The fix broke 5 circular extends tests, suggesting a complex interaction between predicate narrowing and type resolution.
+
+**Next Steps**:
+1. ⚠️ **CRITICAL**: Need to understand why the fix breaks circular extends
+2. Ask Gemini: "Why does checking `asserts && !sense` break circular extends?"
+3. May need to fix circular extends tests first, or find alternative approach
+4. Risk: These tests may have been passing for the wrong reasons
 
 ---
 
