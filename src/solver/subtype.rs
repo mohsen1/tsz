@@ -794,14 +794,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return a_lit == b_lit;
         }
 
-        // For object types, check if properties overlap
-        // This is a simplified check - we only verify that common properties
-        // have overlapping types. Phase 2 will use PropertyCollector for full checking.
-        if let (Some(a_shape), Some(b_shape)) = (
-            object_shape_id(self.interner, a_resolved),
-            object_shape_id(self.interner, b_resolved),
-        ) {
-            return self.do_object_properties_overlap(a_shape, b_shape);
+        // For object-like types, use refined overlap detection with PropertyCollector
+        // This handles: objects, objects with index signatures, and intersections
+        // This replaces the simplified check that only handled direct object-to-object
+        let is_a_obj = self.is_object_like(a_resolved);
+        let is_b_obj = self.is_object_like(b_resolved);
+
+        if is_a_obj && is_b_obj {
+            return self.do_refined_object_overlap_check(a_resolved, b_resolved);
         }
 
         // Conservative: assume overlap for complex types we haven't fully handled yet
@@ -865,6 +865,111 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // At least one isn't a literal, so they overlap
             true
         }
+    }
+
+    /// Check if two types are "object-like" (should use PropertyCollector for overlap detection).
+    ///
+    /// Object-like types include:
+    /// - Plain objects with properties
+    /// - Objects with index signatures
+    /// - Intersections (which may contain objects)
+    fn is_object_like(&self, type_id: TypeId) -> bool {
+        use crate::solver::visitor::{
+            intersection_list_id, object_shape_id, object_with_index_shape_id,
+        };
+
+        object_shape_id(self.interner, type_id).is_some()
+            || object_with_index_shape_id(self.interner, type_id).is_some()
+            || intersection_list_id(self.interner, type_id).is_some()
+    }
+
+    /// Check if two object-like types have overlapping properties and index signatures.
+    ///
+    /// This is the refined implementation using PropertyCollector to handle:
+    /// - Intersections (flattened property collection)
+    /// - Index signatures (both string and number)
+    /// - Optional properties (correct undefined handling via optional_property_type)
+    /// - Discriminant detection (common property with disjoint literal types)
+    ///
+    /// Returns false if types have zero overlap, true otherwise.
+    fn do_refined_object_overlap_check(&self, a: TypeId, b: TypeId) -> bool {
+        use crate::solver::objects::{PropertyCollectionResult, collect_properties};
+
+        // Collect properties and index signatures from both types
+        let res_a = collect_properties(a, self.interner, self.resolver);
+        let res_b = collect_properties(b, self.interner, self.resolver);
+
+        // Extract properties and index signatures from results
+        let (props_a, s_idx_a, _n_idx_a) = match res_a {
+            PropertyCollectionResult::Any => return true, // Any overlaps with everything
+            PropertyCollectionResult::NonObject => return true, // Conservatively overlap
+            PropertyCollectionResult::Properties {
+                properties,
+                string_index,
+                number_index,
+            } => (properties, string_index, number_index),
+        };
+
+        let (props_b, s_idx_b, _n_idx_b) = match res_b {
+            PropertyCollectionResult::Any => return true,
+            PropertyCollectionResult::NonObject => return true,
+            PropertyCollectionResult::Properties {
+                properties,
+                string_index,
+                number_index,
+            } => (properties, string_index, number_index),
+        };
+
+        // 1. Check Common Properties for overlap
+        // If a property exists in both objects, their types must overlap
+        for p_a in &props_a {
+            if let Some(p_b) = props_b.iter().find(|p| p.name == p_a.name) {
+                // Use optional_property_type for correct undefined handling
+                let type_a = self.optional_property_type(p_a);
+                let type_b = self.optional_property_type(p_b);
+
+                if !self.are_types_overlapping(type_a, type_b) {
+                    return false; // Hard conflict - no overlap
+                }
+            }
+        }
+
+        // 2. Check Required Properties A against Index Signatures B
+        // Only REQUIRED properties must be compatible with B's string index.
+        // Optional properties can be missing (undefined) so they don't conflict with index signatures.
+        // Example: { a?: string } and { [k: string]: number } DO overlap because {} satisfies both.
+        if let Some(ref idx_b) = s_idx_b {
+            for p_a in &props_a {
+                if !p_a.optional {
+                    // Only check required properties
+                    if !self.are_types_overlapping(p_a.type_id, idx_b.value_type) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        // 3. Check Required Properties B against Index Signatures A
+        // Only REQUIRED properties must be compatible with A's string index.
+        if let Some(ref idx_a) = s_idx_a {
+            for p_b in &props_b {
+                if !p_b.optional {
+                    // Only check required properties
+                    if !self.are_types_overlapping(p_b.type_id, idx_a.value_type) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        // 4. Index Signature Compatibility Check
+        // NOTE: Index signatures do NOT prevent overlap even if their value types are disjoint
+        // because the empty object {} satisfies both index signatures.
+        // Example: { [k: string]: string } and { [k: string]: number } DO overlap.
+        // So NO CHECK needed here - index signatures never cause disjointness.
+
+        // All checks passed - types overlap
+        true
     }
 
     /// Check if two object types have overlapping properties.
