@@ -14,6 +14,62 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 - ✅ **Fixed generic inference in Round 2** - Preserved placeholder connections for unresolved type parameters
 - Reduced test failures from 37 → 31 → 22
 
+## Redefined Priorities (2026-02-05 by Gemini Pro)
+
+### Priority 1: Intersection Normalization (2 tests) - QUICK WIN 🔴
+**Tests**:
+- `test_intersection_null_with_object_is_never`
+- `test_intersection_undefined_with_object_is_never`
+
+**Problem**: `null & object` and `undefined & object` should reduce to `never` but don't
+
+**Root Cause**: Missing reduction rule for disjoint primitive/object combinations
+
+**Files**: `src/solver/operations.rs` (intersection factory/reduction logic)
+
+**First Step**: Ask Gemini for approach validation before implementing
+
+---
+
+### Priority 2: Property Access: Arrays & Tuples (7 tests) - HIGH IMPACT 🟡
+**Tests**:
+- `test_property_access_array_at_returns_optional_element`
+- `test_property_access_array_entries_returns_tuple_array`
+- `test_property_access_array_map_signature`
+- `test_property_access_array_push_with_env_resolver`
+- `test_property_access_array_reduce_callable`
+- `test_property_access_readonly_array`
+- `test_property_access_tuple_length`
+
+**Hypothesis**: Single root cause in how solver synthesizes properties for Array/Tuple intrinsics
+
+**Files**: Property lookup logic for `TypeKey::Array` and `TypeKey::Tuple`
+
+---
+
+### Priority 3: Function Variance (2 tests) 🟢
+**Tests**:
+- `test_any_in_function_parameters_strict_mode`
+- `test_function_variance_with_return_types`
+
+**Context**: Edge cases in Lawyer layer (compatibility checking)
+
+---
+
+### Priority 4: Generic Inference & Constraints (2 tests) ⚪
+**Tests**:
+- `test_constraint_satisfaction_multiple_candidates`
+- `test_resolve_multiple_lower_bounds_union`
+
+**Context**: Most complex, tackle after property access is stabilized
+
+---
+
+### Priority 5: Weak Types & Others (9 tests) ⚪
+**Tests**: Pre-existing weak type failures, conditional types, keyof, narrowing, etc.
+
+**Strategy**: Leave for last unless blocking other progress
+
 ## Current Status (22 Failing Tests Remaining)
 
 ### Fixed: Generic Inference with Callback Functions (commit 28888e435)

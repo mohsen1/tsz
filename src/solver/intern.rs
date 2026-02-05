@@ -1181,6 +1181,13 @@ impl TypeInterner {
         if self.intersection_has_disjoint_object_literals(&flat) {
             return TypeId::NEVER;
         }
+        // Check if null/undefined intersects with any object type
+        // null & object = never, undefined & object = never
+        // Note: This is different from branded types like string & { __brand: T }
+        // which are valid, but null/undefined are ALWAYS disjoint from object types
+        if self.intersection_has_null_undefined_with_object(&flat) {
+            return TypeId::NEVER;
+        }
 
         // Distributivity: A & (B | C) → (A & B) | (A & C)
         // This enables better normalization and is required for soundness
@@ -1541,6 +1548,54 @@ impl TypeInterner {
         // TypeScript allows branded types like `string & { __brand: "UserId" }`.
         // This pattern is used for nominal typing and should NOT reduce to never.
         // The check was removed because it incorrectly broke valid branded types.
+
+        false
+    }
+
+    /// Check if null or undefined intersects with any object type.
+    ///
+    /// In TypeScript, `null & object` and `undefined & object` reduce to `never`
+    /// because null/undefined are disjoint from all object types.
+    ///
+    /// This is different from branded types like `string & { __brand: "UserId" }`
+    /// which are valid and should NOT reduce to never.
+    fn intersection_has_null_undefined_with_object(&self, members: &[TypeId]) -> bool {
+        let mut has_null_or_undefined = false;
+        let mut has_object_type = false;
+
+        for &member in members {
+            // Check for null or undefined
+            if member == TypeId::NULL || member == TypeId::UNDEFINED || member == TypeId::VOID {
+                has_null_or_undefined = true;
+            } else {
+                // Check if this is an object type (not empty object)
+                match self.lookup(member) {
+                    Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                        // Empty objects {} do NOT count - `null & {}` is valid in some contexts
+                        let shape = self.object_shape(shape_id);
+                        if !shape.properties.is_empty()
+                            || shape.string_index.is_some()
+                            || shape.number_index.is_some()
+                        {
+                            has_object_type = true;
+                        }
+                    }
+                    // Array, tuple, function, callable are all object types that are disjoint from null/undefined
+                    Some(TypeKey::Array(_))
+                    | Some(TypeKey::Tuple(_))
+                    | Some(TypeKey::Function(_))
+                    | Some(TypeKey::Callable(_)) => {
+                        has_object_type = true;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Early exit: if we have both, the intersection is never
+            if has_null_or_undefined && has_object_type {
+                return true;
+            }
+        }
 
         false
     }
