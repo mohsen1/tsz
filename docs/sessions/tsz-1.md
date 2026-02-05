@@ -1410,14 +1410,21 @@ No fix needed. The interning system correctly distinguishes objects based on bot
   visitor.rs
 - Added is_type_reference() updates to handle Recursive alongside Lazy
 
-**Next Steps** (from Gemini Question 1):
-1. Implement Canonicalizer struct in src/solver/intern.rs
-   - Stack-based cycle detection
-   - canonicalize() method that transforms Lazy -> Recursive
-2. Add intern_canonical() entry point (separate from hot path intern())
-3. Add canonical_cache: DashMap<TypeId, TypeId> to TypeInterner
-4. Implement get_def_kind() in TypeResolver (distinguish TypeAlias vs Class)
-5. Ask Gemini Question 2 (Pro) for implementation review
+**Next Steps** (from Gemini Redefinition - 2025-02-05):
+1. ✅ COMPLETED: TypeKey::Recursive variant foundation
+2. **NEXT**: Implement get_def_kind() in TypeResolver (Task #34)
+   - Add DefKind enum to distinguish TypeAlias vs Class/Interface
+   - File: src/solver/db.rs
+   - Why: Canonicalizer only unrolls TypeAlias, preserves nominal types
+3. **THEN**: Ask Gemini Question 1 for Canonicalizer approach validation
+4. **THEN**: Implement Canonicalizer struct in src/solver/intern.rs
+5. **FINALLY**: Ask Gemini Question 2 (Pro) for implementation review
+
+**Gemini Redefinition Notes**:
+- Task #32 is absolute highest priority (Final Boss of North Star)
+- Must follow MANDATORY GEMINI CONSULTATION WORKFLOW for Canonicalizer
+- Conformance testing deferred until Recursive variant is used by compiler
+- Template provided for Gemini Question 1 in session notes
 
 **Gemini Guidance Summary**:
 
