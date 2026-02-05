@@ -1013,36 +1013,104 @@ Tuple subtyping is **ALREADY FULLY IMPLEMENTED** in `src/solver/subtype_rules/tu
 
 ---
 
-### Task #30: Template Literal Type Subtyping
-**Status**: 📝 Planned
-**Priority**: Medium (Structural Operation)
-**Estimated Impact**: +1-2% conformance
+## Session Redefined (2025-02-05) - Focus on North Star Optimization
 
-**Description**:
-Implement template literal type matching and overlap detection:
-- **Matching**: `` `a${string}` `` <: `string`
-- **Overlap**: `` `a${number}` `` and `` `b${number}` `` have zero overlap
-- **Inference**: Matching `` `customer_${infer ID}` `` against literals
+**Strategic Shift**: Stop looking for "missing" features and start looking for "un-optimized" structural logic.
 
-**Why Important**:
-- Used heavily in modern TypeScript libraries (Hono, Prisma)
-- Pure structural operation (Judge layer responsibility)
-- Enables advanced type-level programming
+**Key Insight**: The "Judge" is currently **correct but fat**—it knows the rules but keeps too much redundant information in the type graph. The mission is to make the Judge **lean and canonical** to achieve O(1) type equality.
+
+### Redefined Priority List
+
+#### Priority 1: Object Reduction in Simplification (Task #31) 🚧 CRITICAL
+**Why**: This is the most critical "North Star" task.
+
+**The Problem**:
+- Currently `A | B` only simplifies if they are literals or primitives
+- Example: `{a: 1} | {a: 1, b: 2}` remains bloated
+- This prevents O(1) equality because semantically identical unions have different TypeIds
+
+**The Challenge**:
+- Previously found "too complex for the interner layer"
+- Shallow checks were either too restrictive (break valid cases) or too permissive (incorrect reductions)
+
+**Redefined Approach**:
+1. Implement **Shallow Structural Subtype Check** in `src/solver/intern.rs`
+2. Identify obvious object subtyping without triggering full TypeEvaluator recursion
+3. Focus on non-generic, non-lazy object shapes first
+4. Goal: Ensure `{a: number} & {b: number}` and `{b: number} & {a: number}` result in same canonical form
+
+**North Star Impact**: Critical for O(1) type equality via canonical forms
 
 ---
 
-### Task #31: Object Reduction in Simplification
-**Status**: 📝 Planned
-**Priority**: High (North Star Metric)
-**Estimated Impact**: Performance + correctness
+#### Priority 2: Template Literal Type Subtyping (Task #30)
+**Why**: Significant gap in the structural "Judge" layer. Modern TypeScript relies heavily on this.
+
+**Status Check Needed**:
+- Look at `src/solver/subtype.rs`
+- If `TypeKey::TemplateLiteral` is handled via conservative `true` or is missing, the Judge is "guessing"
+
+**Implementation Goals**:
+1. Matching logic: `` `a${string}` `` should be supertype of `"abc"`
+2. Disjointness: `` `a${number}` `` and `` `b${number}` `` have no overlap (for Task #17)
+3. Handle intrinsic string types (`Uppercase<T>`, etc.)
+
+**Conformance Impact**: High for modern TypeScript patterns
+
+---
+
+#### Priority 3: Structural Conformance Gap Analysis
+**Why**: Use the conformance suite to find where the Judge is failing.
+
+**Action**: Run tests in `TypeScript/tests/cases/conformance/types/typeRelationships/`
+
+**Focus Areas**:
+- `subtypesAndSuperTypes/`
+- `recursiveTypes/`
+- `intersections/`
+- `unions/`
+
+**Goal**: Identify cases where tsc says `A <: B` but tsz says `false` (or vice versa) due to **structural mismatch**, not nominal quirks (tsz-4).
+
+---
+
+#### Priority 4: Recursive Type Canonicalization (Task #32)
+**Why**: North Star requires recursive types like `interface T { self: T }` are interned with structural identity.
+
+**The Problem**:
+- If two different files define same recursive structure, do they get same TypeId?
+- If TypeInterner only uses DefId (nominal), it's failing structural "Judge" requirement
+
+**Goal**: Verify if TypeInterner handles "Graph Isomorphism" for recursive types
+
+---
+
+### Updated Task Breakdown
+
+| Task | Title | Status | Priority |
+|:---|:---|:---|:---|
+| **#31** | **Object Reduction** | 🚧 **NEXT** | **CRITICAL** (North Star) |
+| **#30** | **Template Literals** | 📝 Planned | High (Conformance) |
+| **#32** | **Graph Isomorphism** | 📝 Planned | High (Structural Soundness) |
+| **#33** | **Intersection Order** | 📝 Planned | Medium (Canonical Forms) |
+
+---
+
+### Task #31: Object Reduction in Simplification 🚧 IN PROGRESS
+**Status**: 🚧 High Priority - Next Task
+**Estimated Impact**: Critical for North Star (O(1) type equality)
 
 **Description**:
-Re-enable object reduction in Task #26 simplification (currently disabled):
-- Goal: `{a: 1} | {a: 1, b: 2}` → `{a: 1, b: 2}` (keep supertype in union)
-- Implement "Safe Structural Reduction" for non-generic objects
-- Avoid issues with generics and recursion
+Enable object reduction in union/intersection simplification to achieve canonical forms.
 
-**Why Critical for North Star**:
-- O(1) type equality requires canonical forms
-- Without object reduction, unions bloat and slow down the compiler
-- Major performance win for type-heavy codebases
+**Current State**:
+- Simplification infrastructure exists (Task #26)
+- Object reduction DISABLED due to complexity with generics
+- Task #26 documentation: "Object reduction proved too complex for the interner layer"
+
+**Implementation Plan** (Two-Question Rule):
+1. ✅ Ask Gemini Question 1: How to implement shallow structural subtype check?
+2. ⏭️ Implement in `src/solver/intern.rs`
+3. ⏭️ Ask Gemini Question 2: Review the implementation
+4. ⏭️ Enable object reduction in simplification methods
+5. ⏭️ Test and verify O(1) equality improvements
