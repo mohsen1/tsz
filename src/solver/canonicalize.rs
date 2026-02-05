@@ -261,6 +261,52 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
             TypeKey::Callable(shape_id) => self.canonicalize_callable(shape_id),
 
+            // Task #39: Mapped type canonicalization for alpha-equivalence
+            // When comparing mapped types over type parameters (deferred), we need
+            // to canonicalize the constraint, template, and name_type to achieve
+            // structural identity. The type_param name is handled via param_stack.
+            TypeKey::Mapped(mapped_id) => {
+                let mapped = self.interner.mapped_type(mapped_id);
+
+                // 1. Canonicalize the constraint FIRST (Outside scope)
+                // The iteration variable K is NOT visible in its own constraint
+                let c_constraint = self.canonicalize(mapped.constraint);
+
+                // 2. Enter new scope for the iteration variable (alpha-equivalence)
+                self.param_stack.push(vec![mapped.type_param.name]);
+
+                // 3. Canonicalize the template type (Inside scope - K is visible here)
+                let c_template = self.canonicalize(mapped.template);
+
+                // 4. Canonicalize name_type if present (Inside scope - as clause sees K)
+                let c_name_type = mapped.name_type.map(|t| self.canonicalize(t));
+
+                // 5. Pop scope
+                self.param_stack.pop();
+
+                // 6. Normalize the TypeParamInfo name for alpha-equivalence
+                // We must erase the original name ("K", "P", etc.) so that
+                // { [K in T]: K } and { [P in T]: P } hash to the same value.
+                // Since we use De Bruijn indices (BoundParameter) in the body,
+                // this name is never looked up, only used for hashing identity.
+                let mut c_type_param = mapped.type_param.clone();
+                c_type_param.name = self.interner.intern_string("");
+                // Also canonicalize constraint/default inside TypeParamInfo if present
+                c_type_param.constraint = c_type_param.constraint.map(|c| self.canonicalize(c));
+                c_type_param.default = c_type_param.default.map(|d| self.canonicalize(d));
+
+                let c_mapped = crate::solver::types::MappedType {
+                    type_param: c_type_param,
+                    constraint: c_constraint,
+                    template: c_template,
+                    name_type: c_name_type,
+                    readonly_modifier: mapped.readonly_modifier,
+                    optional_modifier: mapped.optional_modifier,
+                };
+
+                self.interner.mapped(c_mapped)
+            }
+
             // Primitives and literals are already canonical
             TypeKey::Intrinsic(_) | TypeKey::Literal(_) | TypeKey::Error => type_id,
 
