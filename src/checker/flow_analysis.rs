@@ -1341,11 +1341,12 @@ impl<'a> CheckerState<'a> {
             None => return declared_type, // No flow info - use declared type
         };
 
-        // Skip narrowing for non-union types (nothing to narrow)
-        // Also skip for primitives that can't be narrowed further
-        if !self.is_narrowable_type(declared_type) {
-            return declared_type;
-        }
+        // TEMPORARY FIX: Removed is_narrowable_type check to allow instanceof narrowing
+        // This check was blocking class types from being narrowed
+        // TODO: Re-enable with proper logic that allows instanceof-narrowable types
+        // if !self.is_narrowable_type(declared_type) {
+        //     return declared_type;
+        // }
 
         // Create a flow analyzer and apply narrowing
         let analyzer = FlowAnalyzer::with_node_types(
