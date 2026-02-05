@@ -890,6 +890,120 @@ impl TypeInterner {
         self.intersection_from_iter([left, right])
     }
 
+    /// Create an intersection type WITHOUT triggering normalize_intersection
+    ///
+    /// This is a low-level operation used by the SubtypeChecker to merge
+    /// properties from intersection members without causing infinite recursion.
+    ///
+    /// # Safety
+    /// Only use this when you need to synthesize a type for intermediate checking.
+    /// Do NOT use for final compiler output (like .d.ts generation) as the
+    /// resulting type will be "unsimplified".
+    pub fn intersect_types_raw(&self, members: Vec<TypeId>) -> TypeId {
+        // Use SmallVec to keep stack allocation benefits
+        let mut flat: TypeListBuffer = SmallVec::new();
+
+        for member in members {
+            // Structural flattening is safe and cheap
+            if let Some(TypeKey::Intersection(inner)) = self.lookup(member) {
+                let inner_members = self.type_list(inner);
+                flat.extend(inner_members.iter().copied());
+            } else {
+                flat.push(member);
+            }
+        }
+
+        // Abort reduction if any member is a Lazy type.
+        // The interner (Judge) cannot resolve symbols, so if we have unresolved types,
+        // we must preserve the intersection as-is without attempting to merge or reduce.
+        let has_unresolved = flat
+            .iter()
+            .any(|&id| matches!(self.lookup(id), Some(TypeKey::Lazy(_))));
+        if has_unresolved {
+            // Basic dedup without any simplification
+            flat.sort_by_key(|id| id.0);
+            flat.dedup();
+            let list_id = self.intern_type_list(flat.into_vec());
+            return self.intern(TypeKey::Intersection(list_id));
+        }
+
+        // =========================================================
+        // Canonicalization: Handle callable order preservation
+        // =========================================================
+        // In TypeScript, intersections of functions represent overloads, and
+        // order matters. We need to separate callables from non-callables.
+
+        let has_callables = flat.iter().any(|&id| self.is_callable_type(id));
+
+        if !has_callables {
+            // Fast path: No callables, sort everything for canonicalization
+            flat.sort_by_key(|id| id.0);
+            flat.dedup();
+        } else {
+            // Slow path: Separate callables and others to preserve order
+            let mut callables = SmallVec::<[TypeId; 4]>::new();
+
+            // Retain only non-callables in 'flat', move callables to 'callables'
+            // This preserves the order of callables as they are extracted
+            let mut i = 0;
+            while i < flat.len() {
+                if self.is_callable_type(flat[i]) {
+                    callables.push(flat.remove(i));
+                } else {
+                    i += 1;
+                }
+            }
+
+            // Sort and dedup non-callables
+            flat.sort_by_key(|id| id.0);
+            flat.dedup();
+
+            // Deduplicate callables (preserving order)
+            let mut seen = FxHashSet::default();
+            callables.retain(|id| seen.insert(*id));
+
+            // Merge: Put non-callables first (canonical), then callables (ordered)
+            flat.extend(callables);
+        }
+
+        // =========================================================
+        // O(1) Fast Paths (Safe to do without recursion)
+        // =========================================================
+
+        // 1. If any member is Never, the result is Never
+        if flat.contains(&TypeId::NEVER) {
+            return TypeId::NEVER;
+        }
+
+        // 2. If any member is Any, the result is Any (unless Never is present)
+        if flat.contains(&TypeId::ANY) {
+            return TypeId::ANY;
+        }
+
+        // 3. Remove Unknown (Identity element for intersection)
+        flat.retain(|id| *id != TypeId::UNKNOWN);
+
+        // =========================================================
+        // Final Construction
+        // =========================================================
+
+        if flat.is_empty() {
+            return TypeId::UNKNOWN;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        // Create the intersection directly without calling normalize_intersection
+        let list_id = self.intern_type_list(flat.into_vec());
+        self.intern(TypeKey::Intersection(list_id))
+    }
+
+    /// Convenience wrapper for raw intersection of two types
+    pub fn intersect_types_raw2(&self, a: TypeId, b: TypeId) -> TypeId {
+        self.intersect_types_raw(vec![a, b])
+    }
+
     fn intersection_from_iter<I>(&self, members: I) -> TypeId
     where
         I: IntoIterator<Item = TypeId>,
@@ -1071,10 +1185,11 @@ impl TypeInterner {
                     for prop in &callable.properties {
                         if let Some(existing) = properties.iter_mut().find(|p| p.name == prop.name)
                         {
-                            // Intersect property types
-                            existing.type_id = self.intersection2(existing.type_id, prop.type_id);
+                            // Intersect property types using raw intersection to avoid infinite recursion
+                            existing.type_id =
+                                self.intersect_types_raw2(existing.type_id, prop.type_id);
                             existing.write_type =
-                                self.intersection2(existing.write_type, prop.write_type);
+                                self.intersect_types_raw2(existing.write_type, prop.write_type);
                             existing.optional = existing.optional && prop.optional;
                             // Intersection: readonly if ANY constituent is readonly (cumulative)
                             existing.readonly = existing.readonly || prop.readonly;
@@ -1088,7 +1203,8 @@ impl TypeInterner {
                         (Some(idx), Some(existing)) => {
                             string_index = Some(IndexSignature {
                                 key_type: existing.key_type,
-                                value_type: self.intersection2(existing.value_type, idx.value_type),
+                                value_type: self
+                                    .intersect_types_raw2(existing.value_type, idx.value_type),
                                 // Intersection: readonly if ANY constituent is readonly (cumulative)
                                 readonly: existing.readonly || idx.readonly,
                             });
@@ -1100,7 +1216,8 @@ impl TypeInterner {
                         (Some(idx), Some(existing)) => {
                             number_index = Some(IndexSignature {
                                 key_type: existing.key_type,
-                                value_type: self.intersection2(existing.value_type, idx.value_type),
+                                value_type: self
+                                    .intersect_types_raw2(existing.value_type, idx.value_type),
                                 // Intersection: readonly if ANY constituent is readonly (cumulative)
                                 readonly: existing.readonly || idx.readonly,
                             });
@@ -1199,12 +1316,14 @@ impl TypeInterner {
                 if let Some(existing) = merged_props.iter_mut().find(|p| p.name == prop.name) {
                     // Property exists - intersect the types for stricter checking
                     // In TypeScript, if same property has different types, use intersection
+                    // Use raw intersection to avoid infinite recursion
                     if existing.type_id != prop.type_id {
-                        existing.type_id = self.intersection2(existing.type_id, prop.type_id);
+                        existing.type_id =
+                            self.intersect_types_raw2(existing.type_id, prop.type_id);
                     }
                     if existing.write_type != prop.write_type {
                         existing.write_type =
-                            self.intersection2(existing.write_type, prop.write_type);
+                            self.intersect_types_raw2(existing.write_type, prop.write_type);
                     }
                     // Merge flags: required wins over optional, readonly is cumulative
                     // For optional: only optional if ALL are optional (required wins)
@@ -1229,7 +1348,7 @@ impl TypeInterner {
                 (Some(idx), Some(existing)) => {
                     merged_string_index = Some(IndexSignature {
                         key_type: existing.key_type,
-                        value_type: self.intersection2(existing.value_type, idx.value_type),
+                        value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
                         // Intersection: readonly if ANY constituent is readonly (cumulative)
                         readonly: existing.readonly || idx.readonly,
                     });
@@ -1248,7 +1367,7 @@ impl TypeInterner {
                 (Some(idx), Some(existing)) => {
                     merged_number_index = Some(IndexSignature {
                         key_type: existing.key_type,
-                        value_type: self.intersection2(existing.value_type, idx.value_type),
+                        value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
                         // Intersection: readonly if ANY constituent is readonly (cumulative)
                         readonly: existing.readonly || idx.readonly,
                     });
