@@ -1544,6 +1544,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // Fast-path: Structural identity check (Task #36)
+        // Only run if BOTH are potentially complex to avoid overhead on simple mismatches.
+        // Simple types (Intrinsic, Literal) are handled efficiently by the fall-through logic.
+        if self.is_potentially_structural(source) && self.is_potentially_structural(target) {
+            if self.are_types_structurally_identical(source, target) {
+                return SubtypeResult::True;
+            }
+        }
+
         // Note: Weak type checking is handled by CompatChecker (compat.rs:167-170).
         // Removed redundant check here to avoid double-checking which caused false positives.
 
@@ -3257,6 +3266,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         None
+    }
+
+    /// Check if a type is potentially structural (complex enough to benefit from canonicalization).
+    ///
+    /// Returns true for Lazy, Application, Union, Intersection, Function, Callable, Object types.
+    /// Returns false for simple Intrinsic and Literal types (where TypeId equality suffices).
+    fn is_potentially_structural(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeKey::Intrinsic(_)) | Some(TypeKey::Literal(_)) => false,
+            Some(TypeKey::Error) => false,
+            // All other types (Lazy, Application, Union, Intersection, Function, Callable, Object, etc.)
+            // are potentially structural and benefit from canonicalization
+            Some(_) => true,
+            None => false,
+        }
     }
 
     /// Check if two types are structurally identical using De Bruijn indices for cycles.
