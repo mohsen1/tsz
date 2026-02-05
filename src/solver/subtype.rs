@@ -857,15 +857,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // - Current in_progress check (TypeId-level) fails: T[] ≠ T
         // - DefId-level check catches: (DefId_T, DefId_T) is same pair
         //
+        // CRITICAL: We only apply this check to non-generic types.
+        // If the type is an Application (has type args like Box<string>),
+        // we CANNOT use pure DefId equality because Box<string> ≠ Box<number>
+        // even though both have DefId(Box).
+        //
         // This implements coinductive semantics: assume subtypes, verify consistency.
         // =======================================================================
-        let def_pair = if let (Some(s_def), Some(t_def)) = (
-            lazy_def_id(self.interner, source)
-                .or_else(|| enum_components(self.interner, source).map(|(def_id, _)| def_id)),
-            lazy_def_id(self.interner, target)
-                .or_else(|| enum_components(self.interner, target).map(|(def_id, _)| def_id)),
-        ) {
-            Some((s_def, t_def))
+
+        // Helper to check if it's safe to use DefId cycle detection
+        // Only safe if the type is NOT an Application (no generic arguments)
+        let is_safe_for_defid_check = |type_id: TypeId| -> bool {
+            // Check if it's an Application. If so, UNSAFE to check purely by DefId.
+            application_id(self.interner, type_id).is_none()
+        };
+
+        let def_pair = if is_safe_for_defid_check(source) && is_safe_for_defid_check(target) {
+            if let (Some(s_def), Some(t_def)) = (
+                lazy_def_id(self.interner, source)
+                    .or_else(|| enum_components(self.interner, source).map(|(def_id, _)| def_id)),
+                lazy_def_id(self.interner, target)
+                    .or_else(|| enum_components(self.interner, target).map(|(def_id, _)| def_id)),
+            ) {
+                Some((s_def, t_def))
+            } else {
+                None
+            }
         } else {
             None
         };

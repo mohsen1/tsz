@@ -424,14 +424,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // This catches expansive recursion in type aliases like `type T<X> = T<Box<X>>`
             // that produce new TypeIds on each evaluation, bypassing the `visiting` set.
             //
-            // We check if we're already visiting this DefId. If so, we return early
-            // to prevent infinite expansion. This implements coinductive semantics:
-            // assume the type expands consistently, don't expand infinitely.
+            // We check if we're already visiting this DefId. If so, we return ERROR
+            // to prevent infinite expansion. This matches TypeScript behavior for
+            // "Type instantiation is excessively deep and possibly infinite".
             // =======================================================================
             if self.visiting_defs.contains(&def_id) {
-                // We're in a cycle at the DefId level - return the application as-is
-                // This prevents infinite expansion of recursive type aliases
-                return self.interner.application(app.base, app.args.clone());
+                // CRITICAL: Do NOT return the application.
+                // Return ERROR to stop the solver from trying to expand it forever.
+                // This prevents infinite loops where:
+                // 1. evaluate returns App (unevaluated)
+                // 2. check_subtype sees no change, calls check_subtype_inner
+                // 3. check_subtype_inner tries to evaluate again -> infinite loop
+                self.depth_exceeded = true;
+                return TypeId::ERROR;
             }
 
             // Mark this DefId as being visited
