@@ -352,8 +352,14 @@ pub mod diagnostic_codes {
     pub const ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS: u32 = 1094;
     pub const SETTER_CANNOT_HAVE_RETURN_TYPE: u32 = 1095;
     pub const TYPE_PARAMETER_LIST_CANNOT_BE_EMPTY: u32 = 1098;
+    pub const CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION: u32 = 1104; // A 'continue' statement can only be used within an enclosing iteration statement.
+    pub const BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION: u32 = 1105; // A 'break' statement can only be used within an enclosing iteration statement.
+    pub const JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY: u32 = 1107; // Jump target cannot cross function boundary.
     pub const EXPRESSION_EXPECTED: u32 = 1109;
     pub const TYPE_EXPECTED: u32 = 1110;
+    pub const CONTINUE_CAN_ONLY_TARGET_LABEL_OF_ENCLOSING_ITERATION: u32 = 1115; // A 'continue' statement can only target a label of an enclosing iteration statement.
+    pub const CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_LABEL_OF_ENCLOSING_ITERATION: u32 = 1116; // A 'continue' statement can only jump to a label of an enclosing iteration statement. (label not found)
+    pub const BREAK_STATEMENT_CAN_ONLY_JUMP_TO_LABEL_OF_ENCLOSING_STATEMENT: u32 = 1116; // A 'break' statement can only jump to a label of an enclosing statement.
     pub const OBJECT_LITERAL_DUPLICATE_PROPERTY: u32 = 1117; // An object literal cannot have multiple properties with the same name.
     pub const INVALID_CHARACTER: u32 = 1127; // Invalid character.
     pub const DECLARATION_EXPECTED: u32 = 1146;
@@ -365,6 +371,7 @@ pub mod diagnostic_codes {
     pub const VARIABLE_DECLARATION_EXPECTED: u32 = 1134;
     pub const PROPERTY_OR_SIGNATURE_EXPECTED: u32 = 1131;
     pub const ENUM_MEMBER_EXPECTED: u32 = 1132;
+    pub const ENUM_MEMBER_NAME_MUST_BE_FOLLOWED_BY: u32 = 1357; // An enum member name must be followed by a ',', '=', or '}'.
     pub const STATEMENT_EXPECTED: u32 = 1129;
     pub const CATCH_OR_FINALLY_EXPECTED: u32 = 1472;
     pub const DECORATORS_NOT_VALID_HERE: u32 = 1206;
@@ -377,6 +384,8 @@ pub mod diagnostic_codes {
     pub const UNEXPECTED_TOKEN_CLASS_MEMBER: u32 = 1068; // Unexpected token. A constructor, method, accessor, or property was expected.
     pub const DECLARATION_OR_STATEMENT_EXPECTED: u32 = 1128; // Declaration or statement expected.
     pub const VAR_DECLARATION_NOT_ALLOWED: u32 = 1440; // Variable declaration not allowed at this location.
+    pub const EXTENDS_LIST_CANNOT_BE_EMPTY: u32 = 1097; // 'extends' list cannot be empty.
+    pub const OBJECT_MEMBER_CANNOT_BE_OPTIONAL: u32 = 1162; // An object member cannot be declared optional.
     pub const YIELD_EXPRESSION_ONLY_IN_GENERATOR: u32 = 1163; // A 'yield' expression is only allowed in a generator body.
     pub const AWAIT_IN_STATIC_BLOCK: u32 = 18037; // 'await' expression cannot be used inside a class static block.
     pub const YIELD_IN_STATIC_BLOCK: u32 = 18041; // 'yield' expression cannot be used inside a class static block. (Note: TSC uses same code for return)

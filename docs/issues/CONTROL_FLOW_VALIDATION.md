@@ -1,111 +1,148 @@
 # Control Flow Statement Validation
 
-**Status**: NOT IMPLEMENTED
+**Status**: FIXED
 **Discovered**: 2026-02-05
 **Component**: Checker / Grammar Checker
-**Conformance Impact**: ~7 parser tests fail due to missing validation
+**Last Updated**: 2026-02-05
 
-## Problem
+## Summary
 
-tsz does not validate that `break` and `continue` statements appear in valid contexts. These errors are produced by TSC's grammar checker (part of the binder).
+All control flow validation errors are now implemented:
+- Break/Continue statement tests: 27/28 passing (96.4%)
+- The 1 skipped test has no TSC cache entry
 
-## Missing Error Codes
+## What's Fixed
 
-| Code | Message | Description |
-|------|---------|-------------|
-| TS1104 | A 'continue' statement can only be used within an enclosing iteration statement | `continue;` at top level or in switch |
-| TS1105 | A 'break' statement can only be used within an enclosing iteration statement | `break;` at top level (without loop/switch) |
-| TS1107 | Jump target cannot cross function boundary | `break label;` where label is in parent function |
-| TS1116 | A 'continue' statement can only jump to a label of an enclosing iteration statement | `continue label;` where label is not on a loop |
+| Code | Message | Status |
+|------|---------|--------|
+| TS1104 | A 'continue' statement can only be used within an enclosing iteration statement | FIXED |
+| TS1105 | A 'break' statement can only be used within an enclosing iteration statement | FIXED |
+| TS1107 | Jump target cannot cross function boundary | FIXED |
+| TS1115 | A 'continue' statement can only target a label of an enclosing iteration statement | FIXED |
+| TS1116 | A 'break' statement can only jump to a label of an enclosing statement | FIXED |
+
+## Implementation
+
+### Context Tracking
+
+Added to `CheckerContext` (`src/checker/context.rs`):
+- `iteration_depth: u32` - Depth of nested iteration statements
+- `switch_depth: u32` - Depth of nested switch statements
+- `function_depth: u32` - Depth of nested functions
+- `label_stack: Vec<LabelInfo>` - Stack of labels with their types and function depths
+- `had_outer_loop: bool` - Whether there was a loop in an outer function scope
+
+### Label Info
+
+```rust
+pub struct LabelInfo {
+    pub name: String,           // The label name
+    pub is_iteration: bool,     // Whether label wraps an iteration statement
+    pub function_depth: u32,    // Function depth when label was defined
+}
+```
+
+### Validation Logic
+
+**Break Statement** (`check_break_statement`):
+- Labeled break:
+  - If label not found: TS1116
+  - If label crosses function boundary: TS1107
+  - Otherwise: valid
+- Unlabeled break:
+  - If not in loop/switch AND in function with outer loop: TS1107
+  - If not in loop/switch: TS1105
+  - Otherwise: valid
+
+**Continue Statement** (`check_continue_statement`):
+- Labeled continue:
+  - If label not found: TS1115
+  - If label crosses function boundary: TS1107
+  - If label not on iteration statement: TS1115
+  - Otherwise: valid
+- Unlabeled continue:
+  - If not in loop AND in function with outer loop: TS1107
+  - If not in loop: TS1104
+  - Otherwise: valid
+
+### Nested Label Handling
+
+The implementation correctly handles nested labels:
+```typescript
+target1:
+target2:
+while (true) {
+  continue target1;  // Valid - target1 transitively wraps iteration
+}
+```
+
+The `is_iteration_or_nested_iteration` function recursively checks through nested labels to determine if a label ultimately wraps an iteration statement.
 
 ## Examples
 
 ### Example 1: Break at top level
-
 ```typescript
-// parser_breakNotInIterationOrSwitchStatement1.ts
-break;
+break;  // TS1105 ✓
 ```
 
-**Expected**: TS1105 "A 'break' statement can only be used within an enclosing iteration statement"
-**Actual**: No error
-
-### Example 2: Continue at top level
-
+### Example 2: Unlabeled break in function inside loop
 ```typescript
-// parser_continueNotInIterationStatement1.ts
-continue;
-```
-
-**Expected**: TS1104 "A 'continue' statement can only be used within an enclosing iteration statement"
-**Actual**: No error
-
-### Example 3: Break crossing function boundary
-
-```typescript
-// parser_breakNotInIterationOrSwitchStatement2.ts
 while (true) {
   function f() {
-    break;  // Error: crosses function boundary
+    break;  // TS1107 ✓ (crossing function boundary)
   }
 }
 ```
 
-**Expected**: TS1105 (break is not in an iteration statement from its perspective)
-**Actual**: No error
-
-### Example 4: Continue in switch
-
+### Example 3: Labeled break crossing function boundary
 ```typescript
-// parser_continueNotInIterationStatement3.ts
-switch (0) {
-  default:
-    continue;  // Error: continue not valid in switch
-}
-```
-
-**Expected**: TS1104 "A 'continue' statement can only be used within an enclosing iteration statement"
-**Actual**: No error
-
-### Example 5: Break target crossing function boundary
-
-```typescript
-// parser_breakTarget5.ts
 target:
 while (true) {
   function f() {
     while (true) {
-      break target;  // Error: label is in parent function
+      break target;  // TS1107 ✓
     }
   }
 }
 ```
 
-**Expected**: TS1107 "Jump target cannot cross function boundary"
-**Actual**: No error
+### Example 4: Break with non-existent label
+```typescript
+while (true) {
+  break target;  // TS1116 ✓ (target doesn't exist)
+}
+```
 
-## Implementation Notes
+### Example 5: Continue with non-iteration label
+```typescript
+target:
+  continue target;  // TS1115 ✓ (target is not on a loop)
+```
 
-In TSC, these checks are performed by the grammar checker (`checkGrammarStatementInAmbientContext`), which is part of the binder phase. The checker tracks:
-1. Whether we're inside an iteration statement (for/while/do-while)
-2. Whether we're inside a switch statement
-3. Available labels and their types (iteration vs non-iteration)
-4. Function boundaries for label accessibility
-
-## Recommended Approach
-
-1. Add context tracking during AST visiting in the checker
-2. Track iteration context, switch context, and label context
-3. Emit appropriate errors when break/continue appear in invalid contexts
+### Example 6: Continue with non-existent label
+```typescript
+while (true) {
+  continue target;  // TS1115 ✓
+}
+```
 
 ## Related Files
 
-- TSC: `src/compiler/checker.ts` (checkBreakOrContinueStatement)
-- tsz: `src/checker/state_checking_*.rs` (needs implementation)
+- `src/checker/context.rs` - Context fields (iteration_depth, switch_depth, function_depth, label_stack, had_outer_loop)
+- `src/checker/statements.rs` - StatementCheckCallbacks trait and LABELED_STATEMENT handling
+- `src/checker/state_checking_members.rs` - check_break_statement, check_continue_statement implementations
+- `src/checker/function_type.rs` - Function body context reset
+- `src/checker/types/diagnostics.rs` - Error code constants
 
 ## Testing
 
+Conformance tests:
 ```bash
-./scripts/conformance.sh run --filter "BreakStatements" --verbose
-./scripts/conformance.sh run --filter "ContinueStatements" --verbose
+./.target/release/tsz-conformance --test-dir ./TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/BreakStatements --cache-file ./tsc-cache-full.json --tsz-binary ./.target/release/tsz
+
+./.target/release/tsz-conformance --test-dir ./TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/ContinueStatements --cache-file ./tsc-cache-full.json --tsz-binary ./.target/release/tsz
 ```
+
+Results:
+- BreakStatements: 12/13 passed (1 skipped - no cache)
+- ContinueStatements: 15/15 passed (100%)

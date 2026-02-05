@@ -344,3 +344,63 @@ fn test_zero_copy_vs_allocating() {
     assert_eq!(allocated, zero_copy);
     assert_eq!(zero_copy, "identifier");
 }
+
+#[test]
+fn test_unicode_escape_mid_identifier() {
+    // Test unicode escape mid-identifier: C\u0032 should scan as "C2"
+    let mut scanner = ScannerState::new("C\\u0032".to_string(), true);
+    assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+    assert_eq!(scanner.get_token_value_ref(), "C2");
+    assert!(has_flag(
+        scanner.get_token_flags(),
+        TokenFlags::UnicodeEscape
+    ));
+}
+
+#[test]
+fn test_unicode_escape_mid_identifier_multiple() {
+    // Multiple unicode escapes: ab\u0063\u0064ef should scan as "abcdef"
+    let mut scanner = ScannerState::new("ab\\u0063\\u0064ef".to_string(), true);
+    assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+    assert_eq!(scanner.get_token_value_ref(), "abcdef");
+    assert!(has_flag(
+        scanner.get_token_flags(),
+        TokenFlags::UnicodeEscape
+    ));
+}
+
+#[test]
+fn test_unicode_escape_mid_identifier_extended() {
+    // Extended unicode escape: x\u{61} should scan as "xa"
+    let mut scanner = ScannerState::new("x\\u{61}".to_string(), true);
+    assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+    assert_eq!(scanner.get_token_value_ref(), "xa");
+    assert!(has_flag(
+        scanner.get_token_flags(),
+        TokenFlags::UnicodeEscape
+    ));
+}
+
+#[test]
+fn test_unicode_escape_mid_identifier_digit() {
+    // Unicode escape producing digit: foo\u0030 should scan as "foo0" (\u0030 is '0')
+    let mut scanner = ScannerState::new("foo\\u0030".to_string(), true);
+    assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+    assert_eq!(scanner.get_token_value_ref(), "foo0");
+    assert!(has_flag(
+        scanner.get_token_flags(),
+        TokenFlags::UnicodeEscape
+    ));
+}
+
+#[test]
+fn test_unicode_escape_not_identifier_part() {
+    // Unicode escape that is NOT an identifier part stops the identifier
+    // \u002B is '+' which is not valid in identifiers
+    // So "foo\u002B" should scan "foo" then stop
+    let mut scanner = ScannerState::new("foo\\u002B".to_string(), true);
+    assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+    assert_eq!(scanner.get_token_value_ref(), "foo");
+    // Next should be an invalid character (the backslash)
+    // The remaining "\u002B" is not consumed as part of the identifier
+}
