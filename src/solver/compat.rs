@@ -123,6 +123,20 @@ impl<'a, R: TypeResolver> TypeVisitor for ShapeExtractor<'a, R> {
         None
     }
 
+    // TSZ-4: Handle Intersection types for nominal checking
+    // For private brands, we need to find object shapes within the intersection
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let member_list = self.db.type_list(crate::solver::types::TypeListId(list_id));
+        // For nominal checking, iterate and return the first valid object shape found
+        // This ensures we check the private/protected members of constituent types
+        for member in member_list.iter() {
+            if let Some(shape) = self.visit_type(self.db, *member) {
+                return Some(shape);
+            }
+        }
+        None
+    }
+
     fn default_output() -> Self::Output {
         None
     }
