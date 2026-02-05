@@ -11,12 +11,12 @@ tsz's parser error recovery produces different (usually more) errors than TSC wh
 
 ## Conformance Stats (Updated 2026-02-05)
 
-- Parser tests: 52.9% pass rate (443/838)
+- Parser tests: 52.8% pass rate (448/848)
 - Top error mismatches:
-  - TS2304: missing=35, extra=82 (cannot find name) - mostly lib loading bug
-  - TS1005: missing=29, extra=30 (token expected)
-  - TS1109: missing=11, extra=26 (expression expected)
-  - TS1128: missing=2, extra=26 (declaration expected)
+  - TS2304: missing=35, extra=80 (cannot find name) - mostly lib loading bug
+  - TS1005: missing=25, extra=28 (token expected)
+  - TS1109: missing=11, extra=25 (expression expected)
+  - TS1128: missing=2, extra=25 (declaration expected)
   - TS2552: missing=7, extra=19 (name typo suggestion)
   - TS1100: missing=11, extra=0 (invalid use of eval/arguments)
 
@@ -116,6 +116,18 @@ Fixed `enum E { , }` to emit TS1132 "Enum member expected" instead of generic TS
 Fixed `enum E { a: 1 }` to emit TS1357 "An enum member name must be followed by a ',', '=', or '}'" instead of TS1005.
 
 **File**: `src/parser/state_declarations.rs` - `parse_enum_members()`
+
+### TS1005 for shorthand properties with non-identifiers (commit 569e5bd)
+
+Fixed `{ class }`, `{ "" }`, and `{ 0 }` to emit TS1005 "':' expected" because shorthand properties only work with identifiers.
+
+**File**: `src/parser/state_expressions.rs` - `parse_property_assignment()`
+
+### TS1162 for optional markers in object literals (commit 1277c58)
+
+Fixed `{ name? }` to emit TS1162 "An object member cannot be declared optional" instead of TS1005.
+
+**File**: `src/parser/state_expressions.rs` - `parse_property_assignment()`
 
 ## Recommended Approach
 
