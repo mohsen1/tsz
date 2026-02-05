@@ -1,8 +1,15 @@
 # Session TSZ-4: Nominality & Accessibility (Lawyer Layer)
 
 **Started**: 2026-02-05
-**Status**: 🔄 Active - In Progress (Enum Member Distinction)
-**Focus**: Implement TypeScript's nominal "escape hatches" (Enums, Private/Protected members) and visibility constraints
+**Status**: 🔄 Active - Priority 4 (Literal Type Widening)
+**Focus**: Implement TypeScript's nominal "escape hatches" and type system quirks in the Lawyer layer (CompatChecker)
+
+**Session Scope**:
+- ✅ Priority 1: Enum Nominality (COMPLETE)
+- ✅ Priority 2: Private Brand Checking (COMPLETE)
+- ✅ Priority 3: Constructor Accessibility (COMPLETE)
+- 🔄 Priority 4: Literal Type Widening (IN PROGRESS)
+- 📝 Priority 5: Function Bivariance (PLANNED)
 
 ## Previous Session (COMPLETE)
 
@@ -50,6 +57,32 @@ Fixing these will resolve hundreds of conformance failures.
 
 ### Tasks (Priority Order)
 
+#### Priority 1: Harden Enum Assignability (TS2322) ✅ COMPLETE
+**Status**: Implemented enum nominal assignability with `TypeKey::Enum(def_id, literal_type)` wrapper
+**Files Modified**:
+- `src/solver/compat.rs` - Implemented `enum_assignability_override`
+- `src/solver/type_queries_extended.rs` - Added `Enum` variant to `NamespaceMemberKind`
+- `src/checker/type_checking_queries.rs` - Added enum member lookup
+- `src/checker/state_type_environment.rs` - Fixed `get_enum_identity` using AST parent traversal
+
+**Test Results**: 21/21 tests passing ✅
+
+#### Priority 2: Upgrade Private Brand Checking ✅ COMPLETE
+**Status**: Rewrote `private_brand_assignability_override` to use recursive structure preserving Union/Intersection semantics
+**Files Modified**:
+- `src/solver/compat.rs` - Rewrote with proper recursive handling
+
+**Test Results**: 31/31 tests passing ✅
+
+#### Priority 3: Implement Constructor Accessibility (TS2673 / TS2674 / TS2675) ✅ COMPLETE
+**Status**: Implemented constructor accessibility checks for both `new` expressions and class inheritance
+**Files Modified**:
+- `src/checker/state_checking.rs` - Added TS2675 check in heritage clause validation
+- `src/checker/type_checking_utilities.rs` - Enhanced `class_constructor_access_level` to walk inheritance chain
+- `src/checker/constructor_checker.rs` - Implemented `check_constructor_accessibility_for_new`
+
+**Test Results**: 13/13 tests passing ✅
+
 #### Priority 1: Harden Enum Assignability (TS2322)
 **Current State**: `enum_assignability_override` in `compat.rs` is a `Noop`
 
@@ -74,29 +107,44 @@ Fixing these will resolve hundreds of conformance failures.
 - `src/solver/compat.rs` - Replace string matching with SymbolId comparison
 - `src/checker/symbol_resolver.rs` - Extract symbol flags to check for `private`/`protected`
 
-#### Priority 3: Implement Constructor Accessibility (TS2673 / TS2674)
-**Current State**: `constructor_accessibility_override` is a `Noop`
-
-**Task**: Implement the check that prevents assigning a class with `private` or `protected` constructor
-- Cannot assign class type to `new()` signature if constructor is private/protected
-- Must respect scope (e.g., static methods can access private constructor)
-- Emit `TS2673` or `TS2674` errors
+#### Priority 4: Literal Type Widening (Freshness Counterpart) 🔄 IN PROGRESS
+**Goal**: Ensure that when a "fresh" object literal is assigned to a non-literal type, its internal literal types widen to their base primitives
+- `"a"` widens to `string` when target requires it
+- This is the INVERSE of the freshness work completed in previous session
+- Ensures object literals don't have overly specific types after assignment
+- Critical for preventing false positives in subsequent type checks
 
 **Files**:
-- `src/solver/compat.rs` - Implement the override
-- `src/checker/declarations.rs` - Integrate with class declaration checking
+- `src/solver/compat.rs` - Add widening override in CompatChecker
+- `src/solver/lawyer.rs` - Document widening in QUIRKS section
 
-#### Priority 4: Literal Type Widening (Freshness Counterpart)
-**Task**: Ensure that when a "fresh" object literal is assigned to a non-literal type, its internal literal types widen
-- `"a"` widens to `string` when target requires it
-- This is the INVERSE of the freshness work you just completed
-- Ensures object literals don't have overly specific types after assignment
+**Key Questions** (to ask Gemini):
+1. Is CompatChecker the right place for widening, or should this happen during Type Inference?
+2. How does TypeScript distinguish between `const` widening (which doesn't happen) and `let` widening (which does)?
+3. Are there edge cases with Union types (e.g., `"a" | "b"` widening to `string`)?
+4. What function handles the actual "stripping" of freshness after the first assignment?
+
+#### Priority 5: Function Bivariance (The Method Quirk) 📝 PLANNED
+**Goal**: Implement the rule where methods are checked bivariantly, while function properties are checked contravariantly
+- Methods (`method(arg: T): void`) are bivariant for legacy compatibility
+- Function properties (`prop: (arg: T) => void`) are contravariant (sound)
+- This is a high-impact conformance gap
+
+**Files**:
+- `src/solver/compat.rs` - Add bivariance override in CompatChecker
+- `src/checker/symbol_resolver.rs` - Check SymbolFlags to distinguish methods from properties
+
+**Key Questions** (to ask Gemini):
+1. How do we distinguish methods from function properties in the type system?
+2. Should bivariance apply to all methods or only instance methods?
+3. Are there exceptions (e.g., generic methods, overloaded methods)?
 
 ### Success Criteria
-- [ ] `Enum A` assigned to `Enum B` produces a diagnostic
-- [ ] `Class A { private x }` assigned to `Class B { private x }` produces a diagnostic
-- [ ] `new C()` where `C` has a private constructor produces a diagnostic
+- [x] `Enum A` assigned to `Enum B` produces a diagnostic ✅
+- [x] `Class A { private x }` assigned to `Class B { private x }` produces a diagnostic ✅
+- [x] `new C()` where `C` has a private constructor produces a diagnostic ✅
 - [ ] Literal types in object literals widen correctly after assignment
+- [ ] Methods are bivariant, function properties are contravariant
 - [ ] No regressions in existing tests
 
 ---
