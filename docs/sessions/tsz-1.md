@@ -6,9 +6,9 @@
 
 ## Session Redefined (2025-02-05)
 
-**Strategic Position**: Having completed the **Structural Identity Milestone**, the Judge now possesses a "Canonical Engine" capable of recognizing isomorphic recursive types. The focus now shifts from **Identity** to **Transformation**—implementing the complex type algebra of TypeScript (Conditional and Mapped types) while ensuring they produce canonical results.
+**Strategic Position**: Having completed the **Structural Identity Milestone**, the Judge now possesses a "Canonical Engine" capable of recognizing isomorphic recursive types. The focus shifts to **canonicalization integration** - ensuring that complex type algebra (Conditional, Mapped, Template Literals) produces canonical results that obey structural identity laws.
 
-**Core Responsibility**: Ensure that advanced type evaluations (Conditional, Mapped, Template Literals) are mathematically sound and integrated into the canonical interning system.
+**Key Insight**: The "mechanics" of evaluation are often implemented, but the **structural soundness** and **canonicalization** integration is the Judge's remaining work.
 
 ### Coordination Map
 
@@ -16,7 +16,7 @@
 |:---|:---|:---|:---|
 | **tsz-2** | **Interface** | Thinning the Checker | **Constraint**: Relies on Judge for all `evaluate` and `simplify` calls. |
 | **tsz-4** | **Lawyer** | Nominality & Quirks | **Dependency**: Relies on Judge's variance calculations for generic assignability. |
-| **tsz-1** | **Judge** | **Structural Soundness** | **Foundation**: Provides the Canonicalizer and Evaluation engine. |
+| **tsz-1** | **Judge** | **Structural Soundness** | **Foundation**: Provides the Canonicalizer and ensures canonical results. |
 
 ## Milestone Status: Structural Identity ✅ COMPLETE
 
@@ -28,83 +28,78 @@
 | **#37** | **Deep Structural Simplification** | ✅ **COMPLETE** | Recursive types are simplified during evaluation. |
 | **#11** | **Refined Narrowing** | ✅ **COMPLETE** | Fixed reversed checks and missing resolution in narrowing. |
 | **#25** | **Coinductive Cycle Detection** | ✅ **COMPLETE** | Sound GFP semantics for recursive subtyping. |
+| **#38** | **Conditional Type Evaluation** | ✅ **ALREADY DONE** | Distributivity, infer patterns, tail-recursion already implemented. |
 
 **Recent Fixes**:
-- Fixed a bug in the disjoint unit type fast-path where tuples were incorrectly identified as disjoint (Commit: `34444a290`).
+- Fixed disjoint unit type fast-path bug with labeled tuples (Commit: `34444a290`)
 
 ---
 
-## New Priorities: Advanced Type Algebra
+## New Priorities: Canonicalization Integration
 
-### Priority 1: Task #38 - Conditional Type Evaluation 🚧 ACTIVE
+### Priority 1: Task #39 - Mapped Type Canonicalization 🚧 ACTIVE
 **Status**: 📋 NEXT IMMEDIATE
-**Why**: Conditional types are the "logic" of the type system. They must be distributive and support `infer`.
+**Why**: Mapped types are the "Transformation" engine. The Judge must ensure they produce canonical object shapes.
 
 **Implementation Goals**:
-1. **Distributivity**: `(A | B) extends U ? X : Y` → `(A extends U ? X : Y) | (B extends U ? X : Y)`.
-2. **Inference**: Implement `infer R` support by extending the `InferContext` during evaluation.
-3. **Canonicalization**: Ensure the result of a conditional evaluation is passed through `intern_canonical`.
+1. **Homomorphic Mapping**: `{ [P in keyof T]: T[P] }` should preserve T's structure when P is keyof T
+2. **Modifier Handling**: Correctly strip (`-`) or add (`+`) `readonly` and `?` modifiers
+3. **Canonicalization**: Ensure `{ [K in 'a' | 'b']: number }` reduces to `{ a: number, b: number }` with same ObjectShapeId
 
-**Files**: `src/solver/evaluate.rs`, `src/solver/infer.rs`
+**Key Question for Gemini**:
+> "I'm implementing Task #39: Mapped Type Evaluation. I need to ensure homomorphic mapped types are recognized as isomorphic to their source.
+> How should I handle the 'identity' of a mapped type so that `{ [P in K]: T[P] }` is structurally identical to T when K is `keyof T`?
+> Where should the canonicalization happen - in TypeEvaluator or in the Canonicalizer?"
+
+**Files**: `src/solver/evaluate_rules/mapped.rs`, `src/solver/canonicalize.rs`
 
 ---
 
-### Priority 2: Task #39 - Mapped Type Evaluation
+### Priority 2: Task #41 - Variance Calculation
 **Status**: 📝 Planned
-**Why**: Essential for utility types like `Partial<T>`, `Readonly<T>`, and `Pick<T, K>`.
+**Why**: The Judge must tell the Lawyer how to check generics. This enables O(1) generic assignability.
 
 **Implementation Goals**:
-1. **Key Mapping**: Correctly evaluate `{ [K in keyof T]: T[K] }`.
-2. **Modifier Mapping**: Handle `+readonly`, `-readonly`, `+?`, and `-?`.
-3. **Homomorphic Mapped Types**: Preserve the structure of the source type when mapping over `keyof T`.
+1. **VarianceVisitor**: Walk type definitions to mark type parameters as Covariant, Contravariant, Invariant, or Independent
+2. **Caching**: Store VarianceMask on ObjectShape or Symbol for reuse
+3. **Integration**: SubtypeChecker uses variance to skip structural recursion for generic types
 
-**Files**: `src/solver/evaluate.rs`
-
----
-
-### Priority 3: Task #40 - Template Literal Type Inference
-**Status**: 📝 Planned
-**Why**: Allows the Judge to "deconstruct" strings (e.g., inferring `ID` from `` `user_${infer ID}` ``).
-
-**Implementation Goals**:
-1. **Pattern Matching**: Implement the inverse of template literal subtyping.
-2. **Greedy vs. Non-greedy**: Match TypeScript's specific backtracking behavior for multiple `infer` positions.
-
-**Files**: `src/solver/subtype_rules/literals.rs`, `src/solver/evaluate.rs`
-
----
-
-### Priority 4: Task #41 - Variance Calculation
-**Status**: 📝 Planned
-**Why**: The Judge must tell the Lawyer how to check generics.
-
-**Implementation Goals**:
-1. **Variance Visitor**: A visitor that walks a type definition to determine if a type parameter is in a covariant, contravariant, or invariant position.
-2. **Optimization**: Cache variance results on the `ObjectShape` or `Symbol`.
+**Key Question for Gemini**:
+> "I want to implement Task #41: Variance Calculation. I need to create a visitor that determines type parameter variance.
+> Where should I store the resulting VarianceMask? How should SubtypeChecker consume it to skip structural recursion when checking List<string> <: List<unknown>?"
 
 **Files**: `src/solver/visitor.rs`, `src/solver/compat.rs`
 
 ---
 
-## Active Tasks
+### Priority 3: Task #40 - Template Literal Deconstruction
+**Status**: 📝 Planned
+**Why**: Inference from template literals requires "Reverse String Matcher" for `infer` patterns.
 
-### Task #38: Conditional Type Evaluation
-**Status**: 📋 Starting
-**Priority**: Critical
+**Implementation Goals**:
+1. **Pattern Matching**: Inverse of template literal subtyping - extract `infer ID` from `` `user_${ID}` ``
+2. **Greedy vs Non-Greedy**: Handle multiple `infer` positions correctly (e.g., `` `${infer A}_${infer B}` ``)
+3. **Backtracking**: Implement proper backtracking for ambiguous matches
 
-**Description**:
-Implement the full evaluation logic for `TypeKey::Conditional(ConditionalTypeId)`.
-
-**Two-Question Rule - Question 1 (Approach)**:
-1. How should we handle the "checked type" when it is a `TypeParameter`? (Wait for instantiation or evaluate against constraint?)
-2. Where should the distributive logic live? (Inside `evaluate_conditional` or as a pre-pass in `TypeEvaluator`?)
-3. How do we integrate the `Canonicalizer` to ensure `T extends U ? X : Y` is simplified if `X` and `Y` become structurally identical?
-
-**Next Step**: Ask Gemini Question 1 for Task #38.
+**Files**: `src/solver/evaluate_rules/template_literal.rs`, `src/solver/infer.rs`
 
 ---
 
 ## Guidance for the Judge
-- **Rule 1**: Every evaluation result MUST be canonicalized.
-- **Rule 2**: Use the `cycle_stack` in `TypeEvaluator` to prevent infinite unrolling of recursive conditional types.
-- **Rule 3**: When in doubt, the Judge should be strict. The Lawyer (tsz-4) can add the "mercy" later.
+
+### The Judge's Responsibility
+The **Judge** ensures **Structural Soundness** through canonicalization:
+- **Rule 1**: Every evaluation result MUST be canonicalized (via `intern_canonical` or structural identity)
+- **Rule 2**: Isomorphic structures MUST have the same TypeId (O(1) equality)
+- **Rule 3**: Deferred types (TypeParameters) preserve structure until instantiation
+- **Rule 4**: The Judge is strict; the Lawyer (tsz-4) adds "mercy" later
+
+### What "Already Done" Means
+When a task is marked "ALREADY DONE", it means:
+- The **mechanics** are implemented (evaluation works)
+- The **canonicalization integration** may still be needed
+- The **structural soundness** guarantees may need verification
+
+### The "Lawyer vs Judge" Distinction
+- **Lawyer** (tsz-4): How types behave in specific situations (quirks, nominality)
+- **Judge** (tsz-1): Mathematical correctness and canonical identity
