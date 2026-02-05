@@ -69,7 +69,11 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
   - contextual_type_allows_literal_inner: Uses get_lazy_def_id(), is_keyof_type(), is_index_access_type()
 - Started refactoring `state_type_environment.rs`:
   - get_enum_identity: Uses enum_components() instead of TypeKey::Enum match
-- Gemini Pro review confirmed all implementations are correct
+- Enhanced Solver's `enum_assignability_override` in `compat.rs`:
+  - Added union-to-enum assignability check (all union members must match target enum)
+  - Removed incorrect enum-to-union check per Gemini review
+- Gemini Pro review confirmed all implementations (identified and fixed critical bug)
+- All changes committed and pushed to origin
 
 ### Step 2: Refactor Primitives (Low Risk)
 Target: Simple type identity checks
