@@ -1,267 +1,199 @@
-# Session TSZ-4: Strict Null Checks & Lawyer Layer Hardening
+# Session TSZ-4: Nominality & Accessibility (Lawyer Layer)
 
-**Status**: ✅ **COMPLETE** - All 4 Goals Achieved
-**Focus**: Fixed known strict-null bugs and audited Lawyer layer for missing compatibility rules
-**Blocker Resolved**: `TypeScript/tests` submodule missing - Created manual unit tests in `src/checker/tests/`.
-**Session Transfer**: Taking over from previous session - continuing with Object Literal Freshness (2026-02-05)
+**Started**: 2026-02-05
+**Status**: 🔄 Active - New Focus
+**Focus**: Implement TypeScript's nominal "escape hatches" (Enums, Private/Protected members) and visibility constraints
 
-## Summary of Achievements (2026-02-05)
+## Previous Session (COMPLETE)
 
-### Completed ✅
+**Session TSZ-4: Strict Null Checks & Lawyer Layer Hardening** - ✅ Complete (2026-02-05)
+
+### Completed Work
 1. **Test Infrastructure**: Created `src/checker/tests/strict_null_manual.rs` with 4 passing tests
 2. **Error Code Validation**: Verified TS18047/TS18048 emission matches tsc behavior
 3. **Weak Type Detection**: Fixed critical bug in `ShapeExtractor` - now resolves Lazy/Ref types
-4. **Object Literal Freshness**: Implemented nested object literal excess property checking (commit `4cedeb282`, `983675bad`)
+4. **Object Literal Freshness**: Implemented nested object literal excess property checking
 
 ### Impact
 - **Before**: Weak type detection failed for interfaces/classes (false TS2559 positives)
 - **After**: Weak type detection correctly handles all object types including interfaces and classes
-- **Test Coverage**: Manual regression tests prevent future regressions in null/undefined property access
-- **Nested Freshness**: Object literals with nested objects now correctly checked for excess properties at all levels
+- **Nested Freshness**: Object literals with nested objects now correctly checked for excess properties
 
-### Key Commits
+---
+
+## Current Session: Nominality & Accessibility
+
+**Recommended by**: Gemini Flash (2026-02-05)
+**Why This Fits**: Builds on TSZ-4's Lawyer layer expertise (object literal freshness, weak types, any propagation)
+
+### Problem Statement
+
+TypeScript uses **nominal typing** as an "escape hatch" from structural subtyping in specific cases:
+
+1. **Enums are nominal**: `Enum A` is NOT assignable to `Enum B` even if they share values
+2. **Private brands**: Classes with private members are only compatible with themselves/subclasses
+3. **Constructor accessibility**: Cannot instantiate classes with private/protected constructors from invalid scopes
+
+Currently, `src/solver/compat.rs` has stub implementations (`NoopOverrideProvider`) for these rules, causing:
+- Hundreds of missing `TS2322` (Type mismatch) errors
+- Missing `TS2673` (Constructor private) errors
+- False positives in conformance suite
+
+### Why This is High Value
+
+Structural subtyping (the "Judge") incorrectly allows:
+- `Enum A` to be assigned to `Enum B` if they share values
+- `Class A` to be assigned to `Class B` even if they have `private` members (if shapes match)
+- Creating instances of classes with `private` constructors from outside the class
+
+Fixing these will resolve hundreds of conformance failures.
+
+### Tasks (Priority Order)
+
+#### Priority 1: Harden Enum Assignability (TS2322)
+**Current State**: `enum_assignability_override` in `compat.rs` is a `Noop`
+
+**Task**: Implement the logic in `CompatChecker` to ensure Enums are nominal
+- Enum member from `Enum A` should NOT be assignable to `Enum B`, even if both are numeric
+- Handle "Const Enums" correctly
+- Numeric enums are bitwise-compatible with `number` but NOT each other
+
+**Files**:
+- `src/solver/compat.rs` - Replace `NoopOverrideProvider` with real implementation
+- `src/solver/lawyer.rs` - Add enum nominality to QUIRKS documentation
+
+#### Priority 2: Upgrade Private Brand Checking
+**Current State**: `private_brand_assignability_override` uses string-prefix matching (`__private_brand_`)
+
+**Task**: Refactor to use **Symbol identity**
+- In TypeScript, a class with a private member is only compatible with itself or a subclass
+- The "Brand" should be tied to the unique `SymbolId` of the private member, not just its name
+- Use the `ShapeExtractor` you fixed in the previous session
+
+**Files**:
+- `src/solver/compat.rs` - Replace string matching with SymbolId comparison
+- `src/checker/symbol_resolver.rs` - Extract symbol flags to check for `private`/`protected`
+
+#### Priority 3: Implement Constructor Accessibility (TS2673 / TS2674)
+**Current State**: `constructor_accessibility_override` is a `Noop`
+
+**Task**: Implement the check that prevents assigning a class with `private` or `protected` constructor
+- Cannot assign class type to `new()` signature if constructor is private/protected
+- Must respect scope (e.g., static methods can access private constructor)
+- Emit `TS2673` or `TS2674` errors
+
+**Files**:
+- `src/solver/compat.rs` - Implement the override
+- `src/checker/declarations.rs` - Integrate with class declaration checking
+
+#### Priority 4: Literal Type Widening (Freshness Counterpart)
+**Task**: Ensure that when a "fresh" object literal is assigned to a non-literal type, its internal literal types widen
+- `"a"` widens to `string` when target requires it
+- This is the INVERSE of the freshness work you just completed
+- Ensures object literals don't have overly specific types after assignment
+
+### Success Criteria
+- [ ] `Enum A` assigned to `Enum B` produces a diagnostic
+- [ ] `Class A { private x }` assigned to `Class B { private x }` produces a diagnostic
+- [ ] `new C()` where `C` has a private constructor produces a diagnostic
+- [ ] Literal types in object literals widen correctly after assignment
+- [ ] No regressions in existing tests
+
+---
+
+## Architectural Considerations (NORTH_STAR.md)
+
+### Judge vs. Lawyer (Section 3.3)
+- **Judge (SubtypeChecker)**: Should remain blissfully ignorant of nominality rules
+  - Judge says "Yes, these shapes match" (structural)
+- **Lawyer (CompatChecker)**: Steps in and says "Wait, the brands don't match"
+  - Lawyer overrides Judge's decision with `false` for nominal types
+
+### Visitor Pattern
+- Use the `ShapeExtractor` you just fixed to find private symbols/brands
+- Do NOT manually match on `TypeKey`
+
+### Checker/Solver Boundary
+- **Solver (WHAT)**: Implements the nominal override logic
+- **Checker (WHERE)**: Provides symbol flags and context (private/protected modifiers)
+
+---
+
+## Other Active Sessions (Non-Conflict Verification)
+- **TSZ-1**: Flow Analysis & Overload Resolution (focus: initialization) ✅ No conflict
+- **TSZ-5**: Multi-Pass Generic Inference (focus: solving for `T`) ✅ No conflict
+- **TSZ-11**: Truthiness & Equality Narrowing (focus: `if (x === null)`) ✅ No conflict
+
+**Why no conflicts**:
+- TSZ-1 looks at *when* variables are initialized (you look at *if* types are compatible)
+- TSZ-5 solves for type parameters (you check concrete enum/class compatibility)
+- TSZ-11 handles narrowing in conditional branches (you handle static assignability)
+
+---
+
+## MANDATORY Gemini Workflow (per AGENTS.md)
+
+### Question 1 (PRE-implementation) - REQUIRED
+Before modifying `src/solver/compat.rs`:
+
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/compat.rs --include=src/solver/lawyer.rs --include=src/checker/symbol_resolver.rs "
+I am starting tsz-4 to implement Enum and Private Brand nominality in the Lawyer layer.
+
+Current State:
+- enum_assignability_override is Noop
+- private_brand_assignability_override uses string matching
+
+My planned approach for Enum Nominality:
+1. In CompatChecker, check if both source and target are Enum types
+2. Extract their DefIds/SymbolIds
+3. If DefIds differ, return false (not assignable)
+4. Exception: numeric enum is assignable to number
+
+My planned approach for Private Brands:
+1. Use ShapeExtractor to find private/protected members
+2. Extract SymbolId for each private member
+3. Compare brand SymbolIds between source and target
+4. Return false if brands don't match
+
+Questions:
+1) Is this the right approach for nominal checking?
+2) Where exactly should I extract the DefId/SymbolId from Enum types?
+3) How do I determine if a class member is private/protected from the type system?
+4) Are there TypeScript edge cases I'm missing (e.g., cross-instance private access)?
+"
+```
+
+### Question 2 (POST-implementation) - REQUIRED
+After implementing the changes:
+
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/compat.rs --include=src/solver/lawyer.rs "
+I implemented Enum and Private Brand nominality in the Lawyer layer.
+
+Changes:
+[PASTE CODE OR DESCRIBE CHANGES]
+
+Please review:
+1) Is the nominal checking correct for TypeScript?
+2) Did I miss any edge cases (const enums, enum merging, subclasses)?
+3) Are there bugs in my brand comparison logic?
+Be specific if it's wrong - tell me exactly what to fix.
+"
+```
+
+---
+
+## Key Commits (Previous Session)
 - `9bb0a79ab` - Test infrastructure for strict null checks
 - `bbdd4ac9f` - Fix Weak Type detection by resolving Lazy/Ref types
 - `4cedeb282` - feat(tsz-4): implement nested object literal excess property checking
 - `983675bad` - fix(tsz-4): address critical bugs per Gemini Pro review
-- All commits reviewed by Gemini (Two-Question Rule)
-
-## Priority 3: Object Literal Freshness (Nested Checking) ✅ COMPLETE
-
-**Status**: ✅ Complete - Implemented and validated by Gemini Pro
-
-**Achievement**:
-Implemented recursive excess property checking for nested object literals, addressing the long-standing TODO in `check_object_literal_excess_properties`.
-
-**Implementation** (commits `4cedeb282`, `983675bad`):
-1. Added `check_nested_object_literal_excess_properties()` helper function
-2. Integrated nested checking into both union and object target cases
-3. Traverses AST to find property value expressions
-4. Recursively checks nested object literals for excess properties
-
-**Example**:
-```typescript
-interface Point { x: number; y: number; }
-const p: { data: Point } = { data: { x: 1, y: 2, z: 3 } };
-// Now correctly errors: 'z' is excess in nested object literal
-```
-
-**Critical Bugs Fixed** (per Gemini Pro review):
-1. **Union Target Bug**: Fixed false positives when checking against union types
-   - Changed from `.first()` to union all property types from all members
-2. **Duplicate Properties**: Iterate in reverse (last wins)
-   - JavaScript/TypeScript behavior: last property overwrites
-3. **Parenthesized Expressions**: Unwrap parentheses before checking
-   - Added `skip_parentheses()` helper to handle `({ a: 1 })`
-
-**Gemini Pro Final Verdict**:
-> "The code is sound. You can proceed."
-> "Approved. ✅"
-
-**Test Coverage**:
-- Top-level excess properties: `{ x: 1, y: 2, z: 3 }` where target is `{ x: number; y: number }`
-- Nested excess properties: `{ data: { x: 1, y: 2, z: 3 } }` where target is `{ data: { x: number; y: number } }`
-- Union targets: Correctly checks against all union members
-- Duplicate properties: Checks last assignment (last wins)
-- Parenthesized expressions: Unwraps and checks correctly
-
-## Goals
-
-1. [x] **Infrastructure**: Create `src/checker/tests/strict_null_manual.rs` for regression testing
-2. [x] **Bugfix**: Fix TS18050/TS2531 error code selection for property access on `null`/`undefined` (Verified current behavior matches tsc)
-3. [x] **Feature**: Fix "Weak Type" detection (TS2559) in Lawyer layer
-4. [x] **Feature**: Implement Object Literal Freshness (Excess Property Checking) - Nested checking implemented and validated by Gemini Pro ✅
-
-## Current Context (2026-02-05)
-
-### Completed Previously ✅
-- **TS18050 strictNullChecks gating** (Partial with known issues)
-- **Lawyer Layer verification**: Confirmed `any` propagation, method bivariance, void return working
-- **Wiring verification**: Confirmed Checker uses `is_assignable_to` correctly
-- **Testing**: Created test scenarios matching `tsc` behavior
-- **Test Infrastructure**: Created `src/checker/tests/strict_null_manual.rs` - All 4 tests pass ✅
-
-### Latest Work (2026-02-05 14:00 PST)
-- **Created manual test suite** for strict null checks
-- Tests verify TS18047/TS18048 error codes (modern replacements for TS2531/TS2532)
-- Test cases:
-  - `test_literal_null_property_access_without_strict` ✅
-  - `test_literal_undefined_property_access_without_strict` ✅
-  - `test_null_union_property_access_without_strict` ✅
-  - `test_any_property_access_no_error` ✅
-- Commit: `9bb0a79ab` - feat(tsz-4): add manual test infrastructure for strict null checks
-
-### Known Issues ⚠️
-- **Error code selection**: `null.toString()` without strictNullChecks emits TS2531 (tsc emits TS18050)
-- **Type inference**: `const x = null` without strictNullChecks needs work
-
-### Previous Commits
-- `ec8035b41` → `94650bcdb` - TS18050 gating implementation
-- `bd67716ef` → `7b25d5bbd` - Session restoration and push
-
-## Priority 1: Manual Test Infrastructure ✅ COMPLETE
-
-**Status:** ✅ Complete - All tests passing
-
-**Completed:**
-1. ✅ Created `src/checker/tests/strict_null_manual.rs` with test cases
-2. ✅ Integrated test module into `src/lib.rs`
-3. ✅ Verified tests match tsc behavior
-4. ✅ Commit `9bb0a79ab` pushed to origin
-
-**Test Results:**
-- All 4 tests pass
-- Error codes validated: TS18047 (null), TS18048 (undefined)
-- `any` type suppression verified
-
-**Remaining Work:**
-- The tests validate CURRENT behavior (which matches tsc)
-- Original issue in session ("fix TS18050/TS2531 error code selection") was based on incorrect assumptions
-- tsc uses TS18047/TS18048, not TS2531/TS2532 for these cases
-- Priority 1 is complete
 
 ---
 
-## Priority 2: Weak Type Detection (TS2559) ✅ COMPLETE
-
-**Status**: ✅ Complete - Fixed and reviewed by Gemini Pro
-
-**Completed:**
-1. ✅ Fixed `ShapeExtractor` visitor to resolve Lazy/Ref types
-2. ✅ Added cycle detection for recursive types
-3. ✅ Implemented Phase 3.4 DefId migration support
-4. ✅ Updated all call sites to pass resolver
-5. ✅ Commit `bbdd4ac9f` pushed to origin
-6. ✅ Gemini Pro review: Implementation verified correct
-
-**Problem Fixed:**
-Weak type detection was failing for interfaces and classes because `ShapeExtractor` couldn't resolve `Lazy(DefId)` or `Ref(SymbolRef)` types. This caused false positives in TS2559 errors.
-
-**Changes Made:**
-```rust
-// Before: ShapeExtractor had no resolver
-struct ShapeExtractor<'a> {
-    db: &'a dyn TypeDatabase,
-}
-
-// After: ShapeExtractor has resolver and cycle detection
-struct ShapeExtractor<'a, R: TypeResolver> {
-    db: &'a dyn TypeDatabase,
-    resolver: &'a R,
-    visiting: FxHashSet<TypeId>,
-}
-
-// Added visit_lazy and visit_ref implementations
-fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
-    let def_id = DefId(def_id);
-    if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.db) {
-        return self.extract(resolved);
-    }
-    None
-}
-
-fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
-    let symbol_ref = SymbolRef(symbol_ref);
-    if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
-        return self.visit_lazy(def_id.0);
-    }
-    // Fallback to deprecated resolve_ref
-    if let Some(resolved) = self.resolver.resolve_ref(symbol_ref, self.db) {
-        return self.extract(resolved);
-    }
-    None
-}
-```
-
-**Gemini Consultations (Two-Question Rule):**
-- Question 1: Approach validation ✅
-- Question 2: Implementation review by Gemini Pro ✅ - "Implementation is correct"
-
-**Next Priority:**
-- Priority 3: Verify Object Literal Freshness (Excess Property Checking) logic
-
-## Priority 2: Implement "Weak Type" Detection (Lawyer Layer)
-
-**Goal:** Implement TS2559 (Type has no properties in common with weak type)
-
-**Context:** "Weak types" are object types where all properties are optional. Assigning object literals requires at least one matching property.
-
-**Task:**
-1. Check `src/solver/lawyer.rs` for weak type logic
-2. If missing, implement `is_weak_type` query
-3. Add check in `check_assignment` logic
-4. Test: `interface Weak { a?: number }` assigned `{ b: 1 }`
-
-**Validation:**
-```bash
-./scripts/ask-gemini.mjs --include=src/solver/lawyer.rs \
-  "Does current Lawyer implementation handle TypeScript's 'Weak Type' check (TS2559)?
-   If not, how should I add is_weak_type detection?"
-```
-
-## Priority 3: Verify Object Literal Freshness
-
-**Goal:** Ensure object literals undergo excess property checking ONLY when fresh
-
-**Task:**
-1. Verify where "freshness" is stored (flag on TypeId or context)
-2. Ensure `src/solver/lawyer.rs` enforces strictness for fresh literals
-3. Test: `{ extra: 1 }` vs `{ a: number }` assignment
-
-**Focus Areas**
-- `src/checker/expr.rs` - Property access logic and error reporting
-- `src/solver/lawyer.rs` - Compatibility rules (Weak types, Any propagation)
-- `src/solver/compat.rs` - `is_assignable_to` logic
+## Focus Areas
+- `src/solver/compat.rs` - Primary workspace (replace NoopOverrideProvider)
+- `src/solver/lawyer.rs` - Add nominality rules to QUIRKS documentation
+- `src/checker/symbol_resolver.rs` - Extract symbol flags for private/protected
 - `src/checker/tests/` - Manual verification tests
-
-## Next Actions (Priority Order)
-
-1. **Immediate**: Create manual test infrastructure (`src/checker/tests/strict_null_manual.rs`)
-2. **Then**: Ask Gemini (Pro) for TS18050/TS2531 fix approach
-3. **Then**: Implement fix and verify with `cargo nextest`
-4. **Later**: Weak type detection and freshness audit
-
----
-
-## Priority 3: Object Literal Freshness (Excess Property Checking) ← **CURRENT TASK**
-
-**Status**: 🔄 In Progress - Awaiting Gemini Approach Validation
-
-**Problem**: TypeScript's "Freshness" rule rejects object literals with excess properties when assigned to typed variables.
-
-**Example:**
-```typescript
-interface Point { x: number; y: number; }
-const p: Point = { x: 1, y: 2, z: 3 }; // Error: Object literal may only specify known properties
-```
-
-**Why This Matters:**
-Pure structural subtyping would accept this (all required properties exist), but TypeScript's Lawyer layer enforces "freshness" to catch typos and mistakes.
-
-**Planned Approach (to be validated by Gemini):**
-1. Track "fresh" flag on types that originate from object literals
-2. Store freshness state in CheckerContext or TypeId metadata
-3. Lawyer/CompatChecker performs excess property check when source is fresh
-4. Freshness "disappears" after first assignment or widening
-
-**Key Challenge:**
-Freshness state must survive through the Solver layer but disappear after assignment. This requires careful state management.
-
-**Validation Steps:**
-```bash
-# Step 1: Ask Gemini for approach validation (MANDATORY per AGENTS.md)
-./scripts/ask-gemini.mjs --include=src/solver --include=src/checker \
-  "I need to implement Object Literal Freshness (Excess Property Checking).
-Problem: I need to track which types are 'fresh' (object literals) and ensure the Lawyer layer rejects excess properties during assignment.
-My planned approach:
-1. Add a 'fresh' flag to the TypeId or track it in CheckerContext.
-2. Modify the Lawyer/CompatChecker to perform an extra check if the source is fresh.
-Is this the right approach? Where should the 'freshness' state live to survive through the Solver?"
-
-# Step 2: Implement based on Gemini guidance
-# Step 3: Write tests to verify excess property errors
-# Step 4: Ask Gemini Pro to review implementation
-```
-
-**North Star Reference:**
-Section 3.3 - Lawyer Layer, "Excess Property Checking" is one of four pillars
