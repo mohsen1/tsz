@@ -167,3 +167,32 @@ The code preserves literal types (e.g., literal `1` instead of primitive `number
 **Key Success**: The core fix is working - array destructuring now widens to primitives matching TypeScript behavior.
 
 **Commit**: b6f088dc0 - "feat(flow-analysis): add literal widening for destructuring contexts"
+
+### 2026-02-05: All Destructuring Tests Passing - Default Initializer Fixed
+**Status**: ✅ All 3 target tests passing
+
+**What Was Done**:
+1. Added `widen_literals_for_destructuring` parameter to `get_assigned_type`
+2. Implemented `is_destructuring_assignment` helper to detect destructuring contexts
+3. Implemented `contains_destructuring_pattern` helper to detect array/object literals
+4. Fixed default value handling in `match_destructuring_rhs` for `[x = 2] = []` case
+
+**Implementation Details**:
+- `get_assigned_type`: Now accepts `widen_literals_for_destructuring` bool parameter
+- `is_destructuring_assignment`: Checks if assignment is destructuring (binary/var decl with binding pattern or literal)
+- `contains_destructuring_pattern`: Returns true for array/object literal expressions (always destructuring on left side of assignment)
+- Call site updated to pass `widen_literals_for_destructuring=true` for destructuring assignments
+
+**Test Results**:
+- ✅ `test_array_destructuring_assignment_clears_narrowing` - PASSING
+- ✅ `test_array_destructuring_default_initializer_clears_narrowing` - PASSING
+- ✅ `test_object_destructuring_assignment_clears_narrowing` - PASSING
+- ✅ `test_object_destructuring_alias_assignment_clears_narrowing` - PASSING
+- ✅ `test_object_destructuring_alias_default_initializer_clears_narrowing` - PASSING
+
+**Key Success**: All destructuring tests now passing. Literal widening correctly applies in both direct destructuring `[x] = [1]` and default initializer cases `[x = 2] = []`.
+
+**Known Issues**:
+- ⚠️ 4 `any_propagation_tests` failing (pre-existing, not caused by these changes)
+
+**Commit**: 13885c535 - "feat(flow-analysis): fix destructuring default initializer literal widening"
