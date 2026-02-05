@@ -15,24 +15,69 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 **Test Results**: `./scripts/emit/run.sh --max=100`
 - JavaScript Emit: **8.2%** pass rate (5/61 tests passed, 56 failed, 39 skipped)
 - Declaration Emit: **Working** (Separate `DeclarationEmitter` class, tested via `--dts-only`)
-- Overall: Function transformation in namespaces now working!
+- Overall: Infrastructure for namespace/class merging var suppression in place
 
 **Recent Discovery:**
-- Functions inside namespaces are now properly transformed to ES5 IR
-- Type annotations are stripped from function parameters and return types
-- Direct CLI tests confirm the fix works correctly
+- Need to detect sibling context to suppress `var` when namespace merges with class/function/enum
+- This requires architectural changes to pass context to NamespaceES5Transformer
 
 **Recent Work:**
 - Function transformation in namespaces (commit 43dd1dc8e) - **COMPLETED**
-- Classes in namespaces ES5 transformation (commit b82a09613) - **COMPLETED**
-- Indentation preservation in IR printer (commit 5d0319f1a) - **COMPLETED**
+- Namespace var suppression infrastructure (commit 026fb2cac) - **IN PROGRESS**
+  - Added `should_declare_var` field to IRNode::NamespaceIIFE
+  - Updated IRPrinter to respect the flag
+  - Still need to implement sibling context detection
 
 **Known Issues:**
-- Namespace/class merging emits extra `var` declaration
+- Namespace/class merging emits extra `var` declaration (infrastructure in place, logic pending)
 - Some formatting differences (single-line vs multi-line)
 - Various edge cases in complex namespace structures
 
 ## Progress Log
+
+### 2025-02-05 Session 13: Namespace/Class Merging - Var Suppression Infrastructure (PAUSED)
+
+**Problem:**
+When a namespace merges with a class/function/enum of the same name, an extra `var`
+declaration is emitted:
+```javascript
+// Expected (class comes first):
+var clodule = /** @class */ (...);
+(function (clodule) { ... })(clodule || (clodule = {}));
+
+// Actual (extra var):
+var clodule = /** @class */ (...);
+var clodule;  // <-- Extra!
+(function (clodule) { ... })(clodule || (clodule = {}));
+```
+
+**Infrastructure Added (commit 026fb2cac):**
+1. Added `should_declare_var: bool` field to `IRNode::NamespaceIIFE`
+2. Updated `IRPrinter::emit_namespace_iife` to accept and check the flag
+3. Updated all test code to include the new field
+
+**Remaining Work:**
+Need to implement logic to detect when a namespace is merging with an existing declaration.
+Per Gemini's guidance, this requires:
+1. Passing sibling context to `NamespaceES5Transformer::transform_namespace`
+2. Implementing `check_var_declaration_needed(name, ns_idx, siblings)` helper
+3. Rules for suppression:
+   - FunctionDeclaration with same name: always suppress (functions hoist)
+   - ClassDeclaration/EnumDeclaration with same name AND comes before: suppress
+   - Ignore Interface/TypeAlias/Declare (they don't emit values)
+
+**Status:** PAUSED - This is a complex architectural change that requires:
+- Modifying function signatures to accept sibling context
+- Updating all callers of transform_namespace
+- Potentially changing the emitter lowering pipeline
+
+**Next:** Consult Gemini on the best approach to pass sibling context through the emitter pipeline.
+
+**Files Modified:**
+- src/transforms/ir.rs - Added should_declare_var field
+- src/transforms/ir_printer.rs - Updated emit_namespace_iife signature
+- src/transforms/namespace_es5_ir.rs - Added placeholder for detection logic
+- src/transforms/tests/ir_transforms_tests.rs - Updated test cases
 
 ### 2025-02-05 Session 12: Function Transformation in Namespaces (COMPLETED)
 
