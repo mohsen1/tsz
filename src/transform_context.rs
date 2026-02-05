@@ -70,6 +70,8 @@ pub enum TransformDirective {
     ES5Namespace {
         /// Original namespace node index
         namespace_node: NodeIndex,
+        /// Whether to emit a 'var' declaration for the namespace (false when merging with class/enum/function)
+        should_declare_var: bool,
     },
 
     /// ES5 Enum: Transform enum to IIFE pattern

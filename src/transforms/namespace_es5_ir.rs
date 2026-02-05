@@ -115,21 +115,31 @@ impl<'a> NamespaceES5Transformer<'a> {
     ///
     /// `Option<IRNode>` - The transformed namespace as an IR node, or None if skipped
     pub fn transform_namespace(&self, ns_idx: NodeIndex) -> Option<IRNode> {
-        self.transform_namespace_with_export_flag(ns_idx, false)
+        self.transform_namespace_with_flags(ns_idx, false, true)
+    }
+
+    /// Transform a namespace declaration with explicit control over var declaration
+    pub fn transform_namespace_with_var_flag(
+        &self,
+        ns_idx: NodeIndex,
+        should_declare_var: bool,
+    ) -> Option<IRNode> {
+        self.transform_namespace_with_flags(ns_idx, false, should_declare_var)
     }
 
     /// Transform a namespace declaration that is known to be exported
     ///
     /// Use this when the namespace is wrapped in an EXPORT_DECLARATION.
     pub fn transform_exported_namespace(&self, ns_idx: NodeIndex) -> Option<IRNode> {
-        self.transform_namespace_with_export_flag(ns_idx, true)
+        self.transform_namespace_with_flags(ns_idx, true, true)
     }
 
-    /// Transform a namespace declaration with explicit export flag
-    fn transform_namespace_with_export_flag(
+    /// Transform a namespace declaration with explicit export and var flags
+    fn transform_namespace_with_flags(
         &self,
         ns_idx: NodeIndex,
         force_exported: bool,
+        should_declare_var: bool,
     ) -> Option<IRNode> {
         let ns_node = self.arena.get(ns_idx)?;
         let ns_data = self.arena.get_module(ns_node)?;
@@ -160,12 +170,6 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // Root name is the first part
         let name = name_parts.first().cloned().unwrap_or_default();
-
-        // Check if we need to emit `var name;` declaration
-        // This is a simplified check - we don't have full sibling context here
-        // For now, default to true (always emit var) to maintain current behavior
-        // TODO: Pass sibling context to properly detect merging
-        let should_declare_var = true;
 
         Some(IRNode::NamespaceIIFE {
             name,

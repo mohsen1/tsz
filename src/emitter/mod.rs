@@ -138,6 +138,7 @@ enum EmitDirective {
     },
     ES5Namespace {
         namespace_node: NodeIndex,
+        should_declare_var: bool,
     },
     ES5Enum {
         enum_node: NodeIndex,
@@ -425,8 +426,12 @@ impl<'a> Printer<'a> {
                     class_node: *class_node,
                 }
             }
-            TransformDirective::ES5Namespace { namespace_node } => EmitDirective::ES5Namespace {
+            TransformDirective::ES5Namespace {
+                namespace_node,
+                should_declare_var,
+            } => EmitDirective::ES5Namespace {
                 namespace_node: *namespace_node,
+                should_declare_var: *should_declare_var,
             },
             TransformDirective::ES5Enum { enum_node } => EmitDirective::ES5Enum {
                 enum_node: *enum_node,
@@ -566,12 +571,16 @@ impl<'a> Printer<'a> {
                 self.emit_class_expression_es5(class_node);
             }
 
-            EmitDirective::ES5Namespace { namespace_node } => {
+            EmitDirective::ES5Namespace {
+                namespace_node,
+                should_declare_var,
+            } => {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
+                ns_emitter.set_should_declare_var(should_declare_var);
                 let output = ns_emitter.emit_namespace(namespace_node);
                 self.write(&output);
             }
@@ -752,12 +761,16 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5ClassExpression { class_node } => {
                 self.emit_class_expression_es5(*class_node);
             }
-            EmitDirective::ES5Namespace { namespace_node } => {
+            EmitDirective::ES5Namespace {
+                namespace_node,
+                should_declare_var,
+            } => {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
+                ns_emitter.set_should_declare_var(*should_declare_var);
                 let output = ns_emitter.emit_namespace(*namespace_node);
                 self.write(&output);
             }
@@ -874,12 +887,16 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5ClassExpression { class_node } => {
                 self.emit_class_expression_es5(*class_node);
             }
-            EmitDirective::ES5Namespace { namespace_node } => {
+            EmitDirective::ES5Namespace {
+                namespace_node,
+                should_declare_var,
+            } => {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
+                ns_emitter.set_should_declare_var(*should_declare_var);
                 let output = ns_emitter.emit_namespace(*namespace_node);
                 self.write(&output);
             }
