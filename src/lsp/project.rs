@@ -28,6 +28,7 @@ use crate::lsp::rename::{TextEdit, WorkspaceEdit};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats};
 use crate::lsp::signature_help::{SignatureHelp, SignatureHelpProvider};
 use crate::lsp::symbol_index::SymbolIndex;
+use crate::lsp::workspace_symbols::{SymbolInformation, WorkspaceSymbolsProvider};
 use crate::parser::ParserState;
 use crate::parser::node::NodeAccess;
 use crate::parser::{NodeIndex, NodeList, node::NodeArena, syntax_kind_ext};
@@ -1722,5 +1723,25 @@ impl Project {
         } else {
             Some(actions)
         }
+    }
+
+    /// Search for symbols across the entire project.
+    ///
+    /// This implements the LSP `workspace/symbol` request (Cmd+T / Ctrl+T in most editors).
+    /// Returns symbols matching the given query string, sorted by relevance:
+    /// 1. Exact matches (case-insensitive)
+    /// 2. Prefix matches
+    /// 3. Substring matches
+    ///
+    /// At most 100 results are returned.
+    ///
+    /// # Arguments
+    /// * `query` - The search query string. An empty query returns no results.
+    ///
+    /// # Returns
+    /// A vector of `SymbolInformation` for matching symbols, sorted by relevance.
+    pub fn get_workspace_symbols(&self, query: &str) -> Vec<SymbolInformation> {
+        let provider = WorkspaceSymbolsProvider::new(&self.symbol_index);
+        provider.find_symbols(query)
     }
 }
