@@ -1,7 +1,7 @@
-# Session TSZ-6-3: Union/Intersection Member Resolution
+# Session TSZ-6-3: Property Access Visitor Refactoring
 
 **Started**: 2026-02-05
-**Status**: 🟡 ACTIVE - Gemini Question 1 COMPLETE ✅
+**Status**: 🟡 ACTIVE - Incremental Migration Strategy
 **Previous Session**: TSZ-4-3 (Enum Polish - COMPLETE)
 
 ## Context
@@ -15,83 +15,96 @@ TSZ-6 Phases 1-2 are COMPLETE:
 - Phase 1: Constraint-Based Lookup for TypeParameters
 - Phase 2: Generic Member Projection for TypeApplications
 
-This session continues TSZ-6 with Phase 3: Union/Intersection Member Resolution.
+This session continues TSZ-6 with Phase 3, re-scoped as incremental visitor migration.
 
 ## Goal
 
-Implement property access resolution for Union and Intersection types.
+Implement property access resolution for Union and Intersection types using Visitor Pattern (North Star Rule 2).
 
-### Problem Statement
+**Problem**: Current `resolve_property_access_inner` uses large `match` statements (anti-pattern) and cannot properly handle composite types.
 
-Currently, property access fails on composite types:
-```typescript
-type A = { x: string };
-type B = { y: number };
-type U = A | B;
-type I = A & B;
+**Solution**: Refactor to TypeVisitor pattern with incremental migration strategy.
 
-const u: U = { x: 'hello' };
-console.log(u.x); // Error: Property 'x' does not exist on type 'A | B'
+## Strategy: Shadow Implementation (from Gemini)
 
-const i: I = { x: 'hello', y: 42 };
-console.log(i.x); // Should work, but may not resolve correctly
-```
+**AVOID**: "Massive refactor" that breaks everything at once
+**APPROACH**: Incremental migration via bridge pattern
 
-### Expected TypeScript Behavior
+### Migration Steps
 
-**Unions (A | B)**:
-- Property exists only if in **ALL** constituents
-- Result type is **Union** of property types
-- Example: `(A | B).prop` exists only if both A and B have `prop`
-- Result: `type(A.prop) | type(B.prop)`
+**Step 1**: Define the Visitor
+- Make `PropertyAccessEvaluator` implement `TypeVisitor` trait
+- Create visitor methods for each type
 
-**Intersections (A & B)**:
-- Property exists if in **ANY** constituent
-- Result type is **Intersection** of property types
-- Example: `(A & B).prop` exists if either A or B has `prop`
-- Result: `type(A.prop) & type(B.prop)` (may resolve to `never` if incompatible)
+**Step 2**: The Bridge
+- Keep `resolve_property_access_inner` as entry point
+- Instantiate visitor and call `visit_type` instead of direct match
 
-## Implementation Plan (from Gemini Question 1) - VALIDATED ✅
+**Step 3**: Variant-by-Variant Migration
+- Move `TypeKey::Object` logic into `visit_object`
+- Replace match arm with `visitor.visit_object(...)`
+- Verify with tests
+- Repeat for `Array`, `Intrinsic`, etc.
 
-### Architecture: Solver-First - VALIDATED ✅
+**Step 4**: Add New Visitors
+- Implement `visit_union` (all must have)
+- Implement `visit_intersection` (any can have)
 
-**CRITICAL**: Follow North Star Rule 2 - Use Visitor Pattern
-- Do NOT match on `TypeKey::Union` or `TypeKey::Intersection` in Checker
-- MUST use visitor pattern from `src/solver/visitor.rs`
+### Benefits
 
-**Gemini Validation**: "Your approach is correct and highly recommended. Moving this logic into a Visitor ensures recursion is handled centrally and North Star compliance is satisfied."
+- Low risk (one type at a time)
+- Testable after each step
+- No "big bang" breaking changes
+- Builds toward North Star compliance
 
-### File Locations (from Gemini)
+## Milestones
 
-| File | Function/Struct | Action |
-|:---|:---|:---|
-| `src/solver/visitor.rs` | `PropertyVisitor` (New) | Create new visitor for member resolution |
-| `src/solver/operations_property.rs` | `PropertyAccessEvaluator` | Refactor to implement `TypeVisitor` |
-| `src/solver/operations_property.rs` | `resolve_property_access_inner` | Replace `match key` with `self.visit_type(obj_type)` |
+### Milestone 1: Foundation (LOW Complexity) ✅ COMPLETE
+- Make `PropertyAccessEvaluator` implement `TypeVisitor` ✅
+- Implement `visit_intrinsic` (trivial) ✅
+- Create bridge in `resolve_property_access_inner` ✅
+- **Completed**: 2026-02-05
+- **Notes**: Used inline visitor pattern to avoid &mut self casting issues
 
-### Implementation Steps
+### Milestone 2: Core Types (MEDIUM Complexity) - NEXT
+- Implement `visit_object`
+- Implement `visit_array`
+- Move Object/Array logic from match to visitor
+- **Estimated**: 3-4 hours
 
-**Step 1**: Refactor `PropertyAccessEvaluator` to implement `TypeVisitor`
-- Move logic from `match` statements into `visit_*` methods
-- Implement `visit_object`, `visit_array`, `visit_intrinsic`, etc.
-- Ensure `visiting: FxHashSet<TypeId>` is checked before recursing
+### Milestone 3: Composite Types (HIGH Complexity)
+- Implement `visit_union` (All Must Have logic)
+- Implement `visit_intersection` (Any Can Have logic)
+- Handle recursive types via `visit_lazy`
+- **Estimated**: 4-6 hours
 
-**Step 2**: Implement `visit_union` (All Must Have)
+## Implementation Plan (from Gemini Question 1)
+
+### Code Skeletons
+
+**visit_union (All Must Have)**:
 ```rust
 fn visit_union(&mut self, list_id: u32) -> Self::Output {
     let members = self.interner.type_list(TypeListId(list_id));
+    let mut results = Vec::new();
+
     for &member in members {
         let res = self.visit_type(self.interner, member);
-        if res.is_not_found() {
-            return PropertyAccessResult::PropertyNotFound; // Early exit
+        match res {
+            PropertyAccessResult::Success { .. } => results.push(res),
+            PropertyAccessResult::PropertyNotFound { .. } => {
+                // If ANY member lacks the property, the union lacks it
+                return PropertyAccessResult::PropertyNotFound { ... };
+            }
+            _ => return res, // Propagate errors/unknown
         }
     }
-    // All members have the property - union the types
+    // Union of all property types
     self.merge_union_results(results)
 }
 ```
 
-**Step 3**: Implement `visit_intersection` (Any Can Have)
+**visit_intersection (Any Can Have)**:
 ```rust
 fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
     let members = self.interner.type_list(TypeListId(list_id));
@@ -109,43 +122,18 @@ fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
     }
     // Intersection of all found types
     PropertyAccessResult::Success {
-        type_id: self.interner.intersect(successes),
+        type_id: self.intersect_types(successes),
     }
 }
 ```
 
-**Step 4**: Handle `visit_lazy` for automatic recursion
-- Resolver handles `Lazy` -> `Union` -> `Lazy` chains
-- No manual `evaluate_type` calls needed
+## Edge Cases (from Gemini)
 
-**Step 5**: Update `resolve_property_access_inner`
-- Replace large `match key` block with `evaluator.visit_type(obj_type)`
-
-### Edge Cases (from Gemini)
-
-1. **Infinite Recursion**: Use `visiting` set before `visit_lazy`
-2. **`any` in Unions**: `A | any` always succeeds (returns `any`)
+1. **Infinite Recursion**: Check `visiting` set before `visit_lazy`
+2. **`any` in Unions**: `A | any` always succeeds
 3. **`unknown` in Unions**: Usually fails unless property common to all
 4. **Optional Properties**: `{ x: string } | { x?: number }` → `string | number | undefined`
 5. **Index Signatures**: Handle in intersections carefully
-
-## Success Criteria
-
-## Complexity Assessment
-
-**Complexity: HIGH**
-
-### Risks
-1. **Recursive Types**: Unions/Intersections with `TypeKey::Ref` can cause infinite recursion
-2. **Performance**: Large unions (100+ constituents) can cause O(n²) slowdowns
-3. **Intersection Merging**: Getting `prop: string & number` wrong breaks object composition
-4. **Rule 2 Violation**: Temptation to `match` on `TypeKey` directly in Checker
-
-### Mitigations
-- Use Solver's `cycle_stack` for recursion detection
-- Memoize results in Solver layer
-- Follow Two-Question Rule (AGENTS.md)
-- Use visitor pattern religiously
 
 ## Success Criteria
 
@@ -176,16 +164,6 @@ const i: I = { x: 'hello' };
 console.log(i.x); // ✅ OK, type is string & number
 ```
 
-### Verification
-- [ ] Ask Gemini Question 1 (Approach Validation)
-- [ ] Implement MemberCollector visitor
-- [ ] Integrate into property resolution
-- [ ] Ask Gemini Question 2 (Pro Review)
-- [ ] Fix any bugs found by Gemini
-- [ ] Add unit tests
-- [ ] Run conformance suite
-- [ ] Document results
-
 ## Dependencies
 
 - TSZ-4-1: Strict Null Checks - COMPLETE ✅
@@ -193,41 +171,37 @@ console.log(i.x); // ✅ OK, type is string & number
 - TSZ-4-3: Enum Polish - COMPLETE ✅
 - TSZ-6 Phase 1-2: Member Resolution Basics - COMPLETE ✅
 - Gemini Question 1: COMPLETE ✅ (approach validated)
-- Gemini Question 2: PENDING (implementation review)
+- Gemini Question 2: PENDING (post-implementation)
 
 ## Estimated Complexity
 
-**HIGH** (10-15 hours)
-- New visitor implementation
-- Complex type merging logic
-- Recursive type handling
-- Multiple integration points
-- Requires Two-Question Rule validation
+**Overall**: HIGH (10-15 hours)
+- Milestone 1: LOW (2-3 hours)
+- Milestone 2: MEDIUM (3-4 hours)
+- Milestone 3: HIGH (4-6 hours)
 
 ## Next Steps (Immediate)
 
-1. ✅ Ask Gemini Question 1 (Approach Validation) - COMPLETE
-2. ⏸️ Implement `TypeVisitor` for `PropertyAccessEvaluator` - IN PROGRESS
-   - Refactor large `match key` block into visitor methods
-   - Implement `visit_union` and `visit_intersection`
-   - Handle recursive types via `visit_lazy`
-3. ⏸️ Ask Gemini Question 2 (Pro Review) - PENDING
-4. ⏸️ Test and iterate - PENDING
-
-**Current Status**: Analyzing `resolve_property_access_inner` function to understand current implementation before refactoring to visitor pattern.
-
-**Implementation Complexity**: This is a LARGE refactoring that touches the core property resolution logic. The function has 200+ lines with complex match statements handling Object, Array, Union, Intersection, TypeParameter, Application, etc.
-
-**Caution**: Given the scope and complexity, this refactoring should be done incrementally:
-- First: Make `PropertyAccessEvaluator` implement `TypeVisitor` trait
-- Then: Move existing logic into `visit_*` methods one type at a time
-- Finally: Add `visit_union` and `visit_intersection` methods
-
-**Risk**: Breaking existing property access functionality. Need comprehensive testing.
+1. **Start Milestone 1**: Implement TypeVisitor trait for Intrinsic types
+2. Create bridge pattern in resolve_property_access_inner
+3. Test and verify
+4. Continue to Milestone 2 (Object, Array)
+5. Ask Gemini Question 2 (Pro Review) after Milestone 2
 
 ## Notes
 
-- This is "Gold Standard" work for building the TSZ type system
-- Builds on enum union checking knowledge from TSZ-4-3
-- Isolated from TSZ-3 circular dependency issues
-- Must follow Solver-First Architecture (North Star 3.1)
+**Why This Approach**:
+- Avoids "massive refactor" risk
+- Builds toward North Star compliance incrementally
+- Testable after each milestone
+- Unlocks Union/Intersection property access (architecturally mandatory)
+
+**Key Files**:
+- `src/solver/visitor.rs` (TypeVisitor trait)
+- `src/solver/operations_property.rs` (PropertyAccessEvaluator)
+- `src/solver/tests/` (unit tests)
+
+**Alternative Tasks** (if needed):
+- Literal Type Narrowing (CFA)
+- Template Literal Types
+- Mapped Type Evaluation
