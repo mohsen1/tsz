@@ -1209,6 +1209,14 @@ impl<'a> NarrowingContext<'a> {
             return target_type;
         }
 
+        // Special case: any can be narrowed to any type through type guards
+        // This handles cases like: if (x === null) where x: any
+        // CRITICAL: Unlike unknown, any MUST be narrowed to match target type
+        if resolved_source == TypeId::ANY {
+            trace!("Narrowing any to specific type via type guard");
+            return target_type;
+        }
+
         // If source is a union, filter members
         // Use resolved_source for structural inspection
         if let Some(members) = union_list_id(self.db, resolved_source) {
