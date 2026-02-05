@@ -114,6 +114,7 @@ const bad: User = { name: "test", age: 25, extra: true }; // TS2353
 - Task #12: Reachability Analysis (TS7027) ✅
 - Task #13: Type Narrowing Verification ✅
 - Task #14: Excess Property Checking (TS2353) ✅
+- Task #15: Mapped Types Investigation - Blocked ⚠️
 
 **Task #14 Details**:
 Implemented excess property checking for fresh object literals:
@@ -123,23 +124,29 @@ Implemented excess property checking for fresh object literals:
 - Added case in error_reporter.rs to emit TS2353
 - Handles Lazy type resolution, intersections, and unions
 
+**Task #15 Investigation**:
+Investigated making excess property checking work for `Partial<T>` and other mapped types.
+
+**Key Findings**:
+1. `Partial<User>` is a Type APPLICATION, not a Mapped type directly
+2. Checker's `check_object_literal_excess_properties` uses `get_object_shape` which returns `None` for Application types
+3. My solver-layer implementation in `explain_failure` only runs when assignments FAIL
+4. For `Partial<User>` with optional properties, assignments often PASS, so `explain_failure` is never called
+
+**Root Cause**:
+Architecture mismatch between checker and solver layers. Excess property checking needs to happen in CHECKER layer (before assignability), but the checker doesn't handle Application types. My solver-layer implementation only catches excess properties when assignments FAIL, which doesn't help for `Partial<T>`.
+
+**Resolution**:
+Task #15 is BLOCKED due to architectural complexity. Requires refactoring checker-layer excess property checking.
+Recommendation: Defer and focus on higher-ROI tasks.
+
 **Testing**:
 ✅ Basic case: `{ name: "test", age: 25, extra: true }` → TS2353 on 'extra'
 ✅ Valid case: `{ name: "test", age: 25 }` → No error
 ✅ Index signature: Target with [key: string] disables excess check
-
-**Known Limitations**:
-- Does not handle mapped types (e.g., `Partial<User>`)
-- Tracked as Task #15 (Medium priority, +0.5-1% conformance)
-
-**Gemini Consultation**:
-Asked Gemini for approach validation for Task #15:
-- Requires adding `resolve_mapped` to TypeResolver trait
-- Changing `collect_target_properties` to `&mut self`
-- Handling Mapped, Lazy, and Ref types
-- More complex than Task #14
+❌ Mapped types: `Partial<User>` - doesn't trigger TS2353 (blocked)
 
 **Next Session**:
-- Task #15: Mapped Types Property Collection (Medium priority)
-- Or ask Gemini for next high-priority task
-- Continue following Two-Question Rule for solver/checker changes
+- Ask Gemini for next high-priority task (skip Task #15)
+- Focus on tasks with better ROI and clearer architectural path
+- Continue following Two-Question Rule
