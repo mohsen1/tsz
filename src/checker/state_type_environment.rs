@@ -124,70 +124,74 @@ impl<'a> CheckerState<'a> {
     /// For enum members, returns the parent enum symbol.
     /// For enum types, returns the enum symbol itself.
     fn get_enum_identity(&self, type_id: TypeId) -> Option<SymbolId> {
-        let key = self.ctx.types.lookup(type_id)?;
+        use crate::solver::visitor;
 
-        if let TypeKey::Enum(def_id, _) = key {
-            // 1. Resolve DefId to SymbolId
-            let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
-                eprintln!(
-                    "TSZ-4 DEBUG: get_enum_identity: DefId {:?} has no SymbolId",
-                    def_id
-                );
-                return None;
-            };
+        // Use Solver API to extract enum components (DefId and member type)
+        let Some((def_id, _member_type)) = visitor::enum_components(self.ctx.types, type_id) else {
+            return None;
+        };
 
-            // 2. FIX: Use get_symbol_globally instead of ctx.binder.get_symbol
-            // This handles cross-file symbols and lib.d.ts symbols
-            let Some(symbol) = self.get_symbol_globally(sym_id) else {
-                eprintln!(
-                    "TSZ-4 DEBUG: get_enum_identity: Symbol {:?} not found globally",
-                    sym_id
-                );
-                return None;
-            };
-
+        // 1. Resolve DefId to SymbolId
+        let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
             eprintln!(
-                "TSZ-4 DEBUG: get_enum_identity: type={:?} sym={:?} flags={:?} parent={:?}",
-                type_id, sym_id, symbol.flags, symbol.parent
+                "TSZ-4 DEBUG: get_enum_identity: DefId {:?} has no SymbolId",
+                def_id
             );
+            return None;
+        };
 
-            if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
-                // TSZ-4 FIX: For enum members, don't rely on symbol.parent (it's u32::MAX).
-                // Instead, use the value_declaration to find the parent enum node,
-                // then look up the parent enum symbol.
-                let member_decl = symbol.value_declaration;
-                if !member_decl.is_none() {
-                    if let Some(_member_node) = self.ctx.arena.get(member_decl) {
-                        // Get the parent of the enum member node
-                        if let Some(ext) = self.ctx.arena.get_extended(member_decl) {
-                            // The parent should be the enum declaration node
-                            if let Some(enum_node) = self.ctx.arena.get(ext.parent) {
-                                if self.ctx.arena.get_enum(enum_node).is_some() {
-                                    // Find the symbol for this enum declaration
-                                    if let Some(enum_sym_id) =
-                                        self.ctx.binder.get_node_symbol(ext.parent)
-                                    {
-                                        eprintln!(
-                                            "TSZ-4 DEBUG: ENUM_MEMBER - found parent enum {:?}",
-                                            enum_sym_id
-                                        );
-                                        return Some(enum_sym_id);
-                                    }
+        // 2. FIX: Use get_symbol_globally instead of ctx.binder.get_symbol
+        // This handles cross-file symbols and lib.d.ts symbols
+        let Some(symbol) = self.get_symbol_globally(sym_id) else {
+            eprintln!(
+                "TSZ-4 DEBUG: get_enum_identity: Symbol {:?} not found globally",
+                sym_id
+            );
+            return None;
+        };
+
+        eprintln!(
+            "TSZ-4 DEBUG: get_enum_identity: type={:?} sym={:?} flags={:?} parent={:?}",
+            type_id, sym_id, symbol.flags, symbol.parent
+        );
+
+        if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
+            // TSZ-4 FIX: For enum members, don't rely on symbol.parent (it's u32::MAX).
+            // Instead, use the value_declaration to find the parent enum node,
+            // then look up the parent enum symbol.
+            let member_decl = symbol.value_declaration;
+            if !member_decl.is_none() {
+                if let Some(_member_node) = self.ctx.arena.get(member_decl) {
+                    // Get the parent of the enum member node
+                    if let Some(ext) = self.ctx.arena.get_extended(member_decl) {
+                        // The parent should be the enum declaration node
+                        if let Some(enum_node) = self.ctx.arena.get(ext.parent) {
+                            if self.ctx.arena.get_enum(enum_node).is_some() {
+                                // Find the symbol for this enum declaration
+                                if let Some(enum_sym_id) =
+                                    self.ctx.binder.get_node_symbol(ext.parent)
+                                {
+                                    eprintln!(
+                                        "TSZ-4 DEBUG: ENUM_MEMBER - found parent enum {:?}",
+                                        enum_sym_id
+                                    );
+                                    return Some(enum_sym_id);
                                 }
                             }
                         }
                     }
                 }
-                // Fallback: try to find the enum that exports this member
-                // Check if any enum symbol has this member in its exports
-                eprintln!("TSZ-4 DEBUG: ENUM_MEMBER - using fallback to find parent");
-                return self.enum_symbol_from_type(type_id);
-            } else if symbol.flags & symbol_flags::ENUM != 0 {
-                // For the enum itself, the identity is its own symbol
-                eprintln!("TSZ-4 DEBUG: ENUM - returning self {:?}", sym_id);
-                return Some(sym_id);
             }
+            // Fallback: try to find the enum that exports this member
+            // Check if any enum symbol has this member in its exports
+            eprintln!("TSZ-4 DEBUG: ENUM_MEMBER - using fallback to find parent");
+            return self.enum_symbol_from_type(type_id);
+        } else if symbol.flags & symbol_flags::ENUM != 0 {
+            // For the enum itself, the identity is its own symbol
+            eprintln!("TSZ-4 DEBUG: ENUM - returning self {:?}", sym_id);
+            return Some(sym_id);
         }
+
         // Fallback for legacy types or symbols not yet migrated to DefId
         self.enum_symbol_from_type(type_id)
     }

@@ -64,7 +64,10 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
   - Functions/Callables: return_type, this_type, type_predicate.type_id, params, type_params constraints/defaults
   - Mapped types: type_param constraint + default, constraint, template, name_type
 - Refactored `assignability_checker.rs` ensure_refs_resolved_inner from ~170 to ~70 lines
-- Gemini Pro review confirmed complete implementation
+- Refactored `state_type_analysis.rs` removed 3 TypeKey inspections:
+  - is_same_type_parameter: Uses get_type_parameter_info()
+  - contextual_type_allows_literal_inner: Uses get_lazy_def_id(), is_keyof_type(), is_index_access_type()
+- Gemini Pro review confirmed all implementations are correct
 
 ### Step 2: Refactor Primitives (Low Risk)
 Target: Simple type identity checks
