@@ -105,7 +105,12 @@
 - Added comprehensive test suite: 12 tests covering all overlap scenarios
 - Commit: 15d8c93d9
 
-**Subtask 17.2 (Checker)**: 📋 Planned (Next Step)
+**Subtask 17.2 (Checker)**: 🚧 In Progress
+
+**Status Update (2025-02-05)**:
+- Successfully synced with main and resolved merge conflict in `src/solver/objects.rs`
+- Conflict was between old `collect_properties_internal` approach and new `PropertyCollectionResult` enum API
+- Resolved by accepting main branch version (correct revert commit)
 
 **Gemini Guidance (Flash 2025-02-05)**:
 Gemini provided complete implementation plan for integrating TS2367 into checker:
