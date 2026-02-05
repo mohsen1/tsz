@@ -55,6 +55,7 @@ pub mod types;
 pub mod unsoundness_audit;
 mod utils;
 pub mod visitor;
+mod widening;
 pub use visitor::*;
 
 pub(crate) use apparent::*;
