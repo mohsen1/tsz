@@ -1793,6 +1793,22 @@ impl ParserState {
                 );
                 self.parse_variable_statement_with_modifiers(Some(start_pos), decorators)
             }
+            SyntaxKind::ImportKeyword => {
+                // TS1206: Decorators are not valid on import statements
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                );
+                // Check if this is import equals (import X = ...) or regular import
+                if self.look_ahead_is_import_equals() {
+                    self.parse_import_equals_declaration()
+                } else {
+                    self.parse_import_declaration()
+                }
+            }
             SyntaxKind::ExportKeyword => {
                 // Export with decorators: @decorator export class Foo {}
                 self.parse_export_declaration()
