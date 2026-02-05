@@ -492,3 +492,41 @@ Added "Why These Override The Judge" section explaining:
 3. Implement Private Brand checks (Priority 2)
 4. Implement Constructor Accessibility checks (Priority 3)
 5. Verify all tests pass
+
+### Commit: `244df32ae` - feat(tsz-4): use type_reference_symbol_type for enum nominality
+**What Was Done**:
+Per Gemini Flash guidance, modified `get_type_from_type_reference` to call `type_reference_symbol_type` for qualified names instead of `resolve_qualified_name`.
+
+**Change**:
+In `src/checker/state_type_resolution.rs` line 91-106:
+- Added call to `type_reference_symbol_type(sym_id)` after checking type parameters
+- This ensures enum members used as type annotations preserve their `TypeKey::Enum` wrapper
+
+**Test Results**: Still 3/9 failing (same as before)
+- Override not being triggered
+- Needs further investigation
+
+### Commit: `f2cbccdeb` - feat(tsz-4): add debug logging to enum_assignability_override
+**What Was Done**:
+Added comprehensive debug logging to `enum_assignability_override` to trace why it's not being triggered.
+
+**Logging Added**:
+- Entry point: Shows source and target TypeIds
+- TypeKey lookup: Shows what TypeKey variants are present  
+- Nominal check: Shows DefId comparisons and identity resolution
+- Branch decisions: Shows which code path is taken
+
+**CRITICAL FINDING**: No debug output appeared during test run!
+
+This means `enum_assignability_override` is **NOT being called at all** for type annotations like `let x: E.B = E.A`.
+
+**Implications**:
+The override exists and has the correct logic, but there's a "wiring problem" where the type checking pipeline for type annotations doesn't invoke the Lawyer layer's enum nominality override.
+
+**Next Investigation Steps**:
+1. Find where type annotation assignment checking happens
+2. Verify if `CompatChecker` is being used for type annotations
+3. Check if there's a code path that bypasses the override system
+4. Investigate if type annotations use a different compatibility checking mechanism than expressions
+
+**Current Status**: Blocked on finding why enum_assignability_override is not invoked
