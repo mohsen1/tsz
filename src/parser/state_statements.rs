@@ -1215,8 +1215,9 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ClassKeyword);
 
         // Parse optional name (class expressions can be anonymous)
-        let name = if self.is_token(SyntaxKind::Identifier) {
-            self.parse_identifier()
+        // Like class declarations, keywords can be used as class names
+        let name = if self.is_identifier_or_keyword() {
+            self.parse_identifier_name()
         } else {
             NodeIndex::NONE
         };
