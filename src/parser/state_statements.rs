@@ -2944,11 +2944,17 @@ impl ParserState {
         let name = if self.is_property_name() {
             self.parse_property_name()
         } else {
-            // Report error for unknown token
-            self.parse_error_at_current_token(
-                "Unexpected token. A constructor, method, accessor, or property was expected.",
-                diagnostic_codes::UNEXPECTED_TOKEN_CLASS_MEMBER,
-            );
+            // Report error for unknown/missing token
+            // After asterisk (*), we specifically expect an identifier (method name)
+            // so emit TS1003 "Identifier expected" to match tsc
+            if asterisk_token {
+                self.error_identifier_expected();
+            } else {
+                self.parse_error_at_current_token(
+                    "Unexpected token. A constructor, method, accessor, or property was expected.",
+                    diagnostic_codes::UNEXPECTED_TOKEN_CLASS_MEMBER,
+                );
+            }
             self.next_token();
             return NodeIndex::NONE;
         };
