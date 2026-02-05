@@ -37,6 +37,103 @@
 //! Types with only optional properties require at least one common property
 //! with the source type to prevent accidental assignment mistakes.
 //!
+//! ### F. Nominality Overrides (The "Brand" Check)
+//!
+//! TypeScript is primarily structurally typed, but has specific exceptions where
+//! nominality is enforced. These are "escape hatches" from structural subtyping
+//! that prevent unsound or surprising assignments.
+//!
+//! #### F.1. Enum Nominality (TS2322)
+//! Enum members are nominally typed, not structurally.
+//!
+//! **Rule**: `EnumA.Member1` is NOT assignable to `EnumB.Member2` even if both
+//! have the same underlying value (e.g., both are `0`).
+//!
+//! **Implementation**:
+//! - Enum members are wrapped in `TypeKey::Enum(def_id, literal_type)`
+//! - The `def_id` provides nominal identity (which enum)
+//! - The `literal_type` preserves the value (for assignability checks)
+//! - `enum_assignability_override` in `CompatChecker` enforces this rule
+//!
+//! **Examples**:
+//! ```typescript
+//! enum E { A = 0, B = 1 }
+//! enum F { A = 0, B = 1 }
+//!
+//! let x: E.A = E.B;        // ❌ TS2322: different members
+//! let y: E.A = F.A;        // ❌ TS2322: different enums
+//! let z: E.A = 0;          // ✅ OK: numeric enum to number
+//! let w: number = E.A;     // ✅ OK: numeric enum to number
+//! ```
+//!
+//! #### F.2. Private/Protected Brands (TS2322)
+//! Classes with private/protected members behave nominally, not structurally.
+//!
+//! **Rule**: Two classes with the same private member signature are NOT compatible
+//! unless they share the same declaration (or one extends the other).
+//!
+//! **Rationale**: Private members create a "brand" that distinguishes otherwise
+//! structurally identical types. This prevents accidentally mixing objects that
+//! happen to have the same shape but represent different concepts.
+//!
+//! **Implementation**:
+//! - `private_brand_assignability_override` in `CompatChecker`
+//! - Uses `SymbolId` comparison to verify private members originate from same declaration
+//! - Subclasses inherit the parent's private brand (are compatible)
+//! - Public members remain structural (do not create brands)
+//!
+//! **Examples**:
+//! ```typescript
+//! class A { private x: number = 1; }
+//! class B { private x: number = 1; }
+//!
+//! let a: A = new B();        // ❌ TS2322: separate private declarations
+//! let b: B = new A();        // ❌ TS2322: separate private declarations
+//!
+//! class C extends A {}
+//! let c: A = new C();        // ✅ OK: subclass inherits brand
+//! ```
+//!
+//! #### F.3. Constructor Accessibility (TS2673, TS2674)
+//! Classes with private/protected constructors cannot be instantiated from
+//! invalid scopes.
+//!
+//! **Rule**:
+//! - `private constructor()`: Only accessible within the class declaration
+//! - `protected constructor()`: Only accessible within the class or subclasses
+//! - `public constructor()` or no modifier: Accessible everywhere (default)
+//!
+//! **Implementation**:
+//! - `constructor_accessibility_override` in `CompatChecker`
+//! - Checks constructor symbol flags when assigning class type to constructable
+//! - Validates scope (inside class, subclass, or external)
+//!
+//! **Examples**:
+//! ```typescript
+//! class A { private constructor() {} }
+//! let a = new A();           // ❌ TS2673: private constructor
+//! A.staticCreate();          // ✅ OK: inside class
+//!
+//! class B { protected constructor() {} }
+//! class C extends B { constructor() { super(); } }
+//! let b = new B();           // ❌ TS2674: protected constructor
+//! let c = new C();           // ✅ OK: subclass access
+//! ```
+//!
+//! ### Why These Override The Judge
+//!
+//! The **Judge** (SubtypeChecker) implements sound, structural set theory semantics.
+//! It would correctly determine that `class A { private x }` and `class B { private x }`
+//! have the same shape and are structurally compatible.
+//!
+//! The **Lawyer** (CompatChecker) steps in and says "Wait, TypeScript says these
+//! are incompatible because of the private brand." This is TypeScript-specific
+//! legacy behavior that violates soundness principles for practical/ergonomic reasons.
+//!
+//! **Key Principle**: The Lawyer never makes types MORE compatible. It only
+//! makes them LESS compatible by adding restrictions on top of the Judge's
+//! structural analysis.
+//!
 //! The key principle is that `any` should NOT silence structural mismatches.
 //! While `any` is TypeScript's escape hatch, we still want to catch real errors
 //! even when `any` is involved.
