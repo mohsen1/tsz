@@ -4,16 +4,21 @@
 //! cannot be instantiated from invalid scopes.
 
 use crate::binder::BinderState;
+use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::solver::TypeInterner;
+use crate::test_fixtures::TestContext;
+use std::sync::Arc;
 
 fn test_constructor_accessibility(source: &str, expected_error_code: u32) {
+    let ctx = TestContext::new(); // This loads lib files
+
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -21,8 +26,21 @@ fn test_constructor_accessibility(source: &str, expected_error_code: u32) {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        CheckerOptions::default(),
     );
+
+    // Set lib contexts for global symbol resolution
+    if !ctx.lib_files.is_empty() {
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
+            .lib_files
+            .iter()
+            .map(|lib| crate::checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
 
     checker.check_source_file(root);
 
@@ -43,11 +61,13 @@ fn test_constructor_accessibility(source: &str, expected_error_code: u32) {
 }
 
 fn test_no_errors(source: &str) {
+    let ctx = TestContext::new(); // This loads lib files
+
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -55,8 +75,21 @@ fn test_no_errors(source: &str) {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        CheckerOptions::default(),
     );
+
+    // Set lib contexts for global symbol resolution
+    if !ctx.lib_files.is_empty() {
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
+            .lib_files
+            .iter()
+            .map(|lib| crate::checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
 
     checker.check_source_file(root);
 
