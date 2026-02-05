@@ -219,3 +219,52 @@ Be specific if it's wrong - tell me exactly what to fix.
 
 - This bug prevents discriminant narrowing from working correctly in tsz
 - Affects type precision for any type alias with literal members
+
+## Session History
+
+**Created 2026-02-05** following completion of tsz-1 (Discriminant Narrowing).
+
+### Investigation Progress (2026-02-05)
+
+**Phase 1: Initial Hypothesis - SOLVER Bug** ❌ INCORRECT
+- Initially suspected `src/solver/lower.rs` was widening literals in type alias lowering
+- Investigation revealed: **Type alias lowering is CORRECT**
+- Debug output confirms: `lower_literal_type` creates literal `"a"` correctly
+
+**Phase 2: Root Cause Identified - CHECKER Bug** ✅ CORRECT
+- Gemini Pro analysis revealed the real bug location
+- **Bug Location**: `src/checker/` expression inference (NOT solver)
+- **Specific Issue**: Object literal expressions inferred WITHOUT considering contextual type
+
+**Error Analysis**:
+```
+type A = { kind: "a" };
+function test(obj: A) {}
+
+test({ kind: "a" }); // Error: { kind: string } not assignable to A
+```
+
+- Type alias `A` is correctly stored as `{ kind: "a" }` (literal preserved)
+- Argument `{ kind: "a" }` is inferred as `{ kind: string }` (literal widened)
+- This proves type alias lowering works, but expression inference ignores context
+
+**Phase 3: Architecture Investigation** ⏳ IN PROGRESS
+- Gemini identified: `src/checker/object_literal_checker.rs` with `check_object_literal_expression`
+- **File does not exist** - may have been refactored or extracted differently
+- Need to find actual location of object literal expression checking in current codebase
+- Searched multiple files but haven't located the main checking function yet
+
+### Next Steps
+
+**Option 1**: Continue Investigation
+- Find actual location of object literal expression checking
+- Identify where contextual type is ignored
+- Implement fix to pass contextual type to property initializers
+
+**Option 2**: Defer Session
+- This is a deeper investigation than expected
+- May require significant architecture understanding
+- Could benefit from dedicated focused effort
+
+**Decision Point**: Need guidance on whether to continue or defer.
+
