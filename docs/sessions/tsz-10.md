@@ -94,13 +94,37 @@ function bar(x: string | null | undefined) {
 
 ### Task 2: Equality & Instanceof Narrowing
 
-**Status**: 🔄 IN PROGRESS (infrastructure in place, debugging narrowing application)
+**Status**: ✅ COMPLETE
 
 **Progress Summary**:
-1. ✅ Fixed TypeResolver wiring in `apply_type_predicate_narrowing` and `narrow_by_instanceof`
-2. ✅ Committed resolver infrastructure (73e2ded5a)
-3. ❌ Instanceof narrowing still not working in practice
-4. 🔄 Debugging why narrowed types aren't being applied
+1. ✅ Implemented `narrow_by_instanceof` in `src/solver/narrowing.rs`
+2. ✅ Added `are_object_like` helper for detecting object types
+3. ✅ Handle any/unknown narrowing (instanceof DOES narrow these)
+4. ✅ Filter union members based on instanceof relationship
+5. ✅ Handle interface overlap using Intersection type
+6. ✅ Fixed TypeParameter handling bug (commit 5736afc35)
+7. ✅ Added TODO comment for Symbol.hasInstance custom behavior
+
+**Gemini Code Review (Question 2)**:
+Asked Gemini Pro to review the instanceof narrowing implementation.
+Key findings:
+- ✅ Overall logic is correct
+- ✅ Properly uses `classify_for_instance_type` (better than property access)
+- ✅ Correctly handles any/unknown narrowing
+- ✅ Correctly filters union members
+- ✅ Intersection fallback for interface overlap is sound
+- ❌ **BUG FOUND**: `are_object_like` didn't handle TypeParameter
+  - Fixed by checking constraint recursively
+  - Allows intersection narrowing for generics like `T & MyClass`
+
+**Test Cases**:
+- Simple instanceof: `test_simple_instanceof.ts` ✅
+- Generic constrained: `test_instanceof_simple.ts` ✅
+- Compound conditions: Known limitation in checker (separate issue)
+
+**Known Limitations**:
+- Compound conditions (`&&`) don't narrow both sides - this is a checker issue, not solver
+- Symbol.hasInstance not supported - added TODO for future work
 
 **Key Finding**:
 The narrowing INFRASTRUCTURE exists and is correct:
