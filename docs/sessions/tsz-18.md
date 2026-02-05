@@ -133,14 +133,15 @@ Found **6 confirmed bugs** where tsz rejects code that tsc accepts:
 
 **Next Steps**:
 1. ✅ Found 6 confirmed bugs
-2. ⏸️ Started debugging Bug #1 (Key remapping)
-   - Discovered even simple identity remapping fails
-   - Attempted to trace through instantiate_type logic
-   - Gemini Pro hit MAX_TOKENS during debugging session
-3. 🔜 Need alternative approach:
-   - Add debug logging to mapped.rs
-   - Or examine existing tests for mapped types
-   - Or check if there's a known issue with key remapping
+2. ⏸️ Deep debugging of Bug #1 (Key remapping) revealed ROOT CAUSE:
+   - **Issue is in `evaluate_keyof`, not `mapped.rs`**
+   - `evaluate_keyof` creates deferred `KeyOf` types even for type aliases
+   - Example: `keyof O` where `O = { a: string }` stays as `KeyOf(O)` instead of evaluating to `"a"`
+   - This affects Bugs #1, #2, #3, and #4 (all mapped type key remapping)
+3. 🔜 Strategic decision needed:
+   - Fix `evaluate_keyof` (larger change, affects keyof evaluation)
+   - Or focus on Bugs #5 and #6 (template literal bugs, separate area)
+   - Recommendation: Start with template literal bugs (easier wins)
 
 **Session Status**: Good progress - broke the "already implemented" loop and found actionable bugs. Ready to fix them with more investigation or alternative debugging approach.
 
