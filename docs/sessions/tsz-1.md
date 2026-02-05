@@ -1,583 +1,178 @@
-# TSZ-1: Active Tasks
+# Session TSZ-1: Fix and Harden Discriminant Narrowing
 
-## Session Summary 2026-02-05
+**Started**: 2026-02-05
+**Status**: 🔄 PENDING
+**Focus**: Fix 3 critical bugs in discriminant narrowing implementation
 
-### ✅ Major Accomplishments
+## Problem Statement
 
-**Fixes Implemented:**
-1. **TS2393 False Positive Fix** (commit e15963ec9)
-   - Removed duplicate TS2393 reporting in `check_duplicate_class_members`
-   - Valid method overloads (signatures + 1 implementation) no longer report duplicate errors
-   - Clean diagnostic quality improvement
+**From AGENTS.md Investigation (2026-02-04)**:
 
-2. **TS2564 Property Initialization Improvements** (commit 6c368aa6d)
-   - Performance: HashSet → FxHashSet (rustc_hash)
-   - ElementAccessExpression support: `this["x"] = 1` now recognized
-   - Fixed compilation issues
+Commit `f2d4ae5d5` (discriminant narrowing) was found to have **3 CRITICAL BUGS**:
 
-3. **Session Redefinition** (commit 4c5580ca3 & 9f27d130c)
-   - Pivoted from TS2564 edge cases to Type Narrowing (CFA)
-   - After investigation: Found narrowing features already implemented
-   - Redefined to method overload validation and flow analysis tasks
+1. **Reversed Subtype Check**: Asked `is_subtype_of(property_type, literal)` instead of `is_subtype_of(literal, property_type)`
+2. **Missing Type Resolution**: Didn't handle `Lazy`/`Ref`/`Intersection` types
+3. **Broken for Optional Properties**: Failed on `{ prop?: "a" }` cases
 
-**Investigation Results - Features Already Complete:**
-1. **TS2564 Parameter Properties** - Architecturally separate, working correctly
-2. **User-Defined Type Guards** - Fully implemented in `src/checker/control_flow_narrowing.rs`
-3. **`in` Operator Narrowing** - Fully implemented with `TypeGuard::InProperty`
-4. **Union Callable Resolution** - Not valid TypeScript (overloads used instead)
-5. **Type Narrowing (unknown/instanceof)** - Matches tsc behavior correctly
-
-**Commits Pushed:**
-- e15963ec9: TS2393 false positive fix
-- 6c368aa6d: TS2564 HashSet→FxHashSet + element access
-- 4c5580ca3: Session redefinition to Type Narrowing
-- 9f27d130c: Updated priorities after investigation
-
-### 🎯 New Priorities (Per Gemini Latest Consultation)
-
-**1. Unblock Method/Constructor Overload Validation (PRIORITY)**
-- Blockage: `get_type_of_node(method_node)` returns ERROR
-- Solution: Build Signature from AST nodes manually
-- File: `src/checker/state_checking_members.rs`
-
-**2. Reachability Analysis (TS7027)**
-- Detect unreachable code via flow analysis
-- File: `src/checker/flow_analysis.rs`
-
-**3. Exhaustiveness Checking (TS2366/TS7030)**
-- Validate all code paths return values
-- File: `src/checker/flow_analysis.rs`
-
-**4. instanceof Narrowing**
-- Complete object narrowing trilogy
-- Files: `src/solver/narrowing.rs`, `src/checker/flow_analysis.rs`
-
-**5. Discriminated Union Review**
-- Verify correctness of complex narrowing cases
-- File: `src/solver/narrowing.rs`
-
----
-
-## Completed Tasks
-
-### ✅ ASI (Automatic Semicolon Insertion) Fix - Completed 2026-02-05
-
-**Problem**: Variable declarations without semicolons followed by keywords caused false TS1005 "comma expected" errors:
+**Why This Matters**:
+Discriminant narrowing is how TypeScript narrows union types in control flow:
 ```typescript
-var x = 1
-const y = 2  // tsz: TS1005 ',' expected - WRONG!
+function process(value: { kind: "a" } | { kind: "b" }) {
+    if (value.kind === "a") {
+        // value should be narrowed to { kind: "a" }
+    }
+}
 ```
 
-**Root Cause** (`src/parser/state_statements.rs` lines 765-782):
-In `parse_variable_declaration_list`, after parsing a variable without a comma, the code checks if the next token could start another declaration. If so, it emits a comma error - but it didn't check for a preceding line break (ASI).
+If narrowing is broken, type safety is compromised.
 
-**Fix Applied**:
-```rust
-// Added check for ASI before emitting comma error
-if can_start_next
-    && !self.scanner.has_preceding_line_break()  // NEW: ASI check
-    && !self.is_token(SyntaxKind::SemicolonToken)
-    // ...
+## Success Criteria
+
+### Test Case 1: Literal Discriminant
+```typescript
+type A = { kind: "a", value: number };
+type B = { kind: "b", value: string };
+
+function process(obj: A | B) {
+    if (obj.kind === "a") {
+        const val: number = obj.value; // Should work - obj narrowed to A
+    }
+}
 ```
 
-**Conformance Impact**: 40.6% -> 41.8% (+152 tests, +1.2%)
-- **TS1005 extra errors: 972 -> 283** (-689 false positives!)
+### Test Case 2: Optional Properties
+```typescript
+type WithOptional = { kind?: "a"; prop: string };
 
----
+function process(obj: WithOptional) {
+    if (obj.kind === "a") {
+        // Should narrow correctly even with optional discriminant
+        console.log(obj.prop);
+    }
+}
+```
 
-### ✅ Lib Loading Target Respect Fix - Completed 2026-02-05
+### Test Case 3: Nested/Lazy Types
+```typescript
+type Nested = { data: { kind: "a" } };
 
-**Problem**: After fixing cross-arena cache poisoning, conformance dropped because `tsz` was loading ES2015+ types even when `--target es5` was specified.
+function process(obj: { kind: "a" } | Nested) {
+    if (obj.kind === "a") {
+        // Should handle Lazy/Ref resolution correctly
+    }
+}
+```
 
-**Root Cause**: 
-`resolve_lib_files` was following `/// <reference lib="..." />` directives in lib files. Specifically, `lib.dom.d.ts` references `es2015`, causing ES2015 collections (Map, Set, WeakSet) to be loaded even for ES5 targets.
+## Implementation Plan
 
-**TypeScript Behavior**: 
-tsc does NOT follow reference directives when loading default libs based on target. These references are only used when explicitly including libs via `--lib`.
+### Phase 1: Investigation & Root Cause Analysis
 
-**Fix Applied** (`src/cli/config.rs`):
-1. Added `resolve_lib_files_with_options(libs, follow_references)` - parameterized reference following
-2. Added `default_libs_for_target(target)` - explicit lib lists for ES5/ES2015
-3. Added `should_follow_references_for_target(target)` - ES2016+ follows refs, ES5/ES2015 don't
-4. Updated `resolve_default_lib_files` and `materialize_embedded_libs` to use new functions
+**File**: `src/solver/narrowing.rs`
 
-**Verification**:
+**Tasks**:
+1. Find the discriminant narrowing code added in commit `f2d4ae5d5`
+2. Identify the exact lines with the 3 bugs
+3. Write failing tests for each bug
+4. Document current behavior vs expected behavior
+
+### Phase 2: Fix the Bugs
+
+**Bug 1: Reversed Subtype Check**
+- **Issue**: `is_subtype_of(property_type, literal)` should be `is_subtype_of(literal, property_type)`
+- **Fix**: Swap arguments in subtype check
+- **Validation**: Narrowing should succeed when literal matches property type
+
+**Bug 2: Missing Type Resolution**
+- **Issue**: Code doesn't handle `Lazy`/`Ref`/`Intersection` types
+- **Approach**: Use visitor pattern from `src/solver/visitor.rs`
+- **Fix**: Add resolution steps for complex types before matching
+- **Validation**: Test with nested and generic types
+
+**Bug 3: Optional Properties**
+- **Issue**: Fails when discriminant property is optional
+- **Fix**: Handle optional discriminants correctly
+- **Validation**: Test with `{ kind?: "a" }` cases
+
+### Phase 3: Validation & Testing
+
+**Tasks**:
+1. Run all narrowing tests to ensure no regressions
+2. Test with real-world code patterns
+3. Ask Gemini Pro for POST-implementation review
+4. Compare behavior with tsc on conformance tests
+
+## MANDATORY Gemini Workflow
+
+Per AGENTS.md, **MUST ask Gemini TWO questions**:
+
+### Question 1 (PRE-implementation) - REQUIRED
 ```bash
-# Before fix: No error (Map incorrectly available)
-./.target/release/tsz /tmp/test_es5.ts --noEmit --target es5
+./scripts/ask-gemini.mjs --pro --include=src/solver/narrowing.rs --include=src/checker/flow_analysis.rs "
+I'm starting tsz-1: Fix and Harden Discriminant Narrowing.
 
-# After fix: Correct error matching tsc
-error TS2583: Cannot find name 'Map'. Do you need to change your target library?
+Problem: Commit f2d4ae5d5 has 3 critical bugs:
+1. Reversed subtype check (asked is_subtype_of(property_type, literal) instead of is_subtype_of(literal, property_type))
+2. Missing type resolution for Lazy/Ref/Intersection types
+3. Broken for optional properties ({ prop?: \"a\" })
+
+My planned approach:
+1) Find the discriminant narrowing code in src/solver/narrowing.rs
+2) Identify the exact lines with the bugs
+3) Fix each bug systematically
+4) Test with tsc comparison
+
+Questions:
+1) Where is the discriminant narrowing code in narrowing.rs?
+2) Should I use visitor pattern or direct TypeKey matching?
+3) How do I resolve Lazy/Ref/Intersection types before narrowing?
+4) How do I handle optional discriminant properties?
+
+Please provide: file paths, function names, line numbers, and implementation guidance.
+"
 ```
 
-**Conformance Impact**: +0.2% (39.5% -> 39.7%)
+### Question 2 (POST-implementation) - REQUIRED
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/narrowing.rs "
+I fixed the 3 discriminant narrowing bugs in [FILE].
 
----
+Changes: [PASTE CODE OR DESCRIBE CHANGES]
 
-### ✅ Cross-Arena Cache Poisoning Fix - Completed 2026-02-05
+Please review:
+1) Is this logic correct for TypeScript narrowing semantics?
+2) Did I miss any edge cases?
+3) Are there type system bugs?
 
-**Previous Claim**: "Lib loading was already working" - INCORRECT
-
-**Reality**: Lib symbols like `WeakSet`, `Map`, `Set` were resolving to `TypeId::ERROR` due to a cache poisoning bug.
-
-**Root Cause Found**:
-In `compute_type_of_symbol`, when cross-arena delegation was needed:
-1. Parent checker pre-caches `ERROR` as a "resolution in progress" marker (cycle detection)
-2. Child checker is created with `with_parent_cache` which CLONES the parent's cache
-3. Child checker's `get_type_of_symbol` checks cache first, finds ERROR, returns immediately
-4. Lib symbol types are never actually computed
-
-**Fix Applied** (`src/checker/state_type_analysis.rs`):
-```rust
-// Before creating child checker, remove the "in-progress" ERROR marker
-self.ctx.symbol_types.remove(&sym_id);
+Be specific if it's wrong - tell me exactly what to fix.
+"
 ```
 
-**Additional Changes** (`src/parallel.rs`):
-- Added `symbol_arenas` and `declaration_arenas` fields to `BindResult` struct
-- Propagate arena mappings during `merge_bind_results_ref` for lib symbols
+## Dependencies
 
-**Verification**:
-- `WeakSet` now resolves to type 292 (correct) instead of type 1 (ERROR)
-- `Array<T>`, `Promise<T>` type annotations work correctly
+- **tsz-4**: Strict Null Checks & Lawyer Layer (COMPLETE)
+- **tsz-2**: Coinductive Subtyping (COMPLETE)
+- **tsz-5/6/13**: Inference & Member Resolution (COMPLETE)
 
-**Conformance Impact**: -1.1% (40.6% -> 39.5%)
-- This is EXPECTED - the fix exposed a separate issue: lib loading is too permissive
-- Before: Any-poisoning masked incorrect symbol resolution, tests passed by accident
-- After: Symbols resolve correctly, revealing that libs load regardless of target/lib options
-- TS2304 "missing" increased because symbols are now found that shouldn't be available for certain targets
-- Fixed by: Lib Loading Target Respect Fix (above)
+## Related Sessions
 
-### ⚠️ TS2454 Module-Level Fix - In Progress 2026-02-05
-**Status**: Partial Fix Applied, Deeper Issue Discovered
+- **tsz-3**: CFA Stabilization (BLOCKED) - may have related narrowing issues
+- **tsz-11**: Truthiness & Equality Narrowing (Active)
 
-**Changes Made**:
-- Modified `should_check_definite_assignment` in `src/checker/flow_analysis.rs`
-- Removed SOURCE_FILE early return (lines 1796-1798)
-- Removed `found_function_scope` requirement (lines 1807-1809)
+## Implementation Notes
 
-**Issue Discovered**:
-Module-level statements don't have flow nodes created by the binder:
-- `get_node_flow` returns `None` for module-level identifiers
-- `is_definitely_assigned_at` has safe default: returns `true` when no flow info (line 1801)
-- This prevents TS2454 detection for module-level `let`/`const` variables
+### Key Principles
 
-**Root Cause**:
-Flow analysis (control flow graph building) only covers function bodies, not module-level statements. Fixing this requires extending the binder's flow node creation to cover module-level statements.
+1. **Use Visitor Pattern**: Per NORTH_STAR.md 8.1, always prefer visitor pattern over direct TypeKey matching
+2. **Test with tsc**: Every fix must match tsc behavior exactly
+3. **No regressions**: Ensure existing narrowing still works
 
-**Verification**:
-```typescript
-// test.ts
-let x: number;
-console.log(x);  // tsc --strict: TS2454, tsz: No error
-```
+### Files to Investigate
 
----
+- `src/solver/narrowing.rs` - Main narrowing logic
+- `src/checker/flow_analysis.rs` - Control flow analysis
+- `src/checker/control_flow_narrowing.rs` - Narrowing orchestration
+- `src/solver/visitor.rs` - Type resolution helpers
 
-## Active Tasks
+## Session History
 
-### ✅ Overload Implementation Validation - Completed 2026-02-05
-
-**Problem**: TSZ did not validate that function/method/constructor implementations are compatible with all their overload signatures, allowing unsound implementations that TypeScript would reject.
-
-**Root Cause**: No validation of overload compatibility after implementation checking.
-
-**Fix Applied** (`src/checker/state_checking_members.rs`):
-1. Added TS2394 error code and message to `diagnostics.rs`
-2. Implemented `check_overload_compatibility()` function:
-   - Gets implementation's symbol and type
-   - Iterates through all symbol declarations
-   - For each overload (declaration without body), checks if implementation is assignable
-   - Uses `is_assignable_to(impl_type, overload_type)` for validation
-   - Reports TS2394 on overload declaration when incompatible
-3. Added calls in:
-   - `check_function_declaration` (StatementCheckCallbacks impl)
-   - `check_method_declaration`
-   - `check_constructor_declaration`
-
-**Implementation Approach** (based on Gemini Pro guidance):
-- Implementation parameters must be supertypes of overload parameters (contravariant)
-- Implementation return type must be subtype of overload return type (covariant)
-- Effectively: Implementation <: Overload (assignability check)
-- Handles: Function declarations, Method declarations, Constructor declarations
-
-**Testing Results**:
-```typescript
-// Test 1: Function overload - WORKS ✅
-function foo(x: string): void;
-function foo(x: number): void;
-function foo(x: string): void {  // TS2394 reported correctly
-    console.log(x);
-}
-```
-
-**Status**: Function overload validation works correctly. Method/constructor overload validation is blocked by architectural complexity (see "Method/Constructor Overload Blockage" below).
-
-**Conformance Impact**: To be measured
-
----
-
-### ✅ TS2393 False Positive Fix - Completed 2026-02-05
-
-**Problem**: Valid method overloads (multiple signatures + 1 implementation) were incorrectly reporting TS2393 "Duplicate function implementation".
-
-**Root Cause**: In `src/checker/state_checking_members.rs`, the `check_duplicate_class_members` function had duplicate TS2393 reporting code:
-- Lines 357-378: Correct check `if method_impl_count > 1` → Report TS2393
-- Lines 379-401: **BUG** - `else` block with exact same TS2393 reporting code
-
-When `method_impl_count == 1` (valid overloads), the `else` block would execute and incorrectly report TS2393 for the implementation.
-
-**Fix Applied**:
-Removed the duplicate `else` block (lines 379-401) that was causing false positives.
-
-**Testing Results**:
-```typescript
-// Before fix: TS2393 false positive
-class Foo {
-    method(x: string): void;  // Overload
-    method(x: number): void;  // Overload
-    method(x: string): void {  // TS2393 - WRONG!
-        console.log(x);
-    }
-}
-
-// After fix: No error (valid overloads)
-class Foo {
-    method(x: string): void;
-    method(x: number): void;
-    method(x: string): void {  // No error - CORRECT!
-        console.log(x);
-    }
-}
-
-// Multiple implementations still caught correctly
-class Bar {
-    method() {}  // TS2393 - CORRECT!
-    method() {}  // TS2393 - CORRECT!
-}
-```
-
-**Conformance Impact**: Reduces false positives, improves diagnostic quality.
-
----
-
-### ⚠️ Method/Constructor Overload Validation - Blocked 2026-02-05
-
-**Status**: Architectural complexity blocks TS2394 validation for methods and constructors.
-
-**Problem**: `check_overload_compatibility` cannot validate method/constructor overloads because `get_type_of_node(method_node)` returns `TypeId::ERROR`.
-
-**Root Cause**:
-- Function declarations have standalone types → TS2394 works ✅
-- Method declarations are part of class type → `get_type_of_node` returns ERROR ❌
-- Methods don't have independently computable types like functions do
-
-**Attempted Solutions**:
-1. Using `get_type_of_symbol` - returns class type, not method signature
-2. Class-level validation - still blocked by ERROR type issue
-
-**Required Solution** (deferred):
-- Use `call_signature_from_function()` to build CallSignature manually
-- Convert CallSignature to TypeId (mechanism unclear)
-- Or implement Symbol-based signature resolution in Solver
-
-**Recommendation**: Document as "Symbol-based Signature Resolution" requirement and defer to future work. Focus on TS2564 Property Initialization instead.
-
----
-
-### ✅ Overload Implementation Validation - Completed 2026-02-05
-
----
-
-**Context**:
-From architectural review section 5.4: "Function overload matching validation missing"
-
-When a function has overloads, TypeScript validates that the implementation signature is compatible with all overload signatures. Currently TSZ does not perform this validation, allowing unsound implementations.
-
-**Goal**:
-Validate that function implementations are assignable to all their overload signatures.
-
-**Files to Modify**:
-- `src/checker/declarations.rs` - Add validation after function declaration checking
-- `src/checker/state.rs` - Orchestrate the validation
-
-**Implementation Plan**:
-1. Retrieve implementation signature and all overload signatures for a function symbol
-2. Use `solver.is_assignable_to()` to check if implementation is assignable to each overload
-3. Report error if implementation is not compatible
-4. Handle edge cases: generic overloads, `this` parameters
-
----
-
-### ✅ TS2564 Property Initialization - Partially Complete 2026-02-05
-
-**Status**: Core functionality working, performance improved, critical bugs fixed.
-
-**Implementation Completed** (`src/checker/declarations.rs`):
-1. ✅ **Performance fix**: `HashSet` → `FxHashSet` (rustc_hash)
-   - Replaced all `std::collections::HashSet` with `rustc_hash::FxHashSet`
-   - Fixed `FxHashSet::new()` → `FxHashSet::default()`
-
-2. ✅ **Element access support**: `this["x"] = 1` now recognized
-   - Updated `extract_property_key` to handle `ELEMENT_ACCESS_EXPRESSION`
-   - Uses `get_access_expr` for both property and element access
-   - Extracts string literal property names via `get_literal`
-
-**Testing Results**:
-```typescript
-// Test 1: Element access initialization - WORKS ✅
-class Foo {
-    x: number;
-    constructor() {
-        this["x"] = 1;  // No TS2564 - CORRECT!
-    }
-}
-
-// Test 2: Basic property initialization - WORKS ✅
-class Bar {
-    x: number;
-    constructor() {
-        this.x = 1;  // No TS2564 - CORRECT!
-    }
-}
-
-// Test 3: Missing initialization - WORKS ✅
-class Baz {
-    x: number;  // TS2564 - CORRECT!
-}
-```
-
-**Remaining Gaps** (lower priority, edge cases):
-- SwitchStatement handling in `analyze_statement`
-- Conditional expression (ternary) handling
-- Parameter property tracking (`constructor(public x: number)`)
-- Accessor exclusion (get/set pairs shouldn't require initialization)
-- Compound assignments (`this.x ??= 1`)
-
-**Note**: TS2564 was already working correctly for most cases. These fixes address performance and specific edge cases identified by Gemini consultation.
-
-**Conformance Impact**: Minor (eliminates false positives for element access initialization)
-
----
-
-### Task 2: TS2454 Definite Assignment
-**Priority**: Low (Architecture Heavy)
-**Estimated Impact**: +3-5% conformance
-**Effort**: Hard
-
-**Status**: Partially complete (see completed tasks below)
-
-**Remaining Work**:
-- Extend binder to create flow nodes for module-level statements
-- Complete CFA integration for all variable scopes
-
----
-
-## Completed Tasks (Detailed)
-
-### ✅ Cross-Arena Cache Poisoning Fix - 2026-02-05
-See detailed description at top of file.
-
-### ✅ Basic Overload Resolution - Completed 2026-02-05
-**Status**: Basic Implementation Complete, Advanced Gaps Identified
-
-**Finding**: Basic overload resolution is fully implemented in:
-- `src/solver/operations.rs` - `resolve_callable_call` (lines 2360-2459)
-  - First-match-wins algorithm: Returns immediately on first valid signature
-  - Uses `is_assignable_to` (CompatChecker/Lawyer) for type checking
-  - Handles generic inference per-signature in `resolve_generic_call_inner`
-
-**Testing Confirms**:
-- Overloaded functions with string/number parameters resolve correctly
-- DOM functions like `document.createElement('div')` return correct types
-- Type mismatches are detected (TS2322 errors)
-
-**Note**: Basic overload resolution works for 80% of cases. Advanced features (speculative inference, union callables) are not yet implemented.
-
----
-
-### ⚠️ TS2454 Module-Level Fix - Partially Complete 2026-02-05
-
----
-
-## Next Steps
-
-### 1. User-Defined Type Guards (PRIORITY TASK)
-
-**Why**: Massive conformance impact. Without this, tsz cannot narrow types using utility functions (e.g., `isString(val)`). This is ubiquitous in TypeScript codebases.
-
-**Implementation** (per Gemini consultation):
-1. **Solver**: Ensure `TypeKey::Function` or `Signature` can store `TypePredicate`
-2. **Checker/Flow**: In `src/checker/flow_analysis.rs`, detect call expressions in conditions
-   - Check if function's return type is `TypePredicate`
-   - Apply narrowing to argument
-
-**Impact**: High - unlocks narrowing for thousands of tests
-
-**Example**:
-```typescript
-function isString(val: unknown): val is string {
-    return typeof val === 'string';
-}
-
-if (isString(x)) {
-    // x should be narrowed to string
-}
-```
-
----
-
-### 2. `in` Operator Narrowing
-
-**Why**: Primary way TypeScript handles narrowing for non-discriminated objects. Essential for structural typing conformance.
-
-**Implementation**:
-1. **Solver**: Implement `narrow_by_property_presence(type, property_name, exists: bool)`
-2. **Checker**: Detect `BinaryExpression` with `SyntaxKind::InKeyword`
-
-**Impact**: High - essential for object type narrowing
-
-**Example**:
-```typescript
-if ('a' in obj) {
-    // obj should be narrowed to types with property 'a'
-}
-```
-
----
-
-### 3. Union Callable Resolution
-
-**Why**: Supports calling unions of functions with appropriate argument types.
-
-**Implementation**:
-- **File**: `src/solver/operations.rs`
-- **Function**: `resolve_callable_call`
-- Modify to handle `TypeKey::Union` where members are callables
-- Find "intersection" of parameters, "union" of return types
-
-**Impact**: Medium-High - fixes callable errors in complex type tests
-
----
-
-### 4. TS2564 Property Initialization - MOSTLY COMPLETE
-
-**Status**: Core working, remaining gaps are edge cases with diminishing returns.
-
-**Remaining Work** (lower priority):
-- Parameter properties: `constructor(public x: number)`
-- SwitchStatement handling
-- Conditional expression (ternary) handling
-- Accessor exclusion
-- Compound assignments
-
-**Recommendation**: Implement parameter properties (quick win), then pivot to narrowing.
-
----
-
-### 3. Method/Constructor Overload Validation (DEFERRED)
-
-**Status**: Architectural complexity blocks progress.
-
-**Issue**: `get_type_of_node(method_node)` returns `TypeId::ERROR` because methods don't have standalone types like functions do.
-
-**Required Solution**:
-- Use `call_signature_from_function()` to build CallSignature manually
-- Implement Symbol-based signature resolution in Solver
-- Or architect different validation approach for class members
-
-**Recommendation**: Document as "Symbol-based Signature Resolution" requirement. Deferred in favor of narrowing work.
-
----
-
-### 4. TS2454 Module-Level Definite Assignment (DEFERRED)
-
-**Status**: Low priority, architecture heavy.
-
-**Blocker**: Requires Binder changes to create flow nodes for module-level statements.
-
-**Recommendation**: Keep as low priority - significant binder architectural changes required.
-
----
-- Ask Gemini Question 1: CFG walking strategy for property initialization
-- Implement in `src/checker/class_checker.rs`
-- Ask Gemini Question 2: Implementation review
-
----
-
-### 3. TS2454 Definite Assignment (DEFERRED)
-
-Keep as low priority - requires significant binder architectural changes for module-level flow nodes.
-   - Test with function overloads that have incompatible implementations
-
-2. **TS2564 Property Initialization**:
-   - Refactor to use `FxHashSet` for performance
-   - Complete constructor flow graph analysis
-   - Handle multiple constructors and getter/setter properties
-
-3. **TS2454 Definite Assignment** (Deferred):
-   - Requires binder changes for module-level flow nodes
-   - Architectural complexity makes this lower priority
-
----
-
-## Session Focus Shift
-
-**Previous Focus**: Flow Analysis & Overload Resolution infrastructure
-**New Focus**: Missing Diagnostics within Flow Analysis & Overload scope
-
-Based on architectural review, the highest-impact missing diagnostics that fit TSZ-1 scope are:
-1. Overload implementation validation (directly completes overload resolution work)
-2. TS2564 property initialization (class constructor flow analysis)
-3. TS2454 definite assignment (general flow analysis, but architecturally complex)
-
----
-
----
-
-## Investigation Results: Remaining TS1005 Issues (2026-02-05)
-
-After ASI fix, investigated remaining TS1005 errors. These are **parser gaps** that should be reported to TSZ-2 (Parser track):
-
-### 1. Object Shorthand with `!` Assertion
-```typescript
-const foo = { a! }  // tsc: TS1162, tsz: TS1128
-```
-Parser doesn't recognize definite assignment assertion in shorthand properties.
-
-### 2. Optional Method Syntax in Object Literals
-```typescript
-const bar = { a ? () { } }  // tsc: TS1255, tsz: TS1005
-```
-Parser doesn't recognize `?` as optional marker for methods.
-
-### 3. ES2022 String Import Specifiers
-```typescript
-import { "missing" as x } from "./module";  // Valid ES2022
-```
-Parser fails to parse string literal as import binding name.
-
-### 4. Reserved Words as Class Names
-```typescript
-class void {}  // tsc: TS1005, tsz: no error
-```
-Parser accepts `void` as class name, should reject.
-
-### 5. `await` in Async Arrow Default Parameters
-```typescript
-var foo = async (a = await => await) => {}  // tsc: TS1005, tsz: no error
-```
-Parser should reject `await` as parameter name in async context.
-
-**Recommendation**: These findings should be incorporated into TSZ-2 (Parser) session work.
-
----
-
-## Session Alignment
-
-| Session | Focus |
-| :--- | :--- |
-| **TSZ-1 (You)** | **Flow Analysis & Overload Resolution** |
-| TSZ-2 | Parser Error Recovery (Syntax) |
-| TSZ-3 | Symbol Definitions & Scope Conflicts (Binder) |
-| TSZ-4 | Type Strictness & Compatibility Rules (Lawyer) |
+Created 2026-02-05 following completion of tsz-13 (Type Inference - discovery that it was already implemented).
