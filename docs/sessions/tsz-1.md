@@ -1386,13 +1386,102 @@ No fix needed. The interning system correctly distinguishes objects based on bot
 
 ---
 
-### Priority 1: Task #32 (Graph Isomorphism) 📝 NEXT
+### Priority 1: Task #32 (Graph Isomorphism) 📝 IN PROGRESS
 **Why**: "Final Boss" of North Star - structural identity for recursive types
 
 **Why Now**:
 - Simplified graphs (from Task #34) make isomorphism easier
 - All reduction infrastructure is in place
 - Ready to tackle the final North Star requirement
+
+**Status**: 📋 Planning Phase - Gemini Consultation Complete
+
+**Gemini Guidance Summary**:
+
+**Architectural Approach**: De Bruijn Indices for Types
+- Add `TypeKey::Recursive(u32)` variant to represent relative back-references
+- Transform cyclic graphs into trees with relative back-links
+- Canonicalization pass replaces `Lazy(DefId)` with `Recursive` indices
+
+**Key Implementation Components**:
+1. **TypeKey::Recursive(u32)**: De Bruijn index for "N levels up the nesting path"
+2. **Canonicalization Pass**: Unroll `Lazy(DefId)` into canonical form before interning
+3. **Stack<DefId> Tracking**: Detect cycles during unrolling and replace with Recursive
+4. **Memoization**: Cache `DefId -> Canonical TypeId` to avoid repeated unrolling
+
+**Files to Modify**:
+- `src/solver/types.rs`: Add `TypeKey::Recursive(u32)` variant
+- `src/solver/intern.rs`: Add `canonicalize()` helper, modify `intern()` logic
+- `src/solver/visitor.rs`: Update `TypeVisitor` to handle `Recursive` variant
+
+**Critical Edge Cases**:
+- **Expansive Recursion**: Enforce MAX_SUBTYPE_DEPTH limit to prevent infinite unroll
+- **Mutual Recursion**: Stack must track full path for proper De Bruijn indices
+- **Hashing Performance**: Use DashMap cache to avoid re-canonicalization
+- **Alpha-Equivalence**: Canonicalize generic parameter names to standard sequence
+
+**Next Step**: Ask Gemini Question 1 with specific implementation plan for `canonicalize()` function.
+
+**Gemini Question 1 Response - Implementation Guidance**:
+
+**Critical Distinction**: Nominal vs. Structural
+- **Type Aliases**: Structural - `type A = { x: A }` and `type B = { x: B }` ARE isomorphic
+- **Interfaces/Classes**: Nominal - `interface I { x: I }` and `interface J { x: J }` are NOT isomorphic
+- **Action**: Only canonicalize `DefKind::TypeAlias`, preserve nominal identity for classes/interfaces
+
+**Implementation Architecture**:
+
+1. **Add `TypeKey::Recursive(u32)`** to `src/solver/types.rs`
+   - Update `PartialEq` and `Hash` to include this variant
+
+2. **Create `Canonicalizer` struct** in `src/solver/intern.rs`:
+   ```rust
+   struct Canonicalizer<'a> {
+       interner: &'a TypeInterner,
+       resolver: &'a dyn TypeResolver,
+       stack: Vec<DefId>,
+   }
+   ```
+
+3. **Implement `canonicalize()` method**:
+   - For `Lazy(def_id)`:
+     a. Check stack for cycle - if found, return `Recursive(stack.len() - 1 - pos)`
+     b. If not found, check `resolver.get_def_kind(def_id)`
+     c. If `TypeAlias`: push def_id, resolve, recurse, pop
+     d. If `Class/Interface`: return `Lazy(def_id)` (preserve nominal)
+   - Recursively canonicalize nested types in Union, Intersection, etc.
+
+4. **New Entry Point** - `intern_canonical()` in `src/solver/intern.rs`:
+   - DO NOT modify the hot path `intern()` function
+   - Checker/Solver calls `intern_canonical()` for potentially recursive types
+   - Returns canonical TypeId with `Recursive` indices
+
+5. **Caching Layer** - Add to `TypeInterner`:
+   ```rust
+   canonical_cache: DashMap<TypeId, TypeId, FxBuildHasher>,
+   ```
+   - Maps non-canonical TypeId to canonical TypeId
+   - Check cache before running Canonicalizer
+
+6. **Update Visitor** - Modify `src/solver/visitor.rs`:
+   - Add `visit_recursive(&mut self, index: u32)` to `TypeVisitor` trait
+   - Update `for_each_child` to handle `Recursive` (has no children)
+
+**Key Edge Cases Identified**:
+- **Mutual Recursion**: Stack handles correctly (e.g., `type A = { b: B }; type B = { a: A }`)
+- **Generic Applications**: `Recursive` index must point to Application node, not definition
+- **Alpha-Equivalence**: Type params may need canonicalization (separate task)
+
+**Critical Pitfalls to Avoid**:
+1. **Infinite Unrolling**: Check stack BEFORE calling `resolve_lazy`
+2. **Interner Deadlock**: Be careful with nested DashMap operations
+3. **Bypassing Cache**: Ensure Checker uses `intern_canonical()` for type aliases
+
+**Files to Modify**:
+1. `src/solver/types.rs` - Add `TypeKey::Recursive(u32)`
+2. `src/solver/intern.rs` - Add `Canonicalizer`, `intern_canonical()`, cache
+3. `src/solver/visitor.rs` - Handle `Recursive` variant
+4. `src/solver/def.rs` - May need `get_def_kind()` method
 
 ---
 
