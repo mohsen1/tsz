@@ -1,95 +1,97 @@
-# Session tsz-4: Solver Lawyer Layer & strictNullChecks
+# Session TSZ-4: Strict Null Checks & Lawyer Layer Hardening
 
-**Status**: Active
-**Priority**: 4 (High - Type System)
-**Focus**: Verifying and tuning the Lawyer Layer implementation
+**Status**: In Progress
+**Focus**: Fix known strict-null bugs and audit Lawyer layer for missing compatibility rules
+**Blocker**: `TypeScript/tests` submodule missing. Using manual unit tests in `src/checker/tests/`.
 
-## Problem Statement
+## Goals
 
-TSZ is TOO STRICT in type checking, producing errors when `tsc` doesn't:
-- **TS18050** (172 extra): "The value X cannot be used here" (null/undefined)
-- **TS2322** (554 extra): "Type is not assignable to type"
-- **TS2345** (387 extra): "Argument of type X is not assignable to parameter of type Y"
+1. [ ] **Infrastructure**: Create `src/checker/tests/strict_null_manual.rs` for regression testing
+2. [ ] **Bugfix**: Fix TS18050/TS2531 error code selection for property access on `null`/`undefined`
+3. [ ] **Feature**: Implement "Weak Type" detection (TS2559) in Lawyer layer
+4. [ ] **Audit**: Verify Object Literal Freshness (Excess Property Checking) logic
 
-## Current Status (2026-02-05)
+## Current Context (2026-02-05)
 
-### Completed ✅
-
-1. **TS18050 strictNullChecks Gating** (Partial)
-   - Fixed `emit_binary_operator_error` to gate TS18050 for null/undefined operands
-   - Fixed `report_nullish_object` to skip possibly-nullish errors in non-strict mode
-   - Fixed `get_type_of_property_access_expression` similarly
-   - Known issue: Error code selection for literal null in property access
-
-2. **Lawyer Layer Verification** (Complete)
-   - **Step 2 (Any propagation)**: Already implemented in `src/solver/subtype.rs` lines 734-759
-   - **Step 3 (Method bivariance)**: Already implemented in `src/solver/subtype_rules/functions.rs`
-   - **Step 4 (Void return exception)**: Already implemented in `src/solver/subtype_rules/functions.rs`
-   - All features tested and confirmed working correctly
-
-3. **Wiring Verification** (Complete)
-   - Checker correctly calls `is_assignable_to` (CompatChecker)
-   - CompatChecker uses `AnyPropagationRules` with legacy mode enabled by default
-   - Fast path returns `true` if either side is `any`
-
-4. **Testing** (Complete)
-   - Created and tested multiple `any` propagation scenarios
-   - All tests match `tsc` behavior
-   - Lawyer Layer is functioning as expected
-
-### In Progress 🔲
-
-1. **Conformance Baseline** (Next Priority)
-   - Need to run actual conformance tests to establish real error delta
-   - The "~900 extra errors" from original plan may be outdated assumptions
-
-2. **Configuration Verification**
-   - Verify `AnyPropagationRules` correctly toggles based on `CompilerOptions`
-   - Test with `strictNullChecks: true` vs `false`
-
-3. **Error Code Selection** (Lower Priority)
-   - Fix TS18050 vs TS2531 selection for literal null in property access
-
-## Files Modified
-
-- `src/checker/type_checking_queries.rs` - `report_nullish_object()`
-- `src/checker/error_reporter.rs` - `emit_binary_operator_error()`
-- `src/checker/function_type.rs` - `get_type_of_property_access_expression()`
-
-## Coordination Points
-
-- **TSZ-3 (Contextual Typing)**: Changes to `any` propagation may affect type inference from context
-- **TSZ-1 (Modules)**, **TSZ-2 (Parser)**: No direct conflicts
-
-## Test Results
-
-### Working Correctly ✅
-```typescript
-// any propagation
-const x: any = {};
-const y: number = x;  // OK - matches tsc
-
-// method bivariance
-interface Derived { method(x: string | number): void; }
-
-// void return
-const returnsString: () => string = () => "hello";
-const expectsVoid: () => void = returnsString;  // OK - matches tsc
-```
+### Completed Previously ✅
+- **TS18050 strictNullChecks gating** (Partial with known issues)
+- **Lawyer Layer verification**: Confirmed `any` propagation, method bivariance, void return working
+- **Wiring verification**: Confirmed Checker uses `is_assignable_to` correctly
+- **Testing**: Created test scenarios matching `tsc` behavior
 
 ### Known Issues ⚠️
-- `null.toString()` without strictNullChecks emits TS2531 (tsc emits TS18050)
-- Type inference for `const x = null` without strictNullChecks needs work
+- **Error code selection**: `null.toString()` without strictNullChecks emits TS2531 (tsc emits TS18050)
+- **Type inference**: `const x = null` without strictNullChecks needs work
 
-## Next Steps
+### Previous Commits
+- `ec8035b41` → `94650bcdb` - TS18050 gating implementation
+- `bd67716ef` → `7b25d5bbd` - Session restoration and push
 
-1. **Run conformance tests** - Establish real baseline (not assumptions)
-2. **Verify configuration propagation** - Ensure flags reach CompatChecker correctly
-3. **Trace specific failing cases** - If errors exist, understand root cause
-4. **Compare with tsc** - Determine if tsz is actually wrong
+## Priority 1: Fix TS18050 & Null Property Access Error Codes
 
-## History
+**Problem:** Accessing properties on `null`/`undefined` triggers wrong error codes.
 
-- **2026-02-05**: Implemented TS18050 gating; verified Lawyer Layer features working
-- **2026-02-05**: Verified wiring; tested `any` propagation scenarios
-- **2026-02-05**: Discovered Steps 2-4 already implemented (any, bivariance, void return)
+**Task:**
+1. Create `src/checker/tests/strict_null_manual.rs` with test cases
+2. Distinguish literal null vs variable vs union types
+3. Fix error code selection to match `tsc`
+
+**Test Cases:**
+```typescript
+const x: null = null; x.prop;           // Expect TS2531
+const x: undefined = undefined; x.prop;   // Expect TS2532
+const x: string | null = null; x.prop;    // Expect TS2531
+const x: any = null; x.prop;               // Expect NO error
+```
+
+**Validation Steps:**
+```bash
+# 1. Create test file
+# 2. Ask Gemini about implementation in src/checker/expr.rs
+./scripts/ask-gemini.mjs --include=src/checker/expr.rs \
+  "I need to fix error code selection for property access on literal null"
+
+# 3. Run test
+cargo nextest run strict_null_manual
+```
+
+## Priority 2: Implement "Weak Type" Detection (Lawyer Layer)
+
+**Goal:** Implement TS2559 (Type has no properties in common with weak type)
+
+**Context:** "Weak types" are object types where all properties are optional. Assigning object literals requires at least one matching property.
+
+**Task:**
+1. Check `src/solver/lawyer.rs` for weak type logic
+2. If missing, implement `is_weak_type` query
+3. Add check in `check_assignment` logic
+4. Test: `interface Weak { a?: number }` assigned `{ b: 1 }`
+
+**Validation:**
+```bash
+./scripts/ask-gemini.mjs --include=src/solver/lawyer.rs \
+  "Does current Lawyer implementation handle TypeScript's 'Weak Type' check (TS2559)?
+   If not, how should I add is_weak_type detection?"
+```
+
+## Priority 3: Verify Object Literal Freshness
+
+**Goal:** Ensure object literals undergo excess property checking ONLY when fresh
+
+**Task:**
+1. Verify where "freshness" is stored (flag on TypeId or context)
+2. Ensure `src/solver/lawyer.rs` enforces strictness for fresh literals
+3. Test: `{ extra: 1 }` vs `{ a: number }` assignment
+
+**Focus Areas**
+- `src/checker/expr.rs` - Property access logic and error reporting
+- `src/solver/lawyer.rs` - Compatibility rules (Weak types, Any propagation)
+- `src/solver/compat.rs` - `is_assignable_to` logic
+- `src/checker/tests/` - Manual verification tests
+
+## Next Actions (Priority Order)
+
+1. **Immediate**: Create manual test infrastructure (`src/checker/tests/strict_null_manual.rs`)
+2. **Then**: Ask Gemini (Pro) for TS18050/TS2531 fix approach
+3. **Then**: Implement fix and verify with `cargo nextest`
+4. **Later**: Weak type detection and freshness audit
