@@ -136,6 +136,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::diagnostic_codes;
+        
         use crate::solver::{CallEvaluator, CallResult, CallableShape, CompatChecker};
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -217,7 +218,10 @@ impl<'a> CheckerState<'a> {
 
         // Check if the constructor type contains any abstract classes (for union types)
         // e.g., `new cls()` where `cls: typeof AbstractA | typeof AbstractB`
-        if self.type_contains_abstract_class(constructor_type) {
+        //
+        // First, resolve any Lazy types (type aliases) so we can check the actual types
+        let resolved_type = self.resolve_lazy_type(constructor_type);
+        if self.type_contains_abstract_class(resolved_type) {
             self.error_at_node(
                 idx,
                 "Cannot create an instance of an abstract class.",
@@ -521,6 +525,43 @@ impl<'a> CheckerState<'a> {
         use crate::binder::SymbolId;
         use crate::binder::symbol_flags;
         use crate::solver::type_queries::{AbstractClassCheckKind, classify_for_abstract_check};
+        use crate::solver::types::TypeKey;
+
+        // Special handling for Callable types - check if the symbol is abstract
+        if let Some(TypeKey::Callable(shape_id)) = self.ctx.types.lookup(type_id) {
+            let shape = self.ctx.types.callable_shape(shape_id);
+            if let Some(sym_id) = shape.symbol {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    return (symbol.flags & symbol_flags::ABSTRACT) != 0;
+                }
+            }
+            // If no symbol or not abstract, fall through to general classification
+        }
+
+        // Special handling for Lazy types - need to check via context
+        if let Some(TypeKey::Lazy(def_id)) = self.ctx.types.lookup(type_id) {
+            // Try to get the SymbolId for this DefId
+            if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    let is_abstract = (symbol.flags & symbol_flags::ABSTRACT) != 0;
+                    if is_abstract {
+                        return true;
+                    }
+                    // If not abstract, check if it's a type alias and recurse into its body
+                    if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+                        // Get the body from the definition_store and recurse
+                        // NOTE: We need to use resolve_lazy_type here to handle nested type aliases
+                        if let Some(def) = self.ctx.definition_store.get(def_id) {
+                            if let Some(body_type) = def.body {
+                                // Recursively check the body (which may be a union, another lazy, etc.)
+                                return self.type_contains_abstract_class(body_type);
+                            }
+                        }
+                    }
+                }
+            }
+            // If we can't map to a symbol, fall through to general classification
+        }
 
         match classify_for_abstract_check(self.ctx.types, type_id) {
             // TypeQuery is `typeof ClassName` - check if the symbol is abstract
