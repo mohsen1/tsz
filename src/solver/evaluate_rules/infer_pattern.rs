@@ -192,6 +192,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::Lazy(_)
+            | TypeKey::Recursive(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType
@@ -652,6 +653,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::Lazy(_)
+            | TypeKey::Recursive(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType

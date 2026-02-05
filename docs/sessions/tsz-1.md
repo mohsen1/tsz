@@ -1386,13 +1386,33 @@ No fix needed. The interning system correctly distinguishes objects based on bot
 
 ---
 
-### Priority 1: Task #32 (Graph Isomorphism) 📝 IN PROGRESS
+### Priority 1: Task #32 (Graph Isomorphism) 🔄 IN PROGRESS
 **Why**: "Final Boss" of North Star - structural identity for recursive types
 
 **Why Now**:
 - Simplified graphs (from Task #34) make isomorphism easier
 - All reduction infrastructure is in place
 - Ready to tackle the final North Star requirement
+
+**Status**: ⚙️ Implementation Phase - Pattern Match Fixes Required
+
+**Progress**:
+✅ Added TypeKey::Recursive(u32) variant to types.rs
+✅ Added visitor support (visit_recursive, for_each_child, TypeKind)
+✅ Fixed pattern matches in: emitter/type_printer.rs, evaluate_rules/infer_pattern.rs (1/2)
+⏳ Need to fix 19 more pattern matches in 8 files
+
+**Remaining Pattern Match Fixes**:
+- format.rs (1 error)
+- infer.rs (2 errors)
+- instantiate.rs (1 error)
+- lower.rs (2 errors)
+- operations.rs (2 errors)
+- type_queries.rs (9 errors)
+- visitor.rs (2 errors)
+- evaluate_rules/infer_pattern.rs (1 more error)
+
+**Next Step**: Fix remaining pattern matches by adding `TypeKey::Recursive(_)` to all leaf type lists (similar to how Lazy is handled).
 
 **Status**: 📋 Planning Phase - Gemini Consultation Complete
 

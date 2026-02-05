@@ -146,7 +146,10 @@ pub fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 ///
 /// Returns true for TypeKey::Lazy(DefId) (interfaces, classes, type aliases).
 pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeKey::Lazy(_)))
+    matches!(
+        db.lookup(type_id),
+        Some(TypeKey::Lazy(_) | TypeKey::Recursive(_))
+    )
 }
 
 /// Check if a type is a conditional type (T extends U ? X : Y).
@@ -615,6 +618,7 @@ where
                     || info.default.map(|d| self.check(d)).unwrap_or(false)
             }
             TypeKey::Lazy(_)
+            | TypeKey::Recursive(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => false,
@@ -1066,6 +1070,7 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
         | TypeKey::Array(_)
         | TypeKey::Tuple(_)
         | TypeKey::Lazy(_)
+        | TypeKey::Recursive(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
@@ -1367,6 +1372,7 @@ pub fn classify_for_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Constr
         | TypeKey::ModuleNamespace(_)
         | TypeKey::Enum(_, _)
         | TypeKey::Lazy(_)
+        | TypeKey::Recursive(_)
         | TypeKey::Error => ConstraintTypeKind::NoConstraint,
     }
 }
@@ -1452,6 +1458,7 @@ pub fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> Signat
         | TypeKey::Array(_)
         | TypeKey::Tuple(_)
         | TypeKey::Lazy(_)
+        | TypeKey::Recursive(_)
         | TypeKey::Application(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
@@ -1578,6 +1585,7 @@ pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Fu
         TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Lazy(_)
+        | TypeKey::Recursive(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
@@ -1763,6 +1771,7 @@ pub fn classify_for_property_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> P
         | TypeKey::TypeParameter(_)
         | TypeKey::Infer(_)
         | TypeKey::Lazy(_)
+        | TypeKey::Recursive(_)
         | TypeKey::Application(_)
         | TypeKey::Conditional(_)
         | TypeKey::Mapped(_)
@@ -1861,6 +1870,7 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
         | TypeKey::Array(_)
         | TypeKey::Tuple(_)
         | TypeKey::Lazy(_)
+        | TypeKey::Recursive(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
@@ -1951,6 +1961,7 @@ pub fn classify_for_property_access(
         | TypeKey::Array(_)
         | TypeKey::Tuple(_)
         | TypeKey::Lazy(_)
+        | TypeKey::Recursive(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
@@ -2058,6 +2069,7 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
         | TypeKey::Literal(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::Lazy(_)
+        | TypeKey::Recursive(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
         | TypeKey::TypeQuery(_)
@@ -2155,6 +2167,7 @@ pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> I
         | TypeKey::TypeParameter(_)
         | TypeKey::Infer(_)
         | TypeKey::Lazy(_)
+        | TypeKey::Recursive(_)
         | TypeKey::Application(_)
         | TypeKey::Conditional(_)
         | TypeKey::Mapped(_)

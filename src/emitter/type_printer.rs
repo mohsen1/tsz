@@ -173,6 +173,8 @@ impl<'a> TypePrinter<'a> {
 
             TypeKey::ModuleNamespace(_) => "any".to_string(),
 
+            TypeKey::Recursive(index) => format!("T{}", index),
+
             TypeKey::Error => "any".to_string(),
         }
     }

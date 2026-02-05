@@ -273,6 +273,9 @@ impl<'a> TypeFormatter<'a> {
                     format!("Lazy({})", def_id.0)
                 }
             }
+            TypeKey::Recursive(idx) => {
+                format!("Recursive({})", idx)
+            }
             TypeKey::Application(app) => {
                 let app = self.interner.type_application(*app);
                 let base_key = self.interner.lookup(app.base);
