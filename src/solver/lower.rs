@@ -1340,13 +1340,8 @@ impl<'a> TypeLowering<'a> {
             });
         }
 
-        self.interner.object_with_index(ObjectShape {
-            flags: ObjectFlags::empty(),
-            properties,
-            string_index: None,
-            number_index: None,
-            symbol: symbol_id,
-        })
+        self.interner
+            .object_with_flags_and_symbol(properties, ObjectFlags::empty(), symbol_id)
     }
 
     fn lower_call_signature(&self, sig: &SignatureData) -> CallSignature {

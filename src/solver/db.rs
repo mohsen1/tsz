@@ -60,6 +60,12 @@ pub trait TypeDatabase {
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId;
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId;
     fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId;
+    fn object_with_flags_and_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+        symbol: Option<SymbolId>,
+    ) -> TypeId;
     fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {
         self.object_with_flags(properties, ObjectFlags::FRESH_LITERAL)
     }
@@ -207,6 +213,15 @@ impl TypeDatabase for TypeInterner {
 
     fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId {
         TypeInterner::object_with_flags(self, properties, flags)
+    }
+
+    fn object_with_flags_and_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        TypeInterner::object_with_flags_and_symbol(self, properties, flags, symbol)
     }
 
     fn object_with_index(&self, shape: ObjectShape) -> TypeId {
@@ -808,6 +823,16 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.object_with_flags(properties, flags)
     }
 
+    fn object_with_flags_and_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        self.interner
+            .object_with_flags_and_symbol(properties, flags, symbol)
+    }
+
     fn object_with_index(&self, shape: ObjectShape) -> TypeId {
         self.interner.object_with_index(shape)
     }
@@ -1173,6 +1198,16 @@ impl TypeDatabase for BinderTypeDatabase<'_> {
 
     fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId {
         self.query_cache.object_with_flags(properties, flags)
+    }
+
+    fn object_with_flags_and_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        self.query_cache
+            .object_with_flags_and_symbol(properties, flags, symbol)
     }
 
     fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {

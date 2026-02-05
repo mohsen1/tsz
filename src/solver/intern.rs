@@ -2172,6 +2172,26 @@ impl TypeInterner {
         self.intern(TypeKey::Object(shape_id))
     }
 
+    /// Intern an object type with properties, custom flags, and optional symbol.
+    /// This is used for interfaces that need symbol tracking but no index signatures.
+    pub fn object_with_flags_and_symbol(
+        &self,
+        mut properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+        symbol: Option<crate::binder::SymbolId>,
+    ) -> TypeId {
+        // Sort by property name for consistent hashing
+        properties.sort_by(|a, b| a.name.cmp(&b.name));
+        let shape_id = self.intern_object_shape(ObjectShape {
+            flags,
+            properties,
+            string_index: None,
+            number_index: None,
+            symbol,
+        });
+        self.intern(TypeKey::Object(shape_id))
+    }
+
     /// Intern an object type with index signatures.
     pub fn object_with_index(&self, mut shape: ObjectShape) -> TypeId {
         // Sort properties by name for consistent hashing
