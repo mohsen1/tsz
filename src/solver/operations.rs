@@ -653,11 +653,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let instantiated_params: Vec<ParamInfo> = func
             .params
             .iter()
-            .map(|p| ParamInfo {
-                name: p.name,
-                type_id: instantiate_type(self.interner, p.type_id, &substitution),
-                optional: p.optional,
-                rest: p.rest,
+            .map(|p| {
+                let instantiated = instantiate_type(self.interner, p.type_id, &substitution);
+                eprintln!(
+                    "Instantiated param {:?}: original={:?} (key: {:?}) -> instantiated={:?} (key: {:?})",
+                    p.name,
+                    p.type_id,
+                    self.interner.lookup(p.type_id),
+                    instantiated,
+                    self.interner.lookup(instantiated),
+                );
+                // If this is a function type, also log its return type
+                if let Some(TypeKey::Function(shape_id)) = self.interner.lookup(instantiated) {
+                    let shape = self.interner.function_shape(shape_id);
+                    eprintln!(
+                        "  -> instantiated function return_type={:?} (key: {:?})",
+                        shape.return_type,
+                        self.interner.lookup(shape.return_type),
+                    );
+                }
+                ParamInfo {
+                    name: p.name,
+                    type_id: instantiated,
+                    optional: p.optional,
+                    rest: p.rest,
+                }
             })
             .collect();
 
@@ -788,56 +808,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             }
 
-            // Get current substitution with fixed types from Round 1
-            // The substitution maps placeholder names (like __infer_0) to their resolved types
-            let placeholder_subst = infer_ctx.get_current_substitution();
-            let contextual_target =
-                instantiate_type(self.interner, target_type, &placeholder_subst);
-
-            // Check assignability with contextual target type
+            // Check if target_type contains placeholders BEFORE any re-instantiation
             let mut visited = FxHashSet::default();
-            if !self.type_contains_placeholder(contextual_target, &var_map, &mut visited) {
-                // No placeholder in contextual_target - check assignability directly
-                if !self.checker.is_assignable_to(arg_type, contextual_target) {
+            let target_has_placeholders =
+                self.type_contains_placeholder(target_type, &var_map, &mut visited);
+
+            if !target_has_placeholders {
+                // No placeholders in target - direct assignability check
+                if !self.checker.is_assignable_to(arg_type, target_type) {
                     return CallResult::ArgumentTypeMismatch {
                         index: i,
-                        expected: contextual_target,
+                        expected: target_type,
                         actual: arg_type,
                     };
                 }
             } else {
-                // Target type contains placeholders - check against their constraints
-                if let Some(TypeKey::TypeParameter(tp)) = self.interner.lookup(contextual_target)
-                    && let Some(constraint) = tp.constraint
-                {
-                    let inst_constraint =
-                        instantiate_type(self.interner, constraint, &placeholder_subst);
-                    let mut constraint_visited = FxHashSet::default();
-                    if !self.type_contains_placeholder(
-                        inst_constraint,
-                        &var_map,
-                        &mut constraint_visited,
-                    ) {
-                        // Constraint is fully concrete - safe to check now
-                        if !self.checker.is_assignable_to(arg_type, inst_constraint) {
-                            return CallResult::ArgumentTypeMismatch {
-                                index: i,
-                                expected: inst_constraint,
-                                actual: arg_type,
-                            };
-                        }
-                    }
-                }
+                // Target has placeholders - collect constraints using the original target_type
+                // This preserves the connection to inference variables (e.g., U in (x: T) => U)
+                // IMPORTANT: Use target_type directly, not contextual_target, to maintain
+                // the placeholder connection for unresolved type parameters
+                self.constrain_types(
+                    &mut infer_ctx,
+                    &var_map,
+                    arg_type,
+                    target_type,
+                    crate::solver::types::InferencePriority::ReturnType,
+                );
             }
-
-            // arg_type <: contextual_target (with ReturnType priority for contextual args)
-            self.constrain_types(
-                &mut infer_ctx,
-                &var_map,
-                arg_type,
-                contextual_target,
-                crate::solver::types::InferencePriority::ReturnType,
-            );
         }
 
         // 4. Resolve inference variables
@@ -853,6 +850,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let has_constraints = infer_ctx
                 .get_constraints(var)
                 .is_some_and(|c| !c.is_empty());
+
+            // DEBUG: Check if type parameter has constraints
+            tracing::debug!(
+                param_name = %self.interner.resolve_atom(tp.name).as_str(),
+                var = format!("{:?}", var),
+                has_constraints,
+                candidate_count = infer_ctx.get_constraints(var).map(|c| c.lower_bounds.len()).unwrap_or(0),
+                "Resolving param"
+            );
 
             let ty = if has_constraints {
                 match infer_ctx.resolve_with_constraints_by(var, |source, target| {
@@ -881,6 +887,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 TypeId::UNKNOWN
             };
 
+            // DEBUG: See what was actually resolved
+            tracing::debug!(
+                param_name = %self.interner.resolve_atom(tp.name).as_str(),
+                type_id = %ty.0,
+                "Resolved param"
+            );
             final_subst.insert(tp.name, ty);
 
             if let Some(constraint) = tp.constraint {
@@ -2034,15 +2046,124 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeKey::Function(s_fn_id)), Some(TypeKey::Function(t_fn_id))) => {
                 let s_fn = self.interner.function_shape(s_fn_id);
                 let t_fn = self.interner.function_shape(t_fn_id);
-                // Contravariant parameters: target_param <: source_param
-                for (s_p, t_p) in s_fn.params.iter().zip(t_fn.params.iter()) {
-                    self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
+
+                if s_fn.type_params.is_empty() {
+                    // Non-generic source function - direct comparison
+                    // Contravariant parameters: target_param <: source_param
+                    for (s_p, t_p) in s_fn.params.iter().zip(t_fn.params.iter()) {
+                        self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
+                    }
+                    if let (Some(s_this), Some(t_this)) = (s_fn.this_type, t_fn.this_type) {
+                        self.constrain_types(ctx, var_map, t_this, s_this, priority);
+                    }
+                    // Covariant return: source_return <: target_return
+                    eprintln!(
+                        "Constraining return types: source_return={:?} (key: {:?}), target_return={:?} (key: {:?}), var_map keys: {:?}, priority={:?}",
+                        s_fn.return_type,
+                        self.interner.lookup(s_fn.return_type),
+                        t_fn.return_type,
+                        self.interner.lookup(t_fn.return_type),
+                        var_map.keys().collect::<Vec<_>>(),
+                        priority,
+                    );
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        s_fn.return_type,
+                        t_fn.return_type,
+                        priority,
+                    );
+                } else {
+                    // Generic source function - instantiate with fresh inference variables
+                    // This allows inferring the source function's type parameters from the target
+                    let mut source_subst = TypeSubstitution::new();
+                    let mut source_var_map: FxHashMap<TypeId, crate::solver::infer::InferenceVar> =
+                        FxHashMap::default();
+
+                    // Create fresh inference variables for the source function's type parameters
+                    for tp in &s_fn.type_params {
+                        let var = ctx.fresh_var();
+                        let placeholder_name = format!("__infer_src_{}", var.0);
+                        let placeholder_atom = self.interner.intern_string(&placeholder_name);
+                        ctx.register_type_param(placeholder_atom, var, tp.is_const);
+
+                        let placeholder_key = TypeKey::TypeParameter(TypeParamInfo {
+                            is_const: tp.is_const,
+                            name: placeholder_atom,
+                            constraint: tp.constraint,
+                            default: None,
+                        });
+                        let placeholder_id = self.interner.intern(placeholder_key);
+                        source_subst.insert(tp.name, placeholder_id);
+                        source_var_map.insert(placeholder_id, var);
+
+                        // Add constraint as upper bound if it's concrete
+                        if let Some(constraint) = tp.constraint {
+                            let inst_constraint =
+                                instantiate_type(self.interner, constraint, &source_subst);
+                            let mut visited = FxHashSet::default();
+                            // Create combined var_map for type_contains_placeholder check
+                            let combined_for_check: FxHashMap<_, _> = var_map
+                                .iter()
+                                .chain(source_var_map.iter())
+                                .map(|(k, v)| (*k, *v))
+                                .collect();
+                            if !self.type_contains_placeholder(
+                                inst_constraint,
+                                &combined_for_check,
+                                &mut visited,
+                            ) {
+                                ctx.add_upper_bound(var, inst_constraint);
+                            }
+                        }
+                    }
+
+                    // Instantiate source function's parameters and return type
+                    let instantiated_params: Vec<ParamInfo> = s_fn
+                        .params
+                        .iter()
+                        .map(|p| ParamInfo {
+                            name: p.name,
+                            type_id: instantiate_type(self.interner, p.type_id, &source_subst),
+                            optional: p.optional,
+                            rest: p.rest,
+                        })
+                        .collect();
+                    let instantiated_return =
+                        instantiate_type(self.interner, s_fn.return_type, &source_subst);
+                    let instantiated_this = s_fn
+                        .this_type
+                        .map(|t| instantiate_type(self.interner, t, &source_subst));
+
+                    // Create combined var_map for constraint collection
+                    let combined_var_map: FxHashMap<_, _> = var_map
+                        .iter()
+                        .chain(source_var_map.iter())
+                        .map(|(k, v)| (*k, *v))
+                        .collect();
+
+                    // Contravariant parameters: target_param <: instantiated_source_param
+                    for (s_p, t_p) in instantiated_params.iter().zip(t_fn.params.iter()) {
+                        self.constrain_types(
+                            ctx,
+                            &combined_var_map,
+                            t_p.type_id,
+                            s_p.type_id,
+                            priority,
+                        );
+                    }
+                    if let (Some(s_this), Some(t_this)) = (instantiated_this, t_fn.this_type) {
+                        self.constrain_types(ctx, &combined_var_map, t_this, s_this, priority);
+                    }
+                    // Covariant return: instantiated_source_return <: target_return
+                    self.constrain_types(
+                        ctx,
+                        &combined_var_map,
+                        instantiated_return,
+                        t_fn.return_type,
+                        priority,
+                    );
                 }
-                if let (Some(s_this), Some(t_this)) = (s_fn.this_type, t_fn.this_type) {
-                    self.constrain_types(ctx, var_map, t_this, s_this, priority);
-                }
-                // Covariant return: source_return <: target_return
-                self.constrain_types(ctx, var_map, s_fn.return_type, t_fn.return_type, priority);
             }
             (Some(TypeKey::Function(s_fn_id)), Some(TypeKey::Callable(t_callable_id))) => {
                 let s_fn = self.interner.function_shape(s_fn_id);
