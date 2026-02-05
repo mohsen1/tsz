@@ -622,6 +622,232 @@ impl Project {
         }
     }
 
+    /// Check if a symbol is a class/interface member that should use heritage discovery.
+    ///
+    /// Returns true if the symbol is a PROPERTY, METHOD, or ACCESSOR that is NOT private.
+    /// Private members are strictly local to the class and should not participate in heritage discovery.
+    fn is_heritage_member_symbol(_file: &ProjectFile, symbol: &crate::binder::Symbol) -> bool {
+        use crate::binder::symbol_flags;
+
+        // Check if it's a member type
+        let is_member = symbol.has_any_flags(
+            symbol_flags::PROPERTY
+                | symbol_flags::METHOD
+                | symbol_flags::CONSTRUCTOR
+                | symbol_flags::GET_ACCESSOR
+                | symbol_flags::SET_ACCESSOR,
+        );
+
+        if !is_member {
+            return false;
+        }
+
+        // Exclude private members - they're strictly local to the class
+        if symbol.has_any_flags(symbol_flags::PRIVATE) {
+            return false;
+        }
+
+        true
+    }
+
+    /// Find all heritage members (upward and downward) for a class/interface member.
+    ///
+    /// This performs bidirectional traversal:
+    /// - **Upward**: Walks up the extends/implements chain to find base class members
+    /// - **Downward**: Finds all derived classes that override/implement this member
+    ///
+    /// # Arguments
+    /// * `file` - The file containing the initial symbol
+    /// * `symbol_id` - The symbol ID for the member
+    /// * `member_name` - The member name (used for matching)
+    ///
+    /// # Returns
+    /// A set of (file_path, symbol_id) pairs representing all related members in the heritage chain
+    fn find_all_heritage_members(
+        &self,
+        file: &ProjectFile,
+        symbol_id: crate::binder::SymbolId,
+        member_name: &str,
+    ) -> FxHashSet<(String, crate::binder::SymbolId)> {
+        use crate::binder::symbol_flags;
+
+        let mut result = FxHashSet::default();
+        let symbol = match file.binder().symbols.get(symbol_id) {
+            Some(s) => s,
+            None => return result,
+        };
+
+        // Get the parent class/interface symbol
+        let parent_symbol_id = symbol.parent;
+        if parent_symbol_id.is_none() {
+            // No parent - not a class/interface member
+            return result;
+        }
+
+        let parent_symbol = match file.binder().symbols.get(parent_symbol_id) {
+            Some(s) => s,
+            None => return result,
+        };
+
+        // Check if parent is a class or interface
+        let is_class_or_interface =
+            parent_symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE);
+        if !is_class_or_interface {
+            return result;
+        }
+
+        let parent_name = &parent_symbol.escaped_name;
+
+        // Add the current symbol to results
+        result.insert((file.file_name().to_string(), symbol_id));
+
+        // Upward search: Find base class members using sub_to_bases
+        if let Some(base_members) = self.find_base_class_members(file, parent_name, member_name) {
+            result.extend(base_members);
+        }
+
+        // Downward search: Find all derived classes using heritage_clauses
+        let derived_files = self.symbol_index.get_files_with_heritage(parent_name);
+
+        for derived_file_path in derived_files {
+            // Skip the current file (we already added it)
+            if derived_file_path == file.file_name() {
+                continue;
+            }
+
+            if let Some(derived_file) = self.files.get(&derived_file_path) {
+                // Search for symbols with the same member name in the derived file
+                for (idx, sym) in derived_file.binder().symbols.iter().enumerate() {
+                    if sym.escaped_name == member_name
+                        && Self::is_heritage_member_symbol(derived_file, sym)
+                    {
+                        // This is a matching member in a derived class
+                        let sym_id = crate::binder::SymbolId(idx as u32);
+                        result.insert((derived_file_path.clone(), sym_id));
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Find base class members by walking up the heritage chain.
+    ///
+    /// This searches for members with the same name in base classes/interfaces
+    /// that the parent class extends or implements, using the new sub_to_bases mapping.
+    ///
+    /// # Arguments
+    /// * `file` - The file containing the derived class
+    /// * `class_name` - The name of the class/interface
+    /// * `member_name` - The member name to search for
+    ///
+    /// # Returns
+    /// A set of (file_path, symbol_id) pairs representing base class members, or None if
+    /// no base members were found
+    fn find_base_class_members(
+        &self,
+        _file: &ProjectFile,
+        class_name: &str,
+        member_name: &str,
+    ) -> Option<FxHashSet<(String, crate::binder::SymbolId)>> {
+        // Use SymbolIndex to find base types efficiently
+        let base_types = self.symbol_index.get_bases_for_class(class_name);
+
+        if base_types.is_empty() {
+            return None;
+        }
+
+        let mut result = FxHashSet::default();
+        let mut visited_classes = FxHashSet::default();
+        visited_classes.insert(class_name.to_string());
+
+        // For each base type, search for the member
+        for base_type_name in base_types {
+            // Prevent infinite loops in case of circular heritage
+            if visited_classes.contains(&base_type_name) {
+                continue;
+            }
+            visited_classes.insert(base_type_name.clone());
+
+            // Find files that define this base type
+            let base_files = self.symbol_index.get_files_with_symbol(&base_type_name);
+
+            for base_file_path in base_files {
+                if let Some(base_file) = self.files.get(&base_file_path) {
+                    // Search for the base type symbol in this file
+                    if let Some(base_type_symbol_id) =
+                        self.find_class_symbol(base_file, &base_type_name)
+                    {
+                        // Search for the member in the base type
+                        if let Some(base_member_symbol_id) =
+                            self.find_member_in_class(base_file, base_type_symbol_id, member_name)
+                        {
+                            result.insert((base_file_path, base_member_symbol_id));
+
+                            // Recursively search up the hierarchy
+                            if let Some(ancestors) = self.find_base_class_members(
+                                base_file,
+                                &base_type_name,
+                                member_name,
+                            ) {
+                                result.extend(ancestors);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
+    }
+
+    /// Find a class/interface symbol by name in a file.
+    fn find_class_symbol(
+        &self,
+        file: &ProjectFile,
+        class_name: &str,
+    ) -> Option<crate::binder::SymbolId> {
+        use crate::binder::symbol_flags;
+
+        for (idx, symbol) in file.binder().symbols.iter().enumerate() {
+            if symbol.escaped_name == class_name
+                && symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
+            {
+                return Some(crate::binder::SymbolId(idx as u32));
+            }
+        }
+        None
+    }
+
+    /// Find a member symbol by name in a class/interface.
+    fn find_member_in_class(
+        &self,
+        file: &ProjectFile,
+        class_symbol_id: crate::binder::SymbolId,
+        member_name: &str,
+    ) -> Option<crate::binder::SymbolId> {
+        let class_symbol = file.binder().symbols.get(class_symbol_id)?;
+
+        // Search in the class's members
+        if let Some(members) = &class_symbol.members {
+            if let Some(member_symbol_id) = members.get(member_name) {
+                // Verify it's a heritage member (not private, is a property/method/accessor)
+                if let Some(member_symbol) = file.binder().symbols.get(member_symbol_id) {
+                    if Self::is_heritage_member_symbol(file, member_symbol) {
+                        return Some(member_symbol_id);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Find references within a single file.
     pub fn find_references(
         &mut self,
@@ -660,7 +886,42 @@ impl Project {
             };
 
             let mut locations = Vec::new();
-            {
+
+            // Check if this is a heritage member symbol (class/interface member)
+            // If so, we need to find all related symbols across the inheritance hierarchy
+            let is_heritage_member = {
+                let file = self.files.get(file_name)?;
+                let symbol = file.binder().symbols.get(symbol_id);
+                symbol
+                    .map(|s| Self::is_heritage_member_symbol(file, s))
+                    .unwrap_or(false)
+            };
+
+            if is_heritage_member {
+                // Heritage-aware reference discovery
+                let file = self.files.get(file_name)?;
+                let heritage_symbols = self.find_all_heritage_members(file, symbol_id, &local_name);
+
+                // Collect references for all related symbols in the heritage chain
+                for (heritage_file_path, heritage_symbol_id) in heritage_symbols {
+                    if let Some(heritage_file) = self.files.get_mut(&heritage_file_path) {
+                        // Find the declaration node for this symbol
+                        let symbol = heritage_file.binder().symbols.get(heritage_symbol_id);
+                        if let Some(sym) = symbol {
+                            // Use the first declaration of the symbol
+                            if let Some(&decl_node) = sym.declarations.first() {
+                                Self::collect_file_references(
+                                    heritage_file,
+                                    decl_node,
+                                    Some(&mut scope_stats),
+                                    &mut locations,
+                                );
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Standard reference discovery (non-heritage)
                 let file = self.files.get_mut(file_name)?;
                 Self::collect_file_references(
                     file,
