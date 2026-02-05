@@ -1436,6 +1436,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             tuple_list_id(self.interner, source),
             tuple_list_id(self.interner, target),
         ) {
+            // OPTIMIZATION: Unit-tuple disjointness fast-path (O(1) cached lookup)
+            // Two different unit tuples (tuples of literals/enums only) are guaranteed disjoint.
+            // Since we already checked source == target at the top and returned True,
+            // reaching here means source != target. If both are unit tuples, they're disjoint.
+            // This avoids O(N) structural recursion for each comparison in BCT's O(N²) loop.
+            if self.interner.is_unit_type(source) && self.interner.is_unit_type(target) {
+                return SubtypeResult::False;
+            }
             let s_elems = self.interner.tuple_list(s_elems);
             let t_elems = self.interner.tuple_list(t_elems);
             return self.check_tuple_subtype(&s_elems, &t_elems);

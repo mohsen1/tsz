@@ -11,8 +11,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 use walkdir::WalkDir;
 
@@ -102,7 +102,11 @@ fn main() -> Result<()> {
     let test_files = discover_tests(&args.test_dir, args.max)?;
     println!("✓ Found {} test files", test_files.len());
 
-    println!("\n🔨 Processing {} tests with {} workers...", test_files.len(), args.workers);
+    println!(
+        "\n🔨 Processing {} tests with {} workers...",
+        test_files.len(),
+        args.workers
+    );
     let start = Instant::now();
 
     let cache: Mutex<HashMap<String, TscCacheEntry>> = Mutex::new(HashMap::new());
@@ -134,13 +138,17 @@ fn main() -> Result<()> {
         if count % 100 == 0 {
             let err_count = errors.load(Ordering::SeqCst);
             let skip_count = skipped.load(Ordering::SeqCst);
-            eprint!("\r[{}/{}] processed ({} errors, {} skipped)    ", count, total, err_count, skip_count);
+            eprint!(
+                "\r[{}/{}] processed ({} errors, {} skipped)    ",
+                count, total, err_count, skip_count
+            );
         }
     });
 
     let cache = cache.into_inner().unwrap();
-    
-    println!("\r✓ Completed in {:.1}s ({:.0} tests/sec)                    ", 
+
+    println!(
+        "\r✓ Completed in {:.1}s ({:.0} tests/sec)                    ",
         start.elapsed().as_secs_f64(),
         test_files.len() as f64 / start.elapsed().as_secs_f64()
     );
@@ -172,7 +180,7 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
         }
 
         let path_str = path.to_string_lossy();
-        
+
         // Skip fourslash tests (language service tests with special format)
         if path_str.contains("/fourslash/") || path_str.contains("\\fourslash\\") {
             continue;
@@ -183,7 +191,10 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
             continue;
         }
 
-        if path.extension().map_or(false, |ext| ext == "ts" || ext == "tsx") {
+        if path
+            .extension()
+            .map_or(false, |ext| ext == "ts" || ext == "tsx")
+        {
             files.push(path.to_path_buf());
         }
     }
@@ -233,7 +244,10 @@ fn process_test_file(path: &Path, _timeout_secs: u64) -> Result<Option<(String, 
         "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
         "exclude": ["node_modules"]
     });
-    fs::write(&tsconfig_path, serde_json::to_string_pretty(&tsconfig_content)?)?;
+    fs::write(
+        &tsconfig_path,
+        serde_json::to_string_pretty(&tsconfig_content)?,
+    )?;
 
     // Write test files
     if parsed.directives.filenames.is_empty() {
@@ -249,11 +263,11 @@ fn process_test_file(path: &Path, _timeout_secs: u64) -> Result<Option<(String, 
                 .trim_start_matches('/')
                 .to_string();
             let file_path = test_dir.join(&sanitized);
-            
+
             if !file_path.starts_with(test_dir) {
                 continue;
             }
-            
+
             if let Some(parent) = file_path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -283,7 +297,7 @@ fn process_test_file(path: &Path, _timeout_secs: u64) -> Result<Option<(String, 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{}\n{}", stdout, stderr);
-    
+
     let mut error_codes = parse_error_codes(&combined);
     error_codes.sort();
     error_codes.dedup();
@@ -298,15 +312,16 @@ fn process_test_file(path: &Path, _timeout_secs: u64) -> Result<Option<(String, 
 }
 
 /// Convert test directive options to tsconfig compiler options JSON
-fn convert_options_to_tsconfig(
-    options: &HashMap<String, String>,
-) -> serde_json::Value {
+fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json::Value {
     let mut opts = serde_json::Map::new();
 
     for (key, value) in options {
         // Skip test harness-specific directives
         let key_lower = key.to_lowercase();
-        if HARNESS_ONLY_DIRECTIVES.iter().any(|&d| d.to_lowercase() == key_lower) {
+        if HARNESS_ONLY_DIRECTIVES
+            .iter()
+            .any(|&d| d.to_lowercase() == key_lower)
+        {
             continue;
         }
 
@@ -314,7 +329,10 @@ fn convert_options_to_tsconfig(
             serde_json::Value::Bool(true)
         } else if value == "false" {
             serde_json::Value::Bool(false)
-        } else if LIST_OPTIONS.iter().any(|&opt| opt.to_lowercase() == key_lower) {
+        } else if LIST_OPTIONS
+            .iter()
+            .any(|&opt| opt.to_lowercase() == key_lower)
+        {
             // Parse comma-separated list
             let items: Vec<serde_json::Value> = value
                 .split(',')
@@ -326,7 +344,7 @@ fn convert_options_to_tsconfig(
         } else {
             serde_json::Value::String(value.clone())
         };
-        
+
         opts.insert(key.clone(), json_value);
     }
 

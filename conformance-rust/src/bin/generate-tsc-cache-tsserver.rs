@@ -148,7 +148,7 @@ impl TsServerClient {
         loop {
             let mut line = String::new();
             let bytes_read = self.stdout.read_line(&mut line)?;
-            
+
             if bytes_read == 0 {
                 return Ok(None);
             }
@@ -186,7 +186,7 @@ impl TsServerClient {
         let args = serde_json::json!({
             "file": file_path,
             "fileContent": content,
-            "scriptKindName": if file_path.ends_with(".tsx") { "TSX" } 
+            "scriptKindName": if file_path.ends_with(".tsx") { "TSX" }
                              else if file_path.ends_with(".jsx") { "JSX" }
                              else if file_path.ends_with(".js") { "JS" }
                              else { "TS" }
@@ -213,9 +213,9 @@ impl TsServerClient {
         });
 
         let seq = self.send_request("semanticDiagnosticsSync", args)?;
-        
+
         let body = self.read_response(seq)?;
-        
+
         let mut codes = Vec::new();
         if let Some(diagnostics) = body {
             if let Some(arr) = diagnostics.as_array() {
@@ -239,9 +239,9 @@ impl TsServerClient {
         });
 
         let seq = self.send_request("syntacticDiagnosticsSync", args)?;
-        
+
         let body = self.read_response(seq)?;
-        
+
         let mut codes = Vec::new();
         if let Some(diagnostics) = body {
             if let Some(arr) = diagnostics.as_array() {
@@ -286,14 +286,18 @@ fn main() -> Result<()> {
     let mut cache = HashMap::new();
     let mut processed = 0;
     let mut errors = 0;
-    
+
     // Restart tsserver every N files to prevent memory/state buildup
     const RESTART_INTERVAL: usize = 500;
 
     for path in &test_files {
         // Restart tsserver periodically to prevent hangs and memory buildup
         if processed > 0 && processed % RESTART_INTERVAL == 0 {
-            print!("\r[{}/{}] Restarting tsserver...                    ", processed, test_files.len());
+            print!(
+                "\r[{}/{}] Restarting tsserver...                    ",
+                processed,
+                test_files.len()
+            );
             std::io::stdout().flush()?;
             let _ = client.shutdown();
             client = TsServerClient::new(&args.tsserver, args.verbose)?;
@@ -312,18 +316,22 @@ fn main() -> Result<()> {
                     eprintln!("✗ Error processing {}: {}", path.display(), e);
                 }
                 errors += 1;
-                
+
                 // Restart tsserver after errors to recover
                 let _ = client.shutdown();
                 client = TsServerClient::new(&args.tsserver, args.verbose)?;
             }
         }
-        
+
         // Check if this file took too long (might indicate tsserver is stuck)
         let elapsed = file_start.elapsed();
         if elapsed > Duration::from_secs(RESPONSE_TIMEOUT_SECS) {
             if args.verbose {
-                eprintln!("⚠ File {} took {:.1}s, restarting tsserver", path.display(), elapsed.as_secs_f64());
+                eprintln!(
+                    "⚠ File {} took {:.1}s, restarting tsserver",
+                    path.display(),
+                    elapsed.as_secs_f64()
+                );
             }
             let _ = client.shutdown();
             client = TsServerClient::new(&args.tsserver, args.verbose)?;
@@ -331,12 +339,18 @@ fn main() -> Result<()> {
 
         processed += 1;
         if processed % 100 == 0 {
-            print!("\r[{}/{}] processed ({} errors)", processed, test_files.len(), errors);
+            print!(
+                "\r[{}/{}] processed ({} errors)",
+                processed,
+                test_files.len(),
+                errors
+            );
             std::io::stdout().flush()?;
         }
     }
 
-    println!("\r✓ Completed in {:.1}s ({:.0} tests/sec)                    ", 
+    println!(
+        "\r✓ Completed in {:.1}s ({:.0} tests/sec)                    ",
         start.elapsed().as_secs_f64(),
         test_files.len() as f64 / start.elapsed().as_secs_f64()
     );
@@ -378,9 +392,10 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
             continue;
         }
 
-        if path.extension().map_or(false, |ext| {
-            ext == "ts" || ext == "tsx"
-        }) {
+        if path
+            .extension()
+            .map_or(false, |ext| ext == "ts" || ext == "tsx")
+        {
             // Skip .d.ts files
             if path_str.ends_with(".d.ts") {
                 continue;
@@ -432,7 +447,7 @@ const LIST_OPTIONS: &[&str] = &[
 ];
 
 /// Convert test directive options to tsconfig compiler options JSON
-/// 
+///
 /// Handles:
 /// - Boolean options (true/false)
 /// - List options (comma-separated values like @lib: es6,dom)
@@ -446,7 +461,10 @@ fn convert_options_to_tsconfig(
     for (key, value) in options {
         // Skip test harness-specific directives
         let key_lower = key.to_lowercase();
-        if HARNESS_ONLY_DIRECTIVES.iter().any(|&d| d.to_lowercase() == key_lower) {
+        if HARNESS_ONLY_DIRECTIVES
+            .iter()
+            .any(|&d| d.to_lowercase() == key_lower)
+        {
             continue;
         }
 
@@ -454,7 +472,10 @@ fn convert_options_to_tsconfig(
             serde_json::Value::Bool(true)
         } else if value == "false" {
             serde_json::Value::Bool(false)
-        } else if LIST_OPTIONS.iter().any(|&opt| opt.to_lowercase() == key_lower) {
+        } else if LIST_OPTIONS
+            .iter()
+            .any(|&opt| opt.to_lowercase() == key_lower)
+        {
             // Parse comma-separated list
             let items: Vec<serde_json::Value> = value
                 .split(',')
@@ -467,7 +488,7 @@ fn convert_options_to_tsconfig(
         } else {
             serde_json::Value::String(value.clone())
         };
-        
+
         opts.insert(key.clone(), json_value);
     }
 
@@ -519,7 +540,10 @@ fn process_test_file(
         "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
         "exclude": ["node_modules"]
     });
-    fs::write(&tsconfig_path, serde_json::to_string_pretty(&tsconfig_content)?)?;
+    fs::write(
+        &tsconfig_path,
+        serde_json::to_string_pretty(&tsconfig_content)?,
+    )?;
 
     // Track all files we open
     let mut opened_files: Vec<String> = Vec::new();
@@ -532,17 +556,17 @@ fn process_test_file(
             .trim_start_matches('/')
             .to_string();
         let file_path = test_dir.join(&sanitized);
-        
+
         // Skip if path would escape test directory
         if !file_path.starts_with(&test_dir) {
             continue;
         }
-        
+
         // Create parent directories if needed
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        
+
         fs::write(&file_path, file_content)?;
         let file_path_str = file_path.to_string_lossy().to_string();
         client.open_file(&file_path_str, file_content)?;

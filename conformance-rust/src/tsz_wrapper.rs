@@ -54,12 +54,12 @@ pub fn compile_test(
                 .trim_start_matches('/')
                 .to_string();
             let file_path = dir_path.join(&sanitized);
-            
+
             // Verify the path is still inside temp_dir
             if !file_path.starts_with(dir_path) {
                 continue; // Skip files that would escape the temp directory
             }
-            
+
             if let Some(parent) = file_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -140,21 +140,22 @@ const LIST_OPTIONS: &[&str] = &[
 ];
 
 /// Convert test directive options to tsconfig compiler options
-/// 
+///
 /// Handles:
 /// - Boolean options (true/false)
 /// - List options (comma-separated values like @lib: es6,dom)
 /// - String/enum options (target, module, etc.)
 /// - Filters out test harness-specific directives
-fn convert_options_to_tsconfig(
-    options: &HashMap<String, String>,
-) -> serde_json::Value {
+fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json::Value {
     let mut opts = serde_json::Map::new();
 
     for (key, value) in options {
         // Skip test harness-specific directives
         let key_lower = key.to_lowercase();
-        if HARNESS_ONLY_DIRECTIVES.iter().any(|&d| d.to_lowercase() == key_lower) {
+        if HARNESS_ONLY_DIRECTIVES
+            .iter()
+            .any(|&d| d.to_lowercase() == key_lower)
+        {
             continue;
         }
 
@@ -162,7 +163,10 @@ fn convert_options_to_tsconfig(
             serde_json::Value::Bool(true)
         } else if value == "false" {
             serde_json::Value::Bool(false)
-        } else if LIST_OPTIONS.iter().any(|&opt| opt.to_lowercase() == key_lower) {
+        } else if LIST_OPTIONS
+            .iter()
+            .any(|&opt| opt.to_lowercase() == key_lower)
+        {
             // Parse comma-separated list
             let items: Vec<serde_json::Value> = value
                 .split(',')
@@ -175,7 +179,7 @@ fn convert_options_to_tsconfig(
         } else {
             serde_json::Value::String(value.clone())
         };
-        
+
         opts.insert(key.clone(), json_value);
     }
 
@@ -215,9 +219,7 @@ fn compile_tsz_with_binary(
 }
 
 /// Simple parser to extract error codes from tsz output
-fn parse_diagnostics_from_text(
-    text: &str,
-) -> Vec<Diagnostic> {
+fn parse_diagnostics_from_text(text: &str) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     for line in text.lines() {
@@ -246,9 +248,7 @@ fn parse_diagnostics_from_text(
 }
 
 /// Extract error codes from diagnostics
-fn extract_error_codes(
-    diagnostics: &[Diagnostic],
-) -> Vec<u32> {
+fn extract_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
     let mut codes = Vec::new();
 
     for diag in diagnostics {
@@ -289,8 +289,7 @@ mod tests {
 // @strict: true
 const x: number = "string";
 "#;
-        let result = compile_test(content, &[], &HashMap::new(), "../target/release/tsz")
-            .unwrap();
+        let result = compile_test(content, &[], &HashMap::new(), "../target/release/tsz").unwrap();
         // Should have type error (TS2322)
         assert!(!result.error_codes.is_empty());
     }
@@ -301,8 +300,7 @@ const x: number = "string";
 // @strict: true
 const x: number = 42;
 "#;
-        let result = compile_test(content, &[], &HashMap::new(), "../target/release/tsz")
-            .unwrap();
+        let result = compile_test(content, &[], &HashMap::new(), "../target/release/tsz").unwrap();
         // Should have no errors
         assert!(result.error_codes.is_empty());
     }

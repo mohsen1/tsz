@@ -80,6 +80,12 @@ pub trait TypeDatabase {
     /// Returns the TypeId of the extends clause, or None if the symbol doesn't extend anything.
     /// This is used by the BCT algorithm to find common base classes.
     fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId>;
+
+    /// Check if a type is a "unit type" (represents exactly one value).
+    /// Unit types include literals, enum members, unique symbols, null, undefined, void, never,
+    /// and tuples composed entirely of unit types.
+    /// Results are cached for O(1) lookup after first computation.
+    fn is_unit_type(&self, type_id: TypeId) -> bool;
 }
 
 impl TypeDatabase for TypeInterner {
@@ -251,6 +257,10 @@ impl TypeDatabase for TypeInterner {
         // TypeInterner doesn't have access to the Binder, so it can't resolve base classes.
         // The Checker will override this to provide the actual implementation.
         None
+    }
+
+    fn is_unit_type(&self, type_id: TypeId) -> bool {
+        TypeInterner::is_unit_type(self, type_id)
     }
 }
 
@@ -799,6 +809,10 @@ impl TypeDatabase for QueryCache<'_> {
         // Delegate to the interner
         self.interner.get_class_base_type(symbol_id)
     }
+
+    fn is_unit_type(&self, type_id: TypeId) -> bool {
+        self.interner.is_unit_type(type_id)
+    }
 }
 
 impl QueryDatabase for QueryCache<'_> {
@@ -1114,6 +1128,10 @@ impl TypeDatabase for BinderTypeDatabase<'_> {
         // This requires accessing the class declaration node and heritage clauses
         // For now, return None - BCT will fall back to union creation
         None
+    }
+
+    fn is_unit_type(&self, type_id: TypeId) -> bool {
+        self.query_cache.is_unit_type(type_id)
     }
 }
 
