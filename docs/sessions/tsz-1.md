@@ -99,16 +99,19 @@
 
 ---
 
-### Priority 3: Task #42 - Canonicalization Integration 📝 PLANNED
-**Status**: 📝 Planned
+### Priority 3: Task #42 - Canonicalization Integration 🚀 NEXT
+**Status**: 📋 IN PROGRESS
 **Why**: North Star O(1) equality goal requires that all type-producing operations return canonicalized TypeIds.
 
 **Sub-tasks**:
 1. **Union/Intersection Audit**: Ensure order-independence (e.g., `A | B` == `B | A`)
 2. **Instantiation Audit**: Ensure canonical forms after type argument substitution
 3. **Recursive Simplification**: Ensure recursive types simplify correctly during evaluation
+4. **Global intern_canonical Adoption**: Replace direct intern calls with canonicalization wrapper
 
-**Files**: `src/solver/operations.rs`, `src/solver/instantiate.rs`, `src/solver/canonicalize.rs`
+**Files**: `src/solver/operations.rs`, `src/solver/instantiate.rs`, `src/solver/evaluate.rs`, `src/solver/canonicalize.rs`
+
+**Current Focus**: Auditing `src/solver/operations.rs` for union/intersection canonicalization
 
 ---
 
