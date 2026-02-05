@@ -3193,6 +3193,45 @@ fn extract_iterator_result_types<R: TypeResolver>(
     })
 }
 
+/// Get the element type yielded by an async iterable type.
+///
+/// This is a convenience wrapper around `get_iterator_info` that extracts
+/// just the yield type from async iterators.
+///
+/// # Arguments
+///
+/// * `db` - The type database/interner
+/// * `resolver` - Type resolver for handling Lazy/Ref types
+/// * `type_id` - The type to extract the async iterable element type from
+///
+/// # Returns
+///
+/// * `TypeId` - The element type yielded by the async iterable
+/// * `TypeId::ANY` - If the type is not async iterable or is `any`
+///
+/// # Examples
+///
+/// ```ignore
+/// // AsyncIterable<string> yields string
+/// let elem = get_async_iterable_element_type(&db, &resolver, async_iterable_string);
+/// assert_eq!(elem, TypeId::STRING);
+///
+/// // Array<number> yields number (arrays are also async iterable)
+/// let elem = get_async_iterable_element_type(&db, &resolver, array_num);
+/// assert_eq!(elem, TypeId::NUMBER);
+/// ```
+pub fn get_async_iterable_element_type<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> TypeId {
+    // Delegate to get_iterator_info with is_async=true
+    match get_iterator_info(db, resolver, type_id, true) {
+        Some(info) => info.yield_type,
+        None => TypeId::ANY,
+    }
+}
+
 // Re-export property access types from extracted module
 pub use crate::solver::operations_property::*;
 
