@@ -1340,3 +1340,337 @@ fn test_commonjs_import_equals_no_error() {
         codes
     );
 }
+
+// =============================================================================
+// Circular Import Detection Tests
+// =============================================================================
+
+#[test]
+fn test_circular_import_detection_in_binder() {
+    // File A imports from B, and B imports from A
+    // This shouldn't crash the binder
+    let source_a = r#"
+import { b } from "./b";
+export const a = 1;
+"#;
+    let source_b = r#"
+import { a } from "./a";
+export const b = 2;
+"#;
+
+    // Parse and bind both files
+    let mut parser_a = ParserState::new("a.ts".to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    assert!(parser_a.get_diagnostics().is_empty());
+
+    let mut parser_b = ParserState::new("b.ts".to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    assert!(parser_b.get_diagnostics().is_empty());
+
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    // Both files should bind successfully
+    assert!(binder_a.file_locals.has("a"));
+    assert!(binder_b.file_locals.has("b"));
+}
+
+// =============================================================================
+// Mixed Import Style Tests
+// =============================================================================
+
+#[test]
+fn test_mixed_import_require_same_file() {
+    // Using both ES imports and require in the same file
+    let source = r#"
+import { foo } from "./utils";
+const bar = require("./utils");
+"#;
+    let mut parser = ParserState::new("main.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Mixed import/require should parse: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(
+        binder.file_locals.has("foo"),
+        "ES import binding should exist"
+    );
+    assert!(
+        binder.file_locals.has("bar"),
+        "require binding should exist"
+    );
+}
+
+#[test]
+fn test_import_and_reexport_same_module() {
+    let source = r#"
+import { foo } from "./utils";
+export { bar } from "./utils";
+"#;
+    let diags = check_with_resolved_modules(source, "main.ts", vec!["./utils"]);
+    assert!(
+        no_error_code(&diags, TS2307),
+        "Import and re-export from same module should resolve, got: {:?}",
+        diags
+    );
+}
+
+// =============================================================================
+// Module with Different Extension Specifiers
+// =============================================================================
+
+#[test]
+fn test_import_with_js_extension() {
+    // TypeScript allows importing with .js extension (resolves to .ts)
+    let source = r#"import { foo } from "./utils.js";"#;
+    let diags = check_with_resolved_modules(source, "main.ts", vec!["./utils.js"]);
+    assert!(
+        no_error_code(&diags, TS2307),
+        "Import with .js extension should resolve, got: {:?}",
+        diags
+    );
+}
+
+#[test]
+fn test_import_with_ts_extension() {
+    // Importing with .ts extension is unusual but parseable
+    let source = r#"import { foo } from "./utils.ts";"#;
+    let diags = check_with_resolved_modules(source, "main.ts", vec!["./utils.ts"]);
+    assert!(
+        no_error_code(&diags, TS2307),
+        "Import with .ts extension should resolve when in resolved set, got: {:?}",
+        diags
+    );
+}
+
+// =============================================================================
+// Re-export Chain Tests
+// =============================================================================
+
+#[test]
+fn test_barrel_file_exports() {
+    let source = r#"
+export { Button } from "./components/Button";
+export { Input } from "./components/Input";
+export { Form } from "./components/Form";
+"#;
+    let diags = check_with_resolved_modules(
+        source,
+        "index.ts",
+        vec![
+            "./components/Button",
+            "./components/Input",
+            "./components/Form",
+        ],
+    );
+    assert!(
+        no_error_code(&diags, TS2307),
+        "Barrel file re-exports should resolve, got: {:?}",
+        diags
+    );
+}
+
+#[test]
+fn test_wildcard_reexport_with_named_reexport() {
+    let source = r#"
+export * from "./base";
+export { special } from "./special";
+"#;
+    let diags = check_with_resolved_modules(source, "index.ts", vec!["./base", "./special"]);
+    assert!(
+        no_error_code(&diags, TS2307),
+        "Mixed wildcard and named re-exports should resolve, got: {:?}",
+        diags
+    );
+}
+
+// =============================================================================
+// Ambient Module Wildcard Pattern Tests
+// =============================================================================
+
+#[test]
+fn test_wildcard_ambient_module_css() {
+    let source = r#"
+declare module "*.css" {
+    const styles: { [key: string]: string };
+    export default styles;
+}
+import styles from "./app.css";
+"#;
+    let diags = check_single_file(source, "test.ts");
+    assert!(
+        no_error_code(&diags, TS2307),
+        "Wildcard ambient module should match .css imports, got: {:?}",
+        diags
+    );
+}
+
+#[test]
+fn test_wildcard_ambient_module_svg() {
+    let source = r#"
+declare module "*.svg" {
+    const content: string;
+    export default content;
+}
+import logo from "./logo.svg";
+"#;
+    let diags = check_single_file(source, "test.ts");
+    assert!(
+        no_error_code(&diags, TS2307),
+        "Wildcard ambient module should match .svg imports, got: {:?}",
+        diags
+    );
+}
+
+#[test]
+fn test_wildcard_ambient_module_json() {
+    let source = r#"
+declare module "*.json" {
+    const data: any;
+    export default data;
+}
+import data from "./config.json";
+"#;
+    let diags = check_single_file(source, "test.ts");
+    assert!(
+        no_error_code(&diags, TS2307),
+        "Wildcard ambient module should match .json imports, got: {:?}",
+        diags
+    );
+}
+
+// =============================================================================
+// Import with Complex Clauses
+// =============================================================================
+
+#[test]
+fn test_import_default_and_named() {
+    let source = r#"import React, { useState } from "./react";"#;
+    let diags = check_with_resolved_modules(source, "app.tsx", vec!["./react"]);
+    assert!(
+        no_error_code(&diags, TS2307),
+        "Combined default + named import should resolve, got: {:?}",
+        diags
+    );
+}
+
+#[test]
+fn test_import_default_and_namespace() {
+    let source = r#"import React, * as ReactAll from "./react";"#;
+    let mut parser = ParserState::new("app.tsx".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    // This is a parse error in TypeScript - can't combine default with namespace
+    // Just verify it doesn't crash
+}
+
+// =============================================================================
+// Module Declaration with Body Tests
+// =============================================================================
+
+#[test]
+fn test_ambient_module_with_multiple_exports() {
+    let source = r#"
+declare module "my-lib" {
+    export const VERSION: string;
+    export function init(): void;
+    export class Client {
+        connect(): void;
+    }
+    export interface Config {
+        apiKey: string;
+    }
+    export type Status = "active" | "inactive";
+    export enum LogLevel { Debug, Info, Warn, Error }
+}
+"#;
+    let mut parser = ParserState::new("types.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Ambient module with multiple exports should parse: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(
+        binder.declared_modules.contains("my-lib"),
+        "Declared module should be tracked"
+    );
+}
+
+// =============================================================================
+// build_module_resolution_maps edge cases
+// =============================================================================
+
+#[test]
+fn test_resolution_maps_same_name_different_dirs() {
+    use crate::checker::module_resolution::build_module_resolution_maps;
+
+    let files = vec![
+        "/project/src/utils.ts".to_string(),
+        "/project/lib/utils.ts".to_string(),
+    ];
+
+    let (paths, _) = build_module_resolution_maps(&files);
+
+    // src/utils.ts -> ../lib/utils
+    assert_eq!(
+        paths.get(&(0, "../lib/utils".to_string())),
+        Some(&1),
+        "Same-name files in different dirs should resolve correctly"
+    );
+    // lib/utils.ts -> ../src/utils
+    assert_eq!(
+        paths.get(&(1, "../src/utils".to_string())),
+        Some(&0),
+        "Same-name files in different dirs should resolve correctly (reverse)"
+    );
+}
+
+#[test]
+fn test_resolution_maps_mixed_extensions() {
+    use crate::checker::module_resolution::build_module_resolution_maps;
+
+    let files = vec![
+        "/project/main.ts".to_string(),
+        "/project/lib.js".to_string(),
+        "/project/types.d.ts".to_string(),
+        "/project/component.tsx".to_string(),
+    ];
+
+    let (paths, _) = build_module_resolution_maps(&files);
+
+    // All should resolve with extensionless specifiers
+    assert_eq!(paths.get(&(0, "./lib".to_string())), Some(&1));
+    assert_eq!(paths.get(&(0, "./types".to_string())), Some(&2));
+    assert_eq!(paths.get(&(0, "./component".to_string())), Some(&3));
+}
+
+#[test]
+fn test_resolution_maps_only_single_file() {
+    use crate::checker::module_resolution::build_module_resolution_maps;
+
+    let files = vec!["/project/main.ts".to_string()];
+
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert!(
+        paths.is_empty(),
+        "Single file should have no resolution paths"
+    );
+    assert!(
+        modules.is_empty(),
+        "Single file should have no resolved modules"
+    );
+}
