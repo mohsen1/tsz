@@ -27,32 +27,33 @@
 
 ## Task Breakdown (Priority Order per Gemini Redefinition)
 
-### Priority 1: Task #16 - Robust Intersection & Property Infrastructure ⚡ CRITICAL
-**Status**: 🔄 In Progress
+### Priority 1: Task #16 - Robust Intersection & Property Infrastructure ⚡ COMPLETE ✅
+**Status**: ✅ Completed (2025-02-05)
 **Why First**: Foundation for all object-based checks. tsz-4's nominality checks depend on this.
 
-**Subtasks**:
-1. **Task 16.1**: Low-level Intersection Infrastructure
-   - File: `src/solver/intern.rs`
-   - Implement `intersect_types_raw()` and `intersect_types_raw2()`
-   - Prevents infinite recursion in property merging
-   - Estimate: 30 minutes
+**Completed Subtasks**:
+1. **Task 16.1**: ✅ Low-level Intersection Infrastructure
+   - Implemented `intersect_types_raw()` and `intersect_types_raw2()` in `src/solver/intern.rs`
+   - Preserves callable order (overloads must stay ordered)
+   - Lazy type guard (no simplification if unresolved types present)
+   - Does NOT call normalize_intersection or is_subtype_of
+   - Commit: 4f0aa612a
 
-2. **Task 16.2**: Property Collection Visitor
-   - File: `src/solver/objects.rs`
-   - Create `PropertyCollector` struct/visitor
+2. **Task 16.2**: ✅ Property Collection Visitor
+   - Created `src/solver/objects.rs` module with `PropertyCollector`
    - Handles Lazy, Ref, and Intersection types systematically
-   - Estimate: 1 hour
+   - Commutative Any handling (found_any flag)
+   - Visibility merging (Private > Protected > Public)
+   - Fixed all bugs identified by Gemini Pro review
+   - Commit: 4945939bb
 
-3. **Task 16.3**: Judge Integration
-   - File: `src/solver/subtype.rs`
-   - Replace manual property loop with PropertyCollector
+3. **Task 16.3**: ✅ Judge Integration
+   - Replaced manual property loop in `src/solver/subtype.rs` with `collect_properties()` call
    - North Star Rule: Judge asks Lawyer for effective property set
-   - Estimate: 1 hour
+   - Handles Any, NonObject, and Properties result cases
+   - Commit: 7b9b81f7e
 
-**Dependencies**:
-- Task 16.2 DEPENDS ON 16.1
-- Task 16.3 DEPENDS ON 16.2
+**Impact**: Breaks infinite recursion cycle in intersection property merging. Foundation for tsz-4's nominality checks.
 
 ---
 
