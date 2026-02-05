@@ -16,6 +16,7 @@ use crate::checker::state::{CheckerOverrideProvider, CheckerState};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::solver::TypeId;
+use crate::solver::operations::AssignabilityChecker; // For is_assignable_to_bivariant_callback
 use crate::solver::types::RelationCacheKey;
 use tracing::trace;
 
@@ -159,6 +160,43 @@ impl<'a> CheckerState<'a> {
         let mut checker = CompatChecker::with_resolver(self.ctx.types, env);
         self.ctx.configure_compat_checker(&mut checker);
         checker.is_assignable_with_overrides(source, target, &overrides)
+    }
+
+    /// Check if `source` type is assignable to `target` type with bivariant function parameter checking.
+    ///
+    /// This is used for class method override checking, where methods are always bivariant
+    /// (unlike function properties which are contravariant with strictFunctionTypes).
+    ///
+    /// Follows the same pattern as `is_assignable_to` but calls `is_assignable_to_bivariant_callback`
+    /// which disables strict_function_types for the check.
+    pub fn is_assignable_to_bivariant(&mut self, source: TypeId, target: TypeId) -> bool {
+        use crate::solver::CompatChecker;
+
+        // CRITICAL: Ensure all Ref types are resolved before assignability check.
+        // This fixes intersection type assignability where `type AB = A & B` needs
+        // A and B in type_env before we can check if a type is assignable to the intersection.
+        self.ensure_refs_resolved(source);
+        self.ensure_refs_resolved(target);
+
+        self.ensure_application_symbols_resolved(source);
+        self.ensure_application_symbols_resolved(target);
+
+        let source = self.evaluate_type_for_assignability(source);
+        let target = self.evaluate_type_for_assignability(target);
+
+        let env = self.ctx.type_env.borrow();
+        let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+        self.ctx.configure_compat_checker(&mut checker);
+
+        // Use bivariant callback which disables strict_function_types
+        let result = checker.is_assignable_to_bivariant_callback(source, target);
+        trace!(
+            source = source.0,
+            target = target.0,
+            result,
+            "is_assignable_to_bivariant"
+        );
+        result
     }
 
     /// Check if two types have any overlap (can ever be equal).
