@@ -1,8 +1,23 @@
 # Session TSZ-14: Fix Literal Type Widening in Object Literal Expression Inference
 
 **Started**: 2026-02-05
-**Status**: 🔄 PENDING
+**Status**: ⏸️ DEFERRED
 **Focus**: Fix object literal expression inference to respect contextual types
+
+## Deferral Reason (2026-02-05)
+
+**Gemini Pro Recommendation**: DEFER this session until tsz-5 (Generic Type Inference & Contextual Typing) is complete.
+
+**Reasoning**:
+- This bug is a symptom of missing contextual typing infrastructure
+- tsz-5 is currently building the exact infrastructure needed (passing `contextual_type` down through `check_expression`)
+- Working on this now would conflict with tsz-5 or require working around missing infrastructure
+- Better to complete tsz-5 first, then fix this as a follow-up
+
+**Related Sessions**:
+- **tsz-5**: Generic Type Inference & Contextual Typing (ACTIVE) - building the required infrastructure
+
+**Next Step**: Resume tsz-14 AFTER tsz-5 completes contextual typing implementation.
 
 ## Problem Statement
 

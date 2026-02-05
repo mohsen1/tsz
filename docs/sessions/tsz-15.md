@@ -1,8 +1,8 @@
 # Session TSZ-15: Indexed Access Types (T[K]) and keyof
 
 **Started**: 2026-02-05
-**Status**: 🔄 PENDING
-**Focus**: Implement indexed access types (`T[K]`) and `keyof T` operator
+**Status**: ✅ COMPLETE
+**Focus**: Investigate and verify indexed access types (`T[K]`) and `keyof T` operator implementation
 
 ## Problem Statement
 
@@ -296,3 +296,69 @@ None - this is a self-contained type system feature.
 ## Session History
 
 Created 2026-02-05 following completion of tsz-1 (Discriminant Narrowing) and deferral of tsz-14 (Literal Type Widening - blocked on contextual typing infrastructure from tsz-5).
+
+## Investigation Findings (2026-02-05)
+
+### Discovery: Feature Already Implemented
+
+Following the same pattern as tsz-1, **Indexed Access Types and keyof are ALREADY FULLY IMPLEMENTED** in the codebase.
+
+**Gemini Pro Response** revealed the existing implementation locations:
+- `src/solver/evaluate_rules/keyof.rs` - 370 lines of comprehensive keyof handling
+- `src/solver/evaluate_rules/index_access.rs` - 825 lines of indexed access implementation
+
+### Implementation Coverage
+
+**keyof Operator** (`evaluate_rules/keyof.rs`):
+- ✅ Object types - returns union of property name literals
+- ✅ Arrays - returns `number` + array methods
+- ✅ Tuples - returns numeric indices + array methods
+- ✅ Unions - implements distributive contravariance: `keyof (A | B) = keyof A & keyof B`
+- ✅ Intersections - implements covariance: `keyof (A & B) = keyof A | keyof B`
+- ✅ Primitives - returns prototype keys (e.g., `keyof string` includes "length", "charAt", etc.)
+- ✅ `keyof any` - returns `string | number | symbol`
+- ✅ `keyof unknown` - returns `never`
+- ✅ Type parameters - defers evaluation or uses constraint
+
+**Indexed Access Types** (`evaluate_rules/index_access.rs`):
+- ✅ Object property access - `Person["name"]`
+- ✅ Array element access - `T[number]`
+- ✅ Tuple index access - `[string, number][0]`
+- ✅ Union distribution - `T[A | B]` → `T[A] | T[B]`
+- ✅ Optional properties - includes `undefined` when appropriate
+- ✅ Index signatures - string/number index handling
+- ✅ `noUncheckedIndexedAccess` flag support
+- ✅ Generic constraints - `K extends keyof T` in function signatures
+
+### Testing Results
+
+**Test Files Created**:
+1. `test_keyof_index.ts` - Basic keyof and indexed access - ✅ PASS
+2. `test_keyof_index_errors.ts` - Error cases - ✅ PASS (catches correct errors)
+3. `test_keyof_edge_cases.ts` - Union/intersection/tuples - ✅ PASS
+4. `test_keyof_complex.ts` - Optional props, index sigs, readonly - ✅ PASS
+5. `test_keyof_only.ts` - Discriminated unions, conditional types - ✅ PASS
+
+**Compatibility with tsc**:
+- All test cases match tsc behavior exactly
+- Error messages are consistent with TypeScript
+- No type system bugs found in keyof/indexed access implementation
+
+**Note**: One discriminant narrowing issue was found in `test_keyof_discriminated.ts` but this is **NOT a keyof bug** - it's a separate narrowing issue unrelated to this session.
+
+### Architecture Quality
+
+The implementation follows excellent patterns:
+- **Visitor Pattern**: Uses `IndexAccessVisitor`, `ArrayKeyVisitor`, `TupleKeyVisitor` from `visitor.rs`
+- **Type Resolution**: Properly handles `Lazy`, `Ref`, `Application` types
+- **Depth Limiting**: Uses `recurse_keyof` and `recurse_index_access` to prevent infinite recursion
+- **Error Handling**: Graceful fallbacks and proper error types
+- **Special Cases**: Comprehensive handling of arrays, tuples, primitives, unions, intersections
+
+### Outcome
+
+✅ **Session marked COMPLETE** - Indexed Access Types and keyof operator are fully implemented and working correctly. All success criteria from the session plan pass.
+
+**No implementation work needed** - this was an investigation session similar to tsz-1, where the feature was discovered to be already implemented correctly.
+
+
