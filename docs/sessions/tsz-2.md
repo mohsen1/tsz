@@ -1,7 +1,7 @@
 # Session: tsz-2 - Phase 5: Enforce Solver-First Architecture
 
 **Started**: 2026-02-05
-**Status**: COMPLETED - Session wrap up recommended by Gemini
+**Status**: IN_PROGRESS
 **Focus**: Remove direct TypeKey inspection from Checker, enforce Solver-First boundary
 
 **Previous Session**: Coinductive Subtyping (COMPLETE)
@@ -35,6 +35,20 @@ if let TypeKey::Intrinsic(IntrinsicKind::String) = types.get(id) { ... }
 // src/checker/some_file.rs
 if solver.is_string(id) { ... }
 ```
+
+## Current Goals
+
+**Phase 5 Remaining Work:**
+- [x] `state_type_analysis.rs` (0 violations) - COMPLETE ✅
+- [ ] `context.rs` (10 violations) - NEXT PRIORITY
+- [ ] `state_type_environment.rs` (6 violations)
+- [ ] `iterators.rs` (5 violations)
+- [ ] `state_type_resolution.rs` (4 violations)
+
+**Current Task: Refactoring `src/checker/context.rs`**
+- 10 TypeKey violations to eliminate
+- Strategy: Move type logic to `src/solver/` or use `TypeVisitor`
+- **MANDATORY**: Ask Gemini before moving logic to ensure strict/legacy rules are respected (Judge vs Lawyer)
 
 ## Specific Tasks
 
@@ -291,6 +305,18 @@ Does this handle all edge cases correctly?"
 ```
 
 ## Session History
+
+**2026-02-05 - SESSION REACTIVATED:**
+- Session reactivated from COMPLETE status to continue Phase 5 work
+- **state_type_analysis.rs Refactoring Complete:**
+  - Extracted `delegate_cross_arena_symbol_resolution()` helper
+  - Extracted `compute_class_symbol_type()`, `compute_enum_member_symbol_type()`, `compute_namespace_symbol_type()` helpers
+  - Extracted `resolve_symbol_export()` helper to eliminate ~40 lines of duplication
+  - Reduced `compute_type_of_symbol` from ~670 to ~550 lines
+  - Zero TypeKey violations remaining in state_type_analysis.rs
+  - Commits: 390213d32, ae8b14da4, 01a078825
+- **Next Priority:** context.rs (10 TypeKey violations)
+- Remaining violations: ~65 across 15+ checker files
 
 **2026-02-05 - SESSION COMPLETE (Final Wrap Up):**
 - Completed Phase 4.3 Migration (Ref → Lazy/DefId)
