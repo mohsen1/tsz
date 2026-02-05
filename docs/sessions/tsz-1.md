@@ -126,8 +126,14 @@ Object reduction proved too complex for the interner layer:
 
 **Next Steps**:
 - Object reduction needs SubtypeChecker layer integration (not Interner)
-- Investigate circular_extends test failures
+- ~~Investigate circular_extends test failures~~ **PRE-EXISTING ISSUE** (tests fail at commit a975a10bf before my work)
 - Consider architectural changes to support deeper reduction
+
+**Investigation Finding** (2025-02-05):
+The 5 circular_extends test failures are **pre-existing issues**, NOT caused by Priority 2 implementation.
+- Tests fail at commit `a975a10bf` (before structural simplification work)
+- Tests fail at commit `cae535d63` (after structural simplification work)
+- Conclusion: These tests were already broken; my literal-based reduction did NOT introduce regressions
 
 ---
 
