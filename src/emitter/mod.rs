@@ -1670,8 +1670,22 @@ impl<'a> Printer<'a> {
 
         self.comment_emit_idx = 0;
 
-        // CommonJS: Emit "use strict" FIRST (before comments and helpers)
-        if self.ctx.is_commonjs() {
+        // Emit "use strict" FIRST (before comments and helpers)
+        // TypeScript emits "use strict" when:
+        // 1. Module is CommonJS/AMD/UMD
+        // 2. alwaysStrict compiler option is enabled
+        // 3. File is an ES module with target < ES2015
+        // For now, we emit for CommonJS (most common case)
+        // TODO: Add always_strict support to PrinterOptions
+        let is_es_module = self.file_is_module(&source.statements);
+        let is_commonjs_or_amd = matches!(
+            self.ctx.options.module,
+            ModuleKind::CommonJS | ModuleKind::AMD | ModuleKind::UMD
+        );
+        let target_before_es6 = !self.ctx.options.target.supports_es2015();
+
+        // Emit for CommonJS/AMD/UMD OR (ES modules with target < ES6)
+        if is_commonjs_or_amd || (is_es_module && target_before_es6) {
             self.write("\"use strict\";");
             self.write_line();
         }
