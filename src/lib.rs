@@ -2666,3 +2666,8 @@ mod debug_asi;
 #[cfg(test)]
 #[path = "tests/p1_error_recovery_tests.rs"]
 mod p1_error_recovery_tests;
+
+// Strict null checks manual tests for TS18050/TS2531/2532 error codes
+#[cfg(test)]
+#[path = "checker/tests/strict_null_manual.rs"]
+mod strict_null_manual;
