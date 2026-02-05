@@ -1282,6 +1282,29 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
         }
 
+        // BUG FIX: Handle String Enum -> string when source is a Union enum type
+        // Gap B: String enum opacity - SE (string enum) -> string should be rejected
+        // visitor::enum_components returns None for Unions, so we need to check separately
+        if target == TypeId::STRING {
+            // Check if source is a string enum type (Union of string enum members)
+            if self.subtype.resolver.is_enum_type(source, self.interner) {
+                // Source is an enum type, check if it's a string enum
+                if let Some(members) = visitor::union_list_id(self.interner, source) {
+                    let member_list = self.interner.type_list(members);
+                    if let Some(&first_member) = member_list.first() {
+                        if let Some((def_id, _)) =
+                            visitor::enum_components(self.interner, first_member)
+                        {
+                            if !self.subtype.resolver.is_numeric_enum(def_id) {
+                                // Source is a string enum -> string is NOT allowed
+                                return Some(false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let source_enum = visitor::enum_components(self.interner, source);
         let target_enum = visitor::enum_components(self.interner, target);
 
@@ -1302,15 +1325,19 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
                 match (s_parent, t_parent) {
                     (Some(sp), Some(tp)) if sp == tp => {
-                        // Same parent enum: Member -> Parent Type (e.g., E.A -> E)
-                        // Fall through to structural check to verify literal values match
-                        // E.A(0) -> E (E.A | E.B) should pass if 0 is in the union
-                        return None;
+                        // Same parent enum
+                        // If target is the Enum Type (e.g., 'E'), allow structural check
+                        if self.subtype.resolver.is_enum_type(target, self.interner) {
+                            return None;
+                        }
+                        // If target is a different specific member (e.g., 'E.B'), reject nominally
+                        // E.A -> E.B should fail even if they have the same value
+                        Some(false)
                     }
                     _ => {
                         // Different parents (or one/both are types, not members)
                         // Nominal mismatch: EnumA.X is not assignable to EnumB
-                        return Some(false);
+                        Some(false)
                     }
                 }
             }
