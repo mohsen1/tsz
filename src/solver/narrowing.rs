@@ -174,18 +174,38 @@ impl<'a> NarrowingContext<'a> {
         NarrowingContext { db }
     }
 
-    /// Resolve a type by evaluating Lazy types through the QueryDatabase.
+    /// Resolve a type to its structural representation.
     ///
-    /// This ensures that type aliases and other Lazy references are resolved
-    /// to their actual types before performing narrowing operations.
-    fn resolve_type(&self, type_id: TypeId) -> TypeId {
-        if let Some(_def_id) = lazy_def_id(self.db, type_id) {
-            // Use QueryDatabase to resolve Lazy types to their underlying types
-            self.db.evaluate_type(type_id)
-        } else {
-            // Not a Lazy type, return as-is
-            type_id
+    /// Unwraps:
+    /// - Lazy types (evaluates them)
+    /// - Application types (evaluates the generic instantiation)
+    ///
+    /// This ensures that type aliases, interfaces, and generics are resolved
+    /// to their actual structural types before performing narrowing operations.
+    fn resolve_type(&self, mut type_id: TypeId) -> TypeId {
+        // Prevent infinite loops with a fuel counter
+        let mut fuel = 100;
+
+        while fuel > 0 {
+            fuel -= 1;
+
+            // 1. Handle Lazy types
+            if let Some(_def_id) = lazy_def_id(self.db, type_id) {
+                type_id = self.db.evaluate_type(type_id);
+                continue;
+            }
+
+            // 2. Handle Application types (Generics)
+            if let Some(TypeKey::Application(_app_id)) = self.db.lookup(type_id) {
+                type_id = self.db.evaluate_type(type_id);
+                continue;
+            }
+
+            // It's a structural type (Object, Union, Intersection, Primitive)
+            break;
         }
+
+        type_id
     }
 
     /// Find discriminant properties in a union type.
@@ -408,14 +428,6 @@ impl<'a> NarrowingContext<'a> {
 
         trace!(
             "Checking {} member(s) for discriminant match",
-            members.len()
-        );
-
-        eprintln!(
-            "DEBUG narrow_by_discriminant: union_type={}, property_path_len={}, literal={}, members={}",
-            union_type.0,
-            property_path.len(),
-            literal_value.0,
             members.len()
         );
 
