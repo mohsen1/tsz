@@ -30,6 +30,45 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 
 ## Progress Log
 
+### 2025-02-05 Session 9: Callback Formatting Investigation (IN PROGRESS)
+
+**Issue:**
+Callbacks like `function (val) { return val.isSunk; }` are being emitted multi-line
+when they should be single-line in ES5 class methods.
+
+**Expected:**
+```javascript
+Board.prototype.allShipsSunk = function () {
+    return this.ships.every(function (val) { return val.isSunk; });
+};
+```
+
+**Actual:**
+```javascript
+Board.prototype.allShipsSunk = function () {
+    return this.ships.every(function (val) {
+        return val.isSunk;
+    });
+};
+```
+
+**Investigation:**
+- Callbacks go through IR (Intermediate Representation) printer
+- IR printer has single-line logic for FunctionExpr (lines 364-382)
+- Added `is_simple_anonymous_return` heuristic to detect anonymous functions with simple returns
+- Fix NOT working - callbacks still emitted multi-line
+
+**Commit:** e158195e7 (fix attempted but not working)
+
+**Next:** Need deeper investigation into why single-line logic isn't triggering.
+Possible issues:
+1. Callback might be ASTRef instead of FunctionExpr
+2. body_source_range might be calculated incorrectly
+3. Single-line condition might not be met for some reason
+
+**Decision:** Per Gemini's previous advice, should focus on structural issues first
+(module/class merging) rather than formatting at 4.9% pass rate.
+
 ### 2025-02-05 Session 8: Declaration Emit Discovery (COMPLETE)
 
 **Critical Discovery:**
