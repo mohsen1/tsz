@@ -551,3 +551,27 @@ From completed tsz-3 Phase 1:
 - `docs/issues/CFA_CIRCULAR_DEPENDENCY.md` - Full technical analysis
 - `docs/sessions/tsz-3.md` - This session
 - `docs/sessions/history/tsz-3.md` - Completed Phase 1 work
+
+### Upward Search Investigation (2026-02-05)
+**Status**: ✅ COMPLETE (Documented Limitations)
+
+Investigated implementing upward search for heritage discovery and documented the challenges.
+
+**Findings**:
+- SymbolIndex currently tracks "which files extend X" (heritage_clauses: symbol_name -> files)
+- For upward search, we need the reverse: "class X extends which types?"
+- This would require either:
+  1. Adding reverse mapping to SymbolIndex (file -> list of types it extends)
+  2. Parsing AST heritage clauses for each class during lookup
+
+**Decision**: Documented as TODO with detailed implementation guidance
+- Downward search covers the most common use case (find all overrides of base method)
+- For rename safety, users should rename from base class downward
+- Upward search can be added later when SymbolIndex is enhanced
+
+**Changes**:
+- Added comprehensive TODO comment in `find_heritage_member_symbols()`
+- Removed broken upward search implementation
+- Fixed `PropertyCollectionResult` usage in `src/solver/subtype.rs`
+
+**Value**: Clear documentation of current capabilities and limitations for future developers.
