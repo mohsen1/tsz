@@ -366,3 +366,37 @@ Is this the right approach? Specifically:
 - `src/checker/state_type_analysis.rs`: Updated enum member type resolution to use `TypeKey::Enum`
 - `src/checker/type_checking_utilities.rs`: Fixed `enum_member_type_from_decl` to return literal types
 - `src/solver/expression_ops.rs`: Added `NoopResolver` import
+
+### Commit: `a884c0aa2` - test(tsz-4): add Solver-layer unit tests for enum nominal typing
+
+**What Was Done**:
+While waiting for Gemini API rate limit recovery, expanded test coverage per Gemini Flash's recommendation.
+
+**Added Tests** (`src/solver/tests/enum_nominality.rs`):
+- `test_enum_member_typekey_wrapper`: Verifies TypeKey::Enum wrapper creation and DefId preservation
+- `test_different_enum_members_different_types`: Confirms same enum, different members → different types
+- `test_different_enums_different_defids`: Validates different enums have different DefIds
+- `test_enum_preserves_literal_type`: Tests literal type preservation (numeric and string)
+- `test_unwrapped_literals_no_nominality`: Verifies unwrapped literals have no nominal identity
+- `test_same_enum_different_members_different`: Additional validation of nominal distinction
+
+**Test Status**:
+- ✅ 9/9 Solver-layer unit tests passing
+- ❌ 6/9 integration tests passing (enum_nominality_tests.rs)
+  - 3 failures require TypeLowering fix (blocked by Gemini API rate limit)
+
+**Value**:
+These tests validate the Solver layer behavior in isolation, confirming that:
+- TypeKey::Enum wrapper is correctly constructed
+- DefId provides nominal identity
+- Different enum members are structurally and nominally distinct
+- Literal types are preserved within the enum wrapper
+
+This validates the correctness of the Solver layer implementation independent of the TypeLowering integration issue.
+
+**Next Steps**:
+1. Wait for Gemini API rate limit recovery
+2. Ask pre-implementation question about TypeLowering fix
+3. Implement TypeLowering changes per Gemini's guidance
+4. Verify integration tests pass
+5. Ask Gemini for POST-implementation review
