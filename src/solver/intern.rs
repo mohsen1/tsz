@@ -309,6 +309,10 @@ pub struct TypeInterner {
     applications: ConcurrentValueInterner<TypeApplication>,
     /// Cache for is_unit_type checks (memoized O(1) lookup after first computation)
     unit_type_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// The global Array base type (e.g., Array<T> from lib.d.ts)
+    array_base_type: OnceLock<TypeId>,
+    /// Type parameters for the Array base type
+    array_base_type_params: OnceLock<Vec<TypeParamInfo>>,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -342,7 +346,33 @@ impl TypeInterner {
             mapped_types: ConcurrentValueInterner::new(),
             applications: ConcurrentValueInterner::new(),
             unit_type_cache: DashMap::with_hasher(FxBuildHasher),
+            array_base_type: OnceLock::new(),
+            array_base_type_params: OnceLock::new(),
         }
+    }
+
+    /// Set the global Array base type (e.g., Array<T> from lib.d.ts).
+    ///
+    /// This should be called once during primordial type setup when lib.d.ts is processed.
+    /// Once set, the value cannot be changed (OnceLock enforces this).
+    pub fn set_array_base_type(&self, type_id: TypeId, params: Vec<TypeParamInfo>) {
+        let _ = self.array_base_type.set(type_id);
+        let _ = self.array_base_type_params.set(params);
+    }
+
+    /// Get the global Array base type, if it has been set.
+    #[inline]
+    pub fn get_array_base_type(&self) -> Option<TypeId> {
+        self.array_base_type.get().copied()
+    }
+
+    /// Get the type parameters for the global Array base type, if it has been set.
+    #[inline]
+    pub fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        self.array_base_type_params
+            .get()
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Get the object property maps, initializing on first access

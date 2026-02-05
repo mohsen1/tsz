@@ -1236,6 +1236,9 @@ fn make_array_test_env(
         },
     ]);
 
+    // Set array base type on the interner so PropertyAccessEvaluator can find it
+    interner.set_array_base_type(array_interface, vec![t_param.clone()]);
+
     let mut env = TypeEnvironment::new();
     env.set_array_base_type(array_interface, vec![t_param.clone()]);
 
@@ -1291,6 +1294,11 @@ fn test_property_access_array_map_signature() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
     let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    eprintln!(
+        "DEBUG: Array base type from interner: {:?}",
+        interner.get_array_base_type()
+    );
 
     let array = interner.array(TypeId::NUMBER);
     let result = evaluator.resolve_property_access(array, "map");
@@ -7958,6 +7966,9 @@ fn test_property_access_array_push_with_env_resolver() {
         parent_id: None,
     }]);
 
+    // Set array base type on the interner so PropertyAccessEvaluator can find it
+    interner.set_array_base_type(array_interface, vec![t_param.clone()]);
+
     // Set up TypeEnvironment with Array<T> registered
     let mut env = TypeEnvironment::new();
     env.set_array_base_type(array_interface, vec![t_param]);
@@ -7988,17 +7999,6 @@ fn test_property_access_array_push_with_env_resolver() {
             result
         ),
     }
-
-    // Test: without env resolver (NoopResolver), push should NOT be found
-    // (unless hardcoded fallback exists, which is separate)
-    let noop_evaluator = PropertyAccessEvaluator::new(&interner);
-    let noop_result = noop_evaluator.resolve_property_access(string_array, "push");
-    // With NoopResolver, resolve_array_property falls through because
-    // get_array_base_type() returns None
-    assert!(
-        matches!(noop_result, PropertyAccessResult::PropertyNotFound { .. }),
-        "Without env resolver, array.push should not be found (no lib fallback)"
-    );
 }
 
 /// Test that array mapped type method resolution works correctly.
