@@ -121,7 +121,9 @@ All tests passed successfully.
 
 ### Task 2: Verify Function Bivariance in Legacy Mode
 
-**Status**: Needs Verification
+**Status**: ✅ COMPLETE
+
+**Completed**: 2026-02-05
 
 **Goal**: Ensure function parameters are bivariant unless `strictFunctionTypes` is enabled
 
@@ -145,9 +147,32 @@ let bar: Bar = foo; // Should work (methods bivariant)
 - `src/solver/compat.rs` - `strictFunctionTypes` flag handling
 
 **Deliverables**:
-- [ ] Add tests for function parameter variance
-- [ ] Verify method vs function difference
-- [ ] Document strictFunctionTypes behavior
+- [x] Add tests for function parameter variance
+- [x] Verify method vs function difference
+- [x] Document strictFunctionTypes behavior
+
+**Implementation Summary**:
+
+Added 5 comprehensive tests to `src/solver/tests/lawyer_tests.rs`:
+
+1. **test_function_bivariance_legacy_mode**: Verifies parameters are bivariant when strictFunctionTypes=false
+2. **test_function_contravariance_strict_mode**: Verifies parameters are contravariant when strictFunctionTypes=true
+3. **test_methods_always_bivariant**: Verifies methods remain bivariant regardless of strictFunctionTypes
+4. **test_function_with_multiple_parameters**: Tests bivariance/contravariance with multiple parameters
+5. **test_function_variance_with_return_types**: Verifies return types are always covariant
+
+**Gemini Consultation**:
+
+Asked Gemini for approach validation and received guidance on:
+- Key function: `are_parameters_compatible_impl` (lines 94-128) implements bivariance logic
+- Key function: `check_function_subtype` (lines 210-248) extracts `is_method` flag
+- Configuration via `configure_subtype` in compat.rs (lines 757-767)
+- Method detection via `is_method` flag on FunctionShape
+- `disable_method_bivariance` flag interaction
+
+All tests passed successfully.
+
+**Next Task**: Task 4 - Verify Private/Protected Brands (Task 3 EPC already complete)
 
 ### Task 3: Verify Excess Property Checking (EPC)
 
@@ -346,3 +371,32 @@ Be brutal - tell me specifically what to fix."
 **Commit**: `a8c19837a` - "test(tsz-4): add comprehensive any propagation tests"
 
 **Next Task**: Task 2 - Verify Function Bivariance in Legacy Mode
+
+### 2026-02-05: Task 2 Complete - Function Bivariance Verified
+
+**Gemini Consultation**: Asked for approach validation on verifying function bivariance behavior.
+
+**Gemini Guidance Received**:
+- Key function: `are_parameters_compatible_impl` (lines 94-128) implements bivariance logic
+- Key function: `check_function_subtype` (lines 210-248) extracts `is_method` flag
+- Configuration: `configure_subtype` in compat.rs sets `strict_function_types` and `disable_method_bivariance` flags
+- Methods vs Functions: Methods have `is_method=true`, functions have `is_method=false`
+- Bivariance logic: `use_bivariance = method_should_be_bivariant || !self.strict_function_types`
+
+**Implementation**:
+- Added 5 comprehensive tests to `src/solver/tests/lawyer_tests.rs`
+- Added helper function `create_function_type()` for test ergonomics
+- Tests verify both legacy and strict modes
+- Tests verify methods are always bivariant
+- Tests verify return type covariance (independent of parameter variance)
+
+**Results**:
+- ✅ All 5 tests passed
+- ✅ Legacy mode: parameters bivariant (as expected)
+- ✅ Strict mode: parameters contravariant (as expected)
+- ✅ Methods: always bivariant regardless of mode (as expected)
+- ✅ Return types: always covariant (as expected)
+
+**Commit**: `8906511b3` - "test(tsz-4): add function bivariance tests"
+
+**Next Task**: Task 4 - Verify Private/Protected Brands (Task 3 EPC already complete in TSZ-6)
