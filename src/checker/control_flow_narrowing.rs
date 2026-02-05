@@ -951,14 +951,14 @@ impl<'a> FlowAnalyzer<'a> {
 
     pub(crate) fn discriminant_property(&self, expr: NodeIndex, target: NodeIndex) -> Option<Atom> {
         self.discriminant_property_info(expr, target)
-            .and_then(|(prop, is_optional)| if is_optional { None } else { Some(prop) })
+            .and_then(|(prop, is_optional, _base)| if is_optional { None } else { Some(prop) })
     }
 
     pub(crate) fn discriminant_property_info(
         &self,
         expr: NodeIndex,
         target: NodeIndex,
-    ) -> Option<(Atom, bool)> {
+    ) -> Option<(Atom, bool, NodeIndex)> {
         eprintln!(
             "DEBUG discriminant_property_info: expr={}, target={}",
             expr.0, target.0
@@ -1001,18 +1001,17 @@ impl<'a> FlowAnalyzer<'a> {
                 "DEBUG discriminant_property_info: effective_target={}, target={}",
                 effective_target.0, target.0
             );
-            if !self.is_matching_reference(effective_target, target) {
-                eprintln!("DEBUG discriminant_property_info: NOT a matching reference");
-                return None;
-            }
+            // Don't check matching here - let the caller decide if this is a match
+            // The caller might want to narrow the base, not the full property access
             let name_node = self.arena.get(access.name_or_argument)?;
             let ident = self.arena.get_identifier(name_node)?;
             let name = self.interner.intern_string(&ident.escaped_text);
             eprintln!(
-                "DEBUG discriminant_property_info: FOUND property {:?}",
-                name
+                "DEBUG discriminant_property_info: FOUND property {:?}, base={:?}",
+                name, effective_target.0
             );
-            return Some((name, access.question_dot_token));
+            // Return the property name, optional flag, and the BASE of the property access
+            return Some((name, access.question_dot_token, effective_target));
         }
 
         if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
@@ -1034,11 +1033,11 @@ impl<'a> FlowAnalyzer<'a> {
                 access_target
             };
 
-            if !self.is_matching_reference(effective_target, target) {
-                return None;
-            }
+            // Don't check matching here - let the caller decide if this is a match
+            // The caller might want to narrow the base, not the full property access
             let name = self.literal_atom_from_node_or_type(access.name_or_argument)?;
-            return Some((name, access.question_dot_token));
+            // Return the property name, optional flag, and the BASE of the property access
+            return Some((name, access.question_dot_token, effective_target));
         }
 
         None
@@ -1049,17 +1048,17 @@ impl<'a> FlowAnalyzer<'a> {
         left: NodeIndex,
         right: NodeIndex,
         target: NodeIndex,
-    ) -> Option<(Atom, TypeId, bool)> {
-        if let Some((prop, is_optional)) = self.discriminant_property_info(left, target)
+    ) -> Option<(Atom, TypeId, bool, NodeIndex)> {
+        if let Some((prop, is_optional, base)) = self.discriminant_property_info(left, target)
             && let Some(literal) = self.literal_type_from_node(right)
         {
-            return Some((prop, literal, is_optional));
+            return Some((prop, literal, is_optional, base));
         }
 
-        if let Some((prop, is_optional)) = self.discriminant_property_info(right, target)
+        if let Some((prop, is_optional, base)) = self.discriminant_property_info(right, target)
             && let Some(literal) = self.literal_type_from_node(left)
         {
-            return Some((prop, literal, is_optional));
+            return Some((prop, literal, is_optional, base));
         }
 
         None
@@ -1939,7 +1938,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Check for discriminant comparison: x.kind === "circle"
-        if let Some((prop_name, literal_type, is_optional)) =
+        if let Some((prop_name, literal_type, is_optional, discriminant_base)) =
             self.discriminant_comparison(bin.left, bin.right, target)
         {
             return Some((
@@ -1947,7 +1946,7 @@ impl<'a> FlowAnalyzer<'a> {
                     property_path: vec![prop_name],
                     value_type: literal_type,
                 },
-                target,
+                discriminant_base, // Use the BASE of the property access, not the full access
                 is_optional,
             ));
         }
