@@ -1001,7 +1001,7 @@ impl<'a> InferenceContext<'a> {
         let source_key = self.interner.lookup(source);
         let target_key = self.interner.lookup(target);
 
-        // Case 1: Target is a TypeParameter we're inferring
+        // Case 1: Target is a TypeParameter we're inferring (Lower Bound: source <: T)
         if let Some(TypeKey::TypeParameter(ref param_info)) = target_key {
             if let Some(var) = self.find_type_param(param_info.name) {
                 // Add source as a lower bound candidate for this type parameter
@@ -1010,7 +1010,18 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
-        // Case 2: Structural recursion - match based on type structure
+        // Case 2: Source is a TypeParameter we're inferring (Upper Bound: T <: target)
+        // CRITICAL: This handles contravariance! When function parameters are swapped,
+        // the TypeParameter moves to source position and becomes an upper bound.
+        if let Some(TypeKey::TypeParameter(ref param_info)) = source_key {
+            if let Some(var) = self.find_type_param(param_info.name) {
+                // T <: target, so target is an UPPER bound
+                self.add_upper_bound(var, target);
+                return Ok(());
+            }
+        }
+
+        // Case 3: Structural recursion - match based on type structure
         match (source_key, target_key) {
             // Object types: recurse into properties
             (Some(TypeKey::Object(source_shape)), Some(TypeKey::Object(target_shape))) => {
@@ -1082,6 +1093,29 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
+        // Also check index signatures for inference
+        // If target has a string index signature, infer from source's string index
+        if let (Some(target_string_idx), Some(source_string_idx)) =
+            (&target_shape.string_index, &source_shape.string_index)
+        {
+            self.infer_from_types(
+                source_string_idx.value_type,
+                target_string_idx.value_type,
+                priority,
+            )?;
+        }
+
+        // If target has a number index signature, infer from source's number index
+        if let (Some(target_number_idx), Some(source_number_idx)) =
+            (&target_shape.number_index, &source_shape.number_index)
+        {
+            self.infer_from_types(
+                source_number_idx.value_type,
+                target_number_idx.value_type,
+                priority,
+            )?;
+        }
+
         Ok(())
     }
 
@@ -1096,9 +1130,48 @@ impl<'a> InferenceContext<'a> {
         let target_sig = self.interner.function_shape(target_func);
 
         // Parameters are contravariant: swap source and target
-        for (source_param, target_param) in source_sig.params.iter().zip(target_sig.params.iter()) {
-            // Note the swapped arguments! This is the key to handling contravariance.
-            self.infer_from_types(target_param.type_id, source_param.type_id, priority)?;
+        let mut source_params = source_sig.params.iter().peekable();
+        let mut target_params = target_sig.params.iter().peekable();
+
+        loop {
+            let source_rest = source_params.peek().map(|p| p.rest).unwrap_or(false);
+            let target_rest = target_params.peek().map(|p| p.rest).unwrap_or(false);
+
+            // If both have rest params, infer the rest element types
+            if source_rest && target_rest {
+                let source_param = source_params.next().unwrap();
+                let target_param = target_params.next().unwrap();
+                self.infer_from_types(target_param.type_id, source_param.type_id, priority)?;
+                break;
+            }
+
+            // If source has rest param, infer all remaining target params into it
+            if source_rest {
+                let source_param = source_params.next().unwrap();
+                while let Some(target_param) = target_params.next() {
+                    self.infer_from_types(target_param.type_id, source_param.type_id, priority)?;
+                }
+                break;
+            }
+
+            // If target has rest param, infer all remaining source params into it
+            if target_rest {
+                let target_param = target_params.next().unwrap();
+                while let Some(source_param) = source_params.next() {
+                    self.infer_from_types(target_param.type_id, source_param.type_id, priority)?;
+                }
+                break;
+            }
+
+            // Neither has rest param, do normal pairwise comparison
+            match (source_params.next(), target_params.next()) {
+                (Some(source_param), Some(target_param)) => {
+                    // Note the swapped arguments! This is the key to handling contravariance.
+                    self.infer_from_types(target_param.type_id, source_param.type_id, priority)?;
+                }
+                (None, None) => break,
+                _ => break, // Mismatch in arity - stop here
+            }
         }
 
         // Return type is covariant: normal order
