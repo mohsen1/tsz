@@ -287,6 +287,11 @@ pub enum SubtypeFailureReason {
         source_count: usize,
         target_count: usize,
     },
+    /// Excess property in object literal assignment (TS2353).
+    ExcessProperty {
+        property_name: Atom,
+        target_type: TypeId,
+    },
 }
 
 /// Diagnostic severity level.
@@ -1210,6 +1215,17 @@ impl SubtypeFailureReason {
                 PendingDiagnostic::error(
                     codes::TYPE_NOT_ASSIGNABLE,
                     vec![source.into(), target.into()],
+                )
+            }
+
+            SubtypeFailureReason::ExcessProperty {
+                property_name,
+                target_type,
+            } => {
+                // TS2353: Object literal may only specify known properties
+                PendingDiagnostic::error(
+                    codes::EXCESS_PROPERTY,
+                    vec![(*property_name).into(), (*target_type).into()],
                 )
             }
         }

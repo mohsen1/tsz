@@ -1,5 +1,6 @@
 //! TypeScript compatibility layer for assignability rules.
 
+use crate::interner::Atom;
 use crate::solver::db::QueryDatabase;
 use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
@@ -371,6 +372,174 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         result
     }
 
+    /// Check for excess properties in object literal assignment (TS2353).
+    ///
+    /// This implements the "Lawyer" layer rule where fresh object literals
+    /// cannot have properties that don't exist in the target type, unless the
+    /// target has an index signature.
+    ///
+    /// # Arguments
+    /// * `source` - The source type (should be a fresh object literal)
+    /// * `target` - The target type
+    ///
+    /// # Returns
+    /// `true` if no excess properties found, `false` if TS2353 should be reported
+    fn check_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
+        use crate::solver::freshness::is_fresh_object_type;
+        use crate::solver::visitor::{ObjectTypeKind, classify_object_type};
+
+        // Only check fresh object literals
+        if !is_fresh_object_type(self.interner, source) {
+            return true;
+        }
+
+        // Get source shape
+        let source_shape_id = match classify_object_type(self.interner, source) {
+            ObjectTypeKind::Object(shape_id) | ObjectTypeKind::ObjectWithIndex(shape_id) => {
+                shape_id
+            }
+            ObjectTypeKind::NotObject => return true,
+        };
+
+        let source_shape = self.interner.object_shape(source_shape_id);
+
+        // Get target shape
+        let target_shape_id = match classify_object_type(self.interner, target) {
+            ObjectTypeKind::Object(shape_id) | ObjectTypeKind::ObjectWithIndex(shape_id) => {
+                shape_id
+            }
+            ObjectTypeKind::NotObject => return true, // Not an object type, can't check
+        };
+
+        let target_shape = self.interner.object_shape(target_shape_id);
+
+        // If target has string index signature, skip excess property check
+        if target_shape.string_index.is_some() {
+            return true;
+        }
+
+        // Collect all target properties (including base types if intersection)
+        let target_properties = self.collect_target_properties(target);
+
+        // Check each source property
+        for prop_info in &source_shape.properties {
+            if !target_properties.contains(&prop_info.name) {
+                // Excess property found!
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Find the first excess property in object literal assignment.
+    ///
+    /// Returns `Some(property_name)` if an excess property is found, `None` otherwise.
+    /// This is used by `explain_failure` to generate TS2353 diagnostics.
+    fn find_excess_property(&mut self, source: TypeId, target: TypeId) -> Option<Atom> {
+        use crate::solver::freshness::is_fresh_object_type;
+        use crate::solver::visitor::{ObjectTypeKind, classify_object_type};
+
+        // Only check fresh object literals
+        if !is_fresh_object_type(self.interner, source) {
+            return None;
+        }
+
+        // Get source shape
+        let source_shape_id = match classify_object_type(self.interner, source) {
+            ObjectTypeKind::Object(shape_id) | ObjectTypeKind::ObjectWithIndex(shape_id) => {
+                shape_id
+            }
+            ObjectTypeKind::NotObject => return None,
+        };
+
+        let source_shape = self.interner.object_shape(source_shape_id);
+
+        // Get target shape - resolve Lazy types first
+        let target_key = self.interner.lookup(target);
+        let resolved_target = match target_key {
+            Some(TypeKey::Lazy(def_id)) => {
+                // Try to resolve the Lazy type
+                if let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner) {
+                    resolved
+                } else {
+                    return None;
+                }
+            }
+            _ => target,
+        };
+
+        let target_shape_id = match classify_object_type(self.interner, resolved_target) {
+            ObjectTypeKind::Object(shape_id) | ObjectTypeKind::ObjectWithIndex(shape_id) => {
+                shape_id
+            }
+            ObjectTypeKind::NotObject => return None,
+        };
+
+        let target_shape = self.interner.object_shape(target_shape_id);
+
+        // If target has string index signature, skip excess property check
+        if target_shape.string_index.is_some() {
+            return None;
+        }
+
+        // Collect all target properties (including base types if intersection)
+        let target_properties = self.collect_target_properties(resolved_target);
+
+        // Check each source property
+        for prop_info in &source_shape.properties {
+            if !target_properties.contains(&prop_info.name) {
+                // Excess property found!
+                return Some(prop_info.name);
+            }
+        }
+
+        None
+    }
+
+    /// Collect all property names from a type into a set (handles intersections and unions).
+    ///
+    /// For intersections: property exists if it's in ANY member
+    /// For unions: property exists if it's in ALL members
+    fn collect_target_properties(&self, type_id: TypeId) -> rustc_hash::FxHashSet<Atom> {
+        let mut properties = rustc_hash::FxHashSet::default();
+
+        match self.interner.lookup(type_id) {
+            Some(TypeKey::Intersection(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                // Property exists if it's in ANY member of intersection
+                for &member in members.iter() {
+                    let member_props = self.collect_target_properties(member);
+                    properties.extend(member_props);
+                }
+            }
+            Some(TypeKey::Union(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                if members.is_empty() {
+                    return properties;
+                }
+                // For unions, property exists if it's in ALL members
+                // Start with first member's properties
+                let mut all_props = self.collect_target_properties(members[0]);
+                // Intersect with remaining members
+                for &member in members.iter().skip(1) {
+                    let member_props = self.collect_target_properties(member);
+                    all_props = all_props.intersection(&member_props).cloned().collect();
+                }
+                properties = all_props;
+            }
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                for prop_info in &shape.properties {
+                    properties.insert(prop_info.name);
+                }
+            }
+            _ => {}
+        }
+
+        properties
+    }
+
     /// Internal implementation of assignability check.
     /// Extracted to share logic between is_assignable and is_assignable_strict.
     fn is_assignable_impl(
@@ -395,6 +564,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
         if self.violates_weak_type(source, target) {
+            return false;
+        }
+
+        // Excess property checking (TS2353) - Lawyer layer
+        if !self.check_excess_properties(source, target) {
             return false;
         }
 
@@ -540,6 +714,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if self.violates_weak_type(source, target) {
             return Some(SubtypeFailureReason::NoCommonProperties {
                 source_type: source,
+                target_type: target,
+            });
+        }
+
+        // Excess property checking (TS2353)
+        if let Some(excess_prop) = self.find_excess_property(source, target) {
+            return Some(SubtypeFailureReason::ExcessProperty {
+                property_name: excess_prop,
                 target_type: target,
             });
         }
