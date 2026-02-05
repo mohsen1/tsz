@@ -871,6 +871,7 @@ pub type RefTypeKind = LazyTypeKind;
 
 /// Compatibility alias for classify_for_lazy_resolution.
 #[deprecated(note = "Use classify_for_lazy_resolution instead")]
+#[allow(deprecated)]
 pub fn classify_for_ref_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> RefTypeKind {
     classify_for_lazy_resolution(db, type_id)
 }
