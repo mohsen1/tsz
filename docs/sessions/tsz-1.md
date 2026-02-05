@@ -105,12 +105,31 @@
 - Added comprehensive test suite: 12 tests covering all overlap scenarios
 - Commit: 15d8c93d9
 
-**Subtask 17.2 (Checker)**: 🚧 In Progress
+**Subtask 17.2 (Checker)**: ✅ Completed (2025-02-05)
 
-**Status Update (2025-02-05)**:
-- Successfully synced with main and resolved merge conflict in `src/solver/objects.rs`
-- Conflict was between old `collect_properties_internal` approach and new `PropertyCollectionResult` enum API
-- Resolved by accepting main branch version (correct revert commit)
+**Implementation Summary**:
+1. Added TS2367 diagnostic code and message to `src/checker/types/diagnostics.rs`
+2. Implemented `error_comparison_no_overlap()` in `src/checker/error_reporter.rs`
+   - Operator-aware messages (always 'false' for ===, 'true' for !==)
+   - Suppresses errors for any/unknown/error types
+3. Implemented `are_types_overlapping()` wrapper in `src/checker/assignability_checker.rs`
+   - Calls solver with `ensure_refs_resolved` for correctness
+   - Passes `strict_null_checks` flag to solver
+4. Added overlap check in `src/checker/type_computation.rs`
+   - Checks all equality operators (===, !==, ==, !=)
+   - Emits TS2367 when types don't overlap
+
+**Test Results**:
+✅ Detects number vs string non-overlap
+✅ Detects boolean vs number non-overlap
+✅ Operator-aware messages (=== vs !==)
+✅ Suppresses errors for any/unknown types
+
+**Known Gaps** (Follow-up work):
+- Literal type overlap (1 vs 2, "a" vs "b") - literals may be widened
+- Object type property overlap - needs PropertyCollector integration
+
+**Commit**: b0b4476ed
 
 **Gemini Guidance (Flash 2025-02-05)**:
 Gemini provided complete implementation plan for integrating TS2367 into checker:
