@@ -12,7 +12,7 @@ tsz's parser error recovery produces different (usually more) errors than TSC wh
 ## Conformance Stats (Updated 2026-02-05)
 
 - Parser tests: 53.0% pass rate (458/864)
-- Scanner tests: 46.3% pass rate (19/41)
+- Scanner tests: 47.6% pass rate (20/42)
 - Top error mismatches:
   - TS2304: missing=35, extra=88 (cannot find name) - mostly lib loading bug
   - TS1005: missing=25, extra=29 (token expected)
@@ -175,6 +175,12 @@ Fixed `\u0076ar` (var with escape) to emit TS1260 "Keywords cannot contain escap
 ### TS1124 for missing exponent digits (commit a5ed8a7)
 
 Fixed `1e+`, `1e-`, `1e` to emit TS1124 "Digit expected."
+
+**File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
+
+### TS1125 for hex literals without digits (commit b78a0e5)
+
+Fixed `0x`, `0X` to emit TS1125 "Hexadecimal digit expected."
 
 **File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
 
