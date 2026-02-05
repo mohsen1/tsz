@@ -100,6 +100,12 @@ pub struct SymbolIndex {
     /// For example, if "class B extends A" and "class C implements A",
     /// then heritage_clauses["A"] = {"B.ts", "C.ts"}
     heritage_clauses: FxHashMap<String, FxHashSet<String>>,
+
+    /// Reverse heritage tracking: class name -> base classes it extends/implements
+    /// Enables upward traversal for heritage-aware rename
+    /// For example, if "class B extends A, implements I",
+    /// then sub_to_bases["B"] = {"A", "I"}
+    sub_to_bases: FxHashMap<String, FxHashSet<String>>,
 }
 
 impl SymbolIndex {
@@ -170,6 +176,18 @@ impl SymbolIndex {
         self.heritage_clauses
             .get(symbol_name)
             .map(|files| files.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get all base classes/interfaces that a given class extends or implements.
+    ///
+    /// This enables upward traversal for heritage-aware rename.
+    /// For example, if "class B extends A, implements I",
+    /// then `get_bases_for_class("B")` returns `["A", "I"]`.
+    pub fn get_bases_for_class(&self, class_name: &str) -> Vec<String> {
+        self.sub_to_bases
+            .get(class_name)
+            .map(|bases| bases.iter().cloned().collect())
             .unwrap_or_default()
     }
 
@@ -267,6 +285,12 @@ impl SymbolIndex {
             files.remove(file_name);
         }
         self.heritage_clauses.retain(|_, files| !files.is_empty());
+
+        // Remove sub_to_bases entries for this file
+        for bases in self.sub_to_bases.values_mut() {
+            bases.remove(file_name);
+        }
+        self.sub_to_bases.retain(|_, bases| !bases.is_empty());
     }
 
     /// Index a file during binding.
@@ -375,7 +399,7 @@ impl SymbolIndex {
         }
 
         // Scan for HeritageClause nodes (extends/implements)
-        // This enables O(1) lookup for Go to Implementation
+        // This enables O(1) lookup for Go to Implementation and upward traversal for rename
         for i in 0..arena.nodes.len() {
             let node_idx = crate::parser::NodeIndex(i as u32);
             if let Some(node) = arena.get(node_idx) {
@@ -387,14 +411,64 @@ impl SymbolIndex {
                             if let Some(type_name) =
                                 self.extract_heritage_type_name(arena, *type_node_idx)
                             {
-                                // Track that this file extends/implements the type
+                                // Track that this file extends/implements the type (for downward lookup)
                                 self.heritage_clauses
                                     .entry(type_name.clone())
                                     .or_default()
                                     .insert(file_name_owned.clone());
 
-                                // Track in reverse mapping for cleanup
+                                // Track the reverse: which types does this file's class extend/implement
+                                // We need to find the class/interface name that owns this heritage clause
+                                // To do this efficiently, we'll scan for ClassDeclaration/InterfaceDeclaration nodes
+                                // and track their heritage clauses separately below
                                 file_symbol_names.insert(type_name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Second pass: Build sub_to_bases mapping
+        // For each ClassDeclaration/InterfaceDeclaration, extract its heritage clauses
+        for i in 0..arena.nodes.len() {
+            let node_idx = crate::parser::NodeIndex(i as u32);
+            if let Some(node) = arena.get(node_idx) {
+                let is_class_or_interface = node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::INTERFACE_DECLARATION;
+
+                if is_class_or_interface {
+                    if let Some(class_name) = arena.get_identifier_text(node_idx) {
+                        let class_name = class_name.to_string();
+
+                        // Look for HeritageClause nodes that follow this class declaration
+                        // In TypeScript AST, heritage clauses typically appear as siblings or children
+                        // We'll scan forward a reasonable number of nodes to find them
+                        let search_window = 50_usize; // Look ahead up to 50 nodes
+                        let start = i + 1;
+                        let end = (i + 1 + search_window).min(arena.nodes.len());
+
+                        for j in start..end {
+                            let heritage_idx = crate::parser::NodeIndex(j as u32);
+                            if let Some(heritage_node) = arena.get(heritage_idx) {
+                                if heritage_node.kind == syntax_kind_ext::HERITAGE_CLAUSE {
+                                    // Extract base types from this heritage clause
+                                    if let Some(heritage_data) =
+                                        arena.get_heritage_clause(heritage_node)
+                                    {
+                                        for type_node_idx in &heritage_data.types.nodes {
+                                            if let Some(base_name) = self
+                                                .extract_heritage_type_name(arena, *type_node_idx)
+                                            {
+                                                // Track that this class extends/implements the base type
+                                                self.sub_to_bases
+                                                    .entry(class_name.clone())
+                                                    .or_default()
+                                                    .insert(base_name);
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
