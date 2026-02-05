@@ -1779,8 +1779,19 @@ impl<'a> FlowAnalyzer<'a> {
                     {
                         // Check if the guard applies to our target reference
                         if self.is_matching_reference(guard_target, target) {
+                            // CRITICAL: Invert sense for inequality operators (!==)
+                            // For `typeof x !== "string"`, the true branch should EXCLUDE string
+                            let effective_sense = match &guard {
+                                crate::solver::TypeGuard::Typeof(_)
+                                    if bin.operator_token
+                                        == SyntaxKind::ExclamationEqualsEqualsToken as u16 =>
+                                {
+                                    !is_true_branch
+                                }
+                                _ => is_true_branch,
+                            };
                             // Delegate to Solver for the calculation (Solver responsibility: RESULT)
-                            return narrowing.narrow_type(type_id, &guard, is_true_branch);
+                            return narrowing.narrow_type(type_id, &guard, effective_sense);
                         }
                     }
 
