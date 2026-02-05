@@ -891,3 +891,41 @@ system makes it difficult to store trait objects or mix generic/non-generic code
 - Maintains backward compatibility
 - Fixes type alias discriminant narrowing
 - Avoids complex generics or trait object gymnastics
+
+### 2026-02-05: Gemini's "Database-as-Resolver" Solution (Session Continuation)
+
+**Context**: Asked Gemini to redefine session after hitting blocker on union resolution fix.
+
+**Gemini's Brilliant Solution**: Instead of fighting with generics/trait objects, refactor
+`PropertyAccessEvaluator` to use `QueryDatabase::evaluate_type()` directly.
+
+**The Architecture**:
+- `QueryDatabase::evaluate_type(TypeId) -> TypeId` is the official way to resolve Lazy types
+- Remove the `R: TypeResolver` generic from `PropertyAccessEvaluator`
+- Replace `resolver.resolve(id)` calls with `db.evaluate_type(id)`
+- This eliminates the need for separate TypeResolver trait in this context
+
+**Next Steps (TSZ-10 Task 5)**:
+1. Modify `src/solver/operations_property.rs`:
+   - Remove `R: TypeResolver` generic from `PropertyAccessEvaluator`
+   - Store `db: &'a dyn QueryDatabase` instead of resolver
+   - Update methods to use `db.evaluate_type(type_id)`
+
+2. Update `src/solver/narrowing.rs`:
+   - Use simplified `PropertyAccessEvaluator::new(self.db)`
+   - Verify `narrow_by_discriminant` uses `classify_for_union_members`
+
+3. Verification:
+   - Run discriminant narrowing test with type aliases
+   - "union with 1 members" error should disappear
+   - Property `kind` should resolve to literal string instead of ANY
+
+**Mandatory Gemini Workflow**:
+- Question 1 (Pre-implementation): Validate architectural approach
+- Question 2 (Post-implementation): Review for correctness and regressions
+
+**Why This Approach**:
+- Option B (skip tasks): Will hit same bug in instanceof/equality narrowing
+- Option C (switch sessions): TSZ-10 is high priority for discriminant narrowing
+- Database-as-Resolver pattern bypasses Rust generic complexity
+
