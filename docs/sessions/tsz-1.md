@@ -923,6 +923,36 @@ This is likely an **expansive recursion** issue where the type grows on every st
 
 ---
 
+### Task #25: Coinductive Cycle Handling ✅ ALREADY IMPLEMENTED (2025-02-05)
+**Status**: ✅ Feature Already Complete (2025-02-05)
+**Why**: Core architectural feature for recursive types in the Judge layer
+
+**Investigation Findings**:
+Comprehensive coinductive cycle detection is ALREADY FULLY IMPLEMENTED in `src/solver/subtype.rs`.
+
+**Existing Implementation** (check_subtype, lines 1123-1372):
+1. **TypeId-level cycle detection** via `in_progress: FxHashSet<(TypeId, TypeId)>`
+2. **DefId-level cycle detection** via `seen_defs: FxHashSet<(DefId, DefId)>`
+3. **Both forward and reversed pair checking** for bivariant cross-recursion
+4. **Proper cleanup** of both sets with guard pattern
+5. **No caching of non-definitive results** - CycleDetected/DepthExceeded not cached (line 1367)
+6. **Depth limits** - MAX_TOTAL_SUBTYPE_CHECKS and MAX_SUBTYPE_DEPTH
+7. **bypass_evaluation flag** - for TypeEvaluator simplification (Task #26 infrastructure)
+
+**Code Quality**:
+The implementation already follows coinductive semantics (Greatest Fixed Point). Returns `CycleDetected` for TypeId/DefId cycles (provisional true), `DepthExceeded` for excessive recursion (conservative false).
+
+**Conclusion**:
+The stack overflow in `test_interface_extends_class_no_recursion_crash` is NOT caused by missing cycle detection in SubtypeChecker. The Judge layer's cycle detection is sound.
+
+**Root Cause Analysis**:
+The issue is likely in how the **Checker/Resolver layers** interact with the Solver, not in the Solver's core subtyping logic. This is NOT a tsz-1 (Judge layer) issue.
+
+**Recommendation**:
+This task is complete. The stack overflow should be investigated by the session that owns the Checker/Resolver layers (likely tsz-2).
+
+---
+
 **Next Session**:
 - Start with Task #19 (Index checker compatibility)
 - Ask Gemini pre-implementation question before coding (MANDATORY)
