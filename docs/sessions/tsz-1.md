@@ -963,7 +963,74 @@ This task is complete. The stack overflow should be investigated by the session 
 ---
 
 **Next Session**:
-- Start with Task #19 (Index checker compatibility)
+- Task #29: Tuple Subtyping (Rest, Optional, and Variadic Elements)
 - Ask Gemini pre-implementation question before coding (MANDATORY)
 - Focus on tasks with better ROI and clearer architectural path
 - Continue following Two-Question Rule
+
+---
+
+## Redefined Session (2025-02-05 Post-Task #26)
+
+**Current Focus**: Tuple Subtyping and Advanced Structural Operations
+
+### Task #29: Tuple Subtyping (Rest and Optional Elements) 📋 NEXT
+**Status**: 📋 Planned
+**Priority**: High (Core Judge Operation)
+**Estimated Impact**: +2-3% conformance
+
+**Description**:
+Implement robust tuple subtyping to handle TypeScript's complex tuple rules:
+- **Optional elements**: `[string, number?]` vs `[string]`
+- **Rest elements**: `[string, ...number[]]` vs `[string, number, number]`
+- **Variadic Tuples**: `[...T, ...U]`
+- **Readonly Tuples**: `readonly [string, string]` vs `[string, string]`
+
+**Why This Matters**:
+Tuples are used for:
+- Array-like structures
+- Function parameter lists (for `...args`)
+- Generic type manipulation
+- Modern TypeScript patterns
+
+**Implementation Plan** (Two-Question Rule):
+1. Ask Gemini Question 1: What's the correct structural algorithm for comparing tuples with rest/optional elements?
+2. Implement in `src/solver/subtype_rules/tuples.rs`
+3. Ask Gemini Question 2: Review the implementation
+4. Add comprehensive tests
+
+---
+
+### Task #30: Template Literal Type Subtyping
+**Status**: 📝 Planned
+**Priority**: Medium (Structural Operation)
+**Estimated Impact**: +1-2% conformance
+
+**Description**:
+Implement template literal type matching and overlap detection:
+- **Matching**: `` `a${string}` `` <: `string`
+- **Overlap**: `` `a${number}` `` and `` `b${number}` `` have zero overlap
+- **Inference**: Matching `` `customer_${infer ID}` `` against literals
+
+**Why Important**:
+- Used heavily in modern TypeScript libraries (Hono, Prisma)
+- Pure structural operation (Judge layer responsibility)
+- Enables advanced type-level programming
+
+---
+
+### Task #31: Object Reduction in Simplification
+**Status**: 📝 Planned
+**Priority**: High (North Star Metric)
+**Estimated Impact**: Performance + correctness
+
+**Description**:
+Re-enable object reduction in Task #26 simplification (currently disabled):
+- Goal: `{a: 1} | {a: 1, b: 2}` → `{a: 1, b: 2}` (keep supertype in union)
+- Implement "Safe Structural Reduction" for non-generic objects
+- Avoid issues with generics and recursion
+
+**Why Critical for North Star**:
+- O(1) type equality requires canonical forms
+- Without object reduction, unions bloat and slow down the compiler
+- Major performance win for type-heavy codebases
