@@ -86,13 +86,47 @@ Based on Gemini Pro's recommendation:
 - Session tsz-1: Core type relations (must coordinate to avoid conflicts)
 - Session tsz-3: Narrowing (no overlap - different domain)
 
-## Next Steps
+## Progress Update (2026-02-05)
 
-1. ✅ Run the 5 failing tests to see current error messages
-2. ✅ Add tracing to understand the current inference flow
-3. ✅ Ask Gemini Pro: "What's the right algorithm for coinductive type parameter resolution?"
-4. **IN PROGRESS**: Implement the fixes per Gemini Pro guidance
-5. Test and iterate
+### Implemented Fixes (Per Gemini Pro Guidance)
+
+1. **Modified `strengthen_constraints`** - Fixed-point iteration
+   - Continues propagating until no new candidates added
+   - Uses `changed` flag to detect stabilization
+
+2. **Replaced `propagate_lower_bound/propagate_upper_bound`** with `propagate_candidates_to_upper`
+   - Simplified propagation: candidates flow UP the extends chain
+   - If T extends U (T <: U), then T's candidates are also U's candidates
+
+3. **Removed `has_circular` special case** in `resolve_from_candidates`
+   - Always filter by priority, even with circular candidates
+   - High-priority direct candidates win over low-priority propagated ones
+
+### Test Results
+
+**PASSING (2/5):**
+- ✅ test_circular_extends_chain_with_endpoint_bound
+- ✅ test_circular_extends_three_way_with_one_lower_bound
+
+**FAILING (3/5):**
+- ❌ test_circular_extends_with_literal_types (BoundsViolation - needs cycle unification)
+- ❌ test_circular_extends_conflicting_lower_bounds
+- ❌ test_circular_extends_with_concrete_upper_and_lower
+
+### Current Issue
+
+The remaining failing tests involve TRUE cycles where type parameters need to unify and share candidates. The current implementation propagates candidates but doesn't fully unify type parameters in cycles.
+
+Example: T extends U, U extends T with T.lower="hello", U.lower="world"
+- Expected: Both T and U → STRING (unified)
+- Actual: T → STRING, U → "world" (not unified, causes BoundsViolation)
+
+### Next Steps
+
+1. Investigate cycle detection and unification logic
+2. Ask Gemini Pro: "How should type parameters in cycles be unified?"
+3. Implement cycle unification (SCC detection + candidate merging)
+4. Test and iterate
 
 ## Gemini Pro Algorithm (2026-02-05)
 
