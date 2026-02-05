@@ -177,24 +177,37 @@ run_tests() {
         show_summary=true
     fi
 
-    # If summary mode, capture output and print test file contents
+    # If summary mode, capture output and print test file contents BEFORE final results
     if [ "$show_summary" = true ]; then
-        # Use temp file to capture output while showing real-time progress
+        # Use temp file to capture output
         local tmpfile
         tmpfile=$(mktemp)
         trap "rm -f '$tmpfile'" EXIT
         
-        # Run with tee to show output in real-time AND capture it
+        # Capture all output (don't show in real-time so we can reorder)
         local runner_exit=0
         $RUNNER_BIN \
             --test-dir "$TEST_DIR" \
             --cache-file "$CACHE_FILE" \
             --tsz-binary "$TSZ_BIN" \
             --workers $WORKERS \
-            "${extra_args[@]}" 2>&1 | tee "$tmpfile" || runner_exit=$?
+            "${extra_args[@]}" 2>&1 > "$tmpfile" || runner_exit=$?
         
         local output
         output=$(cat "$tmpfile")
+        
+        # Split output: everything before "FINAL RESULTS" and from "FINAL RESULTS" onwards
+        local before_final after_final
+        if echo "$output" | grep -q "FINAL RESULTS"; then
+            before_final=$(echo "$output" | sed -n '/FINAL RESULTS/q;p')
+            after_final=$(echo "$output" | sed -n '/FINAL RESULTS/,$p')
+        else
+            before_final="$output"
+            after_final=""
+        fi
+        
+        # Print output before final results
+        echo "$before_final"
         
         # Extract failing test paths (up to 10)
         local failing_tests=()
@@ -213,7 +226,7 @@ run_tests() {
             fi
         done <<< "$output"
         
-        # Print test file contents if we have any (output already shown via tee)
+        # Print test file contents BEFORE final results
         if [ ${#failing_tests[@]} -gt 0 ]; then
             echo ""
             echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
@@ -231,6 +244,12 @@ run_tests() {
             done
             
             echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+        fi
+        
+        # Now print final results
+        if [ -n "$after_final" ]; then
+            echo ""
+            echo "$after_final"
         fi
         
         rm -f "$tmpfile"
