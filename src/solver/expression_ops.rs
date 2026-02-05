@@ -6,6 +6,7 @@
 //! These functions operate purely on TypeIds and maintain no AST dependencies.
 
 use crate::solver::TypeDatabase;
+use crate::solver::subtype::NoopResolver;
 use crate::solver::types::{IntrinsicKind, LiteralValue, TypeId, TypeKey};
 use crate::solver::{TypeResolver, is_subtype_of};
 
