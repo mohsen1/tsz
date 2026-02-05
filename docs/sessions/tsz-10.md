@@ -566,6 +566,43 @@ function foo(x: string | number) {
 - Task 6: Exhaustiveness checking
 - Task 7: Unreachable code detection
 
+### 2026-02-05: Task 5 Investigation - Discriminant Union Bugs
+
+**Context**: Following Gemini guidance, investigated the 3 critical bugs from AGENTS.md commit f2d4ae5d5.
+
+**Bug Status**:
+1. ✅ Reversed subtype check - Already fixed (line 477: `is_subtype_of(literal, prop_type)`)
+2. ✅ Missing type resolution - Fixed in earlier work
+3. ⚠️  Optional properties - Attempted fix, discovered broader issue
+
+**Attempted Fix**:
+Modified `get_type_at_path` (line 371-375) to preserve `undefined` in optional properties:
+```rust
+// Changed from: property_type.unwrap_or(UNDEFINED)
+// To: union2(property_type, UNDEFINED)
+```
+
+This ensures `{ kind?: "circle" }` has property type `"circle" | undefined` instead of just `"circle"`.
+
+**Discovery - Broader Issue**:
+Test revealed that discriminant narrowing is broken for BOTH optional AND non-optional cases:
+```typescript
+// Non-optional - FAILS
+type Shape1 = { kind: "circle", radius: number } | { kind: "square", side: number };
+if (shape.kind === "circle") { shape.radius; } // ERROR
+
+// Optional - FAILS
+type Shape2 = { kind?: "circle", radius: number } | { kind: "square", side: number };
+if (shape.kind === "circle") { shape.radius; } // ERROR
+```
+
+**Next Steps**:
+- Need deeper investigation into why discriminant narrowing isn't working at all
+- May be issue in flow graph construction or narrowing application
+- Consider asking Gemini for comprehensive review of discriminant narrowing pipeline
+
+**Commit**: `fix(tsz-10): preserve undefined in optional property types`
+
 ### 2026-02-05: typeof Exclusion Narrowing Bug Fixed
 
 **Bug Discovery**: Created test_narrowing3.ts to verify typeof narrowing behavior.
