@@ -78,6 +78,27 @@ enum LiteralDomain {
     Bigint,
 }
 
+/// Primitive kind for disjoint intersection checking.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+enum PrimitiveKind {
+    String,
+    Number,
+    Boolean,
+    BigInt,
+    Symbol,
+}
+
+impl PrimitiveKind {
+    fn from_literal(literal: &LiteralValue) -> Self {
+        match literal {
+            LiteralValue::String(_) => PrimitiveKind::String,
+            LiteralValue::Number(_) => PrimitiveKind::Number,
+            LiteralValue::Boolean(_) => PrimitiveKind::Boolean,
+            LiteralValue::BigInt(_) => PrimitiveKind::BigInt,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct LiteralSet {
     domain: LiteralDomain,
@@ -1060,6 +1081,12 @@ impl TypeInterner {
         // 3. Remove Unknown (Identity element for intersection)
         flat.retain(|id| *id != TypeId::UNKNOWN);
 
+        // 4. Check for disjoint primitives (e.g., string & number = never)
+        // If we have multiple intrinsic primitive types that are disjoint, return never
+        if self.has_disjoint_primitives(&flat) {
+            return TypeId::NEVER;
+        }
+
         // =========================================================
         // Final Construction
         // =========================================================
@@ -1628,6 +1655,78 @@ impl TypeInterner {
         }
 
         false
+    }
+
+    /// Check if an intersection contains disjoint primitive types (e.g., string & number = never).
+    ///
+    /// In TypeScript, certain primitive types are disjoint and their intersection is never:
+    /// - string & number = never
+    /// - string & boolean = never
+    /// - number & boolean = never
+    /// - bigint & number = never
+    /// - bigint & string = never
+    /// - symbol & (any other primitive except itself) = never
+    ///
+    /// Note: Literals of the same primitive type are NOT disjoint (e.g., "a" & "b" is valid).
+    fn has_disjoint_primitives(&self, members: &[TypeId]) -> bool {
+        use std::collections::HashSet;
+
+        let mut primitive_kinds: HashSet<PrimitiveKind> = HashSet::new();
+
+        for &member in members {
+            let kind = self.get_primitive_kind(member);
+            if let Some(k) = kind {
+                // Check for disjoint with existing primitives
+                for &existing_kind in &primitive_kinds {
+                    if Self::are_primitives_disjoint(k, existing_kind) {
+                        return true;
+                    }
+                }
+                primitive_kinds.insert(k);
+            }
+        }
+
+        false
+    }
+
+    /// Get the primitive kind of a type (if it's a primitive or literal of a primitive).
+    fn get_primitive_kind(&self, type_id: TypeId) -> Option<PrimitiveKind> {
+        match self.lookup(type_id) {
+            // Direct primitives
+            Some(TypeKey::Intrinsic(IntrinsicKind::String)) => Some(PrimitiveKind::String),
+            Some(TypeKey::Intrinsic(IntrinsicKind::Number)) => Some(PrimitiveKind::Number),
+            Some(TypeKey::Intrinsic(IntrinsicKind::Boolean)) => Some(PrimitiveKind::Boolean),
+            Some(TypeKey::Intrinsic(IntrinsicKind::Bigint)) => Some(PrimitiveKind::BigInt),
+            Some(TypeKey::Intrinsic(IntrinsicKind::Symbol)) => Some(PrimitiveKind::Symbol),
+            // Literals - they inherit the kind of their base type
+            Some(TypeKey::Literal(lit)) => Some(PrimitiveKind::from_literal(&lit)),
+            // Template literals are string-like
+            Some(TypeKey::TemplateLiteral(_)) => Some(PrimitiveKind::String),
+            _ => None,
+        }
+    }
+
+    /// Check if two primitive kinds are disjoint (their intersection is never).
+    fn are_primitives_disjoint(a: PrimitiveKind, b: PrimitiveKind) -> bool {
+        use PrimitiveKind::*;
+        match (a, b) {
+            // Same kind is never disjoint
+            (String, String)
+            | (Number, Number)
+            | (Boolean, Boolean)
+            | (BigInt, BigInt)
+            | (Symbol, Symbol) => false,
+            // String is disjoint from number, boolean, bigint, symbol
+            (String, Number) | (String, Boolean) | (String, BigInt) | (String, Symbol) => true,
+            // Number is disjoint from string, boolean, bigint, symbol
+            (Number, String) | (Number, Boolean) | (Number, BigInt) | (Number, Symbol) => true,
+            // Boolean is disjoint from string, number, bigint, symbol
+            (Boolean, String) | (Boolean, Number) | (Boolean, BigInt) | (Boolean, Symbol) => true,
+            // BigInt is disjoint from string, number, boolean, symbol
+            (BigInt, String) | (BigInt, Number) | (BigInt, Boolean) | (BigInt, Symbol) => true,
+            // Symbol is disjoint from everything except itself (already handled above)
+            (Symbol, _) | (_, Symbol) => true,
+        }
     }
 
     /// Check if a type is a literal type.
