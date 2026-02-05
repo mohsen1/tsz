@@ -315,9 +315,9 @@ Implemented project-wide Go to Implementation with transitive search support.
 8. ✅ **Heritage-Aware Rename** - Full inheritance hierarchy rename (Task #36)
 9. ✅ **Transitive Cache Invalidation** - Dependency-based cache clearing (Task #37)
 10. ✅ **Multi-File Diagnostic Propagation** - Reactive diagnostics across affected files (Task #38)
+11. ✅ **Reference Count Code Lenses** - Project-aware reference counting (Task #39)
 
 **Next Priority** (per Gemini consultation):
-- Reference Count Code Lenses (Priority B)
 - Global Library Integration - lib.d.ts (Priority C)
 - Auto-Import for Type-Only Imports (Priority D)
 
@@ -701,3 +701,37 @@ const result = foo(42);  // Should show error: number not assignable to string
 - Lazy evaluation: diagnostics only computed when requested
 
 **Value**: Users now see errors across the entire project immediately after making changes, matching the "live" error checking experience of modern IDEs like VS Code with tsserver.
+
+### Reference Count Code Lenses (2026-02-05)
+**Status**: ✅ COMPLETE - Task #39
+
+Implemented project-aware code lenses that show "N references" above declarations.
+
+**Problem**: The existing `CodeLensProvider` used single-file `FindReferences`, missing cross-file references and giving inaccurate counts.
+
+**Implementation**:
+- Added `Project::get_code_lenses()` - Returns unresolved code lenses quickly
+- Added `Project::resolve_code_lens()` - Computes accurate reference counts using:
+  - `Project::find_references()` for project-wide search
+  - `Project::get_implementations()` for interface implementations
+  - Subtracts declaration from count if included in results
+- Formats display as "N references" (pluralized correctly)
+- Includes reference locations in command arguments for `editor.action.showReferences`
+
+**Lazy Resolution Pattern**:
+- `provide_code_lenses`: Scans AST for declarations, returns lenses instantly (O(N) where N = nodes)
+- `resolve_code_lens`: Called only when lens becomes visible, does expensive counting (O(M) where M = affected files)
+
+**Example**:
+```typescript
+function foo() {}  // Code lens shows "2 references"
+class Bar {}       // Code lens shows "1 implementation"
+```
+
+**Value**:
+- Validates SymbolIndex and cross-file reference infrastructure
+- Provides high-visibility feedback that reference tracking works correctly
+- Rounds out the "Standard LSP" feature set for tsz-3
+- Matches VS Code's reference count UX
+
+**Performance**: Uses pool scan optimization (SymbolIndex) to limit searches to files actually containing the symbol, making code lens resolution fast even in large projects.
