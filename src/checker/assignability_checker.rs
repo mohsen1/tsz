@@ -511,33 +511,27 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if variable declaration types are compatible (used for multiple declarations).
+    ///
+    /// Delegates to the Solver's CompatChecker to determine if two types are
+    /// compatible for redeclaration (TS2403). This moves enum comparison logic
+    /// from Checker to Solver per Phase 5 Anti-Pattern 8.1 removal.
     pub(crate) fn are_var_decl_types_compatible(
         &mut self,
         prev_type: TypeId,
         current_type: TypeId,
     ) -> bool {
-        let prev_type = self
-            .enum_symbol_from_value_type(prev_type)
-            .and_then(|sym_id| self.enum_object_type(sym_id))
-            .unwrap_or(prev_type);
-        let current_type = self
-            .enum_symbol_from_value_type(current_type)
-            .and_then(|sym_id| self.enum_object_type(sym_id))
-            .unwrap_or(current_type);
-
-        if prev_type == current_type {
-            return true;
-        }
-        if matches!(prev_type, TypeId::ERROR) || matches!(current_type, TypeId::ERROR) {
-            return true;
-        }
+        // Ensure Ref/Lazy types are resolved before checking compatibility
+        self.ensure_refs_resolved(prev_type);
+        self.ensure_refs_resolved(current_type);
         self.ensure_application_symbols_resolved(prev_type);
         self.ensure_application_symbols_resolved(current_type);
-        // TypeScript allows var redeclarations when the new type is assignable to the
-        // previous type (subtype relationship). Bidirectional check is too strict and
-        // causes false positives with enum literals assigned to number types, etc.
-        self.is_assignable_to(current_type, prev_type)
-            || self.is_assignable_to(prev_type, current_type)
+
+        // Delegate to the Solver's Lawyer layer for type identity checking
+        let env = self.ctx.type_env.borrow();
+        let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, &*env);
+        self.ctx.configure_compat_checker(&mut checker);
+
+        checker.are_types_identical_for_redeclaration(prev_type, current_type)
     }
 
     /// Check if source type is assignable to ANY member of a target union.
