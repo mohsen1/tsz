@@ -1612,11 +1612,31 @@ impl Project {
                 &mut seen,
             );
 
+            // Create CodeActionProvider for generating import edits
+            use crate::lsp::code_actions::CodeActionProvider;
+            let code_action_provider = CodeActionProvider::new(
+                file.arena(),
+                &file.binder,
+                &file.line_map,
+                file.file_name.clone(),
+                file.source_text(),
+            );
+
             for candidate in candidates {
                 if existing.contains(&candidate.local_name) {
                     continue;
                 }
-                completions.push(self.completion_from_import_candidate(&candidate));
+
+                let mut item = self.completion_from_import_candidate(&candidate);
+
+                // Generate additional text edits for auto-import
+                if let Some(edits) =
+                    code_action_provider.build_auto_import_edit(file.root(), &candidate)
+                {
+                    item = item.with_additional_edits(edits);
+                }
+
+                completions.push(item);
             }
         }
 
