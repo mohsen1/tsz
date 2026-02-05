@@ -911,8 +911,9 @@ impl<'a> CheckerState<'a> {
                         return self.ctx.types.union(vec![base_type, TypeId::UNDEFINED]);
                     }
 
-                    // Report error based on the cause (TS2531/TS2532/TS2533)
-                    // These errors only apply with strictNullChecks enabled
+                    // Report error based on the cause (TS2531/TS2532/TS2533 or TS18050)
+                    // TS18050 is for definitely-nullish values in strict mode
+                    // TS2531/2532/2533 are for possibly-nullish values in strict mode
                     use crate::checker::types::diagnostics::diagnostic_codes;
 
                     // Suppress cascade errors when cause is ERROR/ANY/UNKNOWN
@@ -920,8 +921,14 @@ impl<'a> CheckerState<'a> {
                         return property_type.unwrap_or(TypeId::ERROR);
                     }
 
-                    // TS2531/2532/2533 require strictNullChecks
-                    if !self.ctx.compiler_options.strict_null_checks {
+                    // Check if this is definitely nullish (only null/undefined, no other types)
+                    // For possibly nullish values (union types with non-nullish parts), emit TS2531/2532/2533
+                    let is_definitely_nullish = object_type_for_access == TypeId::NULL
+                        || object_type_for_access == TypeId::UNDEFINED;
+
+                    // For possibly-nullish values in non-strict mode, don't error
+                    // But for definitely-nullish values in non-strict mode, fall through to error reporting below
+                    if !self.ctx.compiler_options.strict_null_checks && !is_definitely_nullish {
                         return self
                             .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
                     }
