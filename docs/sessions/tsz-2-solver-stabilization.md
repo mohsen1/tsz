@@ -13,7 +13,51 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 - ✅ Fixed interface lowering (Object vs ObjectWithIndex)
 - Reduced test failures from 37 → 31
 
-## Current Status: 31 Failing Solver Tests
+## Current Focus (2026-02-05 Redefined by Gemini Pro)
+
+### Primary Focus: Generic Inference (16 tests)
+
+**Attack Strategy**: Stop "trying fixes" and start "tracing execution"
+
+**Next Steps**:
+1. Wait for disk cleanup to finish (cargo clean running in background)
+2. Trace the simplest failing test: `test_infer_generic_array_map`
+   ```bash
+   TSZ_LOG="wasm::solver::infer=trace,wasm::solver::instantiate=debug" \
+   TSZ_LOG_FORMAT=tree \
+   cargo nextest run test_infer_generic_array_map --nocapture 2>&1 | head -n 300
+   ```
+3. Ask Gemini Pro with trace data:
+   ```bash
+   ./scripts/ask-gemini.mjs --pro --include=src/solver/infer.rs \
+   "I am debugging 'test_infer_generic_array_map'.
+   The test fails because it returns TypeId(115) instead of the expected type.
+   Here is the trace output: [PASTE TRACE]
+   1) Why is the inference failing to narrow down to the specific type?
+   2) Is the issue in candidate collection or final type resolution?
+   3) What specific function needs to be adjusted?"
+   ```
+4. Implement the fix based on Gemini's guidance
+5. Verify if this fixes the other 15 generic tests
+
+### Secondary Focus: Intersection Normalization (5 tests)
+**Fallback if Generic Inference takes > 1 hour**
+
+**Problem**: `null & object` should reduce to `never`
+
+**Gemini Question** (Pre-implementation):
+```bash
+./scripts/ask-gemini.mjs --include=src/solver/operations.rs --include=src/solver/intern.rs \
+"I need to fix intersection normalization.
+Problem: 'null & object' is not reducing to 'never'.
+1. Where is the canonical place to add reduction rules?
+2. Does TypeScript handle this via the Lawyer layer or the Judge layer?
+3. Please show the correct pattern."
+```
+
+---
+
+## Original Status (31 Failing Solver Tests)
 
 ### Priority 1: Generic Inference Deep Dive (16 tests) - 🔴 CRITICAL
 **Tests**:
