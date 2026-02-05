@@ -85,24 +85,59 @@ Created 2026-02-05 following completion of tsz-15, tsz-16, tsz-17 which all foun
 
 ## Progress
 
-### 2026-02-05: Session Pivoted (Per Gemini Pro Guidance)
-**Original Plan**: Create focused test cases and manually compare tsz vs tsc
-**Problem**: TypeScript conformance suite not checked out, manual testing insufficient
+### 2026-02-05: Session Pivoted and Found Bugs!
 
-**New Plan** (Per Gemini Recommendation):
-1. Initialize TypeScript submodule: `git submodule update --init TypeScript`
-2. Run targeted conformance tests on implemented features
-3. Find ACTUAL failures (not theoretical bugs)
-4. Fix bugs using mandatory Gemini workflow
-5. Break the "already implemented" discovery loop
-
-**Status Update**:
-- Attempted to initialize TypeScript submodule - not configured in .gitmodules
+**Phase 1: Attempted Conformance Tests**
+- Tried to initialize TypeScript submodule - not configured
 - TSC cache exists (12,399 results, 88.7% pass rate = 754 failing tests!)
-- Cannot run conformance tests without TypeScript/tests/cases directory
-- Need alternative approach: create specific high-value test cases
+- Cannot run full conformance suite without test files
 
-**Next Step**: Ask Gemini for specific, high-value edge case test cases for keyof, mapped types, and template literals. Run against both tsz and tsc to find discrepancies.
+**Phase 2: Manual Testing with Gemini's Guidance**
+- Asked Gemini Pro for 30 specific high-value test cases
+- Created comprehensive test suite covering keyof, mapped types, template literals
+- Ran against both tsz and tsc to find discrepancies
+
+**Phase 3: BUGS DISCOVERED! ✅**
+
+Found **6 confirmed bugs** where tsz rejects code that tsc accepts:
+
+1. **Key Remapping with Conditional Types** (line 14)
+   - Issue: `as O[K] extends string ? K : never` not working
+   - Location: `src/solver/evaluate_rules/mapped.rs`
+   - Test: `type Filtered = { [K in keyof O as O[K] extends string ? K : never]: O[K] }`
+
+2. **Remove Readonly Modifier** (line 25)
+   - Issue: `-readonly` modifier not removing readonly flag
+   - Location: `src/solver/evaluate_rules/mapped.rs`
+   - Test: `type Mutable = { -readonly [K in keyof ReadonlyObj]: ReadonlyObj[K] }`
+
+3. **Remove Optional Modifier** (line 37)
+   - Issue: `-?` modifier not making properties required
+   - Location: `src/solver/evaluate_rules/mapped.rs`
+   - Test: `type RequiredObj = { [K in keyof OptionalObj]-?: OptionalObj[K] }`
+
+4. **Recursive Mapped Types** (lines 52-53)
+   - Issue: DeepPartial recursion fails
+   - Location: `src/solver/evaluate_rules/mapped.rs`
+   - Test: `type DeepPartial<T> = { [P in keyof T]?: DeepPartial<T[P]> }`
+
+5. **Template Literal - any Interpolation** (line 65)
+   - Issue: `${any}` should widen to string
+   - Location: `src/solver/evaluate_rules/template_literal.rs`
+   - Test: `type TAny = `val: ${any}``
+
+6. **Template Literal - Number Formatting** (lines 76-77)
+   - Issue: Number to string conversion incorrect
+   - Location: `src/solver/evaluate_rules/template_literal.rs`
+   - Test: `type TNum = `${0.000001}``
+
+**Next Steps**:
+1. Pick one bug to fix (start with mapped types since 4/6 bugs are there)
+2. Ask Gemini for implementation guidance
+3. Implement fix
+4. Ask Gemini for code review
+5. Verify fix works
+6. Move to next bug
 
 ## Next Steps
 
