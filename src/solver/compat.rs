@@ -1288,14 +1288,31 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         match (source_enum, target_enum) {
             // Case 1: Both are enums (or enum members)
             (Some((s_def, _)), Some((t_def, _))) => {
-                if s_def != t_def {
-                    // Nominal mismatch: EnumA.X is not assignable to EnumB
-                    return Some(false);
+                if s_def == t_def {
+                    // Same DefId: Check if they're the exact same member
+                    // If source == target, they're the same member (assignable)
+                    // If source != target, they're different members (not assignable)
+                    return Some(source == target);
                 }
-                // Same enum: Check if they're the exact same member
-                // If source == target, they're the same member (assignable)
-                // If source != target, they're different members (not assignable)
-                Some(source == target)
+
+                // Gap A: Different DefIds, but might be member -> parent relationship
+                // Check if they share a parent enum (e.g., E.A -> E)
+                let s_parent = self.subtype.resolver.get_enum_parent_def_id(s_def);
+                let t_parent = self.subtype.resolver.get_enum_parent_def_id(t_def);
+
+                match (s_parent, t_parent) {
+                    (Some(sp), Some(tp)) if sp == tp => {
+                        // Same parent enum: Member -> Parent Type (e.g., E.A -> E)
+                        // Fall through to structural check to verify literal values match
+                        // E.A(0) -> E (E.A | E.B) should pass if 0 is in the union
+                        return None;
+                    }
+                    _ => {
+                        // Different parents (or one/both are types, not members)
+                        // Nominal mismatch: EnumA.X is not assignable to EnumB
+                        return Some(false);
+                    }
+                }
             }
 
             // Case 2: Target is an enum, source is a primitive
@@ -1339,9 +1356,25 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
 
             // Case 3: Source is an enum, target is a primitive
-            // Enums are always structurally assignable to their base primitives
-            // (e.g., EnumA.X -> number). Let structural check handle it.
-            (Some(_), None) => None,
+            // Gap B: String Enum Opacity - String enums are NOT assignable to string
+            (Some((s_def, _)), None) => {
+                // Check if source is a string enum
+                if !self.subtype.resolver.is_numeric_enum(s_def) {
+                    // Source is a string enum
+                    if target == TypeId::STRING {
+                        // String enum -> string is NOT allowed
+                        return Some(false);
+                    }
+                    // Check if source is a string literal
+                    if let Some(TypeKey::Literal(LiteralValue::String(_))) =
+                        self.interner.lookup(source)
+                    {
+                        return Some(false);
+                    }
+                }
+                // Numeric enums and non-string targets: fall through to structural check
+                None
+            }
 
             // Case 4: Neither is an enum
             (None, None) => None,
