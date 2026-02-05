@@ -102,10 +102,18 @@ Attempted to remove Checker's `enum_assignability_override` (return None from Ch
 **Root Cause:** Checker's enum_assignability_override has additional logic not yet migrated to Solver. Need to identify and migrate missing logic before removal.
 
 **Next Steps:**
-1. Compare Checker's enum_assignability_override with Solver's to find missing cases
-2. Add missing logic to CompatChecker.enum_assignability_override
-3. Re-test removal of Checker's override
-4. Remove check_structural_assignability and enum_assignability_override from state_type_environment.rs
+1. Test removal of Checker's enum_assignability_override (now that Solver has all logic)
+2. If tests pass, remove Checker's enum logic from state_type_environment.rs
+3. Move to other TypeKey removals (generators.rs, iterators.rs, etc.)
+
+**✅ Latest Progress (2026-02-05 evening):**
+- Added `get_enum_parent_def_id(DefId) -> Option<DefId>` to TypeResolver trait
+- Implemented in CheckerContext using symbol.parent and symbol_to_def_id
+- Fixed Case 1 nominality bug (E.A -> E.B should reject even with same value)
+- Fixed Gap B (String Enum Opacity with Union sources)
+- Added early check for string enum TYPE -> string rejection
+- All changes reviewed by Gemini Pro (Question 2)
+- Committed and pushed to origin
 
 ### Step 2: Refactor Primitives (Low Risk)
 Target: Simple type identity checks
