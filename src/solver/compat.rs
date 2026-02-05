@@ -1299,6 +1299,109 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let mut visitor = StringLikeVisitor { db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
+
+    /// Get the DefId of an enum type, handling both direct Enum members and Union-based Enums.
+    ///
+    /// Returns Some(def_id) if the type is an Enum or a Union of Enum members from the same enum.
+    /// Returns None if the type is not an enum or contains mixed enums.
+    fn get_enum_def_id(&self, type_id: TypeId) -> Option<crate::solver::def::DefId> {
+        use crate::solver::visitor;
+
+        // Check direct Enum member
+        if let Some((def_id, _)) = visitor::enum_components(self.interner, type_id) {
+            return Some(def_id);
+        }
+
+        // Check Union of Enum members (handles Enum types represented as Unions)
+        if let Some(members) = visitor::union_list_id(self.interner, type_id) {
+            let members = self.interner.type_list(members);
+            let mut common_def: Option<crate::solver::def::DefId> = None;
+
+            for &member in members.iter() {
+                if let Some((def_id, _)) = visitor::enum_components(self.interner, member) {
+                    if let Some(existing) = common_def {
+                        if existing != def_id {
+                            // Mixed enums in union (e.g., E.A | F.B)
+                            return None;
+                        }
+                    } else {
+                        common_def = Some(def_id);
+                    }
+                } else {
+                    // Union contains non-enum member
+                    return None;
+                }
+            }
+
+            return common_def;
+        }
+
+        None
+    }
+
+    /// Checks if two types are compatible for variable redeclaration (TS2403).
+    ///
+    /// This applies TypeScript's nominal identity rules for enums and
+    /// respects 'any' propagation. Used for checking if multiple variable
+    /// declarations have compatible types.
+    ///
+    /// # Examples
+    /// - `var x: number; var x: number` → true
+    /// - `var x: E.A; var x: E.A` → true
+    /// - `var x: E.A; var x: E.B` → false
+    /// - `var x: E; var x: F` → false (different enums)
+    /// - `var x: E; var x: number` → false
+    pub fn are_types_identical_for_redeclaration(&mut self, a: TypeId, b: TypeId) -> bool {
+        // 1. Fast path: physical identity
+        if a == b {
+            return true;
+        }
+
+        // 2. Any/Error propagation (The Lawyer's "silence errors" rule)
+        if a == TypeId::ANY || b == TypeId::ANY || a == TypeId::ERROR || b == TypeId::ERROR {
+            return true;
+        }
+
+        // 3. Enum Nominality Check
+        // If one is an enum and the other isn't, or they are different enums,
+        // they are not identical for redeclaration, even if structurally compatible.
+        if let Some(res) = self.enum_redeclaration_check(a, b) {
+            return res;
+        }
+
+        // 4. Structural Identity
+        // Delegate to the Judge to check bidirectional subtyping
+        self.subtype.is_subtype_of(a, b) && self.subtype.is_subtype_of(b, a)
+    }
+
+    /// Check if two types involving enums are compatible for redeclaration.
+    ///
+    /// Returns Some(bool) if either type is an enum:
+    /// - Some(false) if different enums or enum vs primitive
+    /// - None if neither is an enum (delegate to structural check)
+    fn enum_redeclaration_check(&self, a: TypeId, b: TypeId) -> Option<bool> {
+        let a_def = self.get_enum_def_id(a);
+        let b_def = self.get_enum_def_id(b);
+
+        match (a_def, b_def) {
+            (Some(def_a), Some(def_b)) => {
+                // Both are enums: must be the same enum definition
+                if def_a != def_b {
+                    Some(false)
+                } else {
+                    // Same enum: check if same member (a == b) or same enum type
+                    // For enum types (unions of members), fall through to structural check
+                    None
+                }
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                // One is an enum, the other is a primitive (e.g., number)
+                // In TS, Enum E and 'number' are NOT identical for redeclaration
+                Some(false)
+            }
+            (None, None) => None,
+        }
+    }
 }
 
 #[cfg(test)]
