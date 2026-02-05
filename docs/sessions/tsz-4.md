@@ -255,3 +255,59 @@ Be specific if it's wrong - tell me exactly what to fix.
 - `src/checker/state_type_analysis.rs`: Updated enum member type resolution to use `TypeKey::Enum`
 - `src/checker/type_checking_utilities.rs`: Fixed `enum_member_type_from_decl` to return literal types
 - `src/solver/expression_ops.rs`: Added `NoopResolver` import
+
+### Commit: `11226ad46` - feat(tsz-4): fix enum identity resolution to use get_symbol_globally
+
+**What Was Done** (per Gemini Pro guidance):
+1. Fixed `get_enum_identity` to use `get_symbol_globally` instead of `ctx.binder.get_symbol`
+2. Added debug logging to trace enum identity resolution
+3. Added explicit `Some(false)` return for different enum identities (Gemini's recommended fix)
+
+**Gemini's Analysis**:
+- Root cause: When `s_id != t_id`, code was falling through to `None`, allowing structural fallback
+- Symbol resolution bug: `ctx.binder.get_symbol` only checks local file, needed `get_symbol_globally`
+- Fix: Return `Some(false)` immediately for different enum identities
+
+**Test Status**: Still 6/9 passing
+- Same 3 tests still failing (E.A to E.B, E.A to F.A, E.A to string)
+- Override still not being triggered despite fixes
+
+**Remaining Investigation**:
+The enum nominality architecture is correct, but the `enum_assignability_override` function is not being called during assignability checking. This may require:
+1. Tracing the full assignability check path from variable declaration to override
+2. Checking if `enum_assignability_override` is registered correctly in the CompatChecker
+3. Investigating if there's a different code path for the test cases
+4. May need to move on to other priorities (Private Brands, Constructor Accessibility) and return with fresh perspective
+
+### Commit: `f1542996b` - feat(tsz-4): implement enum member nominal typing (WIP)
+
+**What Was Done**:
+1. Fixed `enum_member_type_from_decl` to return literal types from initializers (string/numeric literals)
+2. Updated `compute_type_of_symbol` in `state_type_analysis.rs` to wrap members in `TypeKey::Enum(member_def_id, literal_type)`
+3. Added `get_enum_identity` helper to resolve parent enum symbols from member DefIds
+4. Refactored `enum_assignability_override` with cleaner nominal check logic per Gemini Flash guidance
+
+**Test Results**: 6/9 tests passing
+- ✅ Same member to same member: `E.A` to `E.A`
+- ✅ Member to whole enum: `E.A` to `E`
+- ✅ Whole enum to member: `E` to `E.A` (correctly rejects)
+- ✅ Numeric enum to number: `E.A` to `number`
+- ✅ Number to numeric enum member: `number` to `E.A` (correctly rejects)
+- ✅ String literal to string enum: `"a"` to `E` (correctly rejects)
+- ❌ Different members: `E.A` to `E.B` (expects TS2322, gets 0)
+- ❌ Different enums: `E.A` to `F.A` (expects TS2322, gets 0)
+- ❌ String enum to string: `E.A` to `string` (expects TS2322, gets 0)
+
+**Issue**: `enum_assignability_override` not being triggered or returning `None` when it should return `Some(false)`
+
+**Investigation Needed**:
+1. Verify `TypeKey::Enum(member_def_id, literal_type)` types reach the assignability check
+2. Check if `get_enum_identity` correctly resolves parent symbols from member DefIds
+3. Add debug logging to trace why TS2322 errors are not emitted
+4. May need to check if the override is even being called during assignment checking
+
+**Files Modified**:
+- `src/checker/state_type_environment.rs`: Added `get_enum_identity`, `check_structural_assignability`, refactored `enum_assignability_override`
+- `src/checker/state_type_analysis.rs`: Updated enum member type resolution to use `TypeKey::Enum`
+- `src/checker/type_checking_utilities.rs`: Fixed `enum_member_type_from_decl` to return literal types
+- `src/solver/expression_ops.rs`: Added `NoopResolver` import
