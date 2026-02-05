@@ -8,30 +8,24 @@
 
 Original tsz-2 session (Application expansion) was completed successfully. This session is now focused on solver test stabilization.
 
-**Recent Progress** (commit 28888e435):
+**Recent Progress** (commit 80e3c1944):
 - ✅ Fixed function contravariance in strict mode (AnyPropagationMode::TopLevelOnly)
 - ✅ Fixed interface lowering (Object vs ObjectWithIndex)
 - ✅ **Fixed generic inference in Round 2** - Preserved placeholder connections for unresolved type parameters
-- Reduced test failures from 37 → 31 → 22
+- ✅ **Fixed intersection normalization** - Added `null & object = never` rule
+- Reduced test failures from 37 → 31 → 22 → 20
 
 ## Redefined Priorities (2026-02-05 by Gemini Pro)
 
-### Priority 1: Intersection Normalization (2 tests) - QUICK WIN 🔴
+### ✅ Priority 1: Intersection Normalization (2 tests) - COMPLETED
+**Fixed**: Added `intersection_has_null_undefined_with_object()` method in `src/solver/intern.rs`
 **Tests**:
-- `test_intersection_null_with_object_is_never`
-- `test_intersection_undefined_with_object_is_never`
-
-**Problem**: `null & object` and `undefined & object` should reduce to `never` but don't
-
-**Root Cause**: Missing reduction rule for disjoint primitive/object combinations
-
-**Files**: `src/solver/operations.rs` (intersection factory/reduction logic)
-
-**First Step**: Ask Gemini for approach validation before implementing
+- ✅ `test_intersection_null_with_object_is_never`
+- ✅ `test_intersection_undefined_with_object_is_never`
 
 ---
 
-### Priority 2: Property Access: Arrays & Tuples (7 tests) - HIGH IMPACT 🟡
+### Priority 2: Property Access: Arrays & Tuples (7 tests) - NEXT 🔴
 **Tests**:
 - `test_property_access_array_at_returns_optional_element`
 - `test_property_access_array_entries_returns_tuple_array`
