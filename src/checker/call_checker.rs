@@ -239,30 +239,53 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Phase 6 Task 4: Overload Contextual Typing
+        // Instead of re-collecting argument types for each signature (incorrect),
+        // we collect argument types ONCE using a union of all overload signatures.
+        // This matches TypeScript behavior where arguments get the union of parameter types
+        // from all candidate signatures as their contextual type.
+
+        // Create a union of all overload signatures for contextual typing
+        let signature_types: Vec<TypeId> = signatures
+            .iter()
+            .map(|sig| {
+                let func_shape = FunctionShape {
+                    params: sig.params.clone(),
+                    this_type: sig.this_type,
+                    return_type: sig.return_type,
+                    type_params: sig.type_params.clone(),
+                    type_predicate: sig.type_predicate.clone(),
+                    is_constructor: false,
+                    is_method: sig.is_method,
+                };
+                self.ctx.types.function(func_shape)
+            })
+            .collect();
+
+        // Union of all signatures provides contextual typing
+        let union_contextual = if signature_types.len() == 1 {
+            signature_types[0]
+        } else {
+            self.ctx.types.union(signature_types.clone())
+        };
+
+        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, union_contextual);
+
         let mut original_node_types = std::mem::take(&mut self.ctx.node_types);
 
-        for sig in signatures {
-            let func_shape = FunctionShape {
-                params: sig.params.clone(),
-                this_type: sig.this_type,
-                return_type: sig.return_type,
-                type_params: sig.type_params.clone(),
-                type_predicate: sig.type_predicate.clone(),
-                is_constructor: false,
-                is_method: sig.is_method,
-            };
-            let func_type = self.ctx.types.function(func_shape);
-            let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, func_type);
+        // Collect argument types ONCE with union contextual type
+        self.ctx.node_types = Default::default();
+        let arg_types = self.collect_call_argument_types_with_context(
+            args,
+            |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
+            false,
+        );
+        let temp_node_types = std::mem::take(&mut self.ctx.node_types);
 
-            self.ctx.node_types = Default::default();
-            let arg_types = self.collect_call_argument_types_with_context(
-                args,
-                |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
-                false,
-            );
-            let temp_node_types = std::mem::take(&mut self.ctx.node_types);
+        self.ctx.node_types = std::mem::take(&mut original_node_types);
 
-            self.ctx.node_types = std::mem::take(&mut original_node_types);
+        // Now try each signature with the pre-collected argument types
+        for (_sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
             self.ensure_application_symbols_resolved(func_type);
             for &arg_type in &arg_types {
                 self.ensure_application_symbols_resolved(arg_type);
@@ -297,16 +320,26 @@ impl<'a> CheckerState<'a> {
             };
 
             if let CallResult::Success(return_type) = result {
+                // Phase 6 Task 4: Merge the node types inferred during argument collection
                 self.ctx.node_types.extend(temp_node_types);
+
+                // Phase 6 Task 4: CRITICAL FIX - Check excess properties against the MATCHED signature,
+                // not the union. Using the union would allow properties that exist in other overloads
+                // but not in the selected one, causing false negatives.
+                let matched_sig_helper =
+                    ContextualTypeContext::with_expected(self.ctx.types, func_type);
                 self.check_call_argument_excess_properties(args, &arg_types, |i, arg_count| {
-                    ctx_helper.get_parameter_type_for_call(i, arg_count)
+                    matched_sig_helper.get_parameter_type_for_call(i, arg_count)
                 });
+
                 return Some(return_type);
             }
 
-            original_node_types = std::mem::take(&mut self.ctx.node_types);
+            // Phase 6 Task 4: REMOVED erroneous std::mem::take line that was corrupting state.
+            // We don't need to save state on failure - just continue to the next signature.
         }
 
+        // Restore original state if no overload matched
         self.ctx.node_types = original_node_types;
         None
     }
