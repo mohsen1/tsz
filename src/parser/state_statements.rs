@@ -2917,6 +2917,7 @@ impl ParserState {
 
         // Parse decorators if present
         let decorators = self.parse_decorators();
+        let has_decorators = decorators.is_some();
 
         // If decorators were found before a static block, emit TS1206
         if decorators.is_some()
@@ -2980,6 +2981,15 @@ impl ParserState {
         });
 
         if self.is_token(SyntaxKind::ConstructorKeyword) && !has_var_let_modifier {
+            // TS1206: Decorators are not valid on constructors
+            if has_decorators {
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                );
+            }
             return self.parse_constructor_with_modifiers(modifiers);
         }
 
