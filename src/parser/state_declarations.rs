@@ -620,6 +620,16 @@ impl ParserState {
         {
             let start_pos = self.token_pos();
 
+            // Handle leading comma - emit TS1132 "Enum member expected" and skip
+            if self.is_token(SyntaxKind::CommaToken) {
+                self.parse_error_at_current_token(
+                    "Enum member expected.",
+                    diagnostic_codes::ENUM_MEMBER_EXPECTED,
+                );
+                self.next_token(); // Skip the comma
+                continue;
+            }
+
             // Enum member names can be identifiers, string literals, or computed property names
             // Computed property names ([x]) are not valid in enums but we recover gracefully
             let name = if self.is_token(SyntaxKind::OpenBracketToken) {
