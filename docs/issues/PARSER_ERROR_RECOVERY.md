@@ -11,15 +11,15 @@ tsz's parser error recovery produces different (usually more) errors than TSC wh
 
 ## Conformance Stats (Updated 2026-02-05)
 
-- Parser tests: 53.0% pass rate (458/864)
-- Scanner tests: 47.6% pass rate (20/42)
+- Parser tests: 52.9% pass rate (458/865)
+- Scanner tests: 50.0% pass rate (21/42)
 - Top error mismatches:
   - TS2304: missing=35, extra=88 (cannot find name) - mostly lib loading bug
   - TS1005: missing=25, extra=29 (token expected)
   - TS1109: missing=11, extra=24 (expression expected)
   - TS1128: missing=2, extra=27 (declaration expected)
   - TS2552: missing=7, extra=19 (name typo suggestion)
-  - TS1100: missing=11, extra=0 (invalid use of eval/arguments) - strict mode validation
+  - TS1100: missing=11, extra=0 (invalid use of eval/arguments) - strict mode validation (requires checker)
 
 **Note**: Many TS2304 errors are caused by the default lib loading bug (see DEFAULT_LIB_LOADING_BUG.md).
 
