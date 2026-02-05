@@ -1117,9 +1117,9 @@ impl Project {
 
     /// Extract import paths from a file's AST.
     ///
-    /// Walks the top-level statements to find ImportDeclaration and
-    /// ExportDeclaration nodes (with module specifiers) and extracts
-    /// their module specifier strings for the DependencyGraph.
+    /// Walks the top-level statements to find ImportDeclaration,
+    /// ExportDeclaration, and dynamic imports (import(), require()) nodes
+    /// and extracts their module specifier strings for the DependencyGraph.
     fn extract_imports(&self, file_name: &str) -> Vec<String> {
         let mut imports = Vec::new();
 
@@ -1130,16 +1130,22 @@ impl Project {
 
         let arena = file.arena();
         let _root = file.root();
+        let source_text = file.source_text();
 
-        // Walk all nodes to find ImportDeclaration and ExportDeclaration
+        // Walk all nodes to find ImportDeclaration, ExportDeclaration, and CallExpression
         // In the flat NodeArena, we iterate over all nodes
-        for node in arena.nodes.iter() {
-            // Get the module specifier node for both imports and exports
+        for (i, node) in arena.nodes.iter().enumerate() {
+            let node_idx = NodeIndex(i as u32);
+
+            // Get the module specifier node for imports, exports, and dynamic imports
             let specifier_idx = if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
                 arena.get_import_decl(node).map(|d| d.module_specifier)
             } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                 // Handle: export ... from "module" (re-exports)
                 arena.get_export_decl(node).map(|d| d.module_specifier)
+            } else if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                // Check for dynamic imports: import("./module") or require("./module")
+                self.try_extract_dynamic_import(node_idx, arena)
             } else {
                 None
             };
@@ -1157,7 +1163,6 @@ impl Project {
                 // Extract the string text
                 let start = specifier_node.pos as usize;
                 let end = specifier_node.end as usize;
-                let source_text = file.source_text();
 
                 if end <= start || end > source_text.len() {
                     continue;
@@ -1179,6 +1184,66 @@ impl Project {
         }
 
         imports
+    }
+
+    /// Try to extract a dynamic import specifier from a call expression.
+    /// Returns the node index of the specifier string if this is import() or require().
+    fn try_extract_dynamic_import(
+        &self,
+        call_idx: NodeIndex,
+        arena: &NodeArena,
+    ) -> Option<NodeIndex> {
+        
+
+        let call_node = arena.get(call_idx)?;
+        let call_data = arena.get_call_expr(call_node)?;
+
+        // Check if this is import() or require()
+        let is_import = self.is_import_keyword(call_data.expression, arena);
+        let is_require = self.is_require_identifier(call_data.expression, arena);
+
+        if !is_import && !is_require {
+            return None;
+        }
+
+        // Get the first argument (the module specifier)
+        let args = call_data.arguments.as_ref()?;
+        args.nodes.first().copied()
+    }
+
+    /// Check if a node is the `import` keyword (for dynamic import expressions).
+    fn is_import_keyword(&self, node_idx: NodeIndex, arena: &NodeArena) -> bool {
+        use crate::scanner::SyntaxKind;
+
+        if node_idx.is_none() {
+            return false;
+        }
+        if let Some(node) = arena.get(node_idx) {
+            node.kind == SyntaxKind::ImportKeyword as u16
+        } else {
+            false
+        }
+    }
+
+    /// Check if a node is a `require` identifier.
+    fn is_require_identifier(&self, node_idx: NodeIndex, arena: &NodeArena) -> bool {
+        use crate::scanner::SyntaxKind;
+
+        if node_idx.is_none() {
+            return false;
+        }
+        if let Some(node) = arena.get(node_idx) {
+            if node.kind != SyntaxKind::Identifier as u16 {
+                return false;
+            }
+            if let Some(ident_data) = arena.get_identifier(node) {
+                ident_data.escaped_text == "require"
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     }
 
     /// Update the dependency graph for a file.
