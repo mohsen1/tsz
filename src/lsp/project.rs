@@ -1193,8 +1193,6 @@ impl Project {
         call_idx: NodeIndex,
         arena: &NodeArena,
     ) -> Option<NodeIndex> {
-        
-
         let call_node = arena.get(call_idx)?;
         let call_data = arena.get_call_expr(call_node)?;
 
