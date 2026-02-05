@@ -196,10 +196,14 @@ Fixed `0o`, `0O` to emit TS1178 "Octal digit expected."
 
 **File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
 
-### TS1489 for decimals with leading zeros (commit 8e33a8e)
+### TS1489 for decimals with leading zeros (commit 8e33a8e, improved 40d09e1)
 
-Fixed `009`, `08` to emit TS1489 "Decimals with leading zeros are not allowed."
+Fixed `08`, `009`, `08.5` to emit TS1489 "Decimals with leading zeros are not allowed."
 These are numbers starting with `0` that contain non-octal digits (8 or 9).
+
+Note: The scanner only sets the Octal flag when the first digit after `0` is 0-7.
+Numbers like `08` where the first digit is 8 or 9 don't have this flag set, so the
+check inspects the token text directly for the leading zero pattern.
 
 **File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
 
