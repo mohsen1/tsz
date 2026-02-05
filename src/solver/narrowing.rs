@@ -1176,21 +1176,42 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
+        // CRITICAL FIX: Resolve Lazy/Ref types to inspect their structure.
+        // This fixes the "Missing type resolution" bug where type aliases and
+        // generics weren't being narrowed correctly.
+        let resolved_source = self.resolve_type(source_type);
+
+        // Gracefully handle resolution failures: if evaluation fails but the input
+        // wasn't ERROR, we can't narrow structurally. Return original source to
+        // avoid cascading ERRORs through the type system.
+        if resolved_source == TypeId::ERROR && source_type != TypeId::ERROR {
+            trace!("Source type resolution failed, returning original source");
+            return source_type;
+        }
+
+        // Resolve target for consistency
+        let resolved_target = self.resolve_type(target_type);
+        if resolved_target == TypeId::ERROR && target_type != TypeId::ERROR {
+            trace!("Target type resolution failed, returning original source");
+            return source_type;
+        }
+
         // If source is the target, return it
-        if source_type == target_type {
+        if resolved_source == resolved_target {
             trace!("Source type equals target type, returning unchanged");
             return source_type;
         }
 
         // Special case: unknown can be narrowed to any type through type guards
         // This handles cases like: if (typeof x === "string") where x: unknown
-        if source_type == TypeId::UNKNOWN {
+        if resolved_source == TypeId::UNKNOWN {
             trace!("Narrowing unknown to specific type via type guard");
             return target_type;
         }
 
         // If source is a union, filter members
-        if let Some(members) = union_list_id(self.db, source_type) {
+        // Use resolved_source for structural inspection
+        if let Some(members) = union_list_id(self.db, resolved_source) {
             let members = self.db.type_list(members);
             trace!(
                 "Narrowing union with {} members to type {}",
@@ -1231,18 +1252,20 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        if let Some(narrowed) = self.narrow_type_param(source_type, target_type) {
+        // Check if this is a type parameter that needs narrowing
+        // Use resolved_source to handle type parameters behind aliases
+        if let Some(narrowed) = self.narrow_type_param(resolved_source, target_type) {
             trace!("Narrowed type parameter to {}", narrowed.0);
             return narrowed;
         }
 
         // Task 13: Handle boolean -> literal narrowing
         // When narrowing boolean to true or false, return the corresponding literal
-        if source_type == TypeId::BOOLEAN {
-            let is_target_true = if let Some(lit) = literal_value(self.db, target_type) {
+        if resolved_source == TypeId::BOOLEAN {
+            let is_target_true = if let Some(lit) = literal_value(self.db, resolved_target) {
                 matches!(lit, LiteralValue::Boolean(true))
             } else {
-                target_type == TypeId::BOOLEAN_TRUE
+                resolved_target == TypeId::BOOLEAN_TRUE
             };
 
             if is_target_true {
@@ -1250,10 +1273,10 @@ impl<'a> NarrowingContext<'a> {
                 return TypeId::BOOLEAN_TRUE;
             }
 
-            let is_target_false = if let Some(lit) = literal_value(self.db, target_type) {
+            let is_target_false = if let Some(lit) = literal_value(self.db, resolved_target) {
                 matches!(lit, LiteralValue::Boolean(false))
             } else {
-                target_type == TypeId::BOOLEAN_FALSE
+                resolved_target == TypeId::BOOLEAN_FALSE
             };
 
             if is_target_false {
@@ -1262,10 +1285,20 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        // Check if source is assignable to target
-        if self.is_assignable_to(source_type, target_type) {
+        // Check if source is assignable to target using resolved types for comparison
+        if self.is_assignable_to(resolved_source, resolved_target) {
             trace!("Source type is assignable to target, returning source");
             source_type
+        } else if crate::solver::subtype::is_subtype_of_with_db(
+            self.db,
+            resolved_target,
+            resolved_source,
+        ) {
+            // CRITICAL FIX: Check if target is a subtype of source (reverse narrowing)
+            // This handles cases like narrowing string to "hello" where "hello" is a subtype of string
+            // The inference engine uses this to narrow upper bounds by lower bounds
+            trace!("Target is subtype of source, returning target");
+            target_type
         } else {
             trace!("Source type is not assignable to target, returning NEVER");
             TypeId::NEVER
