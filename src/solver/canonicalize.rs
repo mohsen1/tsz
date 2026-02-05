@@ -37,7 +37,7 @@ use crate::solver::TypeDatabase;
 use crate::solver::def::DefId;
 use crate::solver::def::DefKind;
 use crate::solver::subtype::TypeResolver;
-use crate::solver::types::{TupleElement, TypeId, TypeKey};
+use crate::solver::types::{IndexSignature, ObjectShapeId, TupleElement, TypeId, TypeKey};
 use rustc_hash::FxHashMap;
 
 /// Canonicalizer for structural type identity.
@@ -175,12 +175,10 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             // Primitives and literals are already canonical
             TypeKey::Intrinsic(_) | TypeKey::Literal(_) | TypeKey::Error => type_id,
 
-            // Object types: canonicalize property types
-            TypeKey::Object(_shape_id) | TypeKey::ObjectWithIndex(_shape_id) => {
-                // For now, preserve object shape
-                // TODO: Canonicalize property types if needed
-                type_id
-            }
+            // Object types: canonicalize property types while preserving metadata
+            TypeKey::Object(shape_id) => self.canonicalize_object(shape_id, false),
+
+            TypeKey::ObjectWithIndex(shape_id) => self.canonicalize_object(shape_id, true),
 
             // Other types: preserve as-is (will be handled as needed)
             _ => type_id,
@@ -266,6 +264,62 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         }
 
         None
+    }
+
+    /// Canonicalize an object type by recursively canonicalizing property types.
+    ///
+    /// Preserves all metadata (names, optional, readonly, visibility, parent_id)
+    /// and nominal symbols. Only transforms the TypeIds within properties.
+    fn canonicalize_object(&mut self, shape_id: ObjectShapeId, _with_index: bool) -> TypeId {
+        let shape = self.interner.object_shape(shape_id);
+
+        // Canonicalize all properties
+        let mut new_props = Vec::with_capacity(shape.properties.len());
+        for prop in &shape.properties {
+            let mut new_prop = prop.clone();
+            // Canonicalize read type (getter/lookup)
+            new_prop.type_id = self.canonicalize(prop.type_id);
+            // Canonicalize write type (setter/assignment)
+            new_prop.write_type = self.canonicalize(prop.write_type);
+            // Preserve all other metadata as-is
+            // - name (Atom): Property names are NOT remapped
+            // - optional (bool): Part of type identity
+            // - readonly (bool): Part of type identity
+            // - is_method (bool): Part of type identity
+            // - visibility (Visibility): Part of type identity (nominal subtyping)
+            // - parent_id (Option<SymbolId>): Brand for private/protected members
+            new_props.push(new_prop);
+        }
+
+        // Canonicalize index signatures if present
+        let new_string_index = shape.string_index.as_ref().map(|idx| IndexSignature {
+            key_type: self.canonicalize(idx.key_type),
+            value_type: self.canonicalize(idx.value_type),
+            readonly: idx.readonly,
+        });
+
+        let new_number_index = shape.number_index.as_ref().map(|idx| IndexSignature {
+            key_type: self.canonicalize(idx.key_type),
+            value_type: self.canonicalize(idx.value_type),
+            readonly: idx.readonly,
+        });
+
+        // Preserve the symbol field for nominal types (class instances)
+        // This ensures that class A and class B with same properties remain distinct
+        let symbol = shape.symbol;
+
+        // Create new object shape with canonicalized types but preserved metadata
+        let new_shape = crate::solver::types::ObjectShape {
+            flags: shape.flags,
+            properties: new_props,
+            string_index: new_string_index,
+            number_index: new_number_index,
+            symbol,
+        };
+
+        // Intern using the appropriate method
+        // Note: object_with_index takes ObjectShape by value and sorts properties
+        self.interner.object_with_index(new_shape)
     }
 
     /// Clear the cache (useful for testing or bulk operations).
