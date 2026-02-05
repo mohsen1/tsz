@@ -6,9 +6,9 @@
 //! Extracted from operations.rs to keep file sizes manageable.
 
 use crate::interner::Atom;
+use crate::solver::db::QueryDatabase;
 use crate::solver::evaluate::evaluate_type;
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
-use crate::solver::subtype::{NoopResolver, TypeResolver};
 use crate::solver::types::*;
 use crate::solver::visitor::TypeVisitor;
 use crate::solver::{
@@ -53,9 +53,11 @@ pub enum PropertyAccessResult {
 }
 
 /// Evaluates property access.
-pub struct PropertyAccessEvaluator<'a, R: TypeResolver = NoopResolver> {
-    interner: &'a dyn TypeDatabase,
-    resolver: &'a R,
+///
+/// Uses QueryDatabase which provides both TypeDatabase and TypeResolver functionality,
+/// enabling proper resolution of Lazy types and type aliases.
+pub struct PropertyAccessEvaluator<'a> {
+    db: &'a dyn QueryDatabase,
     no_unchecked_indexed_access: bool,
     visiting: RefCell<FxHashSet<TypeId>>,
     depth: RefCell<u32>,
@@ -65,37 +67,22 @@ pub struct PropertyAccessEvaluator<'a, R: TypeResolver = NoopResolver> {
     current_prop_atom: RefCell<Option<Atom>>,
 }
 
-struct PropertyAccessGuard<'a, R: TypeResolver> {
-    evaluator: &'a PropertyAccessEvaluator<'a, R>,
+struct PropertyAccessGuard<'a> {
+    evaluator: &'a PropertyAccessEvaluator<'a>,
     obj_type: TypeId,
 }
 
-impl<'a, R: TypeResolver> Drop for PropertyAccessGuard<'a, R> {
+impl<'a> Drop for PropertyAccessGuard<'a> {
     fn drop(&mut self) {
         self.evaluator.visiting.borrow_mut().remove(&self.obj_type);
         *self.evaluator.depth.borrow_mut() -= 1;
     }
 }
 
-impl<'a> PropertyAccessEvaluator<'a, NoopResolver> {
-    pub fn new(interner: &'a dyn TypeDatabase) -> Self {
+impl<'a> PropertyAccessEvaluator<'a> {
+    pub fn new(db: &'a dyn QueryDatabase) -> Self {
         PropertyAccessEvaluator {
-            interner,
-            resolver: &NoopResolver,
-            no_unchecked_indexed_access: false,
-            visiting: RefCell::new(FxHashSet::default()),
-            depth: RefCell::new(0),
-            current_prop_name: RefCell::new(None),
-            current_prop_atom: RefCell::new(None),
-        }
-    }
-}
-
-impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
-    pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
-        PropertyAccessEvaluator {
-            interner,
-            resolver,
+            db,
             no_unchecked_indexed_access: false,
             visiting: RefCell::new(FxHashSet::default()),
             depth: RefCell::new(0),
@@ -107,6 +94,11 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
     pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
         self.no_unchecked_indexed_access = enabled;
     }
+
+    /// Helper to access the underlying TypeDatabase
+    fn interner(&self) -> &dyn TypeDatabase {
+        self.db.as_type_database()
+    }
 }
 
 // =============================================================================
@@ -116,7 +108,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 // Implement TypeVisitor for &PropertyAccessEvaluator to solve &mut self issue
 // This allows visitor methods to be called from &self methods while still
 // being able to mutate internal state via RefCells.
-impl<'a, R: TypeResolver> TypeVisitor for &PropertyAccessEvaluator<'a, R> {
+impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     type Output = Option<PropertyAccessResult>;
 
     fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
@@ -173,10 +165,10 @@ impl<'a, R: TypeResolver> TypeVisitor for &PropertyAccessEvaluator<'a, R> {
         };
         let prop_atom = match prop_atom_opt.as_ref() {
             Some(&atom) => atom,
-            None => self.interner.intern_string(prop_name),
+            None => self.interner().intern_string(prop_name),
         };
 
-        let shape = self.interner.object_shape(ObjectShapeId(shape_id));
+        let shape = self.interner().object_shape(ObjectShapeId(shape_id));
 
         // Check explicit properties first
         if let Some(prop) =
@@ -194,11 +186,11 @@ impl<'a, R: TypeResolver> TypeVisitor for &PropertyAccessEvaluator<'a, R> {
         }
 
         // Check for index signatures (some Object types may have index signatures that aren't in ObjectWithIndex)
-        let resolver = IndexSignatureResolver::new(self.interner);
+        let resolver = IndexSignatureResolver::new(self.interner());
 
         // Reconstruct obj_type from shape_id for index signature checking
         let obj_type = self
-            .interner
+            .interner()
             .intern(TypeKey::Object(ObjectShapeId(shape_id)));
 
         // Try string index signature first (most common)
@@ -239,10 +231,10 @@ impl<'a, R: TypeResolver> TypeVisitor for &PropertyAccessEvaluator<'a, R> {
         };
         let prop_atom = match prop_atom_opt.as_ref() {
             Some(&atom) => atom,
-            None => self.interner.intern_string(prop_name),
+            None => self.interner().intern_string(prop_name),
         };
 
-        let shape = self.interner.object_shape(ObjectShapeId(shape_id));
+        let shape = self.interner().object_shape(ObjectShapeId(shape_id));
 
         // Check explicit properties first
         if let Some(prop) =
@@ -268,7 +260,7 @@ impl<'a, R: TypeResolver> TypeVisitor for &PropertyAccessEvaluator<'a, R> {
         }
 
         // Check numeric index signature if property name looks numeric
-        let resolver = IndexSignatureResolver::new(self.interner);
+        let resolver = IndexSignatureResolver::new(self.interner());
         if resolver.is_numeric_index_name(prop_name) {
             if let Some(ref idx) = shape.number_index {
                 return Some(PropertyAccessResult::Success {
@@ -280,7 +272,7 @@ impl<'a, R: TypeResolver> TypeVisitor for &PropertyAccessEvaluator<'a, R> {
 
         // Reconstruct obj_type for PropertyNotFound result
         let obj_type = self
-            .interner
+            .interner()
             .intern(crate::solver::types::TypeKey::ObjectWithIndex(
                 ObjectShapeId(shape_id),
             ));
@@ -303,11 +295,11 @@ impl<'a, R: TypeResolver> TypeVisitor for &PropertyAccessEvaluator<'a, R> {
         };
         let prop_atom = match prop_atom_opt.as_ref() {
             Some(&atom) => atom,
-            None => self.interner.intern_string(prop_name),
+            None => self.interner().intern_string(prop_name),
         };
 
         // Reconstruct obj_type for resolve_array_property
-        let obj_type = self.interner.intern(TypeKey::Array(element_type));
+        let obj_type = self.interner().intern(TypeKey::Array(element_type));
         Some(self.resolve_array_property(obj_type, prop_name, prop_atom))
     }
 
@@ -323,11 +315,11 @@ impl<'a, R: TypeResolver> TypeVisitor for &PropertyAccessEvaluator<'a, R> {
         };
         let prop_atom = match prop_atom_opt.as_ref() {
             Some(&atom) => atom,
-            None => self.interner.intern_string(prop_name),
+            None => self.interner().intern_string(prop_name),
         };
 
         // Reconstruct obj_type for resolve_array_property
-        let obj_type = self.interner.intern(TypeKey::Tuple(TupleListId(list_id)));
+        let obj_type = self.interner().intern(TypeKey::Tuple(TupleListId(list_id)));
         Some(self.resolve_array_property(obj_type, prop_name, prop_atom))
     }
 
@@ -336,7 +328,7 @@ impl<'a, R: TypeResolver> TypeVisitor for &PropertyAccessEvaluator<'a, R> {
     }
 }
 
-impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
+impl<'a> PropertyAccessEvaluator<'a> {
     // Helper methods to call visitor logic from &self context
     // These contain the actual implementation that the TypeVisitor trait methods delegate to
 
@@ -351,10 +343,10 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
         let prop_atom = match prop_atom {
             Some(atom) => atom,
-            None => self.interner.intern_string(prop_name),
+            None => self.interner().intern_string(prop_name),
         };
 
-        let shape = self.interner.object_shape(ObjectShapeId(shape_id));
+        let shape = self.interner().object_shape(ObjectShapeId(shape_id));
 
         // Check explicit properties first
         if let Some(prop) =
@@ -372,11 +364,11 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         }
 
         // Check for index signatures (some Object types may have index signatures that aren't in ObjectWithIndex)
-        let resolver = IndexSignatureResolver::new(self.interner);
+        let resolver = IndexSignatureResolver::new(self.interner());
 
         // Reconstruct obj_type from shape_id for index signature checking
         let obj_type = self
-            .interner
+            .interner()
             .intern(TypeKey::Object(ObjectShapeId(shape_id)));
 
         // Try string index signature first (most common)
@@ -415,10 +407,10 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
         let prop_atom = match prop_atom {
             Some(atom) => atom,
-            None => self.interner.intern_string(prop_name),
+            None => self.interner().intern_string(prop_name),
         };
 
-        let shape = self.interner.object_shape(ObjectShapeId(shape_id));
+        let shape = self.interner().object_shape(ObjectShapeId(shape_id));
 
         // Check explicit properties first
         if let Some(prop) =
@@ -444,7 +436,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         }
 
         // Check numeric index signature if property name looks numeric
-        let resolver = IndexSignatureResolver::new(self.interner);
+        let resolver = IndexSignatureResolver::new(self.interner());
         if resolver.is_numeric_index_name(prop_name) {
             if let Some(ref idx) = shape.number_index {
                 return Some(PropertyAccessResult::Success {
@@ -456,7 +448,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
         // Reconstruct obj_type for PropertyNotFound result
         let obj_type = self
-            .interner
+            .interner()
             .intern(crate::solver::types::TypeKey::ObjectWithIndex(
                 ObjectShapeId(shape_id),
             ));
@@ -475,13 +467,13 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
     ) -> Option<PropertyAccessResult> {
         let prop_atom = match prop_atom {
             Some(atom) => atom,
-            None => self.interner.intern_string(prop_name),
+            None => self.interner().intern_string(prop_name),
         };
         Some(self.resolve_array_property(obj_type, prop_name, prop_atom))
     }
 }
 
-impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
+impl<'a> PropertyAccessEvaluator<'a> {
     /// Resolve property access: obj.prop -> type
     pub fn resolve_property_access(
         &self,
@@ -491,7 +483,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         self.resolve_property_access_inner(obj_type, prop_name, None)
     }
 
-    fn enter_property_access_guard(&self, obj_type: TypeId) -> Option<PropertyAccessGuard<'_, R>> {
+    fn enter_property_access_guard(&self, obj_type: TypeId) -> Option<PropertyAccessGuard<'_>> {
         const MAX_PROPERTY_ACCESS_DEPTH: u32 = 50;
 
         let mut depth = self.depth.borrow_mut();
@@ -527,7 +519,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
     ) -> Option<PropertyAccessResult> {
         use crate::solver::types::{LiteralValue, MappedModifier, TypeKey};
 
-        let mapped = self.interner.mapped_type(mapped_id);
+        let mapped = self.interner().mapped_type(mapped_id);
 
         // SPECIAL CASE: Mapped types over array-like sources
         // When a mapped type like Boxified<T> = { [P in keyof T]: Box<T[P]> } is applied
@@ -556,7 +548,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 // Has string index - property access is valid
             } else {
                 return Some(PropertyAccessResult::PropertyNotFound {
-                    type_id: self.interner.mapped(mapped.as_ref().clone()),
+                    type_id: self.interner().mapped(mapped.as_ref().clone()),
                     property_name: prop_atom,
                 });
             }
@@ -564,19 +556,19 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
         // Step 2: Create a substitution for just this property
         let key_literal = self
-            .interner
+            .interner()
             .intern(TypeKey::Literal(LiteralValue::String(prop_atom)));
 
         // Handle name remapping if present (e.g., `as` clause in mapped types)
         if let Some(name_type) = mapped.name_type {
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
-            let remapped = instantiate_type(self.interner, name_type, &subst);
-            let remapped = evaluate_type(self.interner, remapped);
+            let remapped = instantiate_type(self.interner(), name_type, &subst);
+            let remapped = evaluate_type(self.interner(), remapped);
             if remapped == TypeId::NEVER {
                 // Key is filtered out by `as never`
                 return Some(PropertyAccessResult::PropertyNotFound {
-                    type_id: self.interner.mapped(mapped.as_ref().clone()),
+                    type_id: self.interner().mapped(mapped.as_ref().clone()),
                     property_name: prop_atom,
                 });
             }
@@ -585,12 +577,12 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         // Step 3: Instantiate the template with this single key
         let mut subst = TypeSubstitution::new();
         subst.insert(mapped.type_param.name, key_literal);
-        let property_type = instantiate_type(self.interner, mapped.template, &subst);
-        let property_type = evaluate_type(self.interner, property_type);
+        let property_type = instantiate_type(self.interner(), mapped.template, &subst);
+        let property_type = evaluate_type(self.interner(), property_type);
 
         // Step 4: Apply optional modifier
         let final_type = match mapped.optional_modifier {
-            Some(MappedModifier::Add) => self.interner.union2(property_type, TypeId::UNDEFINED),
+            Some(MappedModifier::Add) => self.interner().union2(property_type, TypeId::UNDEFINED),
             Some(MappedModifier::Remove) => property_type,
             None => property_type,
         };
@@ -641,11 +633,11 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         let number_type = TypeId::NUMBER;
         let mut subst = TypeSubstitution::new();
         subst.insert(mapped.type_param.name, number_type);
-        let mapped_element = instantiate_type(self.interner, mapped.template, &subst);
-        let mapped_element = evaluate_type(self.interner, mapped_element);
+        let mapped_element = instantiate_type(self.interner(), mapped.template, &subst);
+        let mapped_element = evaluate_type(self.interner(), mapped_element);
 
         // Create the resulting array type
-        let array_type = self.interner.intern(TypeKey::Array(mapped_element));
+        let array_type = self.interner().intern(TypeKey::Array(mapped_element));
 
         // Resolve the property on the array type
         let result = self.resolve_array_property(array_type, prop_name, prop_atom);
@@ -666,7 +658,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         use crate::solver::types::TypeKey;
 
         // Check if constraint is `keyof T`
-        if let Some(TypeKey::KeyOf(source)) = self.interner.lookup(mapped.constraint) {
+        if let Some(TypeKey::KeyOf(source)) = self.interner().lookup(mapped.constraint) {
             return Some(source);
         }
 
@@ -677,7 +669,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
     fn is_array_like_type(&self, type_id: TypeId) -> bool {
         use crate::solver::types::TypeKey;
 
-        match self.interner.lookup(type_id) {
+        match self.interner().lookup(type_id) {
             Some(TypeKey::Array(_)) => true,
             Some(TypeKey::Tuple(_)) => true,
             Some(TypeKey::TypeParameter(info)) => {
@@ -691,12 +683,12 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             Some(TypeKey::ReadonlyType(inner)) => self.is_array_like_type(inner),
             // Also check for union types where all members are array-like
             Some(TypeKey::Union(members)) => {
-                let members = self.interner.type_list(members);
+                let members = self.interner().type_list(members);
                 !members.is_empty() && members.iter().all(|&m| self.is_array_like_type(m))
             }
             Some(TypeKey::Intersection(members)) => {
                 // For intersection, at least one member should be array-like
-                let members = self.interner.type_list(members);
+                let members = self.interner().type_list(members);
                 members.iter().any(|&m| self.is_array_like_type(m))
             }
             _ => false,
@@ -708,19 +700,21 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         use crate::solver::types::{LiteralValue, TypeKey};
 
         // Evaluate the constraint to try to reduce it
-        let evaluated = evaluate_type(self.interner, constraint);
+        let evaluated = evaluate_type(self.interner(), constraint);
 
-        let Some(key) = self.interner.lookup(evaluated) else {
+        let Some(key) = self.interner().lookup(evaluated) else {
             return false;
         };
 
         match key {
             // Single string literal - exact match
-            TypeKey::Literal(LiteralValue::String(s)) => self.interner.resolve_atom(s) == prop_name,
+            TypeKey::Literal(LiteralValue::String(s)) => {
+                self.interner().resolve_atom(s) == prop_name
+            }
 
             // Union of literals - check if prop_name is in the union
             TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
+                let members = self.interner().type_list(members);
                 for &member in members.iter() {
                     if member == TypeId::STRING {
                         // string index covers all string properties
@@ -736,7 +730,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
             // Intersection - key must be valid in ALL members
             TypeKey::Intersection(members) => {
-                let members = self.interner.type_list(members);
+                let members = self.interner().type_list(members);
                 // For intersection of key types, a key is valid if it's in the intersection
                 // This is conservative - we check if it might be valid
                 members
@@ -776,9 +770,9 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         let constraint = mapped.constraint;
 
         // Evaluate keyof if needed
-        let evaluated = if let Some(TypeKey::KeyOf(operand)) = self.interner.lookup(constraint) {
-            let keyof_type = self.interner.intern(TypeKey::KeyOf(operand));
-            evaluate_type(self.interner, keyof_type)
+        let evaluated = if let Some(TypeKey::KeyOf(operand)) = self.interner().lookup(constraint) {
+            let keyof_type = self.interner().intern(TypeKey::KeyOf(operand));
+            evaluate_type(self.interner(), keyof_type)
         } else {
             constraint
         };
@@ -787,21 +781,21 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             return true;
         }
 
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(evaluated) {
-            let members = self.interner.type_list(members);
+        if let Some(TypeKey::Union(members)) = self.interner().lookup(evaluated) {
+            let members = self.interner().type_list(members);
             for &member in members.iter() {
                 if member == TypeId::STRING {
                     return true;
                 }
                 if let Some(TypeKey::Intrinsic(IntrinsicKind::String)) =
-                    self.interner.lookup(member)
+                    self.interner().lookup(member)
                 {
                     return true;
                 }
             }
         }
 
-        if let Some(TypeKey::Intrinsic(IntrinsicKind::String)) = self.interner.lookup(evaluated) {
+        if let Some(TypeKey::Intrinsic(IntrinsicKind::String)) = self.interner().lookup(evaluated) {
             return true;
         }
 
@@ -828,7 +822,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         // Use visitor for types we've migrated (Intrinsic, Object, ObjectWithIndex, Array, Tuple)
         // Due to TypeVisitor requiring &mut self, we inline the visitor logic here
         // This maintains the visitor pattern while avoiding unsafe casts
-        let key_opt = self.interner.lookup(obj_type);
+        let key_opt = self.interner().lookup(obj_type);
         if let Some(key) = key_opt {
             let result = match key {
                 TypeKey::Intrinsic(kind) => {
@@ -853,8 +847,8 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                             })
                         }
                         IntrinsicKind::Symbol => {
-                            let prop_atom_inner =
-                                prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                            let prop_atom_inner = prop_atom
+                                .unwrap_or_else(|| self.interner().intern_string(prop_name));
                             Some(self.resolve_symbol_primitive_property(prop_name, prop_atom_inner))
                         }
                         _ => None,
@@ -886,10 +880,11 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
         // Fallback to existing match statement for types not yet migrated
         // Look up the type key
-        let key = match self.interner.lookup(obj_type) {
+        let key = match self.interner().lookup(obj_type) {
             Some(k) => k,
             None => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 return PropertyAccessResult::PropertyNotFound {
                     type_id: obj_type,
                     property_name: prop_atom,
@@ -899,8 +894,9 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
         match key {
             TypeKey::Object(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let shape = self.interner().object_shape(shape_id);
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 if let Some(prop) =
                     self.lookup_object_property(shape_id, &shape.properties, prop_atom)
                 {
@@ -916,7 +912,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 // Check for index signatures using IndexSignatureResolver
                 // Some Object types may have index signatures that aren't in ObjectWithIndex
                 use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
-                let resolver = IndexSignatureResolver::new(self.interner);
+                let resolver = IndexSignatureResolver::new(self.interner());
 
                 // Try string index signature first (most common)
                 if resolver.has_index_signature(obj_type, IndexKind::String) {
@@ -945,8 +941,9 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
 
             TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let shape = self.interner().object_shape(shape_id);
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 if let Some(prop) =
                     self.lookup_object_property(shape_id, &shape.properties, prop_atom)
                 {
@@ -970,7 +967,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
                 // Check numeric index signature if property name looks numeric
                 use crate::solver::index_signatures::IndexSignatureResolver;
-                let resolver = IndexSignatureResolver::new(self.interner);
+                let resolver = IndexSignatureResolver::new(self.interner());
                 if resolver.is_numeric_index_name(prop_name) {
                     if let Some(ref idx) = shape.number_index {
                         return PropertyAccessResult::Success {
@@ -987,13 +984,15 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
 
             TypeKey::Function(_) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_function_property(obj_type, prop_name, prop_atom)
             }
 
             TypeKey::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let shape = self.interner().callable_shape(shape_id);
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 for prop in &shape.properties {
                     if prop.name == prop_atom {
                         return PropertyAccessResult::Success {
@@ -1013,7 +1012,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
 
             TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
+                let members = self.interner().type_list(members);
                 if members.contains(&TypeId::ANY) {
                     return PropertyAccessResult::Success {
                         type_id: TypeId::ANY,
@@ -1039,7 +1038,8 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 }
                 // Continue with non-UNKNOWN members
                 // Property access on union: partition into nullable and non-nullable members
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 let mut valid_results = Vec::new();
                 let mut nullable_causes = Vec::new();
                 let mut any_from_index = false; // Track if any member used index signature
@@ -1096,7 +1096,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 if valid_results.is_empty() && nullable_causes.is_empty() {
                     // Before giving up, check union-level index signatures
                     use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
-                    let resolver = IndexSignatureResolver::new(self.interner);
+                    let resolver = IndexSignatureResolver::new(self.interner());
 
                     if resolver.has_index_signature(obj_type, IndexKind::String) {
                         if let Some(value_type) = resolver.resolve_string_index(obj_type) {
@@ -1127,7 +1127,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     let cause = if nullable_causes.len() == 1 {
                         nullable_causes[0]
                     } else {
-                        self.interner.union(nullable_causes)
+                        self.interner().union(nullable_causes)
                     };
 
                     let mut property_type = if valid_results.is_empty() {
@@ -1135,7 +1135,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     } else if valid_results.len() == 1 {
                         Some(valid_results[0])
                     } else {
-                        Some(self.interner.union(valid_results))
+                        Some(self.interner().union(valid_results))
                     };
 
                     if any_from_index
@@ -1151,7 +1151,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     };
                 }
 
-                let mut type_id = self.interner.union(valid_results);
+                let mut type_id = self.interner().union(valid_results);
                 if any_from_index && self.no_unchecked_indexed_access {
                     type_id = self.add_undefined_if_unchecked(type_id);
                 }
@@ -1164,8 +1164,9 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
 
             TypeKey::Intersection(members) => {
-                let members = self.interner.type_list(members);
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let members = self.interner().type_list(members);
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 let mut results = Vec::new();
                 let mut any_from_index = false;
                 let mut nullable_causes = Vec::new();
@@ -1203,7 +1204,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                         let cause = if nullable_causes.len() == 1 {
                             nullable_causes[0]
                         } else {
-                            self.interner.union(nullable_causes)
+                            self.interner().union(nullable_causes)
                         };
                         return PropertyAccessResult::PossiblyNullOrUndefined {
                             property_type: None,
@@ -1217,7 +1218,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     // Before giving up, check if any member has an index signature
                     // For intersections, if ANY member has an index signature, the property access should succeed
                     use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
-                    let resolver = IndexSignatureResolver::new(self.interner);
+                    let resolver = IndexSignatureResolver::new(self.interner());
 
                     // Check string index signature on all members
                     for &member in members.iter() {
@@ -1252,7 +1253,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 let mut type_id = if results.len() == 1 {
                     results[0]
                 } else {
-                    self.interner.intersection(results)
+                    self.interner().intersection(results)
                 };
                 if any_from_index && self.no_unchecked_indexed_access {
                     type_id = self.add_undefined_if_unchecked(type_id);
@@ -1269,7 +1270,8 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
 
             TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 if let Some(constraint) = info.constraint {
                     // Recurse into the constraint to find the property
                     self.resolve_property_access_inner(constraint, prop_name, Some(prop_atom))
@@ -1288,7 +1290,8 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
             // TS apparent members: literals inherit primitive wrapper methods.
             TypeKey::Literal(ref literal) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 match literal {
                     LiteralValue::String(_) => self.resolve_string_property(prop_name, prop_atom),
                     LiteralValue::Number(_) => self.resolve_number_property(prop_name, prop_atom),
@@ -1298,33 +1301,39 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
 
             TypeKey::TemplateLiteral(_) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_string_property(prop_name, prop_atom)
             }
 
             // Built-in properties
             TypeKey::Intrinsic(IntrinsicKind::String) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_string_property(prop_name, prop_atom)
             }
 
             TypeKey::Intrinsic(IntrinsicKind::Number) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_number_property(prop_name, prop_atom)
             }
 
             TypeKey::Intrinsic(IntrinsicKind::Boolean) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_boolean_property(prop_name, prop_atom)
             }
 
             TypeKey::Intrinsic(IntrinsicKind::Bigint) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_bigint_property(prop_name, prop_atom)
             }
 
             TypeKey::Intrinsic(IntrinsicKind::Object) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_object_member(prop_name, prop_atom).unwrap_or(
                     PropertyAccessResult::PropertyNotFound {
                         type_id: obj_type,
@@ -1334,12 +1343,14 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
 
             TypeKey::Array(_) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_array_property(obj_type, prop_name, prop_atom)
             }
 
             TypeKey::Tuple(_) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_array_property(obj_type, prop_name, prop_atom)
             }
 
@@ -1349,7 +1360,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     Some(guard) => guard,
                     None => {
                         let prop_atom =
-                            prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                            prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                         return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
                             PropertyAccessResult::PropertyNotFound {
                                 type_id: obj_type,
@@ -1366,7 +1377,8 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
             // Mapped: try lazy property resolution first to avoid OOM on large mapped types
             TypeKey::Mapped(mapped_id) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
 
                 // Try lazy resolution first - only computes the requested property
                 if let Some(result) =
@@ -1388,7 +1400,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     }
                 };
 
-                let evaluated = evaluate_type(self.interner, obj_type);
+                let evaluated = evaluate_type(self.interner(), obj_type);
                 if evaluated != obj_type {
                     // Successfully evaluated - resolve property on the concrete type
                     self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
@@ -1408,14 +1420,14 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
             // TypeQuery types: typeof queries that need resolution to their structural form
             TypeKey::TypeQuery(_) => {
-                let evaluated = evaluate_type(self.interner, obj_type);
+                let evaluated = evaluate_type(self.interner(), obj_type);
                 if evaluated != obj_type {
                     // Successfully evaluated - resolve property on the concrete type
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
                     // Evaluation didn't change the type - try apparent members
                     let prop_atom =
-                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                        prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
@@ -1435,7 +1447,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     Some(guard) => guard,
                     None => {
                         let prop_atom =
-                            prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                            prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                         return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
                             PropertyAccessResult::PropertyNotFound {
                                 type_id: obj_type,
@@ -1445,14 +1457,14 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     }
                 };
 
-                let evaluated = evaluate_type(self.interner, obj_type);
+                let evaluated = evaluate_type(self.interner(), obj_type);
                 if evaluated != obj_type {
                     // Successfully evaluated - resolve property on the concrete type
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
                     // Evaluation didn't change the type - try apparent members
                     let prop_atom =
-                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                        prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
@@ -1472,7 +1484,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     Some(guard) => guard,
                     None => {
                         let prop_atom =
-                            prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                            prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                         return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
                             PropertyAccessResult::PropertyNotFound {
                                 type_id: obj_type,
@@ -1482,12 +1494,12 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     }
                 };
 
-                let evaluated = evaluate_type(self.interner, obj_type);
+                let evaluated = evaluate_type(self.interner(), obj_type);
                 if evaluated != obj_type {
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
                     let prop_atom =
-                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                        prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
@@ -1502,12 +1514,12 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
             // KeyOf types need evaluation
             TypeKey::KeyOf(_) => {
-                let evaluated = evaluate_type(self.interner, obj_type);
+                let evaluated = evaluate_type(self.interner(), obj_type);
                 if evaluated != obj_type {
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
                     let prop_atom =
-                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                        prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                     // KeyOf typically returns string/number/symbol, try string member access
                     self.resolve_string_property(prop_name, prop_atom)
                 }
@@ -1516,7 +1528,8 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             // ThisType: represents 'this' type in a class/interface context
             // Should be resolved to the actual class type by the checker
             TypeKey::ThisType => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                     return result;
                 }
@@ -1535,7 +1548,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     Some(guard) => guard,
                     None => {
                         let prop_atom =
-                            prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                            prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                         return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
                             PropertyAccessResult::PropertyNotFound {
                                 type_id: obj_type,
@@ -1546,13 +1559,13 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 };
 
                 // Resolve the lazy type using the resolver
-                if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
+                if let Some(resolved) = self.db.resolve_lazy(def_id, self.interner()) {
                     // Successfully resolved - resolve property on the concrete type
                     self.resolve_property_access_inner(resolved, prop_name, prop_atom)
                 } else {
                     // Can't resolve - try apparent members
                     let prop_atom =
-                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                        prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
@@ -1567,7 +1580,8 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
             _ => {
                 // Unknown type key - try apparent members before giving up
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                     return result;
                 }
@@ -1587,7 +1601,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         props: &'props [PropertyInfo],
         prop_atom: Atom,
     ) -> Option<&'props PropertyInfo> {
-        match self.interner.object_property_index(shape_id, prop_atom) {
+        match self.interner().object_property_index(shape_id, prop_atom) {
             PropertyLookup::Found(idx) => props.get(idx),
             PropertyLookup::NotFound => None,
             PropertyLookup::Uncached => props.iter().find(|p| p.name == prop_atom),
@@ -1595,14 +1609,14 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
     }
 
     fn any_args_function(&self, return_type: TypeId) -> TypeId {
-        let rest_array = self.interner.array(TypeId::ANY);
+        let rest_array = self.interner().array(TypeId::ANY);
         let rest_param = ParamInfo {
             name: None,
             type_id: rest_array,
             optional: false,
             rest: true,
         };
-        self.interner.function(FunctionShape {
+        self.interner().function(FunctionShape {
             params: vec![rest_param],
             this_type: None,
             return_type,
@@ -1639,15 +1653,15 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         prop_name: &str,
         prop_atom: Option<Atom>,
     ) -> PropertyAccessResult {
-        let app = self.interner.type_application(app_id);
-        let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+        let app = self.interner().type_application(app_id);
+        let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
 
         // Get the base type (should be a Ref to class/interface/alias)
-        let base_key = match self.interner.lookup(app.base) {
+        let base_key = match self.interner().lookup(app.base) {
             Some(k) => k,
             None => {
                 return PropertyAccessResult::PropertyNotFound {
-                    type_id: self.interner.application(app.base, app.args.clone()),
+                    type_id: self.interner().application(app.base, app.args.clone()),
                     property_name: prop_atom,
                 };
             }
@@ -1655,7 +1669,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
         // Handle Callable types (e.g., Array constructor with instance methods as properties)
         if let TypeKey::Callable(shape_id) = base_key {
-            let shape = self.interner.callable_shape(shape_id);
+            let shape = self.interner().callable_shape(shape_id);
 
             // Try to find the property in the Callable's properties
             if let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom) {
@@ -1665,7 +1679,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
                 // Create substitution: map the Callable's type parameters to the application's arguments
                 // For Array, this means T -> element_type
-                let type_params = self.resolver.get_array_base_type_params();
+                let type_params = self.db.get_array_base_type_params();
 
                 if type_params.is_empty() {
                     // No type params available, return the property type as-is
@@ -1679,21 +1693,21 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 // Instantiate ONLY the property type, not the entire Callable
                 // This avoids recursion into other 37+ Array methods
                 let substitution =
-                    TypeSubstitution::from_args(self.interner, type_params, &app.args);
+                    TypeSubstitution::from_args(self.interner(), type_params, &app.args);
 
                 // Use instantiate_type_infer to handle infer vars and avoid depth issues
                 use crate::solver::instantiate::instantiate_type_with_infer;
                 let instantiated_prop_type =
-                    instantiate_type_with_infer(self.interner, prop.type_id, &substitution);
+                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution);
 
                 // Task 2.3: Handle `this` Types
                 // Array methods may return `this` or `this[]` which need to be
                 // substituted with the actual Application type (e.g., `T[]`)
-                let app_type = self.interner.application(app.base, app.args.clone());
+                let app_type = self.interner().application(app.base, app.args.clone());
 
                 use crate::solver::instantiate::substitute_this_type;
                 let final_type =
-                    substitute_this_type(self.interner, instantiated_prop_type, app_type);
+                    substitute_this_type(self.interner(), instantiated_prop_type, app_type);
 
                 return PropertyAccessResult::Success {
                     type_id: final_type,
@@ -1702,7 +1716,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
 
             return PropertyAccessResult::PropertyNotFound {
-                type_id: self.interner.application(app.base, app.args.clone()),
+                type_id: self.interner().application(app.base, app.args.clone()),
                 property_name: prop_atom,
             };
         }
@@ -1711,20 +1725,20 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         let TypeKey::Lazy(def_id) = base_key else {
             // For non-Lazy bases (e.g., TypeParameter), fall back to structural evaluation
             let evaluated = evaluate_type(
-                self.interner,
-                self.interner.application(app.base, app.args.clone()),
+                self.interner(),
+                self.interner().application(app.base, app.args.clone()),
             );
             return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
         };
 
         // Resolve the def_id to get the SymbolId, then get the body type
-        let sym_id = match self.resolver.def_to_symbol_id(def_id) {
+        let sym_id = match self.db.def_to_symbol_id(def_id) {
             Some(id) => id,
             None => {
                 // Can't convert def_id to symbol_id - fall back to structural evaluation
                 let evaluated = evaluate_type(
-                    self.interner,
-                    self.interner.application(app.base, app.args.clone()),
+                    self.interner(),
+                    self.interner().application(app.base, app.args.clone()),
                 );
                 return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
             }
@@ -1733,25 +1747,25 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         let symbol_ref = crate::solver::SymbolRef(sym_id.0);
 
         // Resolve the symbol to get its body type
-        let body_type = if let Some(inner_def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
-            self.resolver.resolve_lazy(inner_def_id, self.interner)
+        let body_type = if let Some(inner_def_id) = self.db.symbol_to_def_id(symbol_ref) {
+            self.db.resolve_lazy(inner_def_id, self.interner())
         } else {
             #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(symbol_ref, self.interner);
+            let r = self.db.resolve_ref(symbol_ref, self.interner());
             r
         };
 
         let Some(body_type) = body_type else {
             // Resolution failed - fall back to structural evaluation
             let evaluated = evaluate_type(
-                self.interner,
-                self.interner.application(app.base, app.args.clone()),
+                self.interner(),
+                self.interner().application(app.base, app.args.clone()),
             );
             return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
         };
 
         // Get type parameters for this symbol
-        let type_params = match self.resolver.get_type_params(symbol_ref) {
+        let type_params = match self.db.get_type_params(symbol_ref) {
             Some(params) if !params.is_empty() => params,
             _ => {
                 // No type params - resolve on the body directly
@@ -1760,11 +1774,11 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         };
 
         // The body should be an Object type with properties
-        let body_key = match self.interner.lookup(body_type) {
+        let body_key = match self.interner().lookup(body_type) {
             Some(k) => k,
             None => {
                 return PropertyAccessResult::PropertyNotFound {
-                    type_id: self.interner.application(app.base, app.args.clone()),
+                    type_id: self.interner().application(app.base, app.args.clone()),
                     property_name: prop_atom,
                 };
             }
@@ -1773,7 +1787,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         // Handle Object types (classes/interfaces)
         match body_key {
             TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
+                let shape = self.interner().object_shape(shape_id);
 
                 // Try to find the property in the shape
                 if let Some(prop) =
@@ -1781,13 +1795,13 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 {
                     // Found! Now instantiate the property type with the type arguments
                     let substitution =
-                        TypeSubstitution::from_args(self.interner, &type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
 
                     // Instantiate both read and write types
                     let instantiated_read_type =
-                        instantiate_type(self.interner, prop.type_id, &substitution);
+                        instantiate_type(self.interner(), prop.type_id, &substitution);
                     let instantiated_write_type =
-                        instantiate_type(self.interner, prop.write_type, &substitution);
+                        instantiate_type(self.interner(), prop.write_type, &substitution);
 
                     return PropertyAccessResult::Success {
                         type_id: self.optional_property_type(&PropertyInfo {
@@ -1808,9 +1822,9 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 if let Some(ref idx) = shape.string_index {
                     // Found string index signature - instantiate the value type
                     let substitution =
-                        TypeSubstitution::from_args(self.interner, &type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                     let instantiated_value =
-                        instantiate_type(self.interner, idx.value_type, &substitution);
+                        instantiate_type(self.interner(), idx.value_type, &substitution);
 
                     return PropertyAccessResult::Success {
                         type_id: self.add_undefined_if_unchecked(instantiated_value),
@@ -1820,13 +1834,13 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
                 // Check numeric index signature for numeric property names
                 use crate::solver::index_signatures::IndexSignatureResolver;
-                let resolver = IndexSignatureResolver::new(self.interner);
+                let resolver = IndexSignatureResolver::new(self.interner());
                 if resolver.is_numeric_index_name(prop_name) {
                     if let Some(ref idx) = shape.number_index {
                         let substitution =
-                            TypeSubstitution::from_args(self.interner, &type_params, &app.args);
+                            TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                         let instantiated_value =
-                            instantiate_type(self.interner, idx.value_type, &substitution);
+                            instantiate_type(self.interner(), idx.value_type, &substitution);
 
                         return PropertyAccessResult::Success {
                             type_id: self.add_undefined_if_unchecked(instantiated_value),
@@ -1837,15 +1851,15 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
                 // Property not found
                 PropertyAccessResult::PropertyNotFound {
-                    type_id: self.interner.application(app.base, app.args.clone()),
+                    type_id: self.interner().application(app.base, app.args.clone()),
                     property_name: prop_atom,
                 }
             }
             // For non-Object body types (e.g., type aliases to unions), fall back to evaluation
             _ => {
                 let evaluated = evaluate_type(
-                    self.interner,
-                    self.interner.application(app.base, app.args.clone()),
+                    self.interner(),
+                    self.interner().application(app.base, app.args.clone()),
                 );
                 self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
             }
@@ -1856,12 +1870,12 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         if !self.no_unchecked_indexed_access || type_id == TypeId::UNDEFINED {
             return type_id;
         }
-        self.interner.union2(type_id, TypeId::UNDEFINED)
+        self.interner().union2(type_id, TypeId::UNDEFINED)
     }
 
     fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
         if prop.optional {
-            self.interner.union2(prop.type_id, TypeId::UNDEFINED)
+            self.interner().union2(prop.type_id, TypeId::UNDEFINED)
         } else {
             prop.type_id
         }
@@ -1874,7 +1888,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
-        match apparent_primitive_member_kind(self.interner, kind, prop_name) {
+        match apparent_primitive_member_kind(self.interner(), kind, prop_name) {
             Some(ApparentMemberKind::Value(type_id)) => PropertyAccessResult::Success {
                 type_id,
                 from_index_signature: false,
@@ -1938,7 +1952,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
     ) -> PropertyAccessResult {
         // STEP 1: Try to get the boxed interface type from the resolver (e.g. Number for number)
         // This allows us to use lib.d.ts definitions instead of just hardcoded lists
-        if let Some(boxed_type) = self.resolver.get_boxed_type(kind) {
+        if let Some(boxed_type) = self.db.get_boxed_type(kind) {
             // Resolve the property on the boxed interface type
             // This handles inheritance (e.g., String extends Object) automatically
             // and allows user-defined augmentations to lib.d.ts to work
@@ -1986,12 +2000,12 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         let element_type = self.array_element_type(array_type);
 
         // Try to use the Array<T> interface from lib.d.ts
-        let array_base = self.resolver.get_array_base_type();
+        let array_base = self.db.get_array_base_type();
 
         if let Some(array_base) = array_base {
             // Create TypeApplication: Array<element_type>
             // This triggers resolve_application_property which handles substitution correctly
-            let app_type = self.interner.application(array_base, vec![element_type]);
+            let app_type = self.interner().application(array_base, vec![element_type]);
 
             // Resolve property on the application type
             let result = self.resolve_property_access_inner(app_type, prop_name, Some(prop_atom));
@@ -2004,7 +2018,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
         // Handle numeric index access (e.g., arr[0], arr["0"])
         use crate::solver::index_signatures::IndexSignatureResolver;
-        let resolver = IndexSignatureResolver::new(self.interner);
+        let resolver = IndexSignatureResolver::new(self.interner());
         if resolver.is_numeric_index_name(prop_name) {
             let element_or_undefined = self.element_type_with_undefined(element_type);
             return PropertyAccessResult::Success {
@@ -2021,10 +2035,10 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
     }
 
     pub(crate) fn array_element_type(&self, array_type: TypeId) -> TypeId {
-        match self.interner.lookup(array_type) {
+        match self.interner().lookup(array_type) {
             Some(TypeKey::Array(elem)) => elem,
             Some(TypeKey::Tuple(elements)) => {
-                let elements = self.interner.tuple_list(elements);
+                let elements = self.interner().tuple_list(elements);
                 self.tuple_element_union(&elements)
             }
             _ => TypeId::ERROR, // Return ERROR instead of ANY for non-array/tuple types
@@ -2044,11 +2058,11 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
             members.push(ty);
         }
-        self.interner.union(members)
+        self.interner().union(members)
     }
 
     fn element_type_with_undefined(&self, element_type: TypeId) -> TypeId {
-        self.interner.union2(element_type, TypeId::UNDEFINED)
+        self.interner().union2(element_type, TypeId::UNDEFINED)
     }
 
     fn resolve_function_property(

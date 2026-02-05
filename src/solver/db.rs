@@ -361,14 +361,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         &self,
         object_type: TypeId,
         prop_name: &str,
-    ) -> crate::solver::operations_property::PropertyAccessResult {
-        // Default implementation using the non-resolving version
-        // Implementers that have TypeResolver capability should override this
-        let evaluator = crate::solver::operations_property::PropertyAccessEvaluator::new(
-            self.as_type_database(),
-        );
-        evaluator.resolve_property_access(object_type, prop_name)
-    }
+    ) -> crate::solver::operations_property::PropertyAccessResult;
 
     fn property_access_type(
         &self,
@@ -589,6 +582,17 @@ impl QueryDatabase for TypeInterner {
         use crate::solver::compat::CompatChecker;
         let mut checker = CompatChecker::new(self);
         checker.is_assignable(source, target)
+    }
+
+    fn resolve_property_access(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> crate::solver::operations_property::PropertyAccessResult {
+        // TypeInterner doesn't have TypeResolver capability, so it can't resolve Lazy types
+        // Use PropertyAccessEvaluator with QueryDatabase (self implements both TypeDatabase and TypeResolver)
+        let evaluator = crate::solver::operations_property::PropertyAccessEvaluator::new(self);
+        evaluator.resolve_property_access(object_type, prop_name)
     }
 }
 
@@ -1005,6 +1009,16 @@ impl QueryDatabase for QueryCache<'_> {
     fn remove_nullish(&self, type_id: TypeId) -> TypeId {
         // Delegate to the interner
         self.interner.remove_nullish(type_id)
+    }
+
+    fn resolve_property_access(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> crate::solver::operations_property::PropertyAccessResult {
+        // QueryCache doesn't have full TypeResolver capability, so delegate to TypeInterner
+        self.interner
+            .resolve_property_access(object_type, prop_name)
     }
 }
 
