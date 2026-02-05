@@ -68,6 +68,26 @@ impl SubtypeResult {
     }
 }
 
+/// Returns true for unit types where `source != target` implies disjointness.
+///
+/// This intentionally excludes null/undefined/void/never because their assignability
+/// semantics are special-cased elsewhere (e.g., strictNullChecks, void assignability).
+fn is_disjoint_unit_type(types: &dyn TypeDatabase, ty: TypeId) -> bool {
+    match types.lookup(ty) {
+        Some(TypeKey::Literal(_)) | Some(TypeKey::UniqueSymbol(_)) => true,
+        Some(TypeKey::Tuple(list_id)) => {
+            let elements = types.tuple_list(list_id);
+            if elements.iter().any(|e| e.rest || e.optional) {
+                return false;
+            }
+            elements
+                .iter()
+                .all(|e| is_disjoint_unit_type(types, e.type_id))
+        }
+        _ => false,
+    }
+}
+
 /// Controls how `any` is treated during subtype checks.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AnyPropagationMode {
@@ -1331,6 +1351,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Error suppression belongs in the compatibility layer (CompatChecker),
         // not in the strict subtype engine.
         if source == TypeId::ERROR || target == TypeId::ERROR {
+            return SubtypeResult::False;
+        }
+
+        // Fast path: distinct disjoint unit types are never subtypes.
+        // This avoids expensive structural checks for large unions of literals/enum members.
+        if is_disjoint_unit_type(self.interner, source)
+            && is_disjoint_unit_type(self.interner, target)
+        {
             return SubtypeResult::False;
         }
 
