@@ -1,7 +1,7 @@
 # Session TSZ-5: Multi-Pass Generic Inference & Contextual Typing
 
 **Started**: 2026-02-05
-**Status**: 🔄 Phase 2 In Progress - Recursive Contextual Sensitivity
+**Status**: ✅ Phase 2 Complete - Recursive Contextual Sensitivity
 **Focus**: Implement multi-pass inference to fix complex nested generic type inference
 **Last Updated**: 2026-02-05
 
@@ -23,14 +23,40 @@ This session implements **Multi-Pass Inference** to fix a critical bug where com
 
 ### 🔄 Phase 2: Recursive Contextual Sensitivity (IN PROGRESS)
 
-**Goal**: Enable two-pass inference for object and array literals containing lambdas.
+### ✅ Phase 2: Recursive Contextual Sensitivity (COMPLETED 2026-02-05)
+
+**Completed Tasks:**
+- ✅ TODO 2.1: Object literal sensitivity detection (recursive property checking)
+- ✅ TODO 2.2: Array literal sensitivity detection (recursive element checking)
+- ✅ Added conditional expression sensitivity detection
+
+**Implementation** (src/checker/type_computation_complex.rs:47-119):
+- Object literals: Check PROPERTY_ASSIGNMENT, SPREAD_ASSIGNMENT, METHOD_DECLARATION, GET_ACCESSOR, SET_ACCESSOR
+- Array literals: Recursively check all elements
+- Spread elements: Check spread expression (SPREAD_ELEMENT, SPREAD_ASSIGNMENT)
+- Conditional expressions: Check both branches (CONDITIONAL_EXPRESSION)
+- Empty literals: `{}` and `[]` return false (not sensitive)
+
+**Gemini Pro Review**:
+- Added missing conditional expression handler
+- Fixed shorthand property assignment handling (removed incorrect check)
+- Verdict: Implementation is correct for TypeScript
+
+**Test Results**:
+- `handle({ data: 42, process: x => x.toFixed() })` - compiles successfully
+- `batch([1, 2], [x => x.toExponential()])` - compiles successfully
+
+**Edge Cases Handled:**
+- Deep nesting: `handle({ a: { b: { c: x => x } } })` - ✅ Recursive
+- Methods: `{ method(x) { ... } }` - ✅ Always sensitive
+- Empty literals: `{}` and `[]` - ✅ Not sensitive (participate in Round 1)
+- Spreads: `{ ...other, fn: x => x }` - ✅ Check spread expression
 
 **Example Issue**:
 ```typescript
 function handle<T>(config: { data: T, process: (t: T) => void }): void;
 handle({ data: 42, process: x => x.toFixed() });
-// Current: x has type implicit any (object typed without context)
-// Expected: x should have type number (from T = number in Round 1)
+// ✅ SOLVED: x has type number (from T = number in Round 1)
 ```
 - **Architecture**: ✅ Correct separation of concerns (Checker identifies sensitive nodes, Solver performs inference)
 - **Two-Pass Flow**: ✅ Matches TypeScript behavior
