@@ -1793,6 +1793,22 @@ impl ParserState {
                 );
                 self.parse_variable_statement_with_modifiers(Some(start_pos), decorators)
             }
+            SyntaxKind::ImportKeyword => {
+                // TS1206: Decorators are not valid on import statements
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                );
+                // Check if this is import equals (import X = ...) or regular import
+                if self.look_ahead_is_import_equals() {
+                    self.parse_import_equals_declaration()
+                } else {
+                    self.parse_import_declaration()
+                }
+            }
             SyntaxKind::ExportKeyword => {
                 // Export with decorators: @decorator export class Foo {}
                 self.parse_export_declaration()
@@ -2901,6 +2917,7 @@ impl ParserState {
 
         // Parse decorators if present
         let decorators = self.parse_decorators();
+        let has_decorators = decorators.is_some();
 
         // If decorators were found before a static block, emit TS1206
         if decorators.is_some()
@@ -2964,6 +2981,15 @@ impl ParserState {
         });
 
         if self.is_token(SyntaxKind::ConstructorKeyword) && !has_var_let_modifier {
+            // TS1206: Decorators are not valid on constructors
+            if has_decorators {
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                );
+            }
             return self.parse_constructor_with_modifiers(modifiers);
         }
 

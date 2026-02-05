@@ -1988,6 +1988,14 @@ impl ParserState {
 
         // Check for for-in or for-of
         if self.is_token(SyntaxKind::InKeyword) {
+            // TS1005: for-await can only be used with 'of', not 'in'
+            if await_modifier {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "'of' expected.",
+                    diagnostic_codes::TOKEN_EXPECTED,
+                );
+            }
             return self.parse_for_in_statement_rest(start_pos, initializer);
         }
         if self.is_token(SyntaxKind::OfKeyword) {

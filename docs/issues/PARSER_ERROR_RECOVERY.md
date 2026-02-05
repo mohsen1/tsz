@@ -11,15 +11,20 @@ tsz's parser error recovery produces different (usually more) errors than TSC wh
 
 ## Conformance Stats (Updated 2026-02-05)
 
-- Parser tests: 53.1% pass rate (460/867)
+- Parser tests: 53.0% pass rate (460/868)
 - Scanner tests: 50.0% pass rate (21/42)
+- Decorator tests: 10.8% pass rate (12/111)
 - Top error mismatches:
   - TS2304: missing=35, extra=88 (cannot find name) - mostly lib loading bug
-  - TS1005: missing=25, extra=29 (token expected)
+  - TS1005: missing=24, extra=29 (token expected)
   - TS1109: missing=11, extra=24 (expression expected)
-  - TS1128: missing=2, extra=27 (declaration expected)
+  - TS1128: missing=2, extra=26 (declaration expected)
   - TS2552: missing=7, extra=19 (name typo suggestion)
   - TS1100: missing=11, extra=0 (invalid use of eval/arguments) - strict mode validation (requires checker)
+- Decorator-specific mismatches:
+  - TS5025: missing=77 (--experimentalDecorators compiler option)
+  - TS1241: missing=19 (checker validation)
+  - TS1270: missing=15 (checker validation)
 
 **Note**: Many TS2304 errors are caused by the default lib loading bug (see DEFAULT_LIB_LOADING_BUG.md).
 
@@ -206,6 +211,39 @@ Numbers like `08` where the first digit is 8 or 9 don't have this flag set, so t
 check inspects the token text directly for the leading zero pattern.
 
 **File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
+
+### TS1206 for decorators on invalid declarations (commit d5f21e3)
+
+Added TS1206 "Decorators are not valid here" for decorators on:
+- Function declarations
+- Enum declarations
+- Interface declarations
+- Type alias declarations
+- Namespace/module declarations
+- Variable statements
+
+**File**: `src/parser/state_statements.rs` - `parse_decorated_declaration()`
+
+### TS1206 for decorators on import statements (commit 4e3cc61)
+
+Fixed `@dec import X = M1.X;` and `@dec import lib = require('./mod');` to emit
+TS1206 "Decorators are not valid here" instead of TS1005 "(" expected.
+
+**File**: `src/parser/state_statements.rs` - `parse_decorated_declaration()`
+
+### TS1206 for decorators on constructors (commit 0951af0)
+
+Fixed `@dec constructor() {}` in class bodies to emit TS1206 "Decorators are not
+valid here" at the decorator position.
+
+**File**: `src/parser/state_statements.rs` - `parse_class_member()`
+
+### TS1005 for for-await-in (commit f2c8718)
+
+Fixed `for await (const x in y) {}` to emit TS1005 "'of' expected" at the `in`
+keyword position. `for await` only works with `of`, not `in`.
+
+**File**: `src/parser/state_declarations.rs` - `parse_for_statement()`
 
 ## Recommended Approach
 
