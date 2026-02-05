@@ -1599,14 +1599,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        // Fast-path: Structural identity check (Task #36)
-        // Only run if BOTH are potentially complex to avoid overhead on simple mismatches.
-        // Simple types (Intrinsic, Literal) are handled efficiently by the fall-through logic.
-        if self.is_potentially_structural(source) && self.is_potentially_structural(target) {
-            if self.are_types_structurally_identical(source, target) {
-                return SubtypeResult::True;
-            }
-        }
+        // Note: Canonicalization-based structural identity (Task #36) was previously
+        // called here as a "fast path", but it was actually SLOWER than the normal path
+        // because it allocated a fresh Canonicalizer per call (FxHashMap + Vecs) and
+        // triggered O(n²) union reduction via interner.union(). The existing QueryCache
+        // already provides O(1) memoization for repeated subtype checks.
+        // The Canonicalizer remains available for its intended purpose: detecting
+        // structural identity of recursive type aliases (graph isomorphism).
+        // See: are_types_structurally_identical() and isomorphism_tests.rs
 
         // Note: Weak type checking is handled by CompatChecker (compat.rs:167-170).
         // Removed redundant check here to avoid double-checking which caused false positives.
