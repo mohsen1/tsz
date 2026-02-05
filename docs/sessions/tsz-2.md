@@ -1,33 +1,51 @@
 # Session tsz-2: Clippy Warning Cleanup (Phase 4.3 Migration)
 
 **Started**: 2026-02-05
-**Status**: Active
+**Status**: Active - Making Good Progress
 **Focus**: Complete Ref -> Lazy/DefId migration by fixing deprecation warnings
 
 **Previous Session**: Coinductive Subtyping (COMPLETE)
 **Next Session**: Conditional Types Refinement
 
-## Problem Statement
+## Progress Summary
 
-The codebase has **~70 clippy warnings** that need to be cleaned up. The most critical are **46 deprecation warnings** related to the incomplete Phase 4.3 migration from `Ref`/`SymbolRef` to `Lazy`/`DefId`.
+**Completed:**
+- ✅ Fixed PromiseTypeKind::SymbolRef (removed)
+- ✅ Fixed NewExpressionTypeKind::SymbolRef (removed)
+- ✅ Fixed ConstructorCheckKind::SymbolRef (replaced with Lazy)
+- ✅ Fixed PropertyAccessResolutionKind::Ref (removed)
+- ✅ Fixed ContextualLiteralAllowKind::Ref (removed)
+- ✅ Fixed SymbolResolutionTraversalKind::Ref (removed)
+- **Reduced warnings from 70 to 13**
 
-### Warning Categories
+**Remaining (13 deprecation warnings):**
+- 7 × get_ref_symbol() usage
+- 5 × get_symbol_ref() usage
+- 1 × get_ref_if_symbol() usage
 
-**1. Deprecated Functions (46 warnings) - CRITICAL**
-- `get_ref_symbol()` → Should use `get_lazy_def_id()`
-- `get_symbol_ref()` → Should use `get_lazy_def_id()`
-- `get_ref_if_symbol()` → Should use `get_lazy_if_def()`
-- Deprecated enum variants: `Ref`, `SymbolRef` → Should use `Lazy`
+Files Modified (commits 369c1bcad, 47c291b4b, f9058e153):
+- src/solver/type_queries_extended.rs
+- src/checker/promise_checker.rs
+- src/checker/type_checking.rs
+- src/checker/type_computation_complex.rs
+- src/checker/state_type_environment.rs
+- src/checker/state_type_analysis.rs
 
-**2. Unused Code (~20 warnings)**
-- Unused imports: `NodeAccess` (2 locations)
-- Unused variables: `has_primitive`
-- Unused methods: ~10 methods across checker/binder
-- Unused fields: `loop_mutation_cache`, `symbol_aliases`, etc.
+### Remaining Warning Categories
 
-**3. Other Warnings (~4 warnings)**
-- Irrefutable if let patterns
-- Visibility issues (private types in public signatures)
+**1. Deprecated Function Calls (13 warnings) - IN PROGRESS**
+- `get_ref_symbol()` - 7 usages in assignment_checker.rs, enum_checker.rs
+- `get_symbol_ref()` - 5 usages in state_type_analysis.rs
+- `get_ref_if_symbol()` - 1 usage
+
+**2. Unused Code (~20 warnings) - DEFERRED**
+- Unused imports, variables, methods, fields
+- Will be addressed after deprecation warnings are fixed
+
+**3. Other Warnings (~4 warnings) - DEFERRED**
+- Irrefutable if let patterns, visibility issues
+
+## Implementation Strategy (Updated)
 
 ## Implementation Strategy
 
