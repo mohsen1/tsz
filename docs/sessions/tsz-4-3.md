@@ -20,50 +20,60 @@ Conformance suite shows significant progress: 35/80 enum tests pass, only 5 miss
 ### Problem
 Conformance suite shows 5 missing TS2322 errors in enum tests.
 
-### Hypothesis (from Gemini)
-These are likely related to:
-1. **Union types containing Enums** (e.g., `(EnumA | EnumB).prop`)
-2. **Computed property enums**
-3. **Enum member access through complex type paths**
+### Investigation (2026-02-05)
 
-### Investigation Plan
+**Identified specific test**: `enumLiteralAssignableToEnumInsideUnion.ts`
 
-1. **Identify specific failing tests**:
-   ```bash
-   ./scripts/conformance.sh run --filter "enum" --error-code 2322 --verbose
-   ```
-
-2. **Debug with TSZ_LOG**:
-   ```bash
-   TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -- [failing-test-file].ts
-   ```
-
-3. **Trace enum_assignability_override**:
-   - Check if override is being called
-   - Verify it's returning `Some(false)` for cross-enum assignments
-   - Look for cases where it returns `None` (fallthrough to structural)
-
-4. **Fix any bugs found**:
-   - May need to handle union types containing enums
-   - May need to handle computed properties
-   - May need to check enum literal types more carefully
-
-### Expected TypeScript Behavior
-
+**Test case**:
 ```typescript
-enum EnumA { X = 0 }
-enum EnumB { Y = 0 }
-
-// Should error:
-let x: EnumB = EnumA.X;  // ❌ TS2322
-
-// Union types:
-let y: EnumA | EnumB = EnumA.X;  // ✅ OK (same enum)
-let z: EnumA | EnumB = EnumB.X;  // ✅ OK (same enum)
-
-// Cross-enum in unions:
-let w: EnumA = EnumB.X;  // ❌ TS2322
+namespace X {
+    export enum Foo { A, B }
+}
+namespace Z {
+    export enum Foo {
+        A = 1 << 1,
+        B = 1 << 2,
+    }
+}
+const e1: X.Foo | boolean = Z.Foo.A; // Should error: TS2322
 ```
+
+**Root Cause Found**:
+- Source: `Z.Foo.A` (TypeKey::Enum with DefId for Z.Foo)
+- Target: `X.Foo | boolean` (TypeKey::Union)
+- The **Checker layer's** `enum_assignability_override` only handles cases where BOTH source and target are `TypeKey::Enum`
+- When target is a Union, it falls through without checking if the union contains an enum with different DefId
+
+**Key Insight**:
+Conformance tests use the **Checker layer** implementation in `src/checker/state_type_environment.rs`, NOT the Solver layer implementation in `src/solver/compat.rs`!
+
+### Solution
+
+Add union checking logic to the Checker layer's `enum_assignability_override`:
+
+```rust
+// In the else branch (when not both are TypeKey::Enum)
+if let Some(TypeKey::Enum(s_def, _)) = source_key {
+    if let Some(TypeKey::Union(members)) = target_key {
+        // Check each constituent of the union
+        for &member in member_list.iter() {
+            if let Some(TypeKey::Enum(member_def, _)) = self.ctx.types.lookup(member) {
+                if s_def != member_def {
+                    // Nominal mismatch - reject!
+                    return Some(false);
+                }
+            }
+        }
+    }
+}
+```
+
+### Next Steps
+
+1. Implement the fix in `src/checker/state_type_environment.rs`
+2. Test with `enumLiteralAssignableToEnumInsideUnion.ts`
+3. Run full enum conformance suite to verify all 5 missing errors are fixed
+4. Remove debug output from Solver layer (not used by conformance)
 
 ## Task 2: TSZ-6 Phase 3 Initiation
 
