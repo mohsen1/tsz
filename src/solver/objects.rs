@@ -233,6 +233,8 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interner::Atom;
+    use crate::solver::def::DefId;
     use crate::solver::intern::TypeInterner;
 
     // Mock resolver for testing
@@ -266,7 +268,7 @@ mod tests {
             None
         }
 
-        fn get_symbol_id(&self, _def_id: DefId) -> Option<crate::binder::SymbolId> {
+        fn def_to_symbol_id(&self, _def_id: DefId) -> Option<crate::binder::SymbolId> {
             None
         }
     }
