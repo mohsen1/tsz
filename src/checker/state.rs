@@ -198,11 +198,6 @@ impl<'a, 'b> CheckerOverrideProvider<'a, 'b> {
 
 impl<'a, 'b> crate::solver::AssignabilityOverrideProvider for CheckerOverrideProvider<'a, 'b> {
     fn enum_assignability_override(&self, source: TypeId, target: TypeId) -> Option<bool> {
-        // TSZ-4: Debug logging to verify override is being called (use eprintln for test visibility)
-        eprintln!(
-            "TSZ-4 DEBUG: CheckerOverrideProvider::enum_assignability_override called: source={:?} target={:?}",
-            source, target
-        );
         self.checker
             .enum_assignability_override(source, target, self.env)
     }

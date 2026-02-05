@@ -850,11 +850,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         visited: &mut FxHashSet<(TypeId, TypeId)>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
-        eprintln!(
-            "DEBUG match_infer_pattern: source={} pattern={}",
-            source.0, pattern.0
-        );
-
         if !visited.insert((source, pattern)) {
             return true;
         }
@@ -1069,9 +1064,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // This handles cases like: Reducer<infer S> matching a structural function type
                 let evaluator = ApplicationEvaluator::new(self.interner(), self.resolver());
                 let expanded_pattern = evaluator.evaluate_or_original(pattern);
-
-                eprintln!("DEBUG match_infer_pattern: Application expansion");
-                eprintln!("  pattern={} expanded={}", pattern.0, expanded_pattern.0);
 
                 // Only recurse if expansion actually changed the type
                 if expanded_pattern != pattern {

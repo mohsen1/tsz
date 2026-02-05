@@ -2512,32 +2512,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn check_switch_exhaustiveness(
         &mut self,
-        stmt_idx: NodeIndex,
+        _stmt_idx: NodeIndex,
         expression: NodeIndex,
         case_block: NodeIndex,
         has_default: bool,
     ) {
         // If there's a default clause, the switch is syntactically exhaustive
         if has_default {
-            eprintln!(
-                "DEBUG check_switch_exhaustiveness: Switch at {:?} has default, skipping",
-                stmt_idx
-            );
             return;
         }
 
-        eprintln!(
-            "DEBUG check_switch_exhaustiveness: Checking switch at {:?}, expression={:?}",
-            stmt_idx, expression
-        );
-
         // Get the discriminant type
         let discriminant_type = self.get_type_of_node(expression);
-
-        eprintln!(
-            "DEBUG check_switch_exhaustiveness: Discriminant type={:?}",
-            discriminant_type
-        );
 
         // Create a FlowAnalyzer to check exhaustiveness
         let analyzer = crate::checker::control_flow::FlowAnalyzer::new(
@@ -2559,24 +2545,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             &narrowing,
         );
 
-        eprintln!(
-            "DEBUG check_switch_exhaustiveness: No-match type={:?}",
-            no_match_type
-        );
-
         // If the no-match type is not `never`, the switch is not exhaustive
         if no_match_type != crate::solver::TypeId::NEVER {
-            eprintln!(
-                "DEBUG: Switch statement at {:?} is NOT exhaustive. Discriminant type: {:?}, no-match type: {:?}",
-                stmt_idx, discriminant_type, no_match_type
-            );
             // TODO: Emit diagnostic (TS2366 or custom error)
-            // For now, just log to verify the logic works
-        } else {
-            eprintln!(
-                "DEBUG: Switch statement at {:?} IS exhaustive (no-match type is never)",
-                stmt_idx
-            );
         }
     }
 }

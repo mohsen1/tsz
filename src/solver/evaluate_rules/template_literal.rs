@@ -49,10 +49,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if total_combinations > TEMPLATE_LITERAL_EXPANSION_LIMIT {
                     // Would exceed limit - widen to string (Rule #22: Template String Expansion Limits)
                     // TypeScript aborts template literal expansion when cardinality > 100k
-                    eprintln!(
-                        "Template literal expansion aborted: would exceed limit of {} (computed {} combinations)",
-                        TEMPLATE_LITERAL_EXPANSION_LIMIT, total_combinations
-                    );
                     return TypeId::STRING;
                 }
             }
@@ -83,10 +79,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let new_size = combinations.len().saturating_mul(string_values.len());
                     if new_size > TEMPLATE_LITERAL_EXPANSION_LIMIT {
                         // Would exceed limit - widen to string (Rule #22: Template String Expansion Limits)
-                        eprintln!(
-                            "Template literal expansion aborted: would exceed limit of {} (computed {} combinations)",
-                            TEMPLATE_LITERAL_EXPANSION_LIMIT, new_size
-                        );
                         return TypeId::STRING;
                     }
 
@@ -132,10 +124,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn count_literal_members_impl(&self, type_id: TypeId, depth: u32) -> usize {
         // Prevent infinite recursion in deeply nested union types
         if depth > Self::MAX_LITERAL_COUNT_DEPTH {
-            eprintln!(
-                "Warning: count_literal_members depth limit exceeded ({})",
-                Self::MAX_LITERAL_COUNT_DEPTH
-            );
             return 0; // Abort - too deep
         }
 
@@ -175,10 +163,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn extract_literal_strings_impl(&self, type_id: TypeId, depth: u32) -> Vec<String> {
         // Prevent infinite recursion in deeply nested union types
         if depth > Self::MAX_LITERAL_COUNT_DEPTH {
-            eprintln!(
-                "Warning: extract_literal_strings depth limit exceeded ({})",
-                Self::MAX_LITERAL_COUNT_DEPTH
-            );
             return Vec::new(); // Abort - too deep
         }
 

@@ -1810,6 +1810,17 @@ impl<'a> InferenceContext<'a> {
         let source_key = self.interner.lookup(source);
         let target_key = self.interner.lookup(target);
 
+        // OPTIMIZATION: Enum member disjointness fast-path
+        // Two different enum members are guaranteed disjoint (neither is subtype of the other).
+        // Since we already checked source == target at the top, reaching here means source != target.
+        // This avoids O(n²) structural recursion in enumLiteralsSubtypeReduction.ts
+        if let (Some(TypeKey::Enum(..)), Some(TypeKey::Enum(..))) =
+            (source_key.as_ref(), target_key.as_ref())
+        {
+            // Different enum members (or different enums) are always disjoint
+            return false;
+        }
+
         // Check if source is literal of target intrinsic
         if let Some(TypeKey::Literal(lit)) = source_key.as_ref() {
             match (lit, target) {
