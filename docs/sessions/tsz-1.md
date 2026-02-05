@@ -25,7 +25,69 @@
 
 **Strategic Shift**: After consulting with Gemini, shifting focus to implementing critical missing TypeScript diagnostic codes that would most improve conformance.
 
-## Task Breakdown (Priority Order per Gemini Redefinition - 2025-02-05)
+## Task Breakdown (Priority Order per Gemini Redefinition - 2025-02-05 POST-TS2416)
+
+### Priority 1: Index Signature Structural Compatibility (The Judge)
+**Status**: 📝 NEXT TASK
+**Why**: Core structural operation - currently a "blind spot" in the Judge's checks
+
+**Description**:
+Ensure `is_subtype_of` correctly handles index signatures in structural subtyping.
+
+**Implementation Goals**:
+1. Property-to-Index Signature compatibility
+   - If target has string indexer, check all source properties against it
+   - If target has number indexer, check all source numeric properties against it
+2. Index-to-Index Signature compatibility
+   - String indexer must be broader than Number indexer
+3. Integration with PropertyCollector
+   - Collect index signatures from across intersections
+   - Handle inherited index signatures
+
+**Files**: `src/solver/subtype.rs`, `src/solver/objects.rs`
+
+**Two-Question Plan**:
+1. Ask Gemini Flash: "How should `is_subtype_of` handle string/number indexers and explicit properties to match `tsc`?"
+2. Implement based on guidance
+3. Ask Gemini Pro to review implementation
+
+---
+
+### Priority 2: Refined Object Overlap Detection (TS2367)
+**Status**: 📝 Planned
+**Why**: PropertyCollector is now complete (Task #16), enabling proper object overlap detection
+
+**Description**:
+Complete the missing object property overlap detection from Task #17's "Known Gaps".
+
+**Implementation Goals**:
+- Use PropertyCollector to compare properties
+- Detect disjoint property types (e.g., `{a: string}` vs `{a: number}`)
+- Determine if two object types can ever overlap
+
+**Files**: `src/solver/subtype.rs` (function `do_object_properties_overlap`)
+
+---
+
+### Priority 3: Weak Type Detection (TS2559) (The Lawyer)
+**Status**: 📝 Planned
+**Why**: High-ROI diagnostic that relies on PropertyCollector
+
+**Description**:
+Implement weak type detection - objects where all properties are optional.
+
+**TypeScript Rule**:
+You cannot assign a type to a weak type if they share no common properties.
+
+**Implementation Goals**:
+- Implement `is_weak_type` check
+- Common property check for weak type assignment
+
+**Files**: `src/solver/compat.rs`
+
+---
+
+## Legacy Task Breakdown (2025-02-05 PRE-TS2416)
 
 ### Priority 0: Task #16.0 - Verification of Task #16 ✅ COMPLETE
 **Status**: ✅ Completed (2025-02-05)
