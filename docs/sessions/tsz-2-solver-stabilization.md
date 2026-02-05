@@ -8,37 +8,33 @@
 
 Original tsz-2 session (Application expansion) was completed successfully. This session is now focused on solver test stabilization.
 
-**Recent Progress** (commit ea1029cf3):
+**Recent Progress** (commit 28888e435):
 - ✅ Fixed function contravariance in strict mode (AnyPropagationMode::TopLevelOnly)
 - ✅ Fixed interface lowering (Object vs ObjectWithIndex)
-- Reduced test failures from 37 → 31
+- ✅ **Fixed generic inference in Round 2** - Preserved placeholder connections for unresolved type parameters
+- Reduced test failures from 37 → 31 → 22
 
-## Current Focus (2026-02-05 Redefined by Gemini Pro)
+## Current Status (22 Failing Tests Remaining)
 
-### Primary Focus: Generic Inference (16 tests)
+### Fixed: Generic Inference with Callback Functions (commit 28888e435)
 
-**Attack Strategy**: Stop "trying fixes" and start "tracing execution"
+**Root Cause**: In Round 2 of generic call resolution, `get_current_substitution()` was used to re-instantiate
+target types for contextual arguments. This substitution maps unresolved type parameters to `UNKNOWN`,
+breaking the connection to placeholder types.
 
-**Next Steps**:
-1. Wait for disk cleanup to finish (cargo clean running in background)
-2. Trace the simplest failing test: `test_infer_generic_array_map`
-   ```bash
-   TSZ_LOG="wasm::solver::infer=trace,wasm::solver::instantiate=debug" \
-   TSZ_LOG_FORMAT=tree \
-   cargo nextest run test_infer_generic_array_map --nocapture 2>&1 | head -n 300
-   ```
-3. Ask Gemini Pro with trace data:
-   ```bash
-   ./scripts/ask-gemini.mjs --pro --include=src/solver/infer.rs \
-   "I am debugging 'test_infer_generic_array_map'.
-   The test fails because it returns TypeId(115) instead of the expected type.
-   Here is the trace output: [PASTE TRACE]
-   1) Why is the inference failing to narrow down to the specific type?
-   2) Is the issue in candidate collection or final type resolution?
-   3) What specific function needs to be adjusted?"
-   ```
-4. Implement the fix based on Gemini's guidance
-5. Verify if this fixes the other 15 generic tests
+**Example**: For `map<T, U>(array: T[], callback: (x: T) => U): U[]`:
+- Callback parameter type: `(x: placeholder_T) => placeholder_U`
+- When callback arg `(x: number) => string` is constrained:
+  - Round 2 should collect: `string <: placeholder_U`
+  - But `get_current_substitution()` returned `UNKNOWN` for U
+  - Constraint was never added, U resolved to `UNKNOWN` instead of `string`
+
+**Fix**: Use the original `target_type` (with placeholders) for constraint collection in Round 2,
+instead of re-instantiating with resolved types. This preserves the placeholder connection
+for unresolved type parameters.
+
+**Files Modified**:
+- `src/solver/operations.rs` (Round 2 contextual argument processing, lines 806-836)
 
 ### Secondary Focus: Intersection Normalization (5 tests)
 **Fallback if Generic Inference takes > 1 hour**
@@ -57,30 +53,47 @@ Problem: 'null & object' is not reducing to 'never'.
 
 ---
 
-## Original Status (31 Failing Solver Tests)
+## Remaining Failing Tests (22 tests)
 
-### Priority 1: Generic Inference Deep Dive (16 tests) - 🔴 CRITICAL
-**Tests**:
-- `test_infer_generic_array_map`
-- `test_infer_generic_callable_param_from_function`
-- `test_infer_generic_callable_param_from_callable`
-- And 13 others...
+### Still Failing: Generic Inference Tests (2 tests)
+- `test_constraint_satisfaction_multiple_candidates`
+- `test_resolve_multiple_lower_bounds_union`
 
-**Attempted Fix**: Added `strengthen_constraints()` in `resolve_generic_call_inner` - didn't work
+### Still Failing: Conditional Types (1 test)
+- `test_conditional_infer_optional_property_non_distributive_union_input`
 
-**Root Cause Investigation**: Need to trace with tsz-tracing to understand why TypeId resolution is wrong
+### Still Failing: Generic Fallback (1 test)
+- `test_generic_parameter_without_constraint_fallback_to_unknown`
 
-**Files**:
-- `src/solver/operations.rs` (resolve_generic_call_inner, lines 843-891)
-- `src/solver/infer.rs` (InferenceContext)
+### Still Failing: Intersection/Union (1 test)
+- `test_intersection_object_same_property_intersect_types`
 
-**Action Plan**:
-1. Pick one simple failing test
-2. Use tracing: `TSZ_LOG="wasm::solver::infer=trace,wasm::solver::operations=debug" cargo test test_infer_generic_array_map`
-3. Identify: Are candidates being found? Is inference failing to unknown? Is instantiate wrong?
-4. Ask Gemini Pro with trace data
+### Still Failing: Property Access (7 tests)
+- `test_property_access_array_at_returns_optional_element`
+- `test_property_access_array_entries_returns_tuple_array`
+- `test_property_access_array_map_signature`
+- `test_property_access_array_push_with_env_resolver`
+- `test_property_access_array_reduce_callable`
+- `test_property_access_readonly_array`
+- `test_property_access_tuple_length`
 
-### Priority 2: Weak Type Detection (2 tests) - 🟡 PRE-EXISTING
+### Still Failing: Function Variance (2 tests)
+- `test_any_in_function_parameters_strict_mode`
+- `test_function_variance_with_return_types`
+
+### Still Failing: Intersection Normalization (2 tests)
+- `test_intersection_null_with_object_is_never`
+- `test_intersection_undefined_with_object_is_never`
+
+### Still Failing: Keyof/Narrowing (2 tests)
+- `test_keyof_union_string_index_and_literal_narrows`
+- `test_narrow_by_typeof_any`
+
+### Still Failing: Object with Index (2 tests)
+- `test_object_with_index_satisfies_named_property_string_index`
+- `test_object_with_index_satisfies_numeric_property_number_index`
+
+### Still Failing: Weak Type Detection (2 tests) - 🟡 PRE-EXISTING
 **Tests**:
 - `test_weak_union_rejects_no_common_properties`
 - `test_weak_union_with_non_weak_member_not_weak`
