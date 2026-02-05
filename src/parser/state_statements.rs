@@ -804,6 +804,16 @@ impl ParserState {
             }
         }
 
+        // Check for empty declaration list: var ;
+        // TSC emits TS1123 "Variable declaration list cannot be empty"
+        if declarations.is_empty() {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Variable declaration list cannot be empty.",
+                diagnostic_codes::VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY,
+            );
+        }
+
         let end_pos = self.token_end();
         self.arena.add_variable_with_flags(
             syntax_kind_ext::VARIABLE_DECLARATION_LIST,

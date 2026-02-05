@@ -2073,6 +2073,27 @@ impl ParserState {
         };
         self.next_token(); // consume var/let/const
 
+        // Check for empty declaration list: for (var in X) or for (let of X)
+        // TSC emits TS1123 "Variable declaration list cannot be empty"
+        if self.is_token(SyntaxKind::InKeyword) || self.is_token(SyntaxKind::OfKeyword) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Variable declaration list cannot be empty.",
+                diagnostic_codes::VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY,
+            );
+            // Return empty declaration list for error recovery
+            return self.arena.add_variable_with_flags(
+                syntax_kind_ext::VARIABLE_DECLARATION_LIST,
+                start_pos,
+                self.token_end(),
+                VariableData {
+                    modifiers: None,
+                    declarations: self.make_node_list(vec![]),
+                },
+                flags,
+            );
+        }
+
         let mut declarations = Vec::new();
 
         loop {
@@ -2148,6 +2169,28 @@ impl ParserState {
         start_pos: u32,
         initializer: NodeIndex,
     ) -> NodeIndex {
+        // Check for multiple variable declarations in for-in: for (var a, b in X)
+        // TSC emits TS1091 "Only a single variable declaration is allowed in a 'for...in' statement"
+        if let Some(node) = self.arena.get(initializer) {
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                if let Some(data) = self.arena.get_variable(node) {
+                    if data.declarations.nodes.len() > 1 {
+                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        // Report error at the second declaration
+                        if let Some(&second_decl) = data.declarations.nodes.get(1) {
+                            if let Some(second_node) = self.arena.get(second_decl) {
+                                self.parse_error_at(
+                                    second_node.pos,
+                                    second_node.end - second_node.pos,
+                                    "Only a single variable declaration is allowed in a 'for...in' statement.",
+                                    diagnostic_codes::ONLY_SINGLE_VARIABLE_IN_FOR_IN,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
         self.parse_expected(SyntaxKind::InKeyword);
         let expression = self.parse_expression();
         self.parse_expected(SyntaxKind::CloseParenToken);
@@ -2175,6 +2218,28 @@ impl ParserState {
         initializer: NodeIndex,
         await_modifier: bool,
     ) -> NodeIndex {
+        // Check for multiple variable declarations in for-of: for (var a, b of X)
+        // TSC emits TS1188 "Only a single variable declaration is allowed in a 'for...of' statement"
+        if let Some(node) = self.arena.get(initializer) {
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                if let Some(data) = self.arena.get_variable(node) {
+                    if data.declarations.nodes.len() > 1 {
+                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        // Report error at the second declaration
+                        if let Some(&second_decl) = data.declarations.nodes.get(1) {
+                            if let Some(second_node) = self.arena.get(second_decl) {
+                                self.parse_error_at(
+                                    second_node.pos,
+                                    second_node.end - second_node.pos,
+                                    "Only a single variable declaration is allowed in a 'for...of' statement.",
+                                    diagnostic_codes::ONLY_SINGLE_VARIABLE_IN_FOR_OF,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
         self.parse_expected(SyntaxKind::OfKeyword);
         let expression = self.parse_assignment_expression();
         self.parse_expected(SyntaxKind::CloseParenToken);
