@@ -1,40 +1,69 @@
 # Session TSZ-11: Control Flow Analysis Integration
 
 **Started**: 2026-02-05
-**Status**: 🔄 ACTIVE (Critical Discovery - Flow Analysis IS Wired Up!)
+**Status**: ✅ COMPLETED (Instanceof Narrowing Fixed!)
 
-## Goal
+## Outcome
 
-Integrate FlowAnalyzer into the main Checker loop.
+**Status**: SUCCESS - Instanceof narrowing now works!
 
-## CRITICAL DISCOVERY
+### Root Cause Found and Fixed
 
-Flow narrowing IS ALREADY wired up in the main type checking path!
+**Bug**: The `is_narrowable_type` check in `apply_flow_narrowing` (flow_analysis.rs:1346) was blocking class types from being narrowed.
 
-The Call Chain:
-1. dispatch.rs:40 → get_type_of_identifier
-2. type_computation_complex.rs:1773 → check_flow_usage
-3. flow_analysis.rs:1549 → apply_flow_narrowing
-4. flow_analysis.rs:1360 → analyzer.get_flow_type
+The check only returned true for:
+- unknown type
+- Union types or type parameters  
+- Types containing null/undefined
 
-The infrastructure exists and is connected!
+Class types like `Animal` returned false, causing narrowing to be skipped prematurely.
 
-## So Why Doesn't Instanceof Narrowing Work?
+### The Fix
 
-The bug must be in:
-1. FlowNode lookup fails
-2. FlowAnalyzer caching issue
-3. Narrowing logic bug
-4. Type resolution issue
+**Commit**: `eb24674a4` - fix(narrowing): remove is_narrowable_type check to enable instanceof narrowing
 
-## Next Steps
+Removed the overly restrictive check to allow all types to be narrowed.
 
-Task 1: Debug with tracing
-Task 2: Test with minimal case
-Task 3: Fix the bug once identified
+### Test Results ✅
+
+All narrowing types now work correctly:
+
+1. **instanceof narrowing**: `if (animal instanceof Dog) { animal.bark(); }` ✅
+2. **typeof narrowing**: `if (typeof x === "string") { x.toUpperCase(); }` ✅  
+3. **Discriminant narrowing**: `if (shape.kind === "circle") { shape.radius; }` ✅
+4. **Nullish narrowing**: `if (value !== null) { value.toUpperCase(); }` ✅
+
+All tests match TypeScript compiler behavior.
+
+### What Was Discovered
+
+1. **Flow analysis IS wired up** - The infrastructure was complete all along
+2. **The bug was in the narrowing logic** - An overly restrictive check was blocking valid narrowing
+3. **Simple fix** - Removing the check enabled all narrowing types to work
+
+### Technical Details
+
+**File**: `src/checker/flow_analysis.rs:1346`
+**Function**: `apply_flow_narrowing()`
+**Change**: Commented out the `is_narrowable_type` check
+
+### Remaining Work
+
+**TODO**: Re-enable check with proper logic that allows instanceof-narrowable types while maintaining performance for types that don't benefit from flow analysis.
+
+The check was likely intended as an optimization to skip expensive flow analysis for types that can't be narrowed. A better implementation would:
+- Allow class types (for instanceof narrowing)
+- Allow object types (for discriminant narrowing)  
+- Still skip primitives when not in a narrowing context
+
+## Achievement
+
+**TSZ-11 Goal**: Integrate FlowAnalyzer into main type checking - ✅ COMPLETE
+
+The flow analysis was already integrated, but a bug was preventing it from working. That bug is now fixed, and instanceof/typeof/discriminant narrowing all work correctly.
 
 ## References
 
-- apply_flow_narrowing: src/checker/flow_analysis.rs:1320
-- get_flow_type: src/checker/control_flow.rs:210
-- get_type_of_identifier: src/checker/type_computation_complex.rs:1607
+- Previous Session: docs/sessions/history/tsz-10.md (Narrowing Infrastructure)
+- Fix Commit: eb24674a4
+- Flow Analysis Entry: src/checker/flow_analysis.rs:1320
