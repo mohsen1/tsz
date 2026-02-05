@@ -80,12 +80,52 @@ Implemented full `workspace/willRenameFiles` support:
 
 **Value**: Renaming files or directories now correctly updates all imports across the project.
 
+## Current Work: Auto-Import Completions
+
+**Goal**: Implement Auto-Import Completions - the most requested LSP feature. When a user types an unresolved name, suggest completions that automatically add the import statement.
+
+**Challenge**: Requires integrating multiple components (SymbolIndex, ProjectOperations, CodeActions, Completions) and managing complex LSP protocol details.
+
+**Gemini's Implementation Plan**:
+
+1. Update `CompletionItem` struct in `completions.rs`:
+   - Add `additional_text_edits: Option<Vec<TextEdit>>` field
+   - Add `with_additional_edits()` builder method
+
+2. Refactor `CodeActionProvider::build_import_edit` to be public utility:
+   - Extract import generation logic from `code_actions.rs`
+   - Make it accessible from `Project`
+
+3. Update `Project::collect_import_candidates_for_name`:
+   - Use `SymbolIndex` instead of iterating all files (O(Files) → O(Files_with_symbol))
+
+4. Update `Project::get_completions`:
+   - Generate `additionalTextEdits` for auto-import candidates
+   - Attach edits to `CompletionItem` using new builder method
+
+**Edge Cases**:
+- Don't suggest if already imported (check for aliases)
+- Merge into existing import blocks if module already imported
+- Use relative paths (`calculate_new_relative_path`)
+- Lower sort priority for auto-imports (avoid jumping to top)
+
+**Status**: In Progress - Step 1/4 complete
+
+**Progress**:
+- ✅ Step 1: Updated `CompletionItem` struct
+  - Added `additional_text_edits: Option<Vec<TextEdit>>` field
+  - Added `with_additional_edits()` builder method
+  - Added custom deserializer (completion items are server→client only)
+- ⏳ Step 2: Refactor `CodeActionProvider::build_import_edit` to be public
+- ⏳ Step 3: Update `collect_import_candidates_for_name` to use `SymbolIndex`
+- ⏳ Step 4: Update `get_completions` to generate and attach edits
+
 ## Next Steps
 
 Per Gemini consultation, recommended path is:
 1. ✅ Write tests for File Rename (COMPLETE)
 2. ✅ Add dynamic import support (COMPLETE)
-3. **Implement Auto-Import Completions** (NEXT - the most requested LSP feature)
+3. 🔄 Implement Auto-Import Completions (IN PROGRESS)
 
 **Current Focus**: Auto-Import Completions. This involves:
 - Integrating SymbolIndex into completion flow

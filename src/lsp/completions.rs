@@ -142,6 +142,30 @@ pub struct CompletionItem {
     /// default replacement behaviour.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replacement_span: Option<(u32, u32)>,
+    /// Additional text edits to apply when accepting this completion (LSP:
+    /// `additionalTextEdits`). Used for auto-import to insert the import statement.
+    #[serde(
+        rename = "additionalTextEdits",
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_additional_edits::deserialize"
+    )]
+    pub additional_text_edits: Option<Vec<crate::lsp::rename::TextEdit>>,
+}
+
+/// Custom deserializer that always returns None for additional_text_edits.
+/// Since CompletionItem is only sent from server to client, we never
+/// deserialize this field from the client.
+mod deserialize_additional_edits {
+    use crate::lsp::rename::TextEdit;
+    use serde::Deserializer;
+
+    pub fn deserialize<'de, D>(_deserializer: D) -> Result<Option<Vec<TextEdit>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Skip deserialization and always return None
+        Ok(None)
+    }
 }
 
 /// Helper for serde `skip_serializing_if`.
@@ -165,6 +189,7 @@ impl CompletionItem {
             source_display: None,
             kind_modifiers: None,
             replacement_span: None,
+            additional_text_edits: None,
         }
     }
 
@@ -207,6 +232,13 @@ impl CompletionItem {
     /// Set the module source path for auto-import completions.
     pub fn with_source(mut self, source: String) -> Self {
         self.source = Some(source);
+        self
+    }
+
+    /// Set additional text edits to apply when accepting this completion.
+    /// Used for auto-import to insert the import statement.
+    pub fn with_additional_edits(mut self, edits: Vec<crate::lsp::rename::TextEdit>) -> Self {
+        self.additional_text_edits = Some(edits);
         self
     }
 
