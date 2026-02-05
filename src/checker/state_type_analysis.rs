@@ -116,47 +116,23 @@ impl<'a> CheckerState<'a> {
 
         // First, try to resolve the left side as a symbol and check its exports.
         // This handles merged class+namespace, function+namespace, and enum+namespace symbols.
-        let mut member_sym_id_from_symbol = None;
-        if let Some(left_node) = self.ctx.arena.get(qn.left)
+        let member_sym_id_from_symbol = if let Some(left_node) = self.ctx.arena.get(qn.left)
             && left_node.kind == SyntaxKind::Identifier as u16
         {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_identifier_symbol_in_type_position(qn.left)
             {
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
-                    // Try direct exports first
-                    if let Some(ref exports) = symbol.exports
-                        && let Some(member_id) = exports.get(&right_name)
-                    {
-                        member_sym_id_from_symbol = Some(member_id);
-                    }
-                    // For classes, also check members (for static members in type queries)
-                    // This handles `typeof C.staticMember` where C is a class
-                    else if member_sym_id_from_symbol.is_none()
-                        && symbol.flags & symbol_flags::CLASS != 0
-                    {
-                        if let Some(ref members) = symbol.members {
-                            member_sym_id_from_symbol = members.get(&right_name);
-                        }
-                    }
-                    // If not found in direct exports, check for re-exports
-                    else if let Some(ref _exports) = symbol.exports {
-                        // The member might be re-exported from another module
-                        // Check if this symbol has an import_module (it's an imported namespace)
-                        if let Some(ref module_specifier) = symbol.import_module {
-                            // Try to resolve the member through the re-export chain
-                            if let Some(reexported_sym_id) = self.resolve_reexported_member(
-                                module_specifier,
-                                &right_name,
-                                &lib_binders,
-                            ) {
-                                member_sym_id_from_symbol = Some(reexported_sym_id);
-                            }
-                        }
-                    }
+                    self.resolve_symbol_export(symbol, &right_name, &lib_binders)
+                } else {
+                    None
                 }
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         // If found via symbol resolution, use it
         if let Some(member_sym_id) = member_sym_id_from_symbol {
@@ -189,33 +165,10 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .get_symbol_with_libs(fallback_sym, &lib_binders)
         {
-            // Check exports table for direct export
-            let mut member_sym_id = None;
-            if let Some(ref exports) = symbol.exports {
-                member_sym_id = exports.get(&right_name);
-            }
-
-            // For classes, also check members (for static members in type queries)
-            // This handles `typeof C.staticMember` where C is a class
-            if member_sym_id.is_none() && symbol.flags & symbol_flags::CLASS != 0 {
-                if let Some(ref members) = symbol.members {
-                    member_sym_id = members.get(&right_name);
-                }
-            }
-
-            // If not found in direct exports, check for re-exports
-            if member_sym_id.is_none() {
-                // The symbol might be an imported namespace - check if it has an import_module
-                if let Some(ref module_specifier) = symbol.import_module {
-                    if let Some(reexported_sym_id) =
-                        self.resolve_reexported_member(module_specifier, &right_name, &lib_binders)
-                    {
-                        member_sym_id = Some(reexported_sym_id);
-                    }
-                }
-            }
-
-            if let Some(member_sym_id) = member_sym_id {
+            // Use the helper to resolve the member from exports, members, or re-exports
+            if let Some(member_sym_id) =
+                self.resolve_symbol_export(symbol, &right_name, &lib_binders)
+            {
                 // Check value-only, but skip for namespaces since they can be used
                 // to navigate to types (e.g., Outer.Inner.Type)
                 if let Some(member_symbol) = self
@@ -251,6 +204,50 @@ impl<'a> CheckerState<'a> {
         // We don't emit TS2304 here because the left side might have already emitted an error
         // Returning ERROR prevents cascading errors while still indicating failure
         TypeId::ERROR
+    }
+
+    /// Resolve a member from a symbol's exports, members, or re-exports.
+    ///
+    /// This helper implements the common pattern of looking up a member in:
+    /// 1. Direct exports
+    /// 2. Members (for classes with static members)
+    /// 3. Re-exports (for imported namespaces)
+    ///
+    /// Returns `Some(member_sym_id)` if found, `None` otherwise.
+    fn resolve_symbol_export(
+        &mut self,
+        symbol: &crate::binder::Symbol,
+        member_name: &str,
+        lib_binders: &[std::sync::Arc<crate::binder::BinderState>],
+    ) -> Option<crate::binder::SymbolId> {
+        // Try direct exports first
+        if let Some(ref exports) = symbol.exports {
+            if let Some(member_id) = exports.get(member_name) {
+                return Some(member_id);
+            }
+        }
+
+        // For classes, also check members (for static members in type queries)
+        // This handles `typeof C.staticMember` where C is a class
+        if symbol.flags & symbol_flags::CLASS != 0 {
+            if let Some(ref members) = symbol.members {
+                if let Some(member_id) = members.get(member_name) {
+                    return Some(member_id);
+                }
+            }
+        }
+
+        // If not found in direct exports, check for re-exports
+        // The member might be re-exported from another module
+        if let Some(ref module_specifier) = symbol.import_module {
+            if let Some(reexported_sym_id) =
+                self.resolve_reexported_member(module_specifier, member_name, lib_binders)
+            {
+                return Some(reexported_sym_id);
+            }
+        }
+
+        None
     }
 
     /// Helper to resolve an identifier as a type reference (for qualified name left sides).
