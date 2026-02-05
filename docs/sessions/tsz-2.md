@@ -120,6 +120,13 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
 - All bugs fixed and committed (commit: 19d781774)
 - Code compiles successfully with all fixes applied
 
+**✅ Task #27 Complete - Dead Code Cleanup (2026-02-05):**
+- Removed 228 lines of dead enum code from state_type_environment.rs
+- Functions removed: get_enum_identity, check_structural_assignability, enum_assignability_override
+- All enumeration logic now in Solver/compat.rs (commit 5b8c56551)
+- Gemini Pro review: APPROVED - correct and excellent refactoring
+- Committed (commit: 3f356f167)
+
 **✅ Completed Refactoring (2026-02-05):**
 
 **iterators.rs Refactoring (COMPLETE):**
