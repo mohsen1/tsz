@@ -290,10 +290,23 @@ The `enum_assignability_override` logic is correct, but there's an integration g
 2. Ensure type references return `TypeKey::Enum` wrapper, not primitive values
 3. If type references don't use the nominal wrapper, fix them to do so
 
-**Verification Needed**:
-- What does `E.B` resolve to when used as a type annotation?
-- Does it return `TypeKey::Enum(def_id_of_E.B, Literal(1))` or just `Literal(1)`?
-- If the latter, that's why the override never matches (pattern match on `TypeKey::Enum` fails)
+**Investigation Completed**:
+Found `get_type_from_type_reference` in `state_type_resolution.rs`. This function:
+- Uses `TypeLowering` to lower type references (line 86)
+- Calls `lower_type()` which may not preserve `TypeKey::Enum` wrapper
+- Returns `TypeId::ERROR` for unresolved symbols (line 55)
+
+**Critical Finding**:
+Type references (`E.B` in type annotations) use a DIFFERENT code path than property access (`E.A` in expressions):
+- Property access: Uses `check_property_access` → resolves symbol → calls `compute_type_of_symbol` → returns `TypeKey::Enum`
+- Type reference: Uses `get_type_from_type_reference` → uses `TypeLowering` → may unwrap to primitive
+
+This explains why enum_assignability_override is never triggered for type annotations!
+
+**Resolution**:
+Need to ensure `TypeLowering.lower_type()` preserves `TypeKey::Enum` wrappers for enum member type references, OR modify the type resolution path to use `compute_type_of_symbol` for enum members.
+
+**Status**: Investigation complete. Root cause identified. Fix requires understanding `TypeLowering` behavior.
 
 ### Commit: `f1542996b` - feat(tsz-4): implement enum member nominal typing (WIP)
 
