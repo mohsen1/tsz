@@ -3258,6 +3258,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         None
     }
+
+    /// Check if two types are structurally identical using De Bruijn indices for cycles.
+    ///
+    /// This is the O(1) alternative to bidirectional subtyping for identity checks.
+    /// It transforms cyclic graphs into trees to solve the Graph Isomorphism problem.
+    pub fn are_types_structurally_identical(&self, a: TypeId, b: TypeId) -> bool {
+        if a == b {
+            return true;
+        }
+        let mut canonicalizer =
+            crate::solver::canonicalize::Canonicalizer::new(self.interner, self.resolver);
+        let canon_a = canonicalizer.canonicalize(a);
+        let canon_b = canonicalizer.canonicalize(b);
+
+        // After canonicalization, structural identity reduces to TypeId equality
+        canon_a == canon_b
+    }
 }
 
 /// Convenience function for one-off subtype checks (without resolver)
@@ -3292,6 +3309,27 @@ pub fn is_subtype_of_with_resolver<R: TypeResolver>(
 ) -> bool {
     let mut checker = SubtypeChecker::with_resolver(interner, resolver);
     checker.is_subtype_of(source, target)
+}
+
+/// Check if two types are structurally identical using De Bruijn indices for cycles.
+///
+/// This is the O(1) alternative to bidirectional subtyping for identity checks.
+/// It transforms cyclic graphs into trees to solve the Graph Isomorphism problem.
+pub fn are_types_structurally_identical<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    a: TypeId,
+    b: TypeId,
+) -> bool {
+    if a == b {
+        return true;
+    }
+    let mut canonicalizer = crate::solver::canonicalize::Canonicalizer::new(interner, resolver);
+    let canon_a = canonicalizer.canonicalize(a);
+    let canon_b = canonicalizer.canonicalize(b);
+
+    // After canonicalization, structural identity reduces to TypeId equality
+    canon_a == canon_b
 }
 
 /// Convenience function for one-off subtype checks routed through a QueryDatabase.
