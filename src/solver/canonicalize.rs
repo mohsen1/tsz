@@ -1,0 +1,302 @@
+//! Canonicalization for structural type identity (Task #32: Graph Isomorphism)
+//!
+//! This module implements type canonicalization to achieve O(1) structural equality.
+//! It transforms cyclic type definitions into trees using De Bruijn indices:
+//!
+//! - **Recursive(n)**: Self-reference N levels up the nesting path
+//! - **BoundParameter(n)**: Type parameter using positional index for alpha-equivalence
+//!
+//! ## Key Concepts
+//!
+//! ### Structural vs Nominal Types
+//!
+//! - **TypeAlias**: Structural - `type A = { x: A }` and `type B = { x: B }`
+//!   should canonicalize to the same type with `Recursive(0)`
+//! - **Interface/Class/Enum**: Nominal - Must remain as `Lazy(DefId)` for nominal identity
+//!
+//! ### De Bruijn Indices
+//!
+//! - `Recursive(0)`: Immediate self-reference
+//! - `Recursive(1)`: One level up (parent in nesting chain)
+//! - `BoundParameter(0)`: Innermost type parameter
+//! - `BoundParameter(n)`: (n+1)th-most-recently-bound type parameter
+//!
+//! ## Usage
+//!
+//! Canonicalization is for **comparison and hashing only**, not for display.
+//! Use `canonicalize()` to check if two types are structurally identical:
+//!
+//! ```rust
+//! let canon_a = canonicalizer.canonicalize(type_a);
+//! let canon_b = canonicalizer.canonicalize(type_b);
+//! assert_eq!(canon_a, canon_b); // Same structure = same TypeId
+//! ```
+
+use crate::interner::Atom;
+use crate::solver::TypeDatabase;
+use crate::solver::def::DefId;
+use crate::solver::def::DefKind;
+use crate::solver::subtype::TypeResolver;
+use crate::solver::types::{TupleElement, TypeId, TypeKey};
+use rustc_hash::FxHashMap;
+
+/// Canonicalizer for structural type identity.
+///
+/// Transforms type aliases from cyclic graphs to trees using De Bruijn indices.
+/// Only processes `DefKind::TypeAlias` (structural types), preserving nominal
+/// types (Interface/Class/Enum) as `Lazy(DefId)`.
+pub struct Canonicalizer<'a, R: TypeResolver> {
+    /// Type interner for creating new TypeIds
+    interner: &'a dyn TypeDatabase,
+    /// Type resolver for looking up definitions
+    resolver: &'a R,
+    /// Stack of DefIds currently being expanded (for Recursive(n))
+    def_stack: Vec<DefId>,
+    /// Stack of type parameter scopes (for BoundParameter(n))
+    /// Each scope is a list of parameter names in order
+    param_stack: Vec<Vec<Atom>>,
+    /// Cache to avoid re-canonicalizing the same type
+    cache: FxHashMap<TypeId, TypeId>,
+}
+
+impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
+    /// Create a new Canonicalizer.
+    pub fn new(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
+        Canonicalizer {
+            interner,
+            resolver,
+            def_stack: Vec::new(),
+            param_stack: Vec::new(),
+            cache: FxHashMap::default(),
+        }
+    }
+
+    /// Canonicalize a type to its structural form.
+    ///
+    /// Returns a TypeId that represents the canonical structural form.
+    /// Two types with the same structure will return the same TypeId.
+    pub fn canonicalize(&mut self, type_id: TypeId) -> TypeId {
+        // 1. Check cache
+        if let Some(&cached) = self.cache.get(&type_id) {
+            return cached;
+        }
+
+        // 2. Look up TypeKey
+        let key = match self.interner.lookup(type_id) {
+            Some(k) => k,
+            None => return type_id, // Error/None - preserve as-is
+        };
+
+        let result = match key {
+            // Handle Type Alias Expansion (structural only)
+            TypeKey::Lazy(def_id) => {
+                match self.resolver.get_def_kind(def_id) {
+                    Some(DefKind::TypeAlias) => {
+                        // Structural type: canonicalize recursively
+                        self.canonicalize_type_alias(def_id)
+                    }
+                    _ => {
+                        // Nominal type (Interface/Class/Enum): preserve identity
+                        // But canonicalize generic arguments if it's an Application
+                        // For now, just return the Lazy as-is (nominal types keep their identity)
+                        type_id
+                    }
+                }
+            }
+
+            // Handle Type Parameters -> De Bruijn indices
+            TypeKey::TypeParameter(info) => {
+                if let Some(index) = self.find_param_index(info.name) {
+                    self.interner.intern(TypeKey::BoundParameter(index))
+                } else {
+                    // Free variable (shouldn't happen in valid code)
+                    type_id
+                }
+            }
+
+            // Handle Recursive references (pass through - already canonical)
+            TypeKey::Recursive(_) => type_id,
+
+            // Handle BoundParameter references (pass through - already canonical)
+            TypeKey::BoundParameter(_) => type_id,
+
+            // Recurse into composite types
+            TypeKey::Array(elem) => {
+                let c_elem = self.canonicalize(elem);
+                self.interner.array(c_elem)
+            }
+
+            TypeKey::Tuple(list_id) => {
+                let elements = self.interner.tuple_list(list_id);
+                let c_elements: Vec<TupleElement> = elements
+                    .iter()
+                    .map(|e| TupleElement {
+                        type_id: self.canonicalize(e.type_id),
+                        name: e.name,
+                        optional: e.optional,
+                        rest: e.rest,
+                    })
+                    .collect();
+                self.interner.tuple(c_elements)
+            }
+
+            TypeKey::Union(members_id) => {
+                let members = self.interner.type_list(members_id);
+                let c_members: Vec<TypeId> =
+                    members.iter().map(|&m| self.canonicalize(m)).collect();
+                // Sort and deduplicate (union is commutative)
+                // Sort by raw u32 value since TypeId doesn't implement Ord
+                let mut sorted = c_members;
+                sorted.sort_by_key(|t| t.0);
+                sorted.dedup();
+                self.interner.union(sorted)
+            }
+
+            TypeKey::Intersection(members_id) => {
+                let members = self.interner.type_list(members_id);
+                let c_members: Vec<TypeId> =
+                    members.iter().map(|&m| self.canonicalize(m)).collect();
+                // Sort structural members, but preserve callable order (overloads matter)
+                // For now, just canonicalize members without reordering
+                self.interner.intersection(c_members)
+            }
+
+            TypeKey::Function(_shape_id) => {
+                // For now, preserve function type as-is
+                // TODO: Canonicalize parameter and return types if needed
+                type_id
+            }
+
+            TypeKey::Callable(_shape_id) => {
+                // For now, preserve callable type as-is
+                type_id
+            }
+
+            // Primitives and literals are already canonical
+            TypeKey::Intrinsic(_) | TypeKey::Literal(_) | TypeKey::Error => type_id,
+
+            // Object types: canonicalize property types
+            TypeKey::Object(_shape_id) | TypeKey::ObjectWithIndex(_shape_id) => {
+                // For now, preserve object shape
+                // TODO: Canonicalize property types if needed
+                type_id
+            }
+
+            // Other types: preserve as-is (will be handled as needed)
+            _ => type_id,
+        };
+
+        self.cache.insert(type_id, result);
+        result
+    }
+
+    /// Canonicalize a type alias definition.
+    ///
+    /// This handles:
+    /// - Cycle detection via def_stack
+    /// - Generic parameter scope management
+    /// - Recursive self-references -> Recursive(n)
+    fn canonicalize_type_alias(&mut self, def_id: DefId) -> TypeId {
+        // Check for cycles (mutual recursion or self-reference)
+        if let Some(depth) = self.get_recursion_depth(def_id) {
+            return self.interner.intern(TypeKey::Recursive(depth));
+        }
+
+        // Push to stack for cycle detection
+        self.def_stack.push(def_id);
+
+        // Enter new scope if generic
+        let params = self.resolver.get_lazy_type_params(def_id);
+        let pushed_scope = if let Some(ps) = params {
+            let param_names: Vec<Atom> = ps.iter().map(|p| p.name).collect();
+            self.param_stack.push(param_names);
+            true
+        } else {
+            false
+        };
+
+        // Resolve the alias body and canonicalize recursively
+        let body = self
+            .resolver
+            .resolve_lazy(def_id, self.interner)
+            .unwrap_or(TypeId::ERROR);
+        let canonical_body = self.canonicalize(body);
+
+        // Pop scope and def_stack
+        if pushed_scope {
+            self.param_stack.pop();
+        }
+        self.def_stack.pop();
+
+        canonical_body
+    }
+
+    /// Get the recursion depth for a DefId if it's in the def_stack.
+    ///
+    /// Returns Some(depth) if the DefId is being expanded, where:
+    /// - 0 = immediate self-reference (current DefId)
+    /// - n = n levels up the nesting chain
+    fn get_recursion_depth(&self, def_id: DefId) -> Option<u32> {
+        self.def_stack
+            .iter()
+            .rev()
+            .position(|&d| d == def_id)
+            .map(|pos| pos as u32)
+    }
+
+    /// Find the De Bruijn index for a type parameter by name.
+    ///
+    /// Searches from the top of the stack (innermost scope) downward.
+    /// Returns Some(index) if found, where:
+    /// - 0 = innermost parameter
+    /// - n = (n+1)th-most-recently-bound parameter
+    fn find_param_index(&self, name: Atom) -> Option<u32> {
+        let mut flattened_index = 0u32;
+
+        // Search from top of stack (innermost scope) to bottom
+        for scope in self.param_stack.iter().rev() {
+            for (idx, &param_name) in scope.iter().enumerate() {
+                if param_name == name {
+                    // Calculate flattened index from innermost
+                    let innermost_offset = scope.len() - idx - 1;
+                    return Some(flattened_index + innermost_offset as u32);
+                }
+            }
+            flattened_index += scope.len() as u32;
+        }
+
+        None
+    }
+
+    /// Clear the cache (useful for testing or bulk operations).
+    pub fn clear_cache(&mut self) {
+        self.cache.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::solver::intern::TypeInterner;
+    use crate::solver::subtype::TypeEnvironment;
+
+    #[test]
+    fn test_canonicalizer_creation() {
+        let interner = TypeInterner::new();
+        let env = TypeEnvironment::new();
+        let _canonicalizer = Canonicalizer::new(&interner, &env);
+    }
+
+    #[test]
+    fn test_canonicalize_primitive() {
+        let interner = TypeInterner::new();
+        let env = TypeEnvironment::new();
+        let mut canon = Canonicalizer::new(&interner, &env);
+
+        let number = TypeId::NUMBER;
+        let canon_number = canon.canonicalize(number);
+
+        // Primitives should canonicalize to themselves
+        assert_eq!(canon_number, number);
+    }
+}
