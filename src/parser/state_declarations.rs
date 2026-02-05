@@ -2073,6 +2073,27 @@ impl ParserState {
         };
         self.next_token(); // consume var/let/const
 
+        // Check for empty declaration list: for (var in X) or for (let of X)
+        // TSC emits TS1123 "Variable declaration list cannot be empty"
+        if self.is_token(SyntaxKind::InKeyword) || self.is_token(SyntaxKind::OfKeyword) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Variable declaration list cannot be empty.",
+                diagnostic_codes::VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY,
+            );
+            // Return empty declaration list for error recovery
+            return self.arena.add_variable_with_flags(
+                syntax_kind_ext::VARIABLE_DECLARATION_LIST,
+                start_pos,
+                self.token_end(),
+                VariableData {
+                    modifiers: None,
+                    declarations: self.make_node_list(vec![]),
+                },
+                flags,
+            );
+        }
+
         let mut declarations = Vec::new();
 
         loop {
