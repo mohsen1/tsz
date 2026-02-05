@@ -29,17 +29,15 @@ When comparing `A` and `B` where both contain references to themselves, the naiv
 
 ## Implementation Strategy
 
-### Phase A: Fix the Build (Janitor Phase) ⏳ IN PROGRESS
-**Problem**: 9 compilation errors in expression_ops.rs and narrowing_tests.rs (E0283, E0308)
+### Phase A: Fix the Build (Janitor Phase) ✅ COMPLETE
+**Problem**: 9 compilation errors blocking tests
 
-1. **Fix expression_ops.rs**:
-   - Check `compute_best_common_type` - needs explicit type annotations for `TypeResolver` generic `R`
-   - Ensure calls to `check_subtype` match updated signature
-   - Lines with errors: 458, 466, 474, 486, 496
+**Completed** (commit eae3bd048):
+1. ✅ Fixed `compute_best_common_type` calls in expression_ops.rs to use `NoopResolver`
+2. ✅ Fixed `narrow_by_discriminant` calls to pass `&[Atom]` instead of `Atom`
+3. ✅ Removed deprecated `Ref` handling (Phase 4.3 uses `Lazy`)
 
-2. **Fix narrowing_tests.rs**:
-   - Ensure TypeInterner is used correctly as `&dyn TypeDatabase`
-   - Line with error: 369
+**Result**: Build compiles successfully. Runtime shows stack overflow - the exact problem Coinductive Subtyping will solve.
 
 ### Phase B: Coinductive Subtyping (Judge Phase)
 **Goal**: Implement Greatest Fixed Point (GFP) logic for recursive types
