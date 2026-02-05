@@ -69,6 +69,26 @@ Possible issues:
 **Decision:** Per Gemini's previous advice, should focus on structural issues first
 (module/class merging) rather than formatting at 4.9% pass rate.
 
+**Gemini Pro Consultation #2 (2025-02-05):**
+
+**Recommendation**: Immediately pivot from formatting to structural issues.
+
+**Rationale**: At 4.9% pass rate, formatting fixes are high-effort/low-reward. Module/class merging and missing emit implementations are critical functional failures.
+
+**Redefined Priorities:**
+1. **🛑 STOP**: Callback/whitespace formatting (low ROI at 4.9%)
+2. **🚀 HIGH**: Fix Module/Class Merging (critical semantics)
+3. **🚀 HIGH**: Fix Missing Emit Implementations
+4. **MEDIUM**: Fix "use strict" placement and module markers
+
+**Concrete Next Steps:**
+1. Isolate a merging failure test case (e.g., class + namespace with same name)
+2. Ask Gemini about merging logic validation
+3. Implement fix in NamespaceES5Transformer or IRPrinter
+4. Verify pass rate improvement
+
+**Status**: Pivoting to structural issues. Formatting is polish; merging is architecture.
+
 ### 2025-02-05 Session 8: Declaration Emit Discovery (COMPLETE)
 
 **Critical Discovery:**
