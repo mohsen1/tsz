@@ -1767,11 +1767,9 @@ impl TypeInterner {
         }
 
         // Handle Objects (Shallow structural check)
-        // NOTE: Object reduction is DISABLED for safety.
-        // The shallow check is too conservative for complex generic types
-        // and causes issues with inference. Object reduction should be
-        // handled by the SubtypeChecker layer, not the Interner.
-        /*
+        // Uses TypeId equality for properties to avoid recursion.
+        // Supports width subtyping (source can have extra properties).
+        // Skips index signatures (too complex for shallow check).
         let s_key = self.lookup(source);
         let t_key = self.lookup(target);
         match (s_key, t_key) {
@@ -1781,53 +1779,79 @@ impl TypeInterner {
             ) => self.is_object_shape_subtype_shallow(s_id, t_id),
             _ => false,
         }
-        */
-        // For now, objects are never subtypes in shallow check
-        false
     }
 
     /// Shallow object shape subtype check.
-    /// Compares properties using TypeId equality (no recursion).
     ///
-    /// For union/intersection reduction, we use a VERY CONSERVATIVE check:
-    /// Only objects with IDENTICAL property sets (names and TypeIds) can be subtypes.
-    /// This prevents incorrect reductions while handling the common case of
-    /// duplicate object types in unions/intersections.
-    #[allow(dead_code)]
+    /// Compares properties using TypeId equality (no recursion) to enable
+    /// safe object reduction in unions/intersections without infinite recursion.
+    ///
+    /// ## Subtyping Rules:
+    /// - **Width subtyping**: Source can have extra properties
+    /// - **Type Identity**: Common properties must have identical TypeIds (no deep check)
+    /// - **Optional**: Required <: Optional is true, Optional <: Required is false
+    /// - **Readonly**: Mutable <: Readonly is true, Readonly <: Mutable is false
+    /// - **Nominal**: If target has a symbol, source must have the same symbol
+    /// - **Index Signatures**: Skipped (too complex for shallow check)
+    ///
+    /// ## Example Reductions:
+    /// - `{a: 1} | {a: 1, b: 2}` → `{a: 1}` (a absorbs a, b)
+    /// - `{a: 1, b: 2} & {a: 1}` → `{a: 1, b: 2}` (keeps more specific)
+    ///
+    /// Uses O(N+M) two-pointer scan since properties are sorted by Atom.
     fn is_object_shape_subtype_shallow(&self, s_id: ObjectShapeId, t_id: ObjectShapeId) -> bool {
         let s = self.object_shape(s_id);
         let t = self.object_shape(t_id);
 
-        // Nominal check: if target is a class instance, source must match
+        // 1. Nominal check: if target is a class instance, source must match
         if t.symbol.is_some() && s.symbol != t.symbol {
             return false;
         }
 
-        // VERY CONSERVATIVE: Require exact property match
-        // Same number of properties, same names, same TypeIds
-        if s.properties.len() != t.properties.len() {
+        // 2. Conservative: Index signatures make subtyping complex (deferred to Solver)
+        if t.string_index.is_some() || t.number_index.is_some() {
             return false;
         }
 
+        // 3. Structural scan: Source must satisfy all Target properties
+        // Properties are sorted by Atom, so we can use two-pointer scan for O(N+M)
+        let mut s_idx = 0;
+        let s_props = &s.properties;
+
         for t_prop in &t.properties {
-            let s_prop = s.properties.iter().find(|p| p.name == t_prop.name);
-            match s_prop {
-                Some(sp) => {
-                    if sp.type_id != t_prop.type_id {
-                        return false;
-                    }
-                    if sp.optional != t_prop.optional {
-                        return false;
-                    }
+            // Advance source pointer to match target property name
+            while s_idx < s_props.len() && s_props[s_idx].name < t_prop.name {
+                s_idx += 1;
+            }
+
+            if s_idx < s_props.len() && s_props[s_idx].name == t_prop.name {
+                let sp = &s_props[s_idx];
+
+                // Rule: Type Identity (no recursion)
+                if sp.type_id != t_prop.type_id {
+                    return false;
                 }
-                None => {
+
+                // Rule: Required <: Optional (Optional <: Required is False)
+                if !t_prop.optional && sp.optional {
+                    return false;
+                }
+
+                // Rule: Mutable <: Readonly (Readonly <: Mutable is False)
+                if !t_prop.readonly && sp.readonly {
+                    return false;
+                }
+
+                s_idx += 1;
+            } else {
+                // Property missing in source: only allowed if target property is optional
+                if !t_prop.optional {
                     return false;
                 }
             }
         }
 
-        // Index signatures must be identical for shallow check
-        s.string_index == t.string_index && s.number_index == t.number_index
+        true
     }
 
     /// Check if a literal domain matches a primitive class.
