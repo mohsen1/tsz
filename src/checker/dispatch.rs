@@ -245,20 +245,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // void expression
             k if k == syntax_kind_ext::VOID_EXPRESSION => TypeId::UNDEFINED,
 
-            // await expression - unwrap Promise<T> to get T, or return T if not Promise-like
+            // await expression - unwrap Promise<T> to get T, with contextual typing (Phase 6 - tsz-3)
             k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
-                if let Some(unary) = self.checker.ctx.arena.get_unary_expr_ex(node) {
-                    let expr_type = self.checker.get_type_of_node(unary.expression);
-                    // If the awaited type is Promise-like, extract the type argument
-                    // Otherwise, return the original type (TypeScript allows awaiting non-Promises)
-                    // This matches TSC behavior: `await 5` has type `number`, not `unknown`
-                    self.checker
-                        .promise_like_return_type_argument(expr_type)
-                        .unwrap_or(expr_type)
-                } else {
-                    // Return ANY to prevent cascading TS2571 errors
-                    TypeId::ANY
-                }
+                self.checker.get_type_of_await_expression(idx)
             }
 
             // Parenthesized expression - just pass through to inner expression
