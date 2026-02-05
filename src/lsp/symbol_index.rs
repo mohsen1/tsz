@@ -12,6 +12,9 @@ use crate::binder::{BinderState, symbol_flags};
 use crate::lsp::document_symbols::SymbolKind;
 use crate::lsp::position::Location;
 use crate::parser::NodeArena;
+use crate::parser::node::NodeAccess;
+use crate::parser::{NodeIndex, syntax_kind_ext};
+use crate::scanner;
 
 /// Import kind for tracking how symbols are imported.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +50,7 @@ pub struct ImportInfo {
 /// - Per-file symbol references
 /// - Symbol definitions
 /// - Module exports and imports
+/// - Heritage clauses (extends/implements)
 ///
 /// Note: This is a foundational implementation for Phase 2.2. Full AST-based
 /// usage tracking will be added in a future iteration to capture all reference
@@ -90,6 +94,12 @@ pub struct SymbolIndex {
     /// Enables efficient prefix matching using binary search (O(log N)).
     /// Maintained in sorted order via binary search on insert/update.
     sorted_names: Vec<String>,
+
+    /// Heritage clause tracking: symbol name -> files that extend/implement it
+    /// Enables O(1) lookup for Go to Implementation feature
+    /// For example, if "class B extends A" and "class C implements A",
+    /// then heritage_clauses["A"] = {"B.ts", "C.ts"}
+    heritage_clauses: FxHashMap<String, FxHashSet<String>>,
 }
 
 impl SymbolIndex {
@@ -149,6 +159,18 @@ impl SymbolIndex {
     /// Get all imports for a file.
     pub fn get_imports(&self, file_name: &str) -> Vec<ImportInfo> {
         self.imports.get(file_name).cloned().unwrap_or_default()
+    }
+
+    /// Get all files that extend or implement a given symbol.
+    ///
+    /// This enables O(1) lookup for Go to Implementation feature.
+    /// For example, if "class B extends A" and "class C implements A",
+    /// then `get_files_with_heritage("A")` returns `["B.ts", "C.ts"]`.
+    pub fn get_files_with_heritage(&self, symbol_name: &str) -> Vec<String> {
+        self.heritage_clauses
+            .get(symbol_name)
+            .map(|files| files.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Update the index for a single file.
@@ -239,6 +261,12 @@ impl SymbolIndex {
                 }
             }
         }
+
+        // Remove heritage clause entries for this file
+        for files in self.heritage_clauses.values_mut() {
+            files.remove(file_name);
+        }
+        self.heritage_clauses.retain(|_, files| !files.is_empty());
     }
 
     /// Index a file during binding.
@@ -343,6 +371,34 @@ impl SymbolIndex {
                     .entry(source_module.clone())
                     .or_default()
                     .insert(file_name_owned.clone());
+            }
+        }
+
+        // Scan for HeritageClause nodes (extends/implements)
+        // This enables O(1) lookup for Go to Implementation
+        for i in 0..arena.nodes.len() {
+            let node_idx = crate::parser::NodeIndex(i as u32);
+            if let Some(node) = arena.get(node_idx) {
+                if node.kind == syntax_kind_ext::HERITAGE_CLAUSE {
+                    // This is a heritage clause (extends X, implements Y)
+                    if let Some(heritage_data) = arena.get_heritage_clause(node) {
+                        // Iterate through the types in this heritage clause
+                        for type_node_idx in &heritage_data.types.nodes {
+                            if let Some(type_name) =
+                                self.extract_heritage_type_name(arena, *type_node_idx)
+                            {
+                                // Track that this file extends/implements the type
+                                self.heritage_clauses
+                                    .entry(type_name.clone())
+                                    .or_default()
+                                    .insert(file_name_owned.clone());
+
+                                // Track in reverse mapping for cleanup
+                                file_symbol_names.insert(type_name);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -563,6 +619,35 @@ impl SymbolIndex {
         if pos < self.sorted_names.len() && self.sorted_names[pos] == name {
             self.sorted_names.remove(pos);
         }
+    }
+
+    /// Extract the type name from a heritage clause expression node.
+    ///
+    /// This handles:
+    /// - Simple identifiers: `extends A` -> returns "A"
+    /// - Property access: `implements ns.I` -> returns "I"
+    /// - Returns None for complex expressions we can't resolve
+    fn extract_heritage_type_name(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<String> {
+        let node = arena.get(node_idx)?;
+
+        // Case 1: Simple identifier (e.g., `extends A`)
+        if node.kind == scanner::SyntaxKind::Identifier as u16 {
+            return arena.get_identifier_text(node_idx).map(|s| s.to_string());
+        }
+
+        // Case 2: Property access expression (e.g., `implements ns.I`)
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access_expr) = arena.get_access_expr(node) {
+                // For `ns.I`, we want the property name ("I")
+                // The name_or_argument field contains the member name
+                return arena
+                    .get_identifier_text(access_expr.name_or_argument)
+                    .map(|s| s.to_string());
+            }
+        }
+
+        // Case 3: Can't handle this expression type
+        None
     }
 }
 
