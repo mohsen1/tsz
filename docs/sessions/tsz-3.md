@@ -109,16 +109,26 @@ Implemented full `workspace/willRenameFiles` support:
 - Use relative paths (`calculate_new_relative_path`)
 - Lower sort priority for auto-imports (avoid jumping to top)
 
-**Status**: In Progress - Step 1/4 complete
+**Status**: In Progress - Steps 1, 2, 4 complete; Step 3 deferred
 
 **Progress**:
 - ✅ Step 1: Updated `CompletionItem` struct
   - Added `additional_text_edits: Option<Vec<TextEdit>>` field
   - Added `with_additional_edits()` builder method
   - Added custom deserializer (completion items are server→client only)
-- ⏳ Step 2: Refactor `CodeActionProvider::build_import_edit` to be public
-- ⏳ Step 3: Update `collect_import_candidates_for_name` to use `SymbolIndex`
-- ⏳ Step 4: Update `get_completions` to generate and attach edits
+- ✅ Step 2: Refactored edit generation
+  - Added `build_auto_import_edit()` public method to `CodeActionProvider`
+  - Wraps existing `build_import_edit()` logic
+- ⏸️ Step 3: SymbolIndex optimization (DEFERRED)
+  - Would require adding `symbol_index` field to `Project` struct
+  - Can be added as separate performance improvement later
+  - Current implementation still works (iterates all files)
+- ✅ Step 4: Wired up auto-import edits in `get_completions`
+  - Creates `CodeActionProvider` for the file
+  - Calls `build_auto_import_edit()` to generate `Vec<TextEdit>`
+  - Attaches edits to completion item via `with_additional_edits()`
+
+**Next**: Add multi-file integration test to verify auto-import functionality works end-to-end.
 
 ## Next Steps
 

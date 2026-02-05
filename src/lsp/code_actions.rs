@@ -1133,6 +1133,26 @@ impl<'a> CodeActionProvider<'a> {
         }])
     }
 
+    /// Generate import text edits for an auto-import completion.
+    ///
+    /// This is a public wrapper around `build_import_edit` specifically for
+    /// use by the completion system when suggesting auto-imports.
+    ///
+    /// # Arguments
+    /// * `root` - The root node of the AST
+    /// * `candidate` - The import candidate to generate edits for
+    ///
+    /// # Returns
+    /// * `Some(Vec<TextEdit>)` - Text edits to insert the import statement
+    /// * `None` - If the symbol is already imported or the edit cannot be generated
+    pub fn build_auto_import_edit(
+        &self,
+        root: NodeIndex,
+        candidate: &ImportCandidate,
+    ) -> Option<Vec<TextEdit>> {
+        self.build_import_edit(root, candidate)
+    }
+
     fn try_merge_default_import(
         &self,
         root: NodeIndex,
