@@ -214,3 +214,80 @@ subtyping and prevent infinite expansion? Please review the current depth handli
 
 **Step 4: Verify Fix**
 Run the test that was overflowing. Should pass or fail with type error (not crash).
+
+---
+
+# NEW WORK: Generic Type Inference & Substitution Engine
+
+**Started**: 2026-02-05 (Following tsz-2 and tsz-4 completion)
+**Status**: Active
+**Goal**: Implement core Solver logic for inferring type arguments and substituting type parameters
+
+## Problem Statement
+
+Currently, the compiler lacks a robust mechanism to:
+1. **Substitute**: Replace `TypeParameter` identifiers with concrete `TypeId`s across complex type structures
+2. **Infer**: Analyze source type and target type to solve for missing type variables
+3. **Constraint Validation**: Ensure inferred types satisfy `extends` constraints
+
+Without this, generic functions return `any`/`unknown`, and generic types cannot be specialized.
+
+**Impact**:
+- Blocks generic type inference (e.g., `function id<T>(x: T): T` returns `unknown`)
+- Prevents generic type specialization (e.g., `Map<string, number>` becomes `Map<any, any>`)
+- Makes generic constraints ineffective (no validation of `T extends Foo`)
+
+## Implementation Strategy
+
+### Phase A: Type Substitution Engine (TypeMapper Visitor)
+**File**: `src/solver/instantiate.rs`
+
+**Task**: Implement `TypeMapper` using visitor pattern from `src/solver/visitor.rs`
+
+**Logic**:
+- Visitor that walks a `TypeId`
+- When encountering `TypeKey::TypeParameter`, replace it with mapping from `SubstitutionMap`
+- Must handle recursive types and memoize results in `TypeInterner`
+
+### Phase B: Constraint Collection
+**File**: `src/solver/infer.rs`
+
+**Task**: Implement "Dual-Type Visitor" for constraint collection
+
+**Logic**:
+- Traverse two types simultaneously (ParamType with generics, ArgType with concrete data)
+- When ParamType hits `TypeParameter`, record ArgType as "candidate"
+- Handle multiple candidates from different positions
+
+### Phase C: Constraint Solving
+**File**: `src/solver/infer.rs`
+
+**Task**: Merge collected candidates and solve constraints
+
+**Logic**:
+- If multiple candidates exist, produce `Union` (or `Intersection` depending on variance)
+- Validate final result against `TypeParameter`'s `extends` clause using `is_subtype_of`
+
+### Phase D: Checker Integration
+**File**: `src/checker/expr.rs` (specifically `check_call_expression`)
+
+**Task**: Update call expression checking to use inference
+
+**Logic**:
+1. Retrieve signature
+2. Call `solver.infer_type_arguments`
+3. Call `solver.instantiate_signature` with results
+4. Use instantiated signature for remainder of call check
+
+## Success Criteria
+
+- [ ] Identity Test: `function id<T>(x: T): T` returns `string` when called with `"hello"`
+- [ ] Complex Inference: `map<T, U>(arr: T[], f: (x: T) => U): U[]` infers both `T` and `U`
+- [ ] Constraint Enforcement: `log<T extends { name: string }>(x: T)` errors on `{ id: 1 }`
+- [ ] Architecture: No `TypeKey` matching in `src/checker/expr.rs`
+
+## MANDATORY Gemini Workflow (per AGENTS.md)
+
+**Question 1 (Before Phase A)**: Ask Gemini (Flash) to validate TypeMapper approach
+
+**Question 2 (After Phase B/C)**: Ask Gemini (Pro) to review inference logic
