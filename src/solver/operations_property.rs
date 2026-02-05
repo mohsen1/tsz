@@ -10,6 +10,7 @@ use crate::solver::evaluate::evaluate_type;
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
 use crate::solver::subtype::{NoopResolver, TypeResolver};
 use crate::solver::types::*;
+use crate::solver::visitor::TypeVisitor;
 use crate::solver::{
     ApparentMemberKind, TypeDatabase, apparent_object_member_kind, apparent_primitive_member_kind,
 };
@@ -58,6 +59,10 @@ pub struct PropertyAccessEvaluator<'a, R: TypeResolver = NoopResolver> {
     no_unchecked_indexed_access: bool,
     visiting: RefCell<FxHashSet<TypeId>>,
     depth: RefCell<u32>,
+    // Context for visitor pattern (set during property access resolution)
+    // We store both the str (for immediate use) and Atom (for interned comparisons)
+    current_prop_name: RefCell<Option<String>>,
+    current_prop_atom: RefCell<Option<Atom>>,
 }
 
 struct PropertyAccessGuard<'a, R: TypeResolver> {
@@ -80,6 +85,8 @@ impl<'a> PropertyAccessEvaluator<'a, NoopResolver> {
             no_unchecked_indexed_access: false,
             visiting: RefCell::new(FxHashSet::default()),
             depth: RefCell::new(0),
+            current_prop_name: RefCell::new(None),
+            current_prop_atom: RefCell::new(None),
         }
     }
 }
@@ -92,13 +99,70 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             no_unchecked_indexed_access: false,
             visiting: RefCell::new(FxHashSet::default()),
             depth: RefCell::new(0),
+            current_prop_name: RefCell::new(None),
+            current_prop_atom: RefCell::new(None),
         }
     }
 
     pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
         self.no_unchecked_indexed_access = enabled;
     }
+}
 
+// =============================================================================
+// TypeVisitor Implementation for PropertyAccessEvaluator
+// =============================================================================
+
+impl<'a, R: TypeResolver> TypeVisitor for PropertyAccessEvaluator<'a, R> {
+    type Output = Option<PropertyAccessResult>;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        match kind {
+            IntrinsicKind::Any => Some(PropertyAccessResult::Success {
+                type_id: TypeId::ANY,
+                from_index_signature: false,
+            }),
+            IntrinsicKind::Unknown => Some(PropertyAccessResult::IsUnknown),
+            IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
+                let cause = if kind == IntrinsicKind::Void || kind == IntrinsicKind::Undefined {
+                    TypeId::UNDEFINED
+                } else {
+                    TypeId::NULL
+                };
+                Some(PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: None,
+                    cause,
+                })
+            }
+            // Symbol intrinsic is handled separately (has special properties)
+            IntrinsicKind::Symbol => {
+                // Get the property name from context
+                let prop_name = self.current_prop_name.borrow();
+                let prop_atom = self.current_prop_atom.borrow();
+                match (prop_name.as_deref(), prop_atom.as_ref()) {
+                    (Some(name), Some(&atom)) => {
+                        Some(self.resolve_symbol_primitive_property(name, atom))
+                    }
+                    _ => None,
+                }
+            }
+            // Other intrinsics (String, Number, Boolean, Bigint, Object)
+            // will be handled in later milestones - fall back to old match for now
+            _ => None,
+        }
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        // Literals will be handled in later milestones
+        None
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
     /// Resolve property access: obj.prop -> type
     pub fn resolve_property_access(
         &self,
@@ -437,45 +501,48 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         prop_name: &str,
         prop_atom: Option<Atom>,
     ) -> PropertyAccessResult {
-        // Handle intrinsic types first
-        if obj_type == TypeId::ANY {
-            // Any type allows any property access, returning any
-            return PropertyAccessResult::Success {
-                type_id: TypeId::ANY,
-                from_index_signature: false,
+        // Milestone 1: Visitor Bridge Pattern (Simplified)
+        // Set context for visitor methods
+        *self.current_prop_name.borrow_mut() = Some(prop_name.to_string());
+        *self.current_prop_atom.borrow_mut() = prop_atom;
+
+        // For Milestone 1, check for intrinsic types and use visitor logic directly
+        // This avoids the &mut self issue while still implementing the pattern
+        if let Some(TypeKey::Intrinsic(kind)) = self.interner.lookup(obj_type) {
+            // Inline the visitor logic for intrinsics (avoiding &mut self requirement)
+            let result = match kind {
+                IntrinsicKind::Any => Some(PropertyAccessResult::Success {
+                    type_id: TypeId::ANY,
+                    from_index_signature: false,
+                }),
+                IntrinsicKind::Unknown => Some(PropertyAccessResult::IsUnknown),
+                IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
+                    let cause = if kind == IntrinsicKind::Void || kind == IntrinsicKind::Undefined {
+                        TypeId::UNDEFINED
+                    } else {
+                        TypeId::NULL
+                    };
+                    Some(PropertyAccessResult::PossiblyNullOrUndefined {
+                        property_type: None,
+                        cause,
+                    })
+                }
+                IntrinsicKind::Symbol => {
+                    // Symbol primitive has special properties
+                    let prop_atom_inner =
+                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                    Some(self.resolve_symbol_primitive_property(prop_name, prop_atom_inner))
+                }
+                // Other intrinsics fall through to the match statement below
+                _ => None,
             };
+
+            if let Some(res) = result {
+                return res;
+            }
         }
 
-        if obj_type == TypeId::ERROR {
-            // Error type suppresses further errors, returns error
-            return PropertyAccessResult::Success {
-                type_id: TypeId::ERROR,
-                from_index_signature: false,
-            };
-        }
-
-        if obj_type == TypeId::UNKNOWN {
-            return PropertyAccessResult::IsUnknown;
-        }
-
-        if obj_type == TypeId::NULL || obj_type == TypeId::UNDEFINED || obj_type == TypeId::VOID {
-            let cause = if obj_type == TypeId::VOID {
-                TypeId::UNDEFINED
-            } else {
-                obj_type
-            };
-            return PropertyAccessResult::PossiblyNullOrUndefined {
-                property_type: None,
-                cause,
-            };
-        }
-
-        // Handle Symbol primitive properties
-        if obj_type == TypeId::SYMBOL {
-            let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
-            return self.resolve_symbol_primitive_property(prop_name, prop_atom);
-        }
-
+        // Fallback to existing match statement for all other types
         // Look up the type key
         let key = match self.interner.lookup(obj_type) {
             Some(k) => k,
