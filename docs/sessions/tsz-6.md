@@ -1,7 +1,7 @@
 # Session TSZ-6: Member Resolution on Generic and Placeholder Types
 
 **Started**: 2026-02-05
-**Status**: 🔄 Phase 2 COMPLETE - Phase 3 Pending
+**Status**: ✅ COMPLETE (2026-02-05)
 **Focus**: Implement member resolution for Type Parameters, Type Applications, and Union/Intersection types
 
 ## Summary
@@ -187,7 +187,7 @@ Modify `resolve_application_property` to substitute only the found property's ty
 
 ### Phase 3: Union/Intersection Member Resolution
 
-**Status**: ✅ ALREADY IMPLEMENTED (2026-02-05)
+**Status**: ✅ COMPLETE (2026-02-05)
 
 **File**: `src/solver/operations_property.rs`
 
@@ -196,7 +196,40 @@ Modify `resolve_application_property` to substitute only the found property's ty
 - **Union case**: Lines 606-734 - comprehensive implementation handling any/error/unknown types, nullable members, index signatures, and recursive resolution
 - **Intersection case**: Lines 751-848 - comprehensive implementation handling nullable members, unknown types, and index signatures
 
-**Existing Implementation Details**:
+**Bug Fix** (2026-02-05):
+
+Found and fixed a critical bug in union property resolution. The existing code was incorrectly skipping members that don't have the property, effectively treating unions like intersections.
+
+**Bug Location**: `src/solver/operations_property.rs:672-676`
+
+**Root Cause**: The code was catching `PropertyNotFound` and `IsUnknown` results and simply skipping them, allowing property access to succeed if ANY member had the property. This violated TypeScript's type safety.
+
+**Fix Applied**:
+```rust
+// Before (WRONG):
+PropertyAccessResult::PropertyNotFound { .. }
+| PropertyAccessResult::IsUnknown => {
+    // Member doesn't have this property - skip it
+}
+
+// After (CORRECT):
+PropertyAccessResult::PropertyNotFound { .. } => {
+    return PropertyAccessResult::PropertyNotFound {
+        type_id: obj_type,
+        property_name: prop_atom,
+    };
+}
+PropertyAccessResult::IsUnknown => {
+    return PropertyAccessResult::IsUnknown;
+}
+```
+
+**Test Results**:
+- `test_union_bug.ts`: Now correctly errors (matches tsc)
+- `test_union_correct.ts`: Still works (property exists in all members)
+- `test_intersection.ts`: Still works (unchanged behavior)
+
+**Implementation Details**:
 
 #### Union Property Resolution (line 606)
 - Handles `any` contagion (if any member is `any`, returns `any`)
@@ -204,6 +237,7 @@ Modify `resolve_application_property` to substitute only the found property's ty
 - Filters out `unknown` members (only returns `IsUnknown` if ALL members are `unknown`)
 - Partitions members into nullable and non-nullable
 - Recursively resolves properties on each member
+- **Fails immediately if ANY member doesn't have the property** (FIXED)
 - Combines results into union of property types
 - Falls back to index signatures if property not found
 
@@ -214,18 +248,7 @@ Modify `resolve_application_property` to substitute only the found property's ty
 - Falls back to index signatures (if ANY member has an index signature, property access succeeds)
 - Returns intersection of property types
 
-**Test Case Discrepancy** (2026-02-05):
-
-Found test case where tsc reports error but tsz doesn't:
-```typescript
-type A = { x: number };
-type B = { y: string };
-type U = A | B;
-const u: U = { x: 1 } as U;
-const val = u.x; // tsc: Property 'x' does not exist on type 'B'
-```
-
-**Next Step**: Ask Gemini to review the existing Union property resolution implementation to verify if this behavior is correct or if there's a bug.
+**Commit**: `fix(solver): correctly reject union property access when property missing in any constituent`
 
 ## Implementation Guidance (from Gemini Flash 2026-02-05)
 
