@@ -331,16 +331,42 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Source -> Numeric Enum (e.g., number -> E.A)
-        // TSZ-4 FIX: number should NOT be assignable to enum members
+        // Source -> Numeric Enum (e.g., number -> E, or number -> E.A)
+        // TSZ-4 FIX: Distinguish between Enum type (E) and enum members (E.A)
+        // - number IS assignable to Enum type (let e: E = 123)
+        // - number is NOT assignable to enum members (let a: E.A = 123)
         if let Some(t_id) = target_enum {
             if self.enum_kind(t_id) == Some(EnumKind::Numeric) {
-                // If source is number, reject it (number is not assignable to specific enum members)
-                if source == TypeId::NUMBER {
-                    return Some(false);
+                // Check if target is the Enum type itself (not a member)
+                let target_key = self.ctx.types.lookup(target);
+                let is_target_enum_type = if let Some(TypeKey::Enum(t_def, _)) = target_key {
+                    // Resolve DefId to Symbol and check flags
+                    if let Some(t_sym_id) = self.ctx.def_to_symbol_id(t_def) {
+                        if let Some(t_sym) = self.get_symbol_globally(t_sym_id) {
+                            // It's the Enum type if it has ENUM flag but not ENUM_MEMBER flag
+                            t_sym.flags & symbol_flags::ENUM != 0
+                                && t_sym.flags & symbol_flags::ENUM_MEMBER == 0
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if is_target_enum_type {
+                    // Target is Enum type (E) - number IS assignable
+                    return Some(self.check_structural_assignability(source, TypeId::NUMBER, env));
+                } else {
+                    // Target is enum member (E.A) - number is NOT assignable
+                    if source == TypeId::NUMBER {
+                        return Some(false);
+                    }
+                    // For literal sources, check assignability to number (e.g., 5 -> E.A where E.A = 5)
+                    return Some(self.check_structural_assignability(source, TypeId::NUMBER, env));
                 }
-                // For other sources, check assignability to number (e.g., 5 -> E.A where E.A = 5)
-                return Some(self.check_structural_assignability(source, TypeId::NUMBER, env));
             }
         }
 
