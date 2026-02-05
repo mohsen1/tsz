@@ -968,8 +968,17 @@ impl ParserState {
         }
 
         // Parse name - keywords like 'abstract' can be used as function names
-        // Check for illegal binding identifiers (e.g., 'await' in static blocks, async/generator contexts)
-        self.check_illegal_binding_identifier();
+        // Note: function names are NOT subject to async/generator context restrictions
+        // because the name is a declaration in the outer scope, not a binding in the
+        // function body. `async function * await() {}` and `function * yield() {}` are valid.
+        // Only check for static block context (where await is always illegal as an identifier)
+        if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+            );
+        }
 
         let name = if self.is_identifier_or_keyword() {
             self.parse_identifier_name()
@@ -1145,8 +1154,17 @@ impl ParserState {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
 
-        // Check for illegal binding identifiers (e.g., 'await' in async contexts, 'yield' in generator contexts)
-        self.check_illegal_binding_identifier();
+        // Note: function names are NOT subject to async/generator context restrictions
+        // because the name is a declaration in the outer scope, not a binding in the
+        // function body. `async function * await() {}` and `function * yield() {}` are valid.
+        // Only check for static block context (where await is always illegal as an identifier)
+        if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+            );
+        }
 
         // Parse optional name (function expressions can be anonymous)
         let name = if self.is_identifier_or_keyword() {
@@ -1398,11 +1416,11 @@ impl ParserState {
             }
 
             // Default parameter values are evaluated in the parent scope, not in the function body.
-            // Set parameter default context flag to detect 'await' usage (TS1109).
+            // Set parameter default context flag to detect 'await' usage.
+            // IMPORTANT: Keep async context set - TSC emits TS1109 "Expression expected" when
+            // 'await' appears in a parameter default without an operand (e.g., `async (a = await)`)
             let saved_flags = self.context_flags;
             self.context_flags |= CONTEXT_FLAG_PARAMETER_DEFAULT;
-            // Also temporarily disable async context so 'await' is not treated as an await expression
-            self.context_flags &= !CONTEXT_FLAG_ASYNC;
             let initializer = self.parse_assignment_expression();
             if initializer.is_none() {
                 // Emit TS1109 for missing parameter default value: param = [missing]
