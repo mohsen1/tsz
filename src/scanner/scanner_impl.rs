@@ -1430,6 +1430,7 @@ impl ScannerState {
 
     /// Scan an identifier.
     /// ZERO-ALLOCATION: Identifiers are interned, returning an Atom (u32) for O(1) comparison.
+    /// When a unicode escape is encountered mid-identifier, switches to allocation mode.
     fn scan_identifier(&mut self) {
         let start = self.pos;
         // Advance past first character (may be multi-byte)
@@ -1437,6 +1438,18 @@ impl ScannerState {
 
         while self.pos < self.end {
             let ch = self.char_code_unchecked(self.pos);
+            if ch == CharacterCodes::BACKSLASH {
+                // Check if this is a unicode escape that produces an identifier part
+                if let Some(code_point) = self.peek_unicode_escape() {
+                    if is_identifier_part(code_point) {
+                        // Switch to allocation mode and continue scanning with escapes
+                        self.continue_identifier_with_escapes(start);
+                        return;
+                    }
+                }
+                // Invalid escape or not an identifier part - stop here
+                break;
+            }
             if !is_identifier_part(ch) {
                 break;
             }
@@ -1455,6 +1468,47 @@ impl ScannerState {
         // ZERO-ALLOCATION: Don't store token_value for identifiers.
         // get_token_value_ref() will resolve from token_atom or fall back to source slice.
         self.token_value.clear();
+    }
+
+    /// Continue scanning an identifier that has a unicode escape mid-identifier.
+    /// Called when scan_identifier() encounters a valid unicode escape.
+    /// This switches to allocation mode since escapes require building a String.
+    fn continue_identifier_with_escapes(&mut self, start: usize) {
+        // Copy the already-scanned part into a String
+        let mut result = String::from(&self.source[start..self.pos]);
+
+        // Continue scanning identifier parts, handling unicode escapes
+        while self.pos < self.end {
+            let ch = self.char_code_unchecked(self.pos);
+            if ch == CharacterCodes::BACKSLASH {
+                // Check for unicode escape
+                if let Some(code_point) = self.peek_unicode_escape() {
+                    if is_identifier_part(code_point) {
+                        // Consume the escape and add the character
+                        if let Some(c) =
+                            char::from_u32(self.scan_unicode_escape_value().unwrap_or(0))
+                        {
+                            result.push(c);
+                        }
+                        continue;
+                    }
+                }
+                // Invalid escape or not an identifier part - stop here
+                break;
+            }
+            if !is_identifier_part(ch) {
+                break;
+            }
+            if let Some(c) = char::from_u32(ch) {
+                result.push(c);
+            }
+            self.pos += self.char_len_at(self.pos);
+        }
+
+        self.token = crate::scanner::text_to_keyword(&result).unwrap_or(SyntaxKind::Identifier);
+        self.token_atom = self.interner.intern(&result);
+        self.token_value.clear();
+        self.token_flags |= TokenFlags::UnicodeEscape as u32;
     }
 
     /// Peek at a unicode escape sequence without advancing the position.
