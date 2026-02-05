@@ -273,5 +273,57 @@ The implicit default flow node appears to not be created or processed during nor
 3. Verify the implicit default node is actually created in the flow graph
 4. If created, verify it's being processed by FlowAnalyzer
 
-**Session Status**: Implementation incomplete, needs investigation into flow graph construction timing and mechanism.
+**Session Status**: ROOT CAUSE IDENTIFIED - Architectural disconnect between two CFGs.
+
+### 🚨 CRITICAL DISCOVERY from Gemini (Question 2)
+
+**The Problem**: There are TWO Control Flow Graphs in the codebase:
+
+1. **Binder's CFG** (`src/binder/state.rs`):
+   - Basic control flow graph built during binding phase
+   - Contains CASE_CLAUSE nodes (297) that we see being processed
+   - Does NOT have implicit default logic
+
+2. **Checker's CFG** (`src/checker/flow_graph_builder.rs`):
+   - Refined CFG for type narrowing
+   - This is where we implemented implicit default logic
+   - **NOT being used during type checking!**
+
+**The Smoking Gun** (`src/checker/control_flow.rs:135`):
+```rust
+pub fn new(arena: &'a NodeArena, binder: &'a BinderState, interner: &'a dyn QueryDatabase) -> Self {
+    // HARDCODED to use Binder's flow nodes - this is the problem!
+    let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
+    Self { ... }
+}
+```
+
+The `FlowAnalyzer` defaults to the Binder's CFG, which doesn't contain our implicit default logic. The `FlowGraphBuilder` isn't even being executed during type checking!
+
+### Solution Path (from Gemini)
+
+**Step 1**: Update `FlowAnalyzer` to accept custom flow graph arena
+- Add `with_flow_nodes(&arena)` method to override default Binder graph
+- Location: `src/checker/control_flow.rs`
+
+**Step 2**: Wire `FlowGraphBuilder` into the Checker
+- Find where Checker processes function bodies (`src/checker/state.rs` or `declarations.rs`)
+- Run `FlowGraphBuilder::new().build_function_body(body)` for each function
+- Pass resulting arena to `FlowAnalyzer` via `with_flow_nodes()`
+
+**Step 3**: Verify wiring works
+- Debug statements in `build_switch_statement` should appear
+- BLOCK nodes (242) should be processed by FlowAnalyzer
+- Test case should work (exhaustive switch narrows to never)
+
+### Investigation Tasks (Next Steps)
+
+1. **Search** for `FlowAnalyzer::new` calls in `src/checker/state.rs` and `expr.rs`
+2. **Check** if `FlowGraphBuilder` is imported/used anywhere in `src/checker/`
+3. **Modify** `FlowAnalyzer::with_flow_nodes()` to accept builder's arena
+4. **Inject** `FlowGraphBuilder` pass into function checking pipeline
+5. **Ask Gemini** to review the implementation (MANDATORY per AGENTS.md rule)
+
+This is a critical architectural fix that aligns with the North Star Architecture (Section 4.3, 4.5): Binder handles basic symbol flow, Checker/Solver handles refined flow analysis for narrowing.
+
 
