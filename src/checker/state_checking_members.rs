@@ -2246,10 +2246,15 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             diagnostic_codes::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5,
                         );
                     } else {
+                        // TS1064: For ES6+ targets, the return type must be Promise<T>
+                        let type_name = self.format_type(return_type);
                         self.error_at_node(
                             func.type_annotation,
-                            diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
-                            diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
+                            &format_message(
+                                diagnostic_messages::ASYNC_RETURN_TYPE_MUST_BE_PROMISE,
+                                &[&type_name],
+                            ),
+                            diagnostic_codes::ASYNC_RETURN_TYPE_MUST_BE_PROMISE,
                         );
                     }
                 }

@@ -232,6 +232,7 @@ pub mod diagnostic_messages {
     pub const FUNCTION_LACKS_ENDING_RETURN_STATEMENT: &str =
         "Function lacks ending return statement and return type does not include 'undefined'.";
     pub const ASYNC_FUNCTION_RETURNS_PROMISE: &str = "Async function return type must be Promise.";
+    pub const ASYNC_RETURN_TYPE_MUST_BE_PROMISE: &str = "The return type of an async function or method must be the global Promise<T> type. Did you mean to write 'Promise<{0}>'?";
     pub const TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5: &str = "Type '{0}' is not a valid async function return type in ES5 because it does not refer to a Promise-compatible constructor value.";
     pub const ASYNC_FUNCTION_REQUIRES_PROMISE_CONSTRUCTOR: &str = "An async function or method in ES5/ES3 requires the 'Promise' constructor. \
          Make sure you have a declaration for the 'Promise' constructor or include 'ES2015' in your `--lib` option.";
@@ -452,7 +453,8 @@ pub mod diagnostic_codes {
     pub const FUNCTION_LACKS_RETURN_TYPE: u32 = 2355;
     pub const FUNCTION_RETURN_TYPE_MISMATCH: u32 = 2322;
     pub const TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5: u32 = 1055; // Type 'X' is not a valid async function return type in ES5
-    pub const ASYNC_FUNCTION_RETURNS_PROMISE: u32 = 2705; // Async function must return Promise
+    pub const ASYNC_RETURN_TYPE_MUST_BE_PROMISE: u32 = 1064; // The return type of an async function or method must be the global Promise<T> type.
+    pub const ASYNC_FUNCTION_RETURNS_PROMISE: u32 = 2705; // Async function must return Promise (ES5 - Promise constructor required)
     pub const PARAMETER_PROPERTY_NOT_ALLOWED: u32 = 2369; // A parameter property is only allowed in a constructor implementation.
 
     // Variable declaration errors
