@@ -1063,3 +1063,33 @@ When assignability check iterates through signatures, every signature comparison
 - Overloads: Sync `is_method` across CallableShape and PropertyInfo
 
 **Status**: Infrastructure exists, need verification and testing 🟢
+
+### Commit: `2cb7dbcc9` - test(tsz-4): fix function bivariance tests to use interfaces
+
+**Priority 4 Baseline Established**
+
+**What Was Done**:
+Created comprehensive test suite for function bivariance in `src/checker/tests/function_bivariance.rs`.
+
+**Test Results**: 5/8 tests passing ✅
+- ✅ Methods ARE bivariant (correct)
+- ❌ Function properties are ALSO bivariant (BUG - should be contravariant in strict mode)
+
+**Critical Bug Confirmed**:
+Current implementation doesn't distinguish between methods and function properties for variance checking. In strict mode (`--strictFunctionTypes`), function properties should be contravariant but they're being treated as bivariant.
+
+**Failing Tests**:
+1. `test_arrow_function_property_contravariance` - expects TS2322, gets 0
+2. `test_function_property_contravariance` - expects TS2322, gets 0  
+3. `test_function_property_contravariance_strict_mode` - expects TS2322, gets 0
+
+**Root Cause**:
+The `is_method` flag in `PropertyInfo` exists but is not being used correctly during variance checking in `src/solver/subtype_rules/functions.rs`.
+
+**Next Steps**:
+1. Use tsz-tracing with solver subtype logging to find exact code path
+2. Identify where `are_parameters_compatible_impl` should check `is_method`
+3. Fix the logic to enforce contravariance for non-method properties
+4. Re-run tests to verify fix
+
+**Status**: Priority 4 - Bug identified, needs investigation 🔍
