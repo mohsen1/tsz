@@ -1008,8 +1008,16 @@ impl<'a> IRPrinter<'a> {
                 body,
                 is_exported,
                 attach_to_exports,
+                should_declare_var,
             } => {
-                self.emit_namespace_iife(name_parts, 0, body, *is_exported, *attach_to_exports);
+                self.emit_namespace_iife(
+                    name_parts,
+                    0,
+                    body,
+                    *is_exported,
+                    *attach_to_exports,
+                    *should_declare_var,
+                );
             }
             IRNode::NamespaceExport {
                 namespace,
@@ -1072,12 +1080,13 @@ impl<'a> IRPrinter<'a> {
         body: &[IRNode],
         is_exported: bool,
         attach_to_exports: bool,
+        should_declare_var: bool,
     ) {
         let current_name = &name_parts[index];
         let is_last = index == name_parts.len() - 1;
 
-        // Emit var declaration only for the outermost namespace
-        if index == 0 {
+        // Emit var declaration only for the outermost namespace and if flag is true
+        if index == 0 && should_declare_var {
             self.write("var ");
             self.write(current_name);
             self.write(";");
@@ -1108,7 +1117,14 @@ impl<'a> IRPrinter<'a> {
             self.write(";");
             self.write_line();
             // Recurse for nested namespace
-            self.emit_namespace_iife(name_parts, index + 1, body, is_exported, attach_to_exports);
+            self.emit_namespace_iife(
+                name_parts,
+                index + 1,
+                body,
+                is_exported,
+                attach_to_exports,
+                true,
+            );
         }
 
         self.decrease_indent();
