@@ -88,4 +88,4 @@ tests/debug/
 # Pre-commit hook temp files
 .conformance-value
 *cache*
-scripts/conformance/dist
+scripts/conformance/dist.target-bench/
