@@ -1,6 +1,6 @@
 # TS1183: declare function with body
 
-**Status**: NOT IMPLEMENTED (for standalone functions)
+**Status**: FIXED (commit d8257f5)
 **Discovered**: 2026-02-05
 **Component**: Checker / Grammar Checker
 **Conformance Impact**: ~1 parser test fails
