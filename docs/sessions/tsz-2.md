@@ -220,22 +220,63 @@ Run the test that was overflowing. Should pass or fail with type error (not cras
 # NEW WORK: Generic Type Inference & Substitution Engine
 
 **Started**: 2026-02-05 (Following tsz-2 and tsz-4 completion)
-**Status**: Active
-**Goal**: Implement core Solver logic for inferring type arguments and substituting type parameters
+**Status**: 🔍 Investigation - Major Discovery: Type Inference Already Implemented!
+**Goal**: Investigate and fix issues with generic type inference
 
-## Problem Statement
+## 🚨 Major Discovery (2026-02-05)
 
-Currently, the compiler lacks a robust mechanism to:
-1. **Substitute**: Replace `TypeParameter` identifiers with concrete `TypeId`s across complex type structures
-2. **Infer**: Analyze source type and target type to solve for missing type variables
-3. **Constraint Validation**: Ensure inferred types satisfy `extends` constraints
+**Type inference is already FULLY IMPLEMENTED** in `src/solver/operations.rs`:
 
-Without this, generic functions return `any`/`unknown`, and generic types cannot be specialized.
+### Complete Implementation Found
+1. **Type Substitution** (`src/solver/instantiate.rs`):
+   - `TypeInstantiator` visitor pattern for type parameter substitution
+   - Handles recursive types, cycle detection, shadowing
+
+2. **Type Inference** (`src/solver/infer.rs`):
+   - `InferenceVar` with Union-Find algorithm (ena crate)
+   - `InferenceContext` with constraint collection and resolution
+   - Multi-pass inference with priority levels
+
+3. **Generic Call Resolution** (`src/solver/operations.rs:573-842`):
+   - `resolve_generic_call_inner`: Full type inference engine
+   - Creates inference variables for each type parameter
+   - Uses placeholders for constraint collection
+   - **Downward inference**: Seeds constraints from return type (line 667-680)
+   - **Upward inference**: Collects constraints from arguments (line 686-752)
+   - Resolves inference variables with constraints (line 762-786)
+   - Validates inferred types against constraints (line 790-801)
+   - Instantiates return type with final substitution (line 840)
+
+### Manual Tests Created
+Created `src/checker/tests/generic_inference_manual.rs` with 3 passing tests:
+- ✅ `test_identity_function_inference`: Upward inference from arguments
+- ✅ `test_constraint_validation`: Type constraint validation
+- ✅ `test_downward_inference`: Downward inference from contextual type
+
+### Real Bug Found: Complex Nested Inference
+**Issue**: `map<T, U>(arr: T[], f: (x: T) => U): U[]` fails to infer `T` and `U`
+
+**Example**:
+```typescript
+function map<T, U>(arr: T[], f: (x: T) => U): U[] {
+    return arr.map(f);
+}
+
+const result = map([1, 2, 3], x => x.toString());
+// Error: Property 'toString' does not exist on type 'T'
+```
+
+**Root Cause**: When checking `arr.map(f)`:
+- `arr` has type `T[]` where `T` is still a TypeParameter (not yet resolved)
+- The compiler tries to look up the `map` method signature
+- But `T` is not resolved yet, causing the callback parameter to have type `error`
+
+**This is a known complex case**: TypeScript uses **deferred type inference** to handle this, where the type parameters are resolved incrementally during the type checking process.
 
 **Impact**:
-- Blocks generic type inference (e.g., `function id<T>(x: T): T` returns `unknown`)
-- Prevents generic type specialization (e.g., `Map<string, number>` becomes `Map<any, any>`)
-- Makes generic constraints ineffective (no validation of `T extends Foo`)
+- Simple generic functions work correctly (`identity`, `first`, `apply`)
+- Complex nested inference fails (`map`, generic callbacks on generic arrays)
+- This is the gap that needs to be fixed
 
 ## Implementation Strategy
 
@@ -281,10 +322,35 @@ Without this, generic functions return `any`/`unknown`, and generic types cannot
 
 ## Success Criteria
 
-- [ ] Identity Test: `function id<T>(x: T): T` returns `string` when called with `"hello"`
-- [ ] Complex Inference: `map<T, U>(arr: T[], f: (x: T) => U): U[]` infers both `T` and `U`
-- [ ] Constraint Enforcement: `log<T extends { name: string }>(x: T)` errors on `{ id: 1 }`
-- [ ] Architecture: No `TypeKey` matching in `src/checker/expr.rs`
+- [x] Identity Test: `function id<T>(x: T): T` returns `string` when called with `"hello"`
+- [x] Constraint Enforcement: `log<T extends { name: string }>(x: T)` errors on `{ id: 1 }`
+- [x] Downward Inference: `const x: string = identity(42)` correctly errors
+- [ ] **Complex Inference BUG**: `map<T, U>(arr: T[], f: (x: T) => U): U[]` fails to infer `T` and `U`
+- [ ] Architecture: No `TypeKey` matching in `src/checker/expr.rs` (needs verification)
+
+## Next Actions
+
+### Immediate: Commit Discovery
+1. ✅ Create manual test suite (`src/checker/tests/generic_inference_manual.rs`)
+2. ✅ Fix pre-existing compilation errors in `src/solver/tests/inference_candidates_tests.rs`
+3. ✅ Verify basic inference works (3 passing tests)
+4. ✅ Document discovery in session file
+5. [ ] Commit and push to origin
+
+### Next: Fix Complex Nested Inference Bug
+**Problem**: `map<T, U>(arr: T[], f: (x: T) => U): U[]` fails with "Property 'toString' does not exist on type 'T'"
+
+**Hypothesis**: The issue is in how method calls on generic types are resolved when the type parameter is not yet fully resolved.
+
+**Action Plan**:
+1. Ask Gemini (Pro) for approach to deferred type resolution
+2. Investigate `resolve_generic_call_inner` for opportunities to incrementally resolve type parameters
+3. Test against TypeScript compiler behavior
+
+**Key Files to Investigate**:
+- `src/solver/operations.rs:573-842` - `resolve_generic_call_inner`
+- `src/solver/evaluate.rs` - Type evaluation for Application types
+- `src/checker/state_type_resolution.rs` - Checker integration for generic calls
 
 ## MANDATORY Gemini Workflow (per AGENTS.md)
 
