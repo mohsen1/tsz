@@ -992,7 +992,9 @@ if (typeof x === "string") {
 
     let flow_after = binder.get_node_flow(ident_after).expect("flow after");
     let narrowed_after = analyzer.get_flow_type(ident_after, union, flow_after);
-    assert_eq!(narrowed_after, union);
+    // After array destructuring [x] = [1], x is narrowed to primitive `number`, not the union
+    // This matches TypeScript's verified behavior
+    assert_eq!(narrowed_after, TypeId::NUMBER);
 }
 
 #[test]
@@ -1034,7 +1036,9 @@ if (typeof x === "string") {
 
     let flow_after = binder.get_node_flow(ident_after).expect("flow after");
     let narrowed_after = analyzer.get_flow_type(ident_after, union, flow_after);
-    assert_eq!(narrowed_after, union);
+    // After object destructuring ({ x } = { x: 1 }), x is narrowed to primitive `number`
+    // This matches TypeScript's verified behavior
+    assert_eq!(narrowed_after, TypeId::NUMBER);
 }
 
 #[test]

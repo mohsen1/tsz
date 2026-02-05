@@ -1150,6 +1150,28 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
+    /// Widen literal types to their primitive types for array destructuring.
+    ///
+    /// In array destructuring contexts, literals are widened to their base primitives:
+    /// - `1` -> `number`
+    /// - `"hello"` -> `string`
+    /// - `true` -> `boolean`
+    ///
+    /// This matches TypeScript's behavior where `[x] = [1]` narrows `x` to `number`, not literal `1`.
+    fn widen_to_primitive(&self, type_id: TypeId) -> TypeId {
+        if let Some(key) = self.interner.lookup(type_id) {
+            if let crate::solver::types::TypeKey::Literal(ref lit) = key {
+                return match lit {
+                    crate::solver::types::LiteralValue::String(_) => TypeId::STRING,
+                    crate::solver::types::LiteralValue::Number(_) => TypeId::NUMBER,
+                    crate::solver::types::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
+                    crate::solver::types::LiteralValue::BigInt(_) => TypeId::BIGINT,
+                };
+            }
+        }
+        type_id // Non-literal types are preserved
+    }
+
     pub(crate) fn get_assigned_type(
         &self,
         assignment_node: NodeIndex,
@@ -1164,6 +1186,48 @@ impl<'a> FlowAnalyzer<'a> {
             // This ensures that `x = 42` narrows to literal 42.0, not just NUMBER
             // This matches TypeScript's behavior where control flow analysis preserves literal types
             if let Some(literal_type) = self.literal_type_from_node(rhs) {
+                // CRITICAL: Check if this literal is from a destructuring context
+                // For destructuring (array or object), widen literals to primitives to match TypeScript
+                // Example: [x] = [1] widens to number, ({ x } = { x: 1 }) widens to number
+                //
+                // Note: For object properties, the parent is PROPERTY_ASSIGNMENT, so we check grandparent
+                let is_destructuring_element = self
+                    .arena
+                    .get_extended(rhs)
+                    .and_then(|ext| {
+                        // First check if parent is array/object literal
+                        if let Some(parent) = self.arena.get(ext.parent) {
+                            if parent.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                || parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            {
+                                return Some(true);
+                            }
+                            // For object properties, check grandparent
+                            if parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                                if let Some(ext2) =
+                                    self.arena.get_extended(NodeIndex::from(ext.parent))
+                                {
+                                    if let Some(grandparent) = self.arena.get(ext2.parent) {
+                                        return Some(
+                                            grandparent.kind
+                                                == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        None
+                    })
+                    .unwrap_or(false);
+
+                eprintln!(
+                    "DEBUG: literal_type={:?}, is_destructuring_element={}",
+                    literal_type, is_destructuring_element
+                );
+
+                if is_destructuring_element {
+                    return Some(self.widen_to_primitive(literal_type));
+                }
                 return Some(literal_type);
             }
             if let Some(nullish_type) = self.nullish_literal_type(rhs) {
@@ -1299,15 +1363,35 @@ impl<'a> FlowAnalyzer<'a> {
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
             {
-                // CRITICAL FIX: For array destructuring, we should NOT narrow to the RHS element type.
-                // Unlike direct assignment (x = 1 narrows x to literal 1), destructuring extracts
-                // a value from an array, which clears the narrowing to the declared type.
-                //
-                // Example: [x] = [1] should clear x to string | number, not narrow to literal 1.
-                //
-                // By returning None here, we signal that the RHS type should not be used,
-                // which causes get_assigned_type to return None, triggering initial_type return.
-                return None;
+                // FIX: Array destructuring should return the matching RHS element
+                // After [x] = [1] where x: string | number, TypeScript produces `number` (widened primitive)
+                // We return the element node here; get_assigned_type handles the widening
+                let elements = if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                    self.arena.get_literal_expr(node).map(|lit| &lit.elements)?
+                } else {
+                    self.arena
+                        .get_binding_pattern(node)
+                        .map(|pat| &pat.elements)?
+                };
+
+                // Get elements from the RHS array literal
+                let rhs_elements = self.array_literal_elements(rhs);
+
+                for (i, &elem) in elements.nodes.iter().enumerate() {
+                    if elem.is_none() {
+                        continue;
+                    }
+
+                    // Check if this specific element (or its children) targets our reference
+                    if self.assignment_targets_reference_internal(elem, target) {
+                        let rhs_elem = rhs_elements
+                            .and_then(|re| re.nodes.get(i).copied())
+                            .unwrap_or(NodeIndex::NONE);
+
+                        // Recurse to handle nested destructuring: [[x]] = [[1]]
+                        return self.match_destructuring_rhs(elem, rhs_elem, target);
+                    }
+                }
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::OBJECT_BINDING_PATTERN =>
