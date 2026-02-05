@@ -25,9 +25,25 @@
 
 **Strategic Shift**: After consulting with Gemini, shifting focus to implementing critical missing TypeScript diagnostic codes that would most improve conformance.
 
-## Task Breakdown (Priority Order per Gemini Redefinition)
+## Task Breakdown (Priority Order per Gemini Redefinition - 2025-02-05)
 
-### Priority 1: Task #16 - Robust Intersection & Property Infrastructure ⚡ COMPLETE ✅
+### Priority 0: Task #16.0 - Verification of Task #16 ⚡ CRITICAL
+**Status**: 📋 Pending (Next Immediate Action)
+**Why First**: tsz-4 (Lawyer) and tsz-2 (Interface) rely on Task #16 being correct. Any bugs here will cause "ghost failures" in their sessions.
+
+**Actions**:
+1. Run existing solver tests: `cargo test --lib solver`
+2. Run intersection conformance tests if they exist
+3. Create unit test for recursive intersections in `src/solver/objects.rs`
+   - Test case: `type T = { a: T } & { a: T }` (verifies cycle_stack logic)
+   - Test case: `(obj & any) == (any & obj)` (verifies commutativity)
+4. Verify no regressions in object/intersection handling
+
+**Estimated Impact**: Confidence in foundation before building more features
+
+---
+
+### Priority 1: Task #16 - Robust Intersection & Property Infrastructure ✅ COMPLETE
 **Status**: ✅ Completed (2025-02-05)
 **Why First**: Foundation for all object-based checks. tsz-4's nominality checks depend on this.
 
@@ -57,24 +73,57 @@
 
 ---
 
-### Priority 2: Task #17 - TS2367 Comparison Overlap Detection
-**Status**: 📋 Planned
-**Why Second**: High impact on control flow conformance
+### Priority 1: Task #17 - TS2367 Comparison Overlap Detection
+**Status**: 📋 Planned (After Task #16.0 Verification)
+**Why**: Pure set-theory/structural logic - "Can these two sets ever have a non-empty intersection?"
 
-**Constraint**: Must NOT inspect TypeKey in Checker (tsz-2's rule)
+**Gemini Redefinition** (Flash 2025-02-05):
+> "This is the perfect next step. It is a pure 'Judge' operation:
+> 'Can these two sets ever have a non-empty intersection?'"
 
-**Implementation Plan**:
-1. Add `are_types_overlapping(a, b)` to `src/solver/subtype.rs`
-2. Add thin query to `src/solver/mod.rs` (e.g., `solver.compare_overlap()`)
-3. Update `src/checker/expr.rs` to call query and report TS2367
-4. Add reporting logic to `src/checker/error_reporter.rs`
+**Subtask 17.1 (Solver)**: Implement `are_types_overlapping(a, b)` in `src/solver/subtype.rs`
+- If `is_subtype_of(a, b)` or `is_subtype_of(b, a)` → Overlap
+- If both are Objects: Use `PropertyCollector` to find common properties
+- If one is Literal and other is different Literal of same base type → No overlap
+- If one is `string` and other is `number` → No overlap
+
+**Subtask 17.2 (Checker)**: Update `src/checker/expr.rs`
+- Check equality comparisons (`===`, `!==`, `==`, `!=`)
+- Report TS2367 if types have no overlap
+
+**Constraint**: Follow Two-Question Rule for solver logic
+**Must NOT inspect TypeKey in Checker** (tsz-2's rule)
 
 **Example**:
 ```typescript
-if (1 === "one") {  // TS2367: This condition will always return false
-    // ...
-}
+// Should emit TS2367
+if (1 === "one") { }  // number & string have no overlap
+if (true === 1) { }   // boolean & number have no overlap
+
+// Should NOT emit TS2367
+if (1 === 2) { }       // both number, overlap possible
 ```
+
+---
+
+### Priority 2: Task #18 - Structural Intersection Normalization (NEW)
+**Status**: 📝 Planned
+**Why**: High-impact. Prevents confusing errors on types that should have been simplified to `never`.
+
+**Description**: Ensure the Solver simplifies impossible intersections to `never`.
+- Simplify `string & number` to `never`
+- Simplify `{ a: string } & { a: number }` to `{ a: never }`
+- Core "Judge" responsibility to clean up structural types
+
+---
+
+### Priority 3: TS2416 - Signature Override Mismatch
+**Status**: 📝 Planned
+**Why**: Structural validation of class/interface hierarchies
+
+**Description**: When a class extends another, verify new signatures are valid subtypes of old ones.
+- Interaction: tsz-4 handles *accessibility* (private/protected)
+- tsz-1 handles *type* compatibility (structural subtyping)
 
 ---
 
@@ -95,6 +144,51 @@ if (1 === "one") {  // TS2367: This condition will always return false
 **Implementation**:
 1. Leverage existing `reachability_checker.rs`
 2. Check if end-of-function is reachable when return value required
+
+---
+
+## Active Tasks
+
+### Task #16.0: Verify Task #16 Implementation
+**Status**: 📋 NEXT IMMEDIATE ACTION
+**Priority**: Critical (Foundation Validation)
+
+**Description**:
+Verify that Task #16 (Robust Intersection Infrastructure) doesn't regress core behavior.
+
+**Actions**:
+1. Run solver tests: `cargo test --lib solver`
+2. Create unit tests for:
+   - Recursive intersections: `type T = { a: T } & { a: T }`
+   - Commutative Any handling: `(obj & any) == (any & obj)`
+   - Property merging with intersections
+3. Check for regressions in existing intersection/object tests
+
+**Why**: tsz-4 (Lawyer) and tsz-2 (Interface) rely on this being correct.
+
+---
+
+### Task #17: TS2367 - Comparison Overlap Detection
+**Status**: 📋 Planned (After Task #16.0)
+**Priority**: High
+**Estimated Impact**: +1-2% conformance
+
+**Description**:
+Implement TS2367: "This condition will always return 'false' since the types 'X' and 'Y' have no overlap."
+
+**Why**:
+- Pure "Judge" operation: set-theory overlap detection
+- Essential for control flow and equality conformance
+- High-impact, self-contained implementation
+
+**Gemini Guidance** (Flash 2025-02-05):
+> "This is a pure 'Judge' operation: Can these two sets ever have a non-empty intersection?"
+
+**Implementation Plan** (Two-Question Rule):
+1. **Ask Gemini Question 1**: What's the right approach for `are_types_overlapping`?
+2. **Subtask 17.1**: Implement in `src/solver/subtype.rs`
+3. **Ask Gemini Question 2**: Review the implementation
+4. **Subtask 17.2**: Integrate into `src/checker/expr.rs`
 
 ---
 
