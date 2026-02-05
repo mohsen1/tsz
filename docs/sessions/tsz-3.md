@@ -1,12 +1,25 @@
-# Session tsz-3: CFA Stabilization - BLOCKED
+# Session tsz-3: LSP Implementation - JSX Linked Editing
 
 **Started**: 2026-02-05
-**Status**: 🛑 BLOCKED - ARCHITECTURAL DEADLOCK
-**Previous Session**: tsz-3 Phase 1 (CFA Features - Complete)
+**Status**: 🔄 ACTIVE
+**Previous Session**: CFA Stabilization (Blocked - architectural conflicts)
 
 ## Goal
 
-Fix core CFA regressions to provide stable foundation for advanced features.
+Implement LSP features that improve developer experience without requiring deep Solver/Checker architecture expertise.
+
+## Current Work: JSX Linked Editing
+
+Implementing `textDocument/linkedEditingRange` for JSX/TSX files.
+
+**Value**: When editing an opening JSX tag (e.g., `<div>`), the closing tag (`</div>`) automatically syncs.
+
+**Implementation**: Creating `src/lsp/linked_editing.rs`
+- Algorithm: Find JSX tag context, locate parent JsxElement, extract ranges for both opening and closing tag names
+- Files to touch: `src/lsp/linked_editing.rs` (new), `src/lsp/mod.rs` (dispatch)
+- Reference: `src/lsp/highlighting.rs` for parent-walking pattern
+
+**Status**: Planning phase - reviewed implementation with Gemini
 
 ## Outcome: BLOCKED
 
