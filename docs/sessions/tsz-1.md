@@ -79,16 +79,30 @@
 
 ---
 
-### Priority 2: Task #40 - Template Literal Deconstruction
-**Status**: 📝 Planned
+### Priority 2: Task #40 - Template Literal Deconstruction 🚀 NEXT
+**Status**: 📋 IN PROGRESS
 **Why**: Inference from template literals requires "Reverse String Matcher" for `infer` patterns.
 
 **Implementation Goals**:
 1. **Pattern Matching**: Inverse of template literal subtyping - extract `infer ID` from `` `user_${ID}` ``
 2. **Greedy vs Non-Greedy**: Handle multiple `infer` positions correctly (e.g., `` `${infer A}_${infer B}` ``)
 3. **Backtracking**: Implement proper backtracking for ambiguous matches
+4. **Canonical Results**: Ensure extracted strings are interned as `Literal(String)` types
 
 **Files**: `src/solver/evaluate_rules/template_literal.rs`, `src/solver/infer.rs`
+
+---
+
+### Priority 3: Task #42 - Canonicalization Integration 📝 PLANNED
+**Status**: 📝 Planned
+**Why**: North Star O(1) equality goal requires that all type-producing operations return canonicalized TypeIds.
+
+**Sub-tasks**:
+1. **Union/Intersection Audit**: Ensure order-independence (e.g., `A | B` == `B | A`)
+2. **Instantiation Audit**: Ensure canonical forms after type argument substitution
+3. **Recursive Simplification**: Ensure recursive types simplify correctly during evaluation
+
+**Files**: `src/solver/operations.rs`, `src/solver/instantiate.rs`, `src/solver/canonicalize.rs`
 
 ---
 
