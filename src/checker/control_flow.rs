@@ -384,11 +384,6 @@ impl<'a> FlowAnalyzer<'a> {
                 }
             }
 
-            eprintln!(
-                "DEBUG check_flow: is_switch_clause={}, checking cache={}",
-                is_switch_clause, !is_switch_clause
-            );
-
             // Skip if we've already finalized this node
             if visited.contains(&current_flow) {
                 continue;
@@ -401,20 +396,15 @@ impl<'a> FlowAnalyzer<'a> {
                 continue;
             };
 
-            eprintln!(
-                "DEBUG check_flow: flow_node={}, flags={:#x}, has SWITCH_CLAUSE={}",
-                current_flow.0,
-                flow.flags,
-                flow.has_any_flags(flow_flags::SWITCH_CLAUSE)
-            );
-
             // Check if this is a merge point that needs all antecedents processed first
             let is_switch_fallthrough =
                 flow.has_any_flags(flow_flags::SWITCH_CLAUSE) && flow.antecedent.len() > 1;
             let is_loop_header = flow.has_any_flags(flow_flags::LOOP_LABEL);
+            let is_call = flow.has_any_flags(flow_flags::CALL);
             let is_merge_point = flow
                 .has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL)
-                || is_switch_fallthrough;
+                || is_switch_fallthrough
+                || is_call; // CRITICAL: CALL nodes need antecedent for assertion functions
 
             if is_merge_point && !flow.antecedent.is_empty() {
                 // For merge points, check if all required antecedents are processed

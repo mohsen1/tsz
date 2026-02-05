@@ -69,11 +69,55 @@ function test4(x: string | number, y: string) {
 
 ---
 
-### Phase 2: Assertion Functions (PENDING)
+### Phase 2: Assertion Functions (✅ COMPLETE)
 
-**Status**: ⏸️ NOT STARTED
+**Status**: ✅ IMPLEMENTED & TESTED
 
-Integration of `asserts x is T` with flow analysis for all subsequent code.
+**Problem**: Integration of `asserts x is T` with flow analysis for all subsequent code.
+
+**Solution Implemented**:
+1. **Treat CALL nodes as merge points**: Modified `check_flow` to include `flow_flags::CALL` in merge point detection
+2. **Dependency tracking**: CALL nodes now wait for their antecedents to be processed before `handle_call_iterative` is called
+3. **Existing logic reused**: `handle_call_iterative` already had the core logic to detect assertion functions and apply narrowing
+
+**How It Works**:
+1. When a CALL node is encountered in flow analysis, it's treated as a merge point
+2. The worklist algorithm ensures the antecedent (state before the call) is processed first
+3. `handle_call_iterative`:
+   - Gets the pre-call type from the antecedent's results
+   - Checks if the callee is an assertion function via `predicate_signature_for_type`
+   - If `asserts` is true and it targets our reference, applies narrowing via `apply_type_predicate_narrowing`
+   - Returns the narrowed type
+4. The narrowed type is cached in `results` and propagated to all subsequent statements
+
+**Files Modified**:
+- `src/checker/control_flow.rs`:
+  - Added `is_call` to merge point detection (line ~417)
+  - CALL nodes now wait for antecedents before processing
+
+**Test Cases Verified**:
+```typescript
+function assertIsString(x: unknown): asserts x is string {
+    if (typeof x !== "string") throw new Error();
+}
+
+// Test 1: Basic assertion (✅ WORKING)
+function test1(x: unknown) {
+    assertIsString(x);
+    x.toLowerCase(); // x correctly narrowed to string
+}
+
+// Test 2: Error on incompatible assertion (✅ WORKING)
+function test2(x: unknown) {
+    assertIsString(x);
+    assertIsNumber(x); // Error: x is never (string & number = never)
+    x.toFixed(); // Error on never type
+}
+```
+
+**Gemini Consultation**:
+- Question: Asked about architectural approach for assertion functions
+- Answer: Treat CALL nodes as merge points, use existing `handle_call_iterative` logic
 
 ---
 
