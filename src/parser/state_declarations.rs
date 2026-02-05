@@ -64,6 +64,24 @@ impl ParserState {
             None
         };
 
+        // Check for duplicate extends clause: interface I extends A extends B { }
+        if self.is_token(SyntaxKind::ExtendsKeyword) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "'extends' clause already seen.",
+                diagnostic_codes::EXTENDS_CLAUSE_ALREADY_SEEN,
+            );
+            // Skip the duplicate extends and its types for recovery
+            self.next_token();
+            while self.is_identifier_or_keyword() || self.is_token(SyntaxKind::CommaToken) {
+                self.next_token();
+                if self.is_token(SyntaxKind::LessThanToken) {
+                    // Skip type arguments
+                    let _ = self.parse_type_arguments();
+                }
+            }
+        }
+
         // Parse interface body
         self.parse_expected(SyntaxKind::OpenBraceToken);
         let members = self.parse_type_members();
