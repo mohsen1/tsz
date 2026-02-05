@@ -1,8 +1,8 @@
-# Session tsz-2: Stabilization & North Star Architecture Alignment
+# Session tsz-2: Enforce Solver-First Architecture (Anti-Pattern 8.1)
 
 **Started**: 2026-02-05
-**Status**: Active - Merge Conflict to Resolve
-**Focus**: Stabilize Ref -> Lazy/DefId migration, then enforce Checker/Solver separation
+**Status**: Active - Anti-Pattern 8.1 Refactoring
+**Focus**: Remove direct TypeKey inspection from Checker, enforce Solver-First boundary
 
 **Previous Session**: Coinductive Subtyping (COMPLETE)
 **Next Session**: TBD
@@ -10,73 +10,98 @@
 ## Progress Summary
 
 **Completed (Phase 4.3 Migration):**
-- ✅ Fixed PromiseTypeKind::SymbolRef (removed)
-- ✅ Fixed NewExpressionTypeKind::SymbolRef (removed)
-- ✅ Fixed ConstructorCheckKind::SymbolRef (replaced with Lazy)
-- ✅ Fixed PropertyAccessResolutionKind::Ref (removed)
-- ✅ Fixed ContextualLiteralAllowKind::Ref (removed)
-- ✅ Fixed SymbolResolutionTraversalKind::Ref (removed)
-- ✅ Fixed NamespaceMemberKind::SymbolRef (replaced with Lazy)
-- ✅ Replaced all get_ref_symbol() calls with resolve_type_to_symbol_id()
-- ✅ Replaced all get_symbol_ref() calls with resolve_type_to_symbol_id()
-- ✅ Replaced get_ref_if_symbol() with get_lazy_if_def()
-- ✅ Removed deprecated functions from type_queries.rs
-- **Eliminated ALL 46 deprecation warnings** (70 → 0)
+- ✅ All 46 deprecation warnings eliminated (70 → 0)
+- ✅ Ref → Lazy/DefId migration complete
+- ✅ Changes pushed to main
 
-**Current Status:**
-- Local commit made but merge conflict with remote (tsz-4 touched similar files)
-- Need to rebase on main and update incoming tsz-4 code to use new APIs
+**Current Focus: Anti-Pattern 8.1 - Remove Direct TypeKey Matching**
+- Checker is violating NORTH_STAR.md Rule 3: "Checker NEVER inspects type internals"
+- This blocks Solver from evolving its internal representation
+- Must decouple Checker from TypeKey to achieve Solver-First Architecture
 
 ## Current Plan
 
-### 1. Resolve Merge Conflicts (IMMEDIATE BLOCKER)
-The conflict stems from tsz-4 adding new logic that uses deprecated functions.
+### Task 1: Audit & Categorize (IN PROGRESS)
+Search `src/checker/` for TypeKey usages and categorize by purpose:
 
-**Action**: Rebase on main and fix tsz-4 code to use new APIs
-- Update any new calls to `get_ref_symbol`/`get_symbol_ref` → `resolve_type_to_symbol_id`
-- Update any new calls to `get_ref_if_symbol` → `get_lazy_if_def`
-- Consult Gemini if translation isn't 1:1
+```bash
+# Find all TypeKey pattern matches in Checker
+grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
+```
 
-### 2. Verify Conformance (CRITICAL)
-Major refactors like "Ref -> Lazy" often introduce subtle regressions.
+**Categorization:**
+- Type checking (is this a string/object/function?)
+- Property access (does this object have property 'x'?)
+- Type traversal (ensure refs resolved, collect dependencies)
+- Structural inspection (get members, get params, etc.)
 
-**Status**: ⏭️ SKIPPED - TypeScript conformance tests not available in repo
-- Test directory `TypeScript/tests/cases/conformance` does not exist
-- Pre-existing test failures in control_flow_tests are unrelated to migration
-- Manual testing needed for edge cases
+### Task 2: Extend Solver API
+For each identified need, create semantic queries in `src/solver/`:
 
-**Note**: Use `tsz-tracing` to debug if Lazy type resolution behaves differently than old Ref logic.
+**Examples:**
+- Instead of: `matches!(key, TypeKey::Intrinsic(String))`
+- Use: `solver.is_string_type(type_id)`
+- Instead of: `TypeKey::Object(shape_id) => { check props }`
+- Use: `solver.get_property_type(type_id, property_name)`
 
-### 3. Architecture Refactor: Remove Direct TypeKey Matching in Checker
-Per NORTH_STAR.md Anti-Pattern 8.1: Checker should NEVER inspect TypeKey internals directly.
+**Constraint:** New API methods MUST handle:
+- Lazy types (resolve via DefId)
+- Union types (check all members)
+- Intersection types (check all members)
+- Readonly wrappers (unwrap first)
 
-**Task:**
-- Search `src/checker/` for `match .*lookup\(.*\)` or `TypeKey::`
-- Identify places where Checker manually unwraps types (checking Union, Object, etc.)
-- Refactor to use `solver.is_...` methods or Visitor Pattern (`src/solver/visitor.rs`)
+### Task 3: Refactor Checker
+Replace pattern matching with Solver API calls:
+
+**Goal:** Checker should NOT import `TypeKey` at all
+- Remove all `match type_key { TypeKey::... }` patterns
+- Replace with `solver.is_...()` or `solver.get_...()` calls
+- Checker reads like high-level logic, not structural manipulation
 
 ## Success Criteria
 
-- [x] All 46 deprecation warnings resolved
-- [x] Deprecated functions removed
-- [x] Merge conflicts resolved and pushed to main
-- [x] Conformance tests (SKIPPED - test data not available)
-- [ ] No direct TypeKey matching in Checker (Anti-Pattern 8.1 eliminated) - IN PROGRESS
+- [ ] Zero direct matches on `TypeKey` variants in `src/checker/`
+- [ ] Checker does not import `TypeKey` (except possibly in type definitions)
+- [ ] All tests pass (conformance and unit tests)
+- [ ] Solver API extended with necessary semantic queries
+
+## Two-Question Rule (MANDATORY)
+
+For ANY changes to `src/solver/` or `src/checker/`:
+
+**Question 1 (Before):**
+```bash
+./scripts/ask-gemini.mjs --include=src/solver "I found TypeKey pattern matching in checker/file.rs.
+Pattern: [PASTE CODE]
+Purpose: [DESCRIBE WHY]
+Plan: Replace with solver.is_xyz().
+
+Is this correct? What edge cases might I miss?"
+```
+
+**Question 2 (After):**
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver "I implemented solver.is_xyz().
+Code: [PASTE CODE]
+
+Does this handle Unions/Intersections/Lazy correctly? Any bugs?"
+```
 
 ## Notes
 
 **Why This Priority:**
-1. **Stability**: Merge conflict blocks other sessions
-2. **Correctness**: Ref → Lazy migration may have subtle bugs
-3. **Architecture**: Enforces North Star (Checker/Solver separation)
+1. **Architecture**: Anti-Pattern 8.1 is biggest blocker to Solver-First Architecture
+2. **Evolution**: Solver cannot optimize internal representation if Checker depends on TypeKey
+3. **Correctness**: Pattern matching often misses edge cases (Unions, Intersections, Lazy)
 
-**Key Files:**
-- src/checker/state_type_environment.rs (auto-merged)
-- src/checker/type_checking_queries.rs (auto-merged)
-- src/checker/assignment_checker.rs (needs re-apply)
-- src/checker/enum_checker.rs (needs re-apply)
-- src/checker/state_type_analysis.rs (needs re-apply)
-- src/checker/type_checking.rs (needs re-apply)
-- src/checker/type_computation_complex.rs (needs re-apply)
-- src/checker/context.rs (needs re-apply)
-- src/solver/type_queries.rs (needs re-apply)
+**Key Risk:**
+- Simple pattern `matches!(key, TypeKey::String)` misses:
+  - `TypeKey::Union(String, Number)` - should match String
+  - `TypeKey::Lazy(def_id)` - might resolve to String
+  - `TypeKey::Intersection(String, ...)` - should match String
+
+**Files of Interest:**
+- src/checker/assignability_checker.rs (15+ TypeKey matches)
+- src/checker/call_checker.rs (TypeKey::Lazy match)
+- src/solver/visitor.rs (existing visitor pattern)
+- src/solver/type_queries.rs (add new semantic queries here)
