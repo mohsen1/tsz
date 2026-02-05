@@ -142,6 +142,18 @@ pub trait StatementCheckCallbacks {
     /// Restore previously saved iteration/switch context.
     /// Used when leaving a function body.
     fn restore_control_flow_context(&mut self, saved: (u32, u32));
+
+    /// Enter a labeled statement.
+    /// Pushes a label onto the label stack for break/continue validation.
+    /// `is_iteration` should be true if the labeled statement wraps an iteration statement.
+    fn enter_labeled_statement(&mut self, label: String, is_iteration: bool);
+
+    /// Leave a labeled statement.
+    /// Pops the label from the label stack.
+    fn leave_labeled_statement(&mut self);
+
+    /// Get the text of a node (used for getting label names).
+    fn get_node_text(&self, idx: NodeIndex) -> Option<String>;
 }
 
 /// Statement type checker that dispatches to specialized handlers.
@@ -494,6 +506,47 @@ impl StatementChecker {
             }
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => {
                 state.check_function_declaration(stmt_idx);
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                // Extract labeled statement data before mutable operations
+                let labeled_data = {
+                    let arena = state.arena();
+                    let node = arena.get(stmt_idx).unwrap();
+                    arena
+                        .get_labeled_statement(node)
+                        .map(|l| (l.label, l.statement))
+                };
+
+                if let Some((label_idx, statement_idx)) = labeled_data {
+                    // Get the label name
+                    let label_name = state.get_node_text(label_idx).unwrap_or_default();
+
+                    // Determine if the labeled statement wraps an iteration statement
+                    let is_iteration = {
+                        let arena = state.arena();
+                        if let Some(stmt_node) = arena.get(statement_idx) {
+                            matches!(
+                                stmt_node.kind,
+                                syntax_kind_ext::FOR_STATEMENT
+                                    | syntax_kind_ext::FOR_IN_STATEMENT
+                                    | syntax_kind_ext::FOR_OF_STATEMENT
+                                    | syntax_kind_ext::WHILE_STATEMENT
+                                    | syntax_kind_ext::DO_STATEMENT
+                            )
+                        } else {
+                            false
+                        }
+                    };
+
+                    // Push label onto stack
+                    state.enter_labeled_statement(label_name, is_iteration);
+
+                    // Check the contained statement
+                    state.check_statement(statement_idx);
+
+                    // Pop label from stack
+                    state.leave_labeled_statement();
+                }
             }
             _ => {
                 // Catch-all for other statement types
