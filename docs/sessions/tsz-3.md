@@ -253,8 +253,10 @@ Added cross-file Go to Definition support for import statements.
 
 **Per Gemini consultation**, the highest priority next step is **Cross-File Member Support** for References, Rename, and Implementation. While top-level symbols work well, the LSP currently struggles with class/interface members across file boundaries.
 
-**Planned Tasks**:
-1. **Enhance SymbolIndex for identifier mentions** - Record every unique identifier string in a file for O(1) candidate filtering
+**Completed Tasks**:
+1. ✅ **Enhance SymbolIndex for identifier mentions** - Implemented "Pool Scan" optimization to track all identifier strings in the AST for O(1) candidate filtering
+
+**Remaining Tasks**:
 2. **Type-aware reference filtering** - Use Checker to validate property access receivers resolve to owning class/interface
 3. **Cross-File Go to Implementation** - Upgrade from file-local to project-wide using heritage clauses
 4. **Fix shorthand property rename** - Handle `{ x }` expansion to `{ x: newName }` correctly
@@ -264,6 +266,23 @@ Added cross-file Go to Definition support for import statements.
 - Structural typing (anonymous types assigned to interfaces)
 - Declaration merging (Namespace + Class)
 - `this` references as receivers
+
+### SymbolIndex Identifier Mentions (2026-02-05)
+**Status**: ✅ COMPLETE
+
+Added "Pool Scan" optimization to track all identifier mentions in the AST for O(1) candidate filtering.
+
+**Implementation** (`src/lsp/symbol_index.rs`):
+- Modified `index_file()` to accept `NodeArena` parameter
+- Added pool scan of `arena.identifiers` to track all identifier strings (not just declarations)
+- Updated `get_files_with_symbol()` to return files containing any mention of the identifier
+- Updated callers in `Project::set_file` and `update_file` to pass arena
+
+**Value**:
+Before: `find_references` must check every file in the project (O(N) where N = files)
+After: `find_references` can query `get_files_with_symbol()` to filter to only files that actually contain the identifier string (O(1) lookup + O(M) where M = matching files)
+
+This is the foundation for Task #26 (type-aware reference filtering) which will use the Checker to validate property access receivers resolve to the owning class/interface.
 
 **Previous Blocked Work** (CFA):
 - Assertion functions narrowing - COMPLETE (safe to keep)
