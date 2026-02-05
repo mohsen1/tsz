@@ -1212,9 +1212,6 @@ impl Project {
     /// // Returns edits for all files that import utils.ts
     /// ```
     pub fn handle_will_rename_files(&mut self, renames: &[FileRename]) -> WorkspaceEdit {
-        
-        
-        
         use std::path::Path;
 
         let mut result = WorkspaceEdit::new();
@@ -1237,8 +1234,12 @@ impl Project {
                     let new_file_path = new_path.join(relative);
                     let new_file_path_str = new_file_path.to_string_lossy().to_string();
 
-                    // Process this file rename
-                    self.process_file_rename(old_path, Path::new(&new_file_path_str), &mut result);
+                    // Process this file rename with the actual file paths (not directory)
+                    self.process_file_rename(
+                        Path::new(&old_file_path),
+                        Path::new(&new_file_path_str),
+                        &mut result,
+                    );
                 }
             } else {
                 // Single file rename
@@ -1263,67 +1264,54 @@ impl Project {
         use crate::lsp::utils::calculate_new_relative_path;
         use std::path::Path;
 
-        let old_uri = old_path.to_string_lossy().to_string();
+        // Iterate through all files to find those that import the renamed file
+        // We can't use dependency_graph.get_dependents() directly because it stores
+        // raw import specifiers (e.g., "./utils/math") not resolved file paths
+        for (dependent_path, dep_file) in self.files.iter() {
+            // Create a provider to find import nodes
+            let provider = FileRenameProvider::new(
+                dep_file.arena(),
+                dep_file.line_map(),
+                dep_file.source_text(),
+            );
 
-        // Get all files that import the old file
-        if let Some(dependents) = self.dependency_graph.get_dependents(&old_uri) {
-            for dependent_path in dependents {
-                // Get the dependent file
-                let dep_file = match self.files.get(dependent_path) {
-                    Some(f) => f,
-                    None => continue,
-                };
+            // Find all import/export specifiers in this file
+            let import_locations = provider.find_import_specifier_nodes(dep_file.root());
 
-                // Create a provider to find import nodes
-                let provider = FileRenameProvider::new(
-                    dep_file.arena(),
-                    dep_file.line_map(),
-                    dep_file.source_text(),
-                );
+            // For each import, check if it needs updating
+            for import_loc in import_locations {
+                // CRITICAL: Check if this import actually points to the renamed file
+                // Without this check, we would rewrite ALL imports in the file
+                let dependent_path_obj = Path::new(dependent_path);
+                if !self.is_import_pointing_to_file(
+                    dependent_path_obj,
+                    &import_loc.current_specifier,
+                    old_path,
+                ) {
+                    // This import doesn't point to the renamed file, skip it
+                    continue;
+                }
 
-                // Find all import/export specifiers in this file
-                let import_locations = provider.find_import_specifier_nodes(dep_file.root());
+                // Calculate the new import path
+                if let Some(new_specifier) = calculate_new_relative_path(
+                    Path::new(dependent_path),
+                    old_path,
+                    new_path,
+                    &import_loc.current_specifier,
+                ) {
+                    // Create a TextEdit for this import
+                    let text_edit = TextEdit::new(import_loc.range, new_specifier);
 
-                // For each import, check if it needs updating
-                for import_loc in import_locations {
-                    // CRITICAL: Check if this import actually points to the renamed file
-                    // Without this check, we would rewrite ALL imports in the file
-                    let dependent_path_obj = Path::new(dependent_path);
-                    if !self.is_import_pointing_to_file(
-                        dependent_path_obj,
-                        &import_loc.current_specifier,
-                        old_path,
-                    ) {
-                        // This import doesn't point to the renamed file, skip it
-                        continue;
-                    }
-
-                    // Calculate the new import path
-                    if let Some(new_specifier) = calculate_new_relative_path(
-                        Path::new(dependent_path),
-                        old_path,
-                        new_path,
-                        &import_loc.current_specifier,
-                    ) {
-                        // Create a TextEdit for this import
-                        let text_edit = TextEdit::new(import_loc.range, new_specifier);
-
-                        // Add to the result
-                        result.add_edit(dependent_path.clone(), text_edit);
-                    }
+                    // Add to the result
+                    result.add_edit(dependent_path.clone(), text_edit);
                 }
             }
         }
 
         // Update the dependency graph to reflect the rename
-        // Remove old dependencies and add new ones
-        self.dependency_graph.remove_file(&old_uri);
-        if let Some(dependents) = self.dependency_graph.get_dependents(&old_uri) {
-            for _dependent in dependents {
-                // The dependent files now need to point to the new path
-                // This will be updated when those files are re-checked
-            }
-        }
+        // Note: The dependency graph uses raw import specifiers, not resolved paths
+        // So we can't directly update it here. The graph will be rebuilt when
+        // files are re-parsed/re-checked in the normal workflow.
     }
 
     /// Fetch a file by name.
@@ -1350,18 +1338,26 @@ impl Project {
         // Simple resolution: join dir + specifier
         let resolved = importer_dir.join(specifier);
 
+        // Normalize the path by resolving .. and . components
+        let normalized = self.normalize_path(&resolved);
+
         // Check exact match
-        if resolved == target {
+        let target_str = target.to_string_lossy();
+        if normalized == target_str {
             return true;
         }
 
         // Check with extensions (TypeScript resolution logic simplified)
         // The specifier might not have an extension, so we check stems
+        let normalized_path = Path::new(&normalized);
         if let Some(target_stem) = target.file_stem() {
-            if let Some(resolved_stem) = resolved.file_stem() {
+            if let Some(resolved_stem) = normalized_path.file_stem() {
                 if target_stem == resolved_stem {
+                    // Normalize target as well for comparison
+                    let normalized_target = self.normalize_path(target);
+                    let normalized_target_path = Path::new(&normalized_target);
                     // Check if parent dirs match
-                    if resolved.parent() == target.parent() {
+                    if normalized_path.parent() == normalized_target_path.parent() {
                         return true;
                     }
                 }
@@ -1369,6 +1365,31 @@ impl Project {
         }
 
         false
+    }
+
+    /// Simple path normalization that resolves . and .. components without filesystem access.
+    fn normalize_path(&self, path: &Path) -> String {
+        let path_str = path.to_string_lossy();
+
+        // Split by / and process components
+        let components: Vec<&str> = path_str.split('/').collect();
+        let mut result = Vec::new();
+
+        for component in components {
+            if component == "." {
+                // Skip current directory component
+                continue;
+            } else if component == ".." {
+                // Pop from result if possible
+                if !result.is_empty() && result.last() != Some(&"") {
+                    result.pop();
+                }
+            } else {
+                result.push(component);
+            }
+        }
+
+        result.join("/")
     }
 
     /// Check if a path represents a directory (vs a file).

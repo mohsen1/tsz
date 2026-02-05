@@ -1,4 +1,4 @@
-# Session tsz-3: LSP Implementation - Directory Renames
+# Session tsz-3: LSP Implementation - File Rename Testing
 
 **Started**: 2026-02-05
 **Status**: 🔄 ACTIVE
@@ -8,46 +8,63 @@
 
 Implement LSP features that improve developer experience without requiring deep Solver/Checker architecture expertise.
 
-## Current Work: File Rename - Phase 4 (Directory Renames)
-
-Extending `workspace/willRenameFiles` to handle directory renames.
-
-**Challenge**: When a directory is renamed, must recursively update all imports
-that reference files within that directory. Files inside the renamed directory
-also need their relative imports updated.
-
-**Implementation Plan**:
-1. Detect if old_uri/new_uri are directories
-2. Recursively find all files within the directory
-3. For each file, find its dependents and update their imports
-4. Handle relative imports inside the renamed directory
-
-**Status**: ✅ COMPLETE
-
-**Implementation**:
-- Added `is_directory()` helper to detect directory paths
-- Added `find_files_in_directory()` helper to list all .ts/.tsx files in a directory
-- Refactored `handle_will_rename_files()` to detect directory renames
-- Created `process_file_rename()` helper to handle single file renames
-- When directory renamed: expands to individual file renames with proper path computation
-
-**Value**: Renaming a directory now correctly updates all imports across the project,
-including both imports into the directory and imports between files within the directory.
-
 ## Completed Work
 
+### File Rename Testing (2026-02-05)
+**Status**: ✅ COMPLETE
+
+Wrote comprehensive test suite for File Rename functionality (`src/lsp/tests/file_rename_tests.rs`).
+
+**Tests Implemented (8 passing, 1 ignored)**:
+1. `test_single_file_rename_updates_imports` - Basic file rename
+2. `test_directory_rename_updates_imports` - Directory rename (recursive)
+3. `test_nested_directory_rename` - Nested directory structure
+4. `test_sibling_directory_rename` - Sibling directory with `../` imports
+5. `test_reexport_updates_on_rename` - Re-export chains
+6. `test_extensionless_import_updates` - Extensionless imports
+7. `test_no_edit_for_unrelated_imports` - Filtering works correctly
+8. `test_dot_slash_prefix_preserved` - Import style preservation
+9. `test_directory_with_index_file` - IGNORED (requires directory-to-index module resolution)
+
+**Bugs Fixed During Testing**:
+1. **AST Walk Bug**: `find_import_specifier_nodes()` was only checking the root node instead of iterating all nodes in the arena
+2. **Directory Rename Bug**: Was passing directory path instead of actual file paths to `process_file_rename()`
+3. **Path Normalization**: Added `normalize_path()` helper to properly resolve `.` and `..` components in paths
+
+**Known Limitations**:
+- Directory-to-index resolution (e.g., `./utils` → `./utils/index.ts`) requires full module resolution logic
+- This is a complex edge case that depends on TypeScript's module resolution algorithm
+
 ### File Rename Handling (2026-02-05)
-**Status**: ✅ COMPLETE - Commit 460b19435
+**Status**: ✅ COMPLETE - Commits c0e1bec5a, 9041b49b5, 460b19435, cdf4c3b78
 
 Implemented full `workspace/willRenameFiles` support:
 - Phase 1: Path utilities (c0e1bec5a)
 - Phase 2: FileRenameProvider (9041b49b5)
 - Phase 3: Project orchestration (460b19435)
+- Phase 4: Directory renames (cdf4c3b78)
 
 **Implementation**:
 - Added `dependency_graph` field to Project struct
 - `extract_imports()` handles imports AND re-exports
-- `is_import_pointing_to_file()` filters imports correctly
+- `is_import_pointing_to_file()` filters imports correctly with path normalization
+- `normalize_path()` helper resolves `.` and `..` components
+- `process_file_rename()` iterates through all files to find dependents
+- Directory renames expand to individual file renames with proper path computation
+
+**Value**: Renaming files or directories now correctly updates all imports across the project.
+
+## Next Steps
+
+Per Gemini consultation, recommended path is:
+1. ✅ Write tests for File Rename (COMPLETE)
+2. Add dynamic import support (`import("./module")` and `require()`)
+3. Implement Auto-Import Completions (most requested feature)
+
+**Current Focus**: Considering next LSP feature to implement. Options include:
+- Dynamic import support in FileRenameProvider
+- Auto-import completions
+- Code action improvements
 - `handle_will_rename_files()` orchestrates full flow
 - Fixed two critical bugs per Gemini Pro review
 
