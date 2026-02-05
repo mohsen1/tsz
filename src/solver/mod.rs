@@ -108,6 +108,9 @@ mod bidirectional_tests;
 mod integration_tests;
 // intern_tests: loaded from intern.rs
 #[cfg(test)]
+#[path = "tests/enum_nominality.rs"]
+mod enum_nominality;
+#[cfg(test)]
 #[path = "tests/intersection_union_tests.rs"]
 mod intersection_union_tests;
 // lawyer_tests: loaded from lawyer.rs
