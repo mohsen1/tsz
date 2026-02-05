@@ -1769,21 +1769,35 @@ impl ParserState {
         let text = self.scanner.get_token_value_ref().to_string();
         let token_flags = self.scanner.get_token_flags();
 
-        // Check for legacy octal literal (e.g., 01, 0777, 01.0) - TS1121
-        // Legacy octals start with 0 followed by octal digits (0-7), without 0o/0O prefix
-        // Numbers like 009 start with 0 but contain non-octal digits 8-9, so they emit TS1489 instead
-        if (token_flags & TokenFlags::Octal as u32) != 0 {
+        // Check for numbers with leading zeros that should emit TS1121 or TS1489
+        // This includes:
+        // - TS1121: Legacy octal (01, 0777) - Octal flag set, all digits 0-7
+        // - TS1489: Decimal with leading zero (08, 009, 08.5) - starts with 0, contains 8/9
+        //
+        // The scanner sets Octal flag only when first digit after 0 is 0-7.
+        // So "08" doesn't have Octal flag (8 is not octal), but should still emit TS1489.
+        // We need to check both cases.
+        let bytes = text.as_bytes();
+        let is_leading_zero_number = bytes.len() > 1
+            && bytes[0] == b'0'
+            && bytes[1].is_ascii_digit()
+            && (token_flags
+                & (TokenFlags::HexSpecifier as u32
+                    | TokenFlags::BinarySpecifier as u32
+                    | TokenFlags::OctalSpecifier as u32))
+                == 0;
+
+        if is_leading_zero_number {
             // Find the integer part (before any decimal point or exponent)
             let integer_part = text
                 .split(['.', 'e', 'E'])
                 .next()
                 .unwrap_or(&text);
-            // Verify the integer part digits after the leading 0 are all octal (0-7)
-            // Skip leading 0 and check remaining digits don't contain 8 or 9
+            // Check if any digit after the leading 0 is 8 or 9
             let has_non_octal =
                 integer_part.len() > 1 && integer_part[1..].bytes().any(|b| b == b'8' || b == b'9');
             if has_non_octal {
-                // TS1489: Decimals with leading zeros are not allowed (e.g., 009, 08)
+                // TS1489: Decimals with leading zeros are not allowed (e.g., 08, 009, 08.5)
                 use crate::checker::types::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     start_pos,
@@ -1792,6 +1806,7 @@ impl ParserState {
                     diagnostic_codes::DECIMALS_WITH_LEADING_ZEROS_NOT_ALLOWED,
                 );
             } else if integer_part.len() > 1 {
+                // TS1121: Legacy octal literal (e.g., 01, 0777)
                 use crate::checker::types::diagnostics::diagnostic_codes;
                 // Convert legacy octal to modern octal for the suggestion (e.g., "01" -> "0o1")
                 let suggested = format!("0o{}", &integer_part[1..]);

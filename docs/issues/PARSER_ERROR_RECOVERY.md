@@ -11,15 +11,15 @@ tsz's parser error recovery produces different (usually more) errors than TSC wh
 
 ## Conformance Stats (Updated 2026-02-05)
 
-- Parser tests: 53.0% pass rate (458/864)
-- Scanner tests: 47.6% pass rate (20/42)
+- Parser tests: 53.1% pass rate (460/867)
+- Scanner tests: 50.0% pass rate (21/42)
 - Top error mismatches:
   - TS2304: missing=35, extra=88 (cannot find name) - mostly lib loading bug
   - TS1005: missing=25, extra=29 (token expected)
   - TS1109: missing=11, extra=24 (expression expected)
   - TS1128: missing=2, extra=27 (declaration expected)
   - TS2552: missing=7, extra=19 (name typo suggestion)
-  - TS1100: missing=11, extra=0 (invalid use of eval/arguments) - strict mode validation
+  - TS1100: missing=11, extra=0 (invalid use of eval/arguments) - strict mode validation (requires checker)
 
 **Note**: Many TS2304 errors are caused by the default lib loading bug (see DEFAULT_LIB_LOADING_BUG.md).
 
@@ -196,10 +196,14 @@ Fixed `0o`, `0O` to emit TS1178 "Octal digit expected."
 
 **File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
 
-### TS1489 for decimals with leading zeros (commit 8e33a8e)
+### TS1489 for decimals with leading zeros (commit 8e33a8e, improved 40d09e1)
 
-Fixed `009`, `08` to emit TS1489 "Decimals with leading zeros are not allowed."
+Fixed `08`, `009`, `08.5` to emit TS1489 "Decimals with leading zeros are not allowed."
 These are numbers starting with `0` that contain non-octal digits (8 or 9).
+
+Note: The scanner only sets the Octal flag when the first digit after `0` is 0-7.
+Numbers like `08` where the first digit is 8 or 9 don't have this flag set, so the
+check inspects the token text directly for the leading zero pattern.
 
 **File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
 
