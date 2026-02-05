@@ -4,6 +4,8 @@
 **Status**: Active
 **Goal**: Implement coinductive subtyping logic to handle recursive types without infinite loops
 
+**Last Updated**: 2026-02-05 (Phase B Complete)
+
 ## Problem Statement
 
 From NORTH_STAR.md Section 4.4:
@@ -39,8 +41,24 @@ When comparing `A` and `B` where both contain references to themselves, the naiv
 
 **Result**: Build compiles successfully. Runtime shows stack overflow - the exact problem Coinductive Subtyping will solve.
 
-### Phase B: Coinductive Subtyping Implementation 🔄 IN PROGRESS
+### Phase B: Coinductive Subtyping Implementation ✅ COMPLETE
 **Root Cause**: Expansive recursion - `type T = Box<T>` produces new TypeId on each evaluation, bypassing cycle detection
+
+**Implementation** (commits b0dd31634, c04b735ff):
+
+1. ✅ **DefId-Level Cycle Detection in check_subtype** (src/solver/subtype.rs)
+   - Extract DefIds from Lazy/Enum types BEFORE calling evaluate_type
+   - Check `seen_defs` for cycles (both forward and reverse pairs)
+   - Return `CycleDetected` if cycle found
+   - Cleanup `seen_defs` after evaluation
+
+2. ✅ **visiting_defs Tracking in TypeEvaluator** (src/solver/evaluate.rs)
+   - Added `visiting_defs: FxHashSet<DefId>` field
+   - In `evaluate_application`: check if DefId is in `visiting_defs` before resolving
+   - If yes, return application as-is (prevent infinite expansion)
+   - If no, insert into `visiting_defs`, evaluate, then remove
+
+**Result**: No more stack overflow when evaluating recursive types. Tests pass successfully.
 
 **Step 1: Confirm Recursion Location** ⏳
 ```bash
@@ -114,7 +132,13 @@ Based on Gemini's guidance, implement:
 
 **Phase A Complete** (commit eae3bd048): Fixed all compilation errors. Build compiles successfully. Runtime shows stack overflow.
 
-**Current Status**: Phase B - Coinductive Subtyping Implementation
+**Phase B Complete** (commits b0dd31634, c04b735ff):
+- Implemented DefId-level cycle detection in check_subtype
+- Added visiting_defs tracking to TypeEvaluator for evaluate_application
+- No more stack overflow when evaluating recursive types
+- Tests pass successfully
+
+**Current Status**: Phase B Complete - Ready for Phase C (Validation)
 
 ### Root Cause Analysis (from Gemini Pro)
 The stack overflow is caused by **expansive recursion** during type evaluation:
