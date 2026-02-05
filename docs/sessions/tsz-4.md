@@ -444,3 +444,51 @@ Per Gemini Flash recommendation, created comprehensive test suites for the next 
 1. Implement Private Brand nominality checks in `src/solver/compat.rs`
 2. Implement Constructor Accessibility checks in `src/solver/compat.rs`
 3. Verify all tests pass
+
+### Commit: `a0f126a99` - docs(tsz-4): add QUIRKS documentation for nominal typing overrides
+
+**What Was Done**:
+Per Gemini Pro recommendation, documented the TypeScript nominal typing rules in the Lawyer layer QUIRKS section while waiting for Gemini API rate limit recovery.
+
+**Added Documentation** (Section F: Nominality Overrides in `src/solver/lawyer.rs`):
+
+**F.1. Enum Nominality (TS2322)**
+- Documented that enum members are nominally typed via `TypeKey::Enum(def_id, literal_type)` wrapper
+- Explained how `def_id` provides nominal identity while `literal_type` preserves value
+- Included examples showing `E.A ≠ E.B` and `E.A ≠ F.A` even with same values
+
+**F.2. Private/Protected Brands (TS2322)**
+- Documented that classes with private members behave nominally, not structurally
+- Explained the brand concept and rationale (prevent accidental mixing of similar-shape types)
+- Clarified that subclasses inherit parent's private brand
+- Distinguished from public members (which remain structural)
+
+**F.3. Constructor Accessibility (TS2673, TS2674)**
+- Documented private/protected constructor accessibility restrictions
+- Explained scope validation (inside class, subclass, external)
+- Included examples for each accessibility level
+
+**Architectural Context**:
+Added "Why These Override The Judge" section explaining:
+- The Judge implements sound, structural set theory semantics
+- The Lawyer adds TypeScript-specific restrictions on top
+- Key principle: Lawyer never makes types MORE compatible, only LESS compatible
+- This is TypeScript legacy behavior that violates soundness for ergonomic reasons
+
+**Value**:
+- Provides context for future developers working on the Lawyer layer
+- Explains the rationale behind TypeScript's nominal typing quirks
+- Clarifies the Judge vs. Lawyer relationship
+- Prepares codebase for implementation of Priority 1, 2, & 3 features
+
+**Session Status**:
+- ✅ All test infrastructure complete (Priorities 1, 2, 3)
+- ✅ Documentation complete
+- ❌ BLOCKED on Gemini API rate limit for implementation work
+
+**Next Steps** (when rate limit resets):
+1. Ask pre-implementation question about TypeLowering fix (Priority 1)
+2. Implement TypeLowering changes per Gemini's guidance
+3. Implement Private Brand checks (Priority 2)
+4. Implement Constructor Accessibility checks (Priority 3)
+5. Verify all tests pass
