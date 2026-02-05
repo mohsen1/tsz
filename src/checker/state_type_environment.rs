@@ -129,30 +129,62 @@ impl<'a> CheckerState<'a> {
         if let TypeKey::Enum(def_id, _) = key {
             // 1. Resolve DefId to SymbolId
             let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
-                tracing::debug!("get_enum_identity: DefId {:?} has no SymbolId", def_id);
+                eprintln!(
+                    "TSZ-4 DEBUG: get_enum_identity: DefId {:?} has no SymbolId",
+                    def_id
+                );
                 return None;
             };
 
             // 2. FIX: Use get_symbol_globally instead of ctx.binder.get_symbol
             // This handles cross-file symbols and lib.d.ts symbols
             let Some(symbol) = self.get_symbol_globally(sym_id) else {
-                tracing::debug!("get_enum_identity: Symbol {:?} not found globally", sym_id);
+                eprintln!(
+                    "TSZ-4 DEBUG: get_enum_identity: Symbol {:?} not found globally",
+                    sym_id
+                );
                 return None;
             };
 
-            tracing::trace!(
-                "get_enum_identity: type={:?} sym={:?} flags={:?} parent={:?}",
-                type_id,
-                sym_id,
-                symbol.flags,
-                symbol.parent
+            eprintln!(
+                "TSZ-4 DEBUG: get_enum_identity: type={:?} sym={:?} flags={:?} parent={:?}",
+                type_id, sym_id, symbol.flags, symbol.parent
             );
 
             if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
-                // For a member, the identity is the parent Enum symbol
-                return Some(symbol.parent);
+                // TSZ-4 FIX: For enum members, don't rely on symbol.parent (it's u32::MAX).
+                // Instead, use the value_declaration to find the parent enum node,
+                // then look up the parent enum symbol.
+                let member_decl = symbol.value_declaration;
+                if !member_decl.is_none() {
+                    if let Some(_member_node) = self.ctx.arena.get(member_decl) {
+                        // Get the parent of the enum member node
+                        if let Some(ext) = self.ctx.arena.get_extended(member_decl) {
+                            // The parent should be the enum declaration node
+                            if let Some(enum_node) = self.ctx.arena.get(ext.parent) {
+                                if self.ctx.arena.get_enum(enum_node).is_some() {
+                                    // Find the symbol for this enum declaration
+                                    if let Some(enum_sym_id) =
+                                        self.ctx.binder.get_node_symbol(ext.parent)
+                                    {
+                                        eprintln!(
+                                            "TSZ-4 DEBUG: ENUM_MEMBER - found parent enum {:?}",
+                                            enum_sym_id
+                                        );
+                                        return Some(enum_sym_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Fallback: try to find the enum that exports this member
+                // Check if any enum symbol has this member in its exports
+                eprintln!("TSZ-4 DEBUG: ENUM_MEMBER - using fallback to find parent");
+                return self.enum_symbol_from_type(type_id);
             } else if symbol.flags & symbol_flags::ENUM != 0 {
                 // For the enum itself, the identity is its own symbol
+                eprintln!("TSZ-4 DEBUG: ENUM - returning self {:?}", sym_id);
                 return Some(sym_id);
             }
         }
@@ -184,9 +216,9 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<bool> {
-        // TSZ-4: Debug logging to trace enum nominal typing
-        tracing::debug!(
-            "enum_assignability_override: source={:?} target={:?}",
+        // TSZ-4: Debug logging to trace enum nominal typing (use eprintln for test visibility)
+        eprintln!(
+            "TSZ-4 DEBUG: enum_assignability_override: source={:?} target={:?}",
             self.format_type(source),
             self.format_type(target)
         );
@@ -194,7 +226,10 @@ impl<'a> CheckerState<'a> {
         let source_key = self.ctx.types.lookup(source);
         let target_key = self.ctx.types.lookup(target);
 
-        tracing::debug!("source_key={:?}, target_key={:?}", source_key, target_key);
+        eprintln!(
+            "TSZ-4 DEBUG: source_key={:?}, target_key={:?}",
+            source_key, target_key
+        );
 
         // 1. Handle Nominal Identity (Enum vs Enum, Member vs Enum, Member vs Member)
         if let (Some(TypeKey::Enum(s_def, s_inner)), Some(TypeKey::Enum(t_def, t_inner))) =
@@ -216,7 +251,10 @@ impl<'a> CheckerState<'a> {
             let s_identity = self.get_enum_identity(source);
             let t_identity = self.get_enum_identity(target);
 
-            tracing::debug!("Identities: s_id={:?}, t_id={:?}", s_identity, t_identity);
+            eprintln!(
+                "TSZ-4 DEBUG: Identities: s_id={:?}, t_id={:?}",
+                s_identity, t_identity
+            );
 
             if let (Some(s_id), Some(t_id)) = (s_identity, t_identity) {
                 if s_id == t_id {
@@ -294,8 +332,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // Source -> Numeric Enum (e.g., number -> E.A)
+        // TSZ-4 FIX: number should NOT be assignable to enum members
         if let Some(t_id) = target_enum {
             if self.enum_kind(t_id) == Some(EnumKind::Numeric) {
+                // If source is number, reject it (number is not assignable to specific enum members)
+                if source == TypeId::NUMBER {
+                    return Some(false);
+                }
+                // For other sources, check assignability to number (e.g., 5 -> E.A where E.A = 5)
                 return Some(self.check_structural_assignability(source, TypeId::NUMBER, env));
             }
         }

@@ -323,14 +323,14 @@ impl<'a> CheckerState<'a> {
 
     /// Check a single variable declaration.
     pub(crate) fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
-        // TSZ-4: Debug logging at entry point
-        tracing::debug!(
-            "check_variable_declaration called for decl_idx={:?}",
+        // TSZ-4: Debug logging at entry point (use eprintln for test visibility)
+        eprintln!(
+            "TSZ-4 DEBUG: check_variable_declaration called for decl_idx={:?}",
             decl_idx
         );
 
         let Some(node) = self.ctx.arena.get(decl_idx) else {
-            tracing::debug!("No node found for decl_idx, returning early");
+            eprintln!("TSZ-4 DEBUG: No node found for decl_idx, returning early");
             return;
         };
 
@@ -416,9 +416,9 @@ impl<'a> CheckerState<'a> {
 
                     // Check assignability (skip for 'any' since anything is assignable to any)
                     // This includes strict null checks - null/undefined should NOT be assignable to non-nullable types
-                    // TSZ-4: Debug logging to trace why check might be skipped
-                    tracing::debug!(
-                        "About to check assignability: declared_type={:?} type_contains_error={}",
+                    // TSZ-4: Debug logging to trace why check might be skipped (use eprintln for test visibility)
+                    eprintln!(
+                        "TSZ-4 DEBUG: About to check assignability: declared_type={:?} type_contains_error={}",
                         declared_type,
                         checker.type_contains_error(declared_type)
                     );
@@ -450,15 +450,17 @@ impl<'a> CheckerState<'a> {
                                     var_decl.initializer,
                                 );
                             } else {
-                                // TSZ-4: Debug logging to trace assignability check
-                                tracing::debug!(
-                                    "Checking assignability: init_type={:?} declared_type={:?}",
-                                    init_type,
-                                    declared_type
+                                // TSZ-4: Debug logging to trace assignability check (use eprintln for test visibility)
+                                eprintln!(
+                                    "TSZ-4 DEBUG: Checking assignability: init_type={:?} declared_type={:?}",
+                                    init_type, declared_type
                                 );
                                 let is_assignable =
                                     checker.is_assignable_to(init_type, declared_type);
-                                tracing::debug!("is_assignable_to returned: {:?}", is_assignable);
+                                eprintln!(
+                                    "TSZ-4 DEBUG: is_assignable_to returned: {:?}",
+                                    is_assignable
+                                );
 
                                 if !is_assignable {
                                     checker.error_type_not_assignable_with_reason_at(
