@@ -12,12 +12,62 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 
 ## Current State (2025-02-05)
 
-**Test Results**: `./scripts/emit/run.sh --max=50`
-- JavaScript Emit: **14.3%** pass rate (3/21 tests passed, 18 failed)
+**Test Results**: `./scripts/emit/run.sh --max=100`
+- JavaScript Emit: **4.9%** pass rate (3/61 tests passed, 58 failed)
 - Declaration Emit: **0%** pass rate (0/3 tests passed, 3 failed)
-- Overall: Many tests skipped due to timeout/errors
+- Overall: Many tests failing due to structural issues
+
+**Priority Pivot:** Per Gemini consultation, stopped formatting work (low ROI) and pivoted to structural correctness.
 
 ## Progress Log
+
+### 2025-02-05 Session 5: Strategic Pivot - Gemini Consultation
+
+**Consulted Gemini** for session redefinition given low pass rate (4.9%).
+
+**Gemini's Key Insight:**
+"You are currently in a 'polishing the brass on the Titanic' situation. You are spending time on whitespace/formatting while the ship has structural holes (0% declaration emit, missing 'use strict', broken merging)."
+
+**Revised Priorities (Per Gemini):**
+
+**Priority 1: "Use Strict" Emission (HIGH ROI)**
+- **Why:** If tsc emits `"use strict";` and you don't, entire file is mismatched. Affects hundreds of tests.
+- **Problem:** Currently only emit for CommonJS. Need to emit for:
+  1. Modules (CommonJS/AMD/UMD)
+  2. Files with `alwaysStrict: true`
+  3. Files starting with `"use strict"` directive
+- **Action:** Modify `src/emitter/mod.rs` emit_source_file (line 1184)
+- **Implementation:**
+```rust
+let is_es_module = self.file_is_module(&source.statements);
+let always_strict = self.ctx.options.always_strict;
+let is_commonjs_or_amd = matches!(self.ctx.options.module, ModuleKind::CommonJS | ModuleKind::AMD | ModuleKind::UMD);
+
+if always_strict || (is_es_module && (is_commonjs_or_amd || self.ctx.options.target < ScriptTarget::ES2015)) {
+    self.write("\"use strict\";");
+    self.write_line();
+}
+```
+
+**Priority 2: Declaration Emit (0% Pass Rate)**
+- **Why:** 0% means feature is broken/offline. Fixing brings whole category online.
+- **Problem:** Emitter needs "declaration mode" to:
+  - Strip function bodies (`{ ... }` -> `;`)
+  - Emit types (usually erased)
+  - Skip implementation details
+- **Action:** Investigate Printer mode or create DeclarationPrinter
+
+**Priority 3: Structural Correctness (ES5 Transforms)**
+- **Why:** Semantics more important than formatting
+- **Problem:** `IRNode::FunctionExpr` is ambiguous
+- **Action:** Ensure this capture, super calls are correct
+- **DO NOT:** Fix formatting until pass rate >50%
+
+**Action Taken:**
+- Reverted single-line callback formatting changes (commit 218c24ea5)
+- Ready to implement "use strict" fix
+
+**Next Step:** Implement "use strict" emission logic
 
 ### 2025-02-05 Session 4: Discovered IR Code Path (BREAKTHROUGH!)
 
