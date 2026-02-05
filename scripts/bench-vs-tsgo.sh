@@ -7,28 +7,53 @@
 #
 # Usage:
 #   ./scripts/bench-vs-tsgo.sh                    # Full benchmark suite
-#   ./scripts/bench-vs-tsgo.sh --quick              # Quick smoke test (fewer runs, fewer files)
-#   ./scripts/bench-vs-tsgo.sh --json               # Export results to JSON
-#   ./scripts/bench-vs-tsgo.sh --filter 'BCT|CFA'   # Run only tests matching regex
+#   ./scripts/bench-vs-tsgo.sh --quick            # Quick smoke test (fewer runs, fewer files)
+#   ./scripts/bench-vs-tsgo.sh --json             # Export results to JSON
+#   ./scripts/bench-vs-tsgo.sh --filter 'BCT|CFA' # Run only tests matching regex
+#   ./scripts/bench-vs-tsgo.sh --rebuild          # Force rebuild of optimized binary
+#
+# The benchmark uses an isolated target directory (.target-bench/) to prevent
+# interference from other cargo builds. The binary is built with the 'dist' profile
+# which enables maximum optimizations (LTO=fat, codegen-units=1, stripped symbols).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Dedicated target directory for benchmarks - isolated from dev builds
+# This prevents other cargo builds from accidentally overwriting the optimized binary
+BENCH_TARGET_DIR="$PROJECT_ROOT/.target-bench"
+
 # Compilers
-TSZ="$PROJECT_ROOT/.target/dist/tsz"
+TSZ="$BENCH_TARGET_DIR/dist/tsz"
 TSGO="${TSGO:-$(which tsgo 2>/dev/null || echo "")}"
 
 # Parse arguments
 QUICK_MODE=false
 JSON_OUTPUT=false
 FILTER=""
+FORCE_REBUILD=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --quick) QUICK_MODE=true; shift ;;
         --json) JSON_OUTPUT=true; shift ;;
         --filter) FILTER="$2"; shift 2 ;;
+        --rebuild) FORCE_REBUILD=true; shift ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --quick     Quick smoke test (fewer runs, fewer files)"
+            echo "  --json      Export results to JSON"
+            echo "  --filter    Run only tests matching regex (e.g., --filter 'BCT|CFA')"
+            echo "  --rebuild   Force rebuild of tsz binary (ensures fresh optimized build)"
+            echo "  --help      Show this help"
+            echo ""
+            echo "The benchmark uses an isolated target directory (.target-bench/) to prevent"
+            echo "interference from other cargo builds."
+            exit 0
+            ;;
         *) shift ;;
     esac
 done
@@ -97,12 +122,35 @@ check_prerequisites() {
         echo -e "${YELLOW}○${NC} jq not found (optional, install for results table)"
     fi
     
-    # Check/build tsz
-    if [ ! -x "$TSZ" ]; then
-        echo -e "${YELLOW}Building tsz...${NC}"
-        (cd "$PROJECT_ROOT" && cargo build --profile dist --features cli)
+    # Check/build tsz with dedicated benchmark target directory
+    # Using isolated target dir prevents other cargo builds from affecting benchmark binary
+    local need_rebuild=false
+    
+    if [ "$FORCE_REBUILD" = true ]; then
+        echo -e "${YELLOW}Force rebuild requested...${NC}"
+        need_rebuild=true
+    elif [ ! -x "$TSZ" ]; then
+        echo -e "${YELLOW}Binary not found, building...${NC}"
+        need_rebuild=true
+    else
+        # Verify binary is recent (rebuilt if source is newer than binary)
+        local newest_src=$(find "$PROJECT_ROOT/src" -name "*.rs" -newer "$TSZ" 2>/dev/null | head -1)
+        if [ -n "$newest_src" ]; then
+            echo -e "${YELLOW}Source changed since last build, rebuilding...${NC}"
+            need_rebuild=true
+        fi
     fi
+    
+    if [ "$need_rebuild" = true ]; then
+        echo -e "${CYAN}Building tsz with dist profile (LTO=fat, codegen-units=1)${NC}"
+        echo -e "${CYAN}Target directory: $BENCH_TARGET_DIR${NC}"
+        (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" cargo build --profile dist --features cli)
+    fi
+    
     echo -e "${GREEN}✓${NC} tsz: $($TSZ --version 2>&1 | head -1)"
+    echo -e "   Binary: $TSZ"
+    echo -e "   Size: $(ls -lh "$TSZ" | awk '{print $5}')"
+    echo -e "   Built: $(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$TSZ" 2>/dev/null || stat -c '%y' "$TSZ" 2>/dev/null | cut -d. -f1)"
     
     # Check tsgo
     if [ -z "$TSGO" ] || [ ! -x "$TSGO" ]; then
