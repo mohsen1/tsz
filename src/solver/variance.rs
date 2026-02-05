@@ -23,12 +23,22 @@
 //!
 //! Cycle detection uses `(TypeId, Polarity)` pairs to allow correct variance
 //! calculation for recursive types like `type List<T> = { head: T; tail: List<T> }`.
+//!
+//! ## Phase 3: Recursive Variance
+//!
+//! Phase 3 adds support for:
+//! - **Lazy type resolution**: Resolving `Lazy(DefId)` types to analyze variance
+//! - **Recursive variance composition**: Composing variance through generic applications
+//! - **Ref type handling**: Resolving `Ref(SymbolRef)` types for complete coverage
 
 use crate::interner::Atom;
-use crate::solver::TypeDatabase;
 use crate::solver::TypeVisitor;
+use crate::solver::db::QueryDatabase;
+use crate::solver::def::DefId;
 use crate::solver::types::*;
+use crate::solver::visitor::{lazy_def_id, ref_symbol};
 use rustc_hash::FxHashSet;
+use std::sync::Arc;
 
 /// Compute the variance of a type parameter within a type.
 ///
@@ -67,7 +77,7 @@ use rustc_hash::FxHashSet;
 /// let variance = compute_variance(db, box_body, "T");
 /// assert!(variance.is_invariant());
 /// ```
-pub fn compute_variance(db: &dyn TypeDatabase, type_id: TypeId, target_param: Atom) -> Variance {
+pub fn compute_variance(db: &dyn QueryDatabase, type_id: TypeId, target_param: Atom) -> Variance {
     let visitor = VarianceVisitor::new(db, target_param);
     visitor.compute(type_id)
 }
@@ -78,8 +88,8 @@ pub fn compute_variance(db: &dyn TypeDatabase, type_id: TypeId, target_param: At
 /// negative for contravariant positions) as it traverses the type graph.
 /// When it encounters the target type parameter, it records the current polarity.
 struct VarianceVisitor<'a> {
-    /// The type database for looking up type structures.
-    db: &'a dyn TypeDatabase,
+    /// The type database for looking up type structures and resolving lazy types.
+    db: &'a dyn QueryDatabase,
     /// The name of the type parameter we're searching for (e.g., 'T').
     target_param: Atom,
     /// The accumulated variance result so far.
@@ -94,7 +104,7 @@ struct VarianceVisitor<'a> {
 
 impl<'a> VarianceVisitor<'a> {
     /// Create a new VarianceVisitor.
-    fn new(db: &'a dyn TypeDatabase, target_param: Atom) -> Self {
+    fn new(db: &'a dyn QueryDatabase, target_param: Atom) -> Self {
         Self {
             db,
             target_param,
@@ -346,11 +356,42 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
     /// Bound parameters: not handled in variance (used for canonicalization).
     fn visit_bound_parameter(&mut self, _de_bruijn_index: u32) {}
 
-    /// Lazy types: resolve and continue.
-    fn visit_lazy(&mut self, _def_id: u32) {
-        // Lazy(DefId) types must be resolved to find variance
-        // For now, we can't traverse into Lazy types without a resolver
-        // This is handled at a higher level by resolving first
+    /// Lazy types: resolve and continue (Phase 3).
+    ///
+    /// Phase 3: Resolve Lazy(DefId) types to analyze variance of the underlying type.
+    /// This is critical for analyzing user-defined types like `type Box<T> = { value: T }`.
+    fn visit_lazy(&mut self, def_id: u32) {
+        // Resolve the Lazy(DefId) to its underlying TypeId
+        let def_id = DefId(def_id);
+        if let Some(resolved) = self.db.resolve_lazy(def_id, self.db.as_type_database()) {
+            let current_polarity = self.get_current_polarity();
+            self.visit_with_polarity(resolved, current_polarity);
+        }
+    }
+
+    /// Ref types: resolve and continue (Phase 3).
+    ///
+    /// Phase 3: Resolve Ref(SymbolRef) types to analyze variance.
+    /// This handles legacy symbol-based type references.
+    fn visit_ref(&mut self, symbol_ref: u32) {
+        let symbol_ref = SymbolRef(symbol_ref);
+
+        // Try to convert Ref to DefId (Phase 3.4 migration path)
+        if let Some(def_id) = self.db.symbol_to_def_id(symbol_ref) {
+            // Convert to Lazy and resolve
+            if let Some(resolved) = self.db.resolve_lazy(def_id, self.db.as_type_database()) {
+                let current_polarity = self.get_current_polarity();
+                self.visit_with_polarity(resolved, current_polarity);
+                return;
+            }
+        }
+
+        // Fallback: Use deprecated resolve_ref for legacy symbols
+        #[allow(deprecated)]
+        if let Some(resolved) = self.db.resolve_ref(symbol_ref, self.db.as_type_database()) {
+            let current_polarity = self.get_current_polarity();
+            self.visit_with_polarity(resolved, current_polarity);
+        }
     }
 
     /// Recursive types: skip (already handled by cycle detection).
@@ -362,22 +403,55 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
         self.visit_with_polarity(member_type, current_polarity);
     }
 
-    /// Generic applications: variance depends on base type's variance.
+    /// Generic applications: variance composition (Phase 3).
     ///
-    /// CRITICAL FIX: Since we can't resolve the base type's variance without
-    /// a recursive query, we must assume invariance (the safe choice).
-    /// Assuming covariance would be unsound!
+    /// Phase 3: Look up the base type's variance and compose it with current polarity.
+    /// This enables recursive variance calculation for nested generics like
+    /// `type Wrapper<T> = Box<T>` where `Box` is covariant, so `Wrapper` should also be covariant.
     fn visit_application(&mut self, app_id: u32) {
         let app = self.db.type_application(TypeApplicationId(app_id));
         let current_polarity = self.get_current_polarity();
 
-        // CONSERVATIVE: Assume all type parameters are invariant
-        // This is safe (won't cause unsoundness) but may miss optimization opportunities
-        // TODO: Look up variance mask of base type to get correct per-parameter variance
-        for &arg in &app.args {
-            // Visit with both polarities to indicate invariance
-            self.visit_with_polarity(arg, current_polarity);
-            self.visit_with_polarity(arg, !current_polarity);
+        // 1. Extract DefId from the base type (Lazy or via Ref helper)
+        let base_def_id = if let Some(def_id) = lazy_def_id(self.db.as_type_database(), app.base) {
+            Some(def_id)
+        } else if let Some(symbol_ref) = ref_symbol(self.db.as_type_database(), app.base) {
+            self.db.symbol_to_def_id(symbol_ref)
+        } else {
+            None
+        };
+
+        // 2. Look up variance of the base type's parameters (disambiguate QueryDatabase trait)
+        use crate::solver::db::QueryDatabase as QDB;
+        let variances: Option<Arc<[Variance]>> =
+            base_def_id.and_then(|def_id| QDB::get_type_param_variance(self.db, def_id));
+
+        if let Some(variances) = variances {
+            // 3. Compose variance: for each argument, apply base param's variance rules
+            for (i, &arg) in app.args.iter().enumerate() {
+                // Default to invariance if base type has more args than variance entries
+                let base_param_variance = variances
+                    .get(i)
+                    .copied()
+                    .unwrap_or(Variance::COVARIANT | Variance::CONTRAVARIANT);
+
+                // Composition Rules:
+                // - Covariant base param: Argument inherits current polarity
+                if base_param_variance.contains(Variance::COVARIANT) {
+                    self.visit_with_polarity(arg, current_polarity);
+                }
+                // - Contravariant base param: Argument flips current polarity
+                if base_param_variance.contains(Variance::CONTRAVARIANT) {
+                    self.visit_with_polarity(arg, !current_polarity);
+                }
+                // Note: Invariant (both bits) visits both. Independent (no bits) visits neither.
+            }
+        } else {
+            // Fallback: Base variance unknown, assume invariance (safest choice)
+            for &arg in &app.args {
+                self.visit_with_polarity(arg, current_polarity);
+                self.visit_with_polarity(arg, !current_polarity);
+            }
         }
     }
 
