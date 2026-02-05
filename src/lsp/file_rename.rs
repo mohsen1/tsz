@@ -4,7 +4,7 @@
 //! when files are renamed or moved.
 
 use crate::lsp::position::{LineMap, Range};
-use crate::parser::node::{NodeAccess, NodeArena};
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
