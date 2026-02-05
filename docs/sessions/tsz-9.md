@@ -97,3 +97,79 @@ Conditional type evaluation needs to:
 
 *Created 2026-02-05 after completing TSZ-4 (Lawyer Layer Audit).*
 *Renamed from TSZ-8 due to naming conflict with existing session.*
+
+---
+
+## Investigation Results (2026-02-05)
+
+### Existing Implementation Found ✅
+
+**File**: `src/solver/evaluate_rules/infer_pattern.rs` (1,085 lines)
+
+**Key Functions**:
+- `match_infer_pattern()` (line 845) - Main pattern matching entry point
+- `bind_infer()` (line 286) - Bind inferred type with constraint checking
+- `substitute_infer()` (line 28) - Replace infer placeholders with bindings
+- `type_contains_infer()` (line 41) - Check if type contains infer
+
+### Bugs Identified 🔍
+
+**Bug #1: Always Uses Union for Multiple Infer Declarations**
+- Location: Lines 886-888, 946-950
+- Current code:
+```rust
+if let Some(existing) = merged.get_mut(&name) {
+    if *existing != ty {
+        *existing = self.interner().union2(*existing, ty); // ALWAYS UNION!
+    }
+}
+```
+- Problem: Should use `intersection2` for contravariant positions (function parameters)
+- Impact: Incorrect type inference for overlapping `infer` declarations in function types
+
+**Example that should fail**:
+```typescript
+type Bar<T> = T extends (x: infer U) => void | (x: infer U) => void ? U : never;
+// Should produce intersection, but current code produces union
+```
+
+**Bug #2: No Polarity/Variance Tracking**
+- The code has no way to know if it's in a covariant or contravariant position
+- Function parameters are contravariant
+- Function return types are covariant
+- Need to add `polarity: bool` parameter to track this
+
+### Implementation Plan
+
+1. Add `polarity: bool` parameter to `match_infer_pattern()`
+   - `true` = covariant (use union)
+   - `false` = contravariant (use intersection)
+
+2. Update all recursive calls to pass correct polarity:
+   - Function parameters: `polarity = false`
+   - Function return types: `polarity = true`
+   - Object properties: `polarity = true`
+   - Array elements: `polarity = true`
+   - Tuple elements: `polarity = true`
+
+3. Fix binding merge logic:
+```rust
+if polarity {
+    *existing = self.interner().union2(*existing, ty); // Covariant
+} else {
+    *existing = self.interner().intersection2(*existing, ty); // Contravariant
+}
+```
+
+### Files to Modify
+
+1. `src/solver/evaluate_rules/infer_pattern.rs`
+   - Add `polarity` parameter to `match_infer_pattern()`
+   - Add `polarity` parameter to helper functions
+   - Fix merge logic at 3 locations (lines 888, 949, etc.)
+
+2. Tests needed for:
+   - Multiple infer in function parameters (contravariant → intersection)
+   - Multiple infer in return types (covariant → union)
+   - Mixed polarity cases
+
