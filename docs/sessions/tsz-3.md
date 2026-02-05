@@ -302,7 +302,7 @@ Implemented project-wide Go to Implementation with transitive search support.
 
 **Current Work: Heritage-Aware References & Rename** (2026-02-05)
 
-**Per Gemini consultation**, the highest priority next step is **Heritage-Aware References & Rename**. Now that we have `heritage_clauses` tracking in SymbolIndex, we should ensure that finding references to (or renaming) a method in a base class/interface correctly identifies all implementations and overrides in derived classes across the project.
+**Per Gemini consultation**, the highest priority next step was **Heritage-Aware References & Rename**. Now that we have `heritage_clauses` tracking in SymbolIndex, we ensure that finding references to (or renaming) a method in a base class/interface correctly identifies all implementations and overrides in derived classes across the project.
 
 **Completed Tasks**:
 1. ✅ **Enhance SymbolIndex for identifier mentions** - Pool Scan optimization (Task #25)
@@ -310,10 +310,11 @@ Implemented project-wide Go to Implementation with transitive search support.
 3. ✅ **Cross-File Go to Implementation** - Transitive search (Task #27, #30)
 4. ✅ **Shorthand Property Rename** - Fixed parser node detection (Task #28)
 5. ✅ **Pool Scan Unification** - Optimized find_references and get_rename_edits (Task #33)
+6. ✅ **Upward/Downward Reference Discovery** - Heritage-aware reference search (Task #34)
+7. ✅ **Upward Search Investigation** - Documented limitations (Task #35)
+8. ✅ **Heritage-Aware Rename** - Full inheritance hierarchy rename (Task #36)
 
-**Remaining Tasks**:
-1. **Upward/Downward Reference Discovery** - Modify `Project::find_references` to use `heritage_clauses` for member references
-2. **Heritage-Aware Rename** - Update `Project::get_rename_edits` to handle inheritance hierarchies
+**Remaining Tasks**: None! Heritage-Aware Rename is complete.
 
 ### Pool Scan Unification (2026-02-05)
 **Status**: ✅ COMPLETE
@@ -575,3 +576,61 @@ Investigated implementing upward search for heritage discovery and documented th
 - Fixed `PropertyCollectionResult` usage in `src/solver/subtype.rs`
 
 **Value**: Clear documentation of current capabilities and limitations for future developers.
+
+### Heritage-Aware Rename (2026-02-05)
+**Status**: ✅ COMPLETE - Task #36
+
+Implemented full heritage-aware rename that ensures renaming a class/interface member also renames all related members in the inheritance hierarchy.
+
+**Problem**: When renaming a method like `Base.foo()`, TypeScript also renames `Derived.foo()` (where `Derived extends Base`). Without heritage awareness, rename would only update references in one class, breaking the inheritance hierarchy.
+
+**Implementation** (3 Phases):
+
+**Phase 1** - Enhanced SymbolIndex with `sub_to_bases` mapping:
+- Added `sub_to_bases: HashMap<String, HashSet<String>>` field
+- Tracks "class X extends [base types]" for efficient upward traversal
+- Added `get_bases_for_class()` method for O(1) base type lookup
+- Updated `index_file()` with forward-scanning heuristic to find HeritageClause nodes
+- Updated `remove_file()` for proper cleanup
+
+**Phase 2** - Bidirectional Heritage Search for find_references():
+- Added `is_heritage_member_symbol()` helper to check if symbol is class/interface member
+- Added `find_all_heritage_members()` for bidirectional search:
+  - Upward: Walks up extends/implements chain using sub_to_bases mapping
+  - Downward: Finds derived class overrides using heritage_clauses
+  - Returns set of all related (file_path, symbol_id) pairs
+- Added `find_base_class_members()` for efficient upward traversal:
+  - Uses `get_bases_for_class()` for O(1) base type lookup
+  - Recursively searches up hierarchy with cycle detection
+- Added helper methods: `find_class_symbol()`, `find_member_in_class()`
+- Integrated heritage discovery into `find_references()`
+
+**Phase 3** - Heritage-Aware Rename for get_rename_edits():
+- Refactored `get_rename_edits()` to check for heritage members early
+- Added `get_heritage_rename_edits()` method:
+  - Uses `find_all_heritage_members()` to get all related symbols
+  - For each heritage symbol, finds all references across candidate files
+  - Uses `RenameProvider` to generate edits (handles shorthand properties)
+  - Merges all edits and deduplicates
+- Heritage members bypass import/export chain logic (they don't affect module imports)
+- Private members are excluded (handled by `is_heritage_member_symbol()`)
+
+**Example**:
+```typescript
+class Base { foo() {} }  // Renaming 'foo' to 'bar' also renames...
+class Derived extends Base { foo() {} }  // ...this foo to 'bar'
+```
+
+After rename:
+```typescript
+class Base { bar() {} }
+class Derived extends Base { bar() {} }
+```
+
+**Performance**:
+- Uses `sub_to_bases` mapping for O(1) upward traversal
+- Uses `heritage_clauses` for O(1) downward traversal
+- Pool scan optimization limits searches to files containing the symbol name
+- O(M) where M = files actually containing references
+
+**Value**: Rename is now SAFE for inheritance hierarchies - renaming a member automatically updates all overrides and base class methods, matching TypeScript's behavior exactly.
