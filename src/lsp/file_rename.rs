@@ -49,41 +49,25 @@ impl<'a> FileRenameProvider<'a> {
     /// This returns ALL imports/exports in the file. The caller is responsible
     /// for filtering to only those that actually reference the renamed file,
     /// since that requires knowing the module resolution context.
-    pub fn find_import_specifier_nodes(&self, root: NodeIndex) -> Vec<ImportLocation> {
+    pub fn find_import_specifier_nodes(&self, _root: NodeIndex) -> Vec<ImportLocation> {
         let mut result = Vec::new();
 
-        // Walk the AST to find all ImportDeclaration and ExportDeclaration nodes
-        self.walk_tree(root, &mut result);
+        // In the flat NodeArena structure, we do a simple linear scan of all nodes
+        // This is efficient because NodeArena is contiguous in memory
+        for node in self.arena.nodes.iter() {
+            // Check if this is an import or export declaration
+            if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                if let Some(import_decl) = self.arena.get_import_decl(node) {
+                    self.add_import_location(import_decl.module_specifier, &mut result);
+                }
+            } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                if let Some(export_decl) = self.arena.get_export_decl(node) {
+                    self.add_import_location(export_decl.module_specifier, &mut result);
+                }
+            }
+        }
 
         result
-    }
-
-    /// Walk the AST tree to find import/export declarations.
-    fn walk_tree(&self, node_idx: NodeIndex, result: &mut Vec<ImportLocation>) {
-        if node_idx.is_none() {
-            return;
-        }
-
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return,
-        };
-
-        // Check if this is an import or export declaration
-        if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
-            if let Some(import_decl) = self.arena.get_import_decl(node) {
-                self.add_import_location(import_decl.module_specifier, result);
-            }
-        } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-            if let Some(export_decl) = self.arena.get_export_decl(node) {
-                self.add_import_location(export_decl.module_specifier, result);
-            }
-        }
-
-        // Recursively walk children
-        // Note: In the flat NodeArena structure, we need to walk all nodes
-        // For now, we'll do a simple linear scan of all nodes
-        // This is efficient because NodeArena is contiguous in memory
     }
 
     /// Add an import location to the result if the specifier is a string literal.

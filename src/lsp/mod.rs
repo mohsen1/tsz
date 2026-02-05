@@ -62,6 +62,9 @@ pub mod workspace_symbols;
 #[path = "tests/code_actions_tests.rs"]
 mod code_actions_tests;
 #[cfg(test)]
+#[path = "tests/file_rename_tests.rs"]
+mod file_rename_tests;
+#[cfg(test)]
 #[path = "tests/project_tests.rs"]
 mod project_tests;
 #[cfg(test)]
