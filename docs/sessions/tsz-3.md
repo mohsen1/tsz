@@ -73,25 +73,8 @@ Where is get_type_of_array_literal? Does it distinguish Tuple vs Array context?
 How do I extract element types at specific indices from a Tuple type?"
 ```
 
-#### Task 2: `this` in Object Literals (MEDIUM-HIGH)
-**File**: `src/checker/type_computation.rs` (`get_type_of_object_literal`)
-
-**Goal**: Support `ThisType<T>` marker to push `T` onto `this_type_stack`.
-
-**Test Case**:
-```typescript
-type ObjectDescriptor<D, M> = {
-    data?: D;
-    methods?: M & ThisType<D & M>;
-};
-function makeObject<D, M>(desc: ObjectDescriptor<D, M>): D & M { ... }
-makeObject({
-    data: { x: 0 },
-    methods: {
-        move() { this.x++; } // 'this' should know about 'x'
-    }
-});
-```
+#### Task 2: `this` in Object Literals (MEDIUM-HIGH) ⏸️ DEFERRED TO PHASE 8
+**Reason**: ThisType<T> requires Solver to recognize specific SymbolId from lib.d.ts and Checker to manage this_type_stack. Less critical than overload resolution and priority-based inference. See Phase 8 below.
 
 #### Task 3: `await` Context Propagation (LOW) ✅ COMPLETE
 **File**: `src/checker/type_computation.rs`, `src/checker/dispatch.rs`
@@ -119,12 +102,107 @@ const x: number = await expr; // expr should get number | PromiseLike<number>
 - Recursive unwrapping works ✅
 - Contextual typing works ✅
 
-#### Task 4: Overload Context Investigation (MEDIUM)
+#### Task 4: Overload Context Investigation (HIGH) 🔄 IN PROGRESS
 **File**: `src/checker/call_checker.rs` (`resolve_call_expression`)
 
-**Goal**: Determine how overload signature selection affects contextual typing for arguments.
+**Goal**: Investigate and implement contextual typing for overloaded function arguments.
 
-**Action**: Write test case, verify behavior matches TypeScript.
+**Problem**: When a function is overloaded, the contextual type of arguments depends on which signature is being targeted. This is a "chicken and egg" problem.
+
+**Example**:
+```typescript
+declare function set(handler: (x: string) => void): void;
+declare function set(handler: (x: number) => void): void;
+set(x => x.toString()); // 'x' should get contextual type from candidate signatures
+```
+
+**Approach** (from Gemini Flash 2026-02-05):
+1. Write test case with overloaded functions and arrow function arguments
+2. Use `tsz-tracing` to see if arguments get `unknown` or `any`
+3. Modify `call_checker.rs` to propagate context from candidate signatures
+4. Ensure parameter types from candidate signatures are pushed into `ctx.contextual_type`
+
+**Ask Gemini First** (Two-Question Rule - MANDATORY):
+```bash
+./scripts/ask-gemini.mjs --include=src/checker/call_checker.rs \
+  "I need to implement contextual typing for overloaded functions.
+  When resolve_call_expression iterates through signatures, how should it provide contextual types to arguments?
+  Does tsc use the first signature, or does it try to match based on argument structure first?
+  Where should I hook into the signature selection loop to set the contextual type?"
+```
+
+---
+
+## Phase 7: Priority-Based Contextual Inference (READY - The "Final Boss")
+
+**Status**: 🟡 READY TO START (Complex multi-file refactoring)
+**Started**: 2026-02-05
+
+**Problem Statement**:
+Inference needs to happen in "waves." Some constraints are "High Priority" (explicit types) and some are "Low Priority" (contextual types from return position). Treating them equally causes circularities or `unknown` leakage.
+
+**Impact**: Critical for complex generic functions like `Array.prototype.map` or `Promise.then`.
+
+**Note**: This was the deferred Task 4 from "Generic Inference & Nominal Hierarchy Integration" phase.
+
+### Task 1: Define InferencePriority Enum (HIGH)
+**File**: `src/solver/types.rs`
+
+**Goal**: Define standard priority levels used by tsc.
+
+**Priority Levels** (from Gemini):
+- `NakedTypeVariable` - Highest priority
+- `HomomorphicMappedType`
+- `MappedType`
+- `ContravariantConditional`
+- (Other levels as defined by tsc)
+
+### Task 2: Refactor constrain_types (HIGH)
+**File**: `src/solver/operations.rs`
+
+**Goal**: Update `constrain_types` signature to accept `InferencePriority` parameter.
+
+**Impact**: Requires updating 6+ helper functions.
+
+### Task 3: Multi-Pass Inference in resolve_generic_call (HIGH)
+**File**: `src/solver/operations.rs`
+
+**Goal**: Implement multi-pass inference using priority levels to prevent `any` leakage.
+
+**Ask Gemini First** (Two-Question Rule - MANDATORY):
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/operations.rs \
+  "I am ready to implement Priority-Based Contextual Inference.
+  I need to add InferencePriority to constrain_types.
+  What are the standard priority levels used by tsc?
+  How does resolve_generic_call use these priorities to prevent 'any' leakage when the return type provides the context?"
+```
+
+---
+
+## Phase 8: Advanced Markers (DEFERRED)
+
+**Status**: ⏸️ DEFERRED - Lower priority than Phases 6-7
+
+### Task 2 (from Phase 6): ThisType<T> in Object Literals (MEDIUM-LOW)
+**File**: `src/checker/type_computation.rs` (`get_type_of_object_literal`)
+
+**Why Deferred**: `ThisType<T>` is a marker interface that requires Solver to recognize a specific `SymbolId` from `lib.d.ts` and Checker to manage `this_type_stack`. While important for libraries like Vue 2, it's less core to type system stability than Overloads and Priority-Based Inference.
+
+**Test Case**:
+```typescript
+type ObjectDescriptor<D, M> = {
+    data?: D;
+    methods?: M & ThisType<D & M>;
+};
+function makeObject<D, M>(desc: ObjectDescriptor<D, M>): D & M { ... }
+makeObject({
+    data: { x: 0 },
+    methods: {
+        move() { this.x++; } // 'this' should know about 'x'
+    }
+});
+```
 
 ---
 
