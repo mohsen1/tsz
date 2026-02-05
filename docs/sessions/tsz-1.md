@@ -974,30 +974,42 @@ This task is complete. The stack overflow should be investigated by the session 
 
 **Current Focus**: Tuple Subtyping and Advanced Structural Operations
 
-### Task #29: Tuple Subtyping (Rest and Optional Elements) 📋 NEXT
-**Status**: 📋 Planned
+### Task #29: Tuple Subtyping (Rest and Optional Elements) ✅ ALREADY IMPLEMENTED (2025-02-05)
+**Status**: ✅ Feature Already Complete (2025-02-05)
 **Priority**: High (Core Judge Operation)
-**Estimated Impact**: +2-3% conformance
 
-**Description**:
-Implement robust tuple subtyping to handle TypeScript's complex tuple rules:
-- **Optional elements**: `[string, number?]` vs `[string]`
-- **Rest elements**: `[string, ...number[]]` vs `[string, number, number]`
-- **Variadic Tuples**: `[...T, ...U]`
-- **Readonly Tuples**: `readonly [string, string]` vs `[string, string]`
+**Investigation Findings**:
+Tuple subtyping is **ALREADY FULLY IMPLEMENTED** in `src/solver/subtype_rules/tuples.rs`.
 
-**Why This Matters**:
-Tuples are used for:
-- Array-like structures
-- Function parameter lists (for `...args`)
-- Generic type manipulation
-- Modern TypeScript patterns
+**Existing Implementation** (Lines 27-250):
+- `check_tuple_subtype`: Main entry point for tuple subtyping
+- `expand_tuple_rest`: Handles variadic tuple expansion
+- `check_array_to_tuple_subtype`: Array-to-tuple compatibility
+- `check_tuple_to_array_subtype`: Tuple-to-array compatibility
+- `check_array_to_fixed_array_subtype`: Array covariance with readonly
 
-**Implementation Plan** (Two-Question Rule):
-1. Ask Gemini Question 1: What's the correct structural algorithm for comparing tuples with rest/optional elements?
-2. Implement in `src/solver/subtype_rules/tuples.rs`
-3. Ask Gemini Question 2: Review the implementation
-4. Add comprehensive tests
+**Comprehensive Coverage**:
+✅ Required element counting (source ≥ target required)
+✅ Rest element handling with "sandwich" matching (prefix, variadic middle, suffix)
+✅ Optional element compatibility
+✅ Variadic tuple expansion (`[...T, ...U]`)
+✅ Readonly tuple covariance (mutable ≤ readonly)
+✅ Closed tuple constraints (no extra elements if target has no rest)
+✅ Nested rest elements (flattened recursively)
+
+**Test Status**: All tuple tests pass (100+ test cases)
+
+**Test Coverage**:
+- Conditional tuple inference
+- Tuple array assignability
+- Tuple element extraction
+- Tuple rest distribution
+- Optional tuple elements
+- Readonly tuple elements
+- Spread operator with tuples
+- Destructuring with tuples
+
+**Files**: `src/solver/subtype_rules/tuples.rs`
 
 ---
 
