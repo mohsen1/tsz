@@ -180,18 +180,8 @@ impl<'a> CheckerState<'a> {
 
         // Otherwise, fall back to type-based lookup for pure namespace/module types
         // Look up the member in the left side's exports
-        // Supports both legacy Ref(SymbolRef) and new Lazy(DefId) types
-        let fallback_sym_id = if let Some(sym_ref) =
-            crate::solver::type_queries::get_symbol_ref(self.ctx.types, left_type)
-        {
-            Some(crate::binder::SymbolId(sym_ref.0))
-        } else if let Some(def_id) =
-            crate::solver::type_queries_extended::get_def_id(self.ctx.types, left_type)
-        {
-            self.ctx.def_to_symbol_id(def_id)
-        } else {
-            None
-        };
+        // Supports both Lazy(DefId) and Enum types
+        let fallback_sym_id = self.ctx.resolve_type_to_symbol_id(left_type);
 
         if let Some(fallback_sym) = fallback_sym_id
             && let Some(symbol) = self

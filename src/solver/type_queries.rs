@@ -738,37 +738,6 @@ pub fn get_enum_def_id(
     }
 }
 
-/// Get the SymbolRef from a Lazy type by converting DefId to SymbolId.
-///
-/// This is a compatibility helper for code that expects SymbolRef from type references.
-/// Returns None if the type is not a Lazy type or if DefId cannot be converted to SymbolId.
-///
-/// Note: This requires access to a TypeResolver to perform the conversion.
-/// Callers should prefer using get_lazy_def_id() and working with DefId directly.
-#[deprecated(note = "Use get_lazy_def_id() and work with DefId directly")]
-pub fn get_ref_symbol(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<crate::solver::types::SymbolRef> {
-    match db.lookup(type_id) {
-        Some(TypeKey::Lazy(_)) => {
-            // Cannot convert DefId to SymbolRef without a TypeResolver
-            // Callers need to migrate to using DefId directly
-            None
-        }
-        _ => None,
-    }
-}
-
-/// Get the SymbolRef from a Lazy type - alias for get_ref_symbol.
-#[deprecated(note = "Use get_lazy_def_id() and work with DefId directly")]
-pub fn get_symbol_ref(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<crate::solver::types::SymbolRef> {
-    get_ref_symbol(db, type_id)
-}
-
 // =============================================================================
 // Constructor Type Collection Helpers
 // =============================================================================
@@ -1882,15 +1851,6 @@ pub fn get_lazy_if_def(
         Some(TypeKey::Lazy(def_id)) => Some(def_id),
         _ => None,
     }
-}
-
-/// Compatibility alias for get_lazy_if_def.
-#[deprecated(note = "Use get_lazy_if_def() instead")]
-pub fn get_ref_if_symbol(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<crate::solver::def::DefId> {
-    get_lazy_if_def(db, type_id)
 }
 
 // =============================================================================

@@ -1815,9 +1815,7 @@ impl<'a> CheckerState<'a> {
         // For type parameters, check if the constraint is a constructor type
         // For intersection types, check if any member is a constructor type
         // For application types, check if the base type is a constructor type
-        use crate::solver::type_queries::{
-            ConstructorCheckKind, classify_for_constructor_check, get_ref_symbol,
-        };
+        use crate::solver::type_queries::{ConstructorCheckKind, classify_for_constructor_check};
 
         match classify_for_constructor_check(self.ctx.types, type_id) {
             ConstructorCheckKind::TypeParameter { constraint } => {
@@ -1844,10 +1842,8 @@ impl<'a> CheckerState<'a> {
                 //     class C extends x {}  // x should be valid here
                 //   }
                 // Only check the base - don't recurse further to avoid infinite loops
-                // Check if base is a Ref to a type alias with constructor type body
-                if let Some(symbol_ref) = get_ref_symbol(self.ctx.types, base) {
-                    use crate::binder::SymbolId;
-                    let sym_id = SymbolId(symbol_ref.0);
+                // Check if base is a Lazy type to a type alias with constructor type body
+                if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) {
                     if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                         if let Some(decl_idx) = symbol.declarations.first().copied() {
                             if let Some(decl_node) = self.ctx.arena.get(decl_idx) {

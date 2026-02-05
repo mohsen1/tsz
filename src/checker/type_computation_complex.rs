@@ -781,20 +781,24 @@ impl<'a> CheckerState<'a> {
                 // Since evaluate_application_type is on CheckerState (mutable), we
                 // check if the base type is a type alias that resolves to a Callable
                 let app = self.ctx.types.type_application(app_id);
-                // Check if base is a Ref to a type alias with a Callable body
-                if let Some(sym_ref) =
-                    crate::solver::type_queries::get_ref_if_symbol(self.ctx.types, app.base)
+                // Check if base is a Lazy type to a type alias with a Callable body
+                if let Some(def_id) =
+                    crate::solver::type_queries::get_lazy_if_def(self.ctx.types, app.base)
                 {
-                    let symbol_id = SymbolId(sym_ref.0);
-                    if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                    let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
+                        return None;
+                    };
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                         // For type aliases, get the cached resolved type
-                        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                        if let Some(&cached_type) = self.ctx.symbol_types.get(&sym_id) {
                             // Recursively check the resolved type
                             return self.get_construct_signature_return_type(cached_type);
                         }
                         // Check if symbol is a class
                         if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
-                            return Some(self.ctx.types.reference(SymbolRef(sym_ref.0)));
+                            return Some(
+                                self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id)),
+                            );
                         }
                     }
                 }
