@@ -90,11 +90,12 @@ impl<'a> NamespaceES5Emitter<'a> {
             None => return String::new(),
         };
 
-        let mut printer = IRPrinter::with_arena(self.arena);
+        let mut printer = if let Some(source_text) = self.source_text {
+            IRPrinter::with_arena_and_source(self.arena, source_text)
+        } else {
+            IRPrinter::with_arena(self.arena)
+        };
         printer.set_indent_level(self.indent_level);
-        if let Some(source_text) = self.source_text {
-            printer.set_source_text(source_text);
-        }
         printer.emit(&ir).to_string()
     }
 

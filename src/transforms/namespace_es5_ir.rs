@@ -463,7 +463,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         let is_exported = has_export_modifier(self.arena, &var_data.modifiers);
 
-        let mut result = vec![IRNode::ASTRef(var_idx)];
+        let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
 
         if is_exported {
             let var_names = collect_variable_names(self.arena, &var_data.declarations);
@@ -484,7 +484,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         let var_node = self.arena.get(var_idx)?;
         let var_data = self.arena.get_variable(var_node)?;
 
-        let mut result = vec![IRNode::ASTRef(var_idx)];
+        let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
 
         // Always export since this is from an export declaration
         let var_names = collect_variable_names(self.arena, &var_data.declarations);
@@ -956,7 +956,7 @@ impl<'a> NamespaceTransformContext<'a> {
 
         let is_exported = has_export_modifier(self.arena, &var_data.modifiers);
 
-        let mut result = vec![IRNode::ASTRef(var_idx)];
+        let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
 
         if is_exported {
             // Collect variable names for export
@@ -982,7 +982,7 @@ impl<'a> NamespaceTransformContext<'a> {
         let var_node = self.arena.get(var_idx)?;
         let var_data = self.arena.get_variable(var_node)?;
 
-        let mut result = vec![IRNode::ASTRef(var_idx)];
+        let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
 
         // Always export
         let var_names = collect_variable_names(self.arena, &var_data.declarations);
@@ -1226,6 +1226,36 @@ fn collect_variable_names(arena: &NodeArena, declarations: &NodeList) -> Vec<Str
     }
 
     names
+}
+
+/// Convert variable declarations to proper IR (VarDecl nodes)
+fn convert_variable_declarations(arena: &NodeArena, declarations: &NodeList) -> Vec<IRNode> {
+    let mut result = Vec::new();
+
+    for &decl_list_idx in &declarations.nodes {
+        if let Some(decl_list_node) = arena.get(decl_list_idx)
+            && let Some(decl_list) = arena.get_variable(decl_list_node)
+        {
+            for &decl_idx in &decl_list.declarations.nodes {
+                if let Some(decl_node) = arena.get(decl_idx)
+                    && let Some(decl) = arena.get_variable_declaration(decl_node)
+                    && let Some(name) = get_identifier_text(arena, decl.name)
+                {
+                    // Use ASTRef for the initializer if present - it will be emitted without type annotations
+                    // by the AST emission logic in the printer
+                    let initializer = if decl.initializer.is_some() {
+                        Some(Box::new(IRNode::ASTRef(decl.initializer)))
+                    } else {
+                        None
+                    };
+
+                    result.push(IRNode::VarDecl { name, initializer });
+                }
+            }
+        }
+    }
+
+    result
 }
 
 // =============================================================================
