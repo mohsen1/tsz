@@ -271,13 +271,14 @@ while (true) {
 }
 
 #[test]
-fn test_break_in_function_inside_loop_emits_ts1105() {
-    // break inside a function inside a loop should emit TS1105
-    // because the function body resets the iteration context
+fn test_break_in_function_inside_loop_emits_ts1107() {
+    // break inside a function inside a loop should emit TS1107
+    // "Jump target cannot cross function boundary" - there IS an outer loop,
+    // but the function boundary blocks access to it
     let source = r#"
 while (true) {
     function f() {
-        break;  // Error: not in loop context from function's perspective
+        break;  // Error: TS1107 - jump target cannot cross function boundary
     }
 }
 "#;
@@ -300,8 +301,8 @@ while (true) {
     checker.check_source_file(root);
 
     assert!(
-        checker.ctx.diagnostics.iter().any(|d| d.code == 1105),
-        "Should emit TS1105 for break in function inside loop, got: {:?}",
+        checker.ctx.diagnostics.iter().any(|d| d.code == 1107),
+        "Should emit TS1107 for break in function inside loop, got: {:?}",
         checker.ctx.diagnostics
     );
 }
