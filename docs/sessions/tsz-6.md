@@ -1,90 +1,164 @@
-# Session tsz-6 - Advanced Type Nodes for Declaration Emit
+# Session TSZ-6: Member Resolution on Generic and Placeholder Types
 
-## Date: 2026-02-04
+**Started**: 2026-02-05
+**Status**: 🔄 Active
+**Focus**: Implement member resolution for Type Parameters, Type Applications, and Union/Intersection types
 
-## Status: COMPLETE ✅
+## Summary
 
-### Session Goal
-
-Implement advanced type node emission (MappedType, ConditionalType, TypeQuery, IndexedAccessType) to fix TS1005 syntax errors and unblock accurate declaration emit.
+This session implements **Member Resolution on Generic Types** to enable property and method access on placeholder types before type parameters are resolved.
 
 ### Problem Statement
 
-Current declaration emit has 75+ TS1005 syntax errors (29 missing, 46 extra) because `emit_type` falls back to `emit_node` for unsupported type nodes, producing empty type annotations like `: ;`.
+**Current Bug**: Property access fails on generic types
+```typescript
+function map<T, U>(arr: T[], f: (x: T) => U): U[] {
+    return arr.map(f);
+    // Error: Property 'map' does not exist on type 'T[]'
+}
+```
 
-**Root Cause:** Missing support in `src/declaration_emitter.rs` emit_type() for:
-- MappedType: `{ [K in T]: U }`
-- ConditionalType: `T extends U ? X : Y`
-- TypeQuery: `typeof X`
-- IndexedAccessType: `T[K]`
-- TemplateLiteralType: `` `a${B}c` ``
+**Root Cause**:
+- When checking `arr.map(f)`, the type of `arr` is `T[]` (a `TypeKey::Array(T)`)
+- `T` is a `TypeParameter` (not yet resolved)
+- The Solver doesn't know how to project members from the global `Array<T>` interface onto a specific `TypeParameter`
+- Result: Property lookup fails with "Property 'map' does not exist"
 
-### Why This Session First (Strategic Rationale)
+### Solution
 
-Per Gemini consultation (2026-02-04):
+Implement member resolution for generic types in three phases:
 
-> **Import/Export Elision (TSZ-5) has a hard functional dependency on the Solver's ability to understand how symbols are referenced.**
-> 
-> If a .d.ts contains `export const x: typeof InternalVar;` and TypeQuery isn't implemented, the usage analyzer will fail to see that InternalVar is "used", leading to incorrect import elision.
-> 
-> **Solver-First Principle:** Implementing type nodes first ensures the "Lawyer" (usage analyzer) has all the facts from the "Judge" (Solver).
+1. **Phase 1**: Constraint-Based Lookup (Type Parameters)
+   - If `T extends { id: string }`, then `t.id` should succeed by looking at the constraint
 
-### Implementation Plan
+2. **Phase 2**: Generic Member Projection (TypeApplications)
+   - For `T[]`, find the `Array<U>` interface and substitute `U` with `T`
+   - Result: `map<V>(callback: (val: T) => V): V[]`
 
-#### Phase 1: TypeQuery (typeof) ✅
-- [x] Add TYPE_QUERY handling in emit_type()
-- [x] Add type_arguments support (TS 4.7+)
-- [x] Emit: `typeof SomeSymbol` and `typeof f<number>`
+3. **Phase 3**: Union/Intersection Member Resolution
+   - Handle `(T | U).prop` - property must exist in all constituents
+   - Handle `(T & U).prop` - property can exist in any constituent
 
-#### Phase 2: IndexedAccessType ✅
-- [x] Add INDEXED_ACCESS_TYPE handling
-- [x] Add precedence handling for Union/Intersection/Function types
-- [x] Emit: `(A | B)[K]` with proper parentheses
+## Implementation Plan
 
-#### Phase 3: MappedType ✅
-- [x] Already implemented (no changes needed)
-- [x] Emit: `{ readonly [P in keyof T]: T[P]; }`
+### Phase 1: Constraint-Based Lookup
 
-#### Phase 4: ConditionalType ✅
-- [x] Add CONDITIONAL_TYPE handling
-- [x] Add precedence handling for all type parts
-- [x] Emit: `T extends null ? never : T` with proper parentheses
+**File**: `src/solver/operations.rs`
 
-### Success Criteria
+**Task**: Modify property lookup to handle TypeParameters by checking constraints
 
-- [x] All advanced type nodes implemented in emit_type()
-- [x] Parser support verified (already had all accessors)
-- [x] Code compiles without errors
-- [ ] TS1005 errors reduced (to be measured with conformance tests)
-- [ ] Conformance pass rate increases (to be measured)
+**Logic**:
+1. In property/member lookup, check if base is a `TypeParameter`
+2. If yes, check if it has a `constraint`
+3. If yes, recurse into the constraint to find the property
+4. If no constraint, fall back to `Object` members (TypeScript behavior)
 
-### Dependencies
+### Phase 2: Generic Member Projection
 
-- Requires: Parser/Binder support for these type nodes (verify first)
-- Blocks: TSZ-5 (Import/Export Elision) - paused until this completes
+**Files**: `src/solver/instantiate.rs`, `src/solver/operations.rs`
 
-### Notes
+**Task**: Implement member projection for TypeApplications
 
-- **MANDATORY**: Follow Two-Question Rule for any solver/checker changes
-- All changes to src/solver/ or src/checker/ require Gemini consultation first
-- Focus on emit_type() in src/declaration_emitter.rs primarily
+**Logic**:
+1. When looking up `map` on `T[]`:
+   - Recognize this as `Array<T>`
+   - Find the global `Array<U>` interface
+   - Find the `map` signature: `map<V>(callback: (val: U) => V): V[]`
+   - Substitute `U` with `T` from the application
+   - Result: `map<V>(callback: (val: T) => V): V[]`
 
-### Completion Summary - 2026-02-04
+2. Use existing `instantiate_type` or specialized `instantiate_signature`
 
-**Completed Work:**
-1. **TypeQuery Enhancement**: Added type_arguments support for `typeof f<number>` (TS 4.7+)
-2. **IndexedAccessType Fix**: Added precedence handling to correctly emit `(A | B)[K]` instead of `A | B[K]`
-3. **ConditionalType Implementation**: Full implementation with precedence handling for all parts (check_type, extends_type, true_type, false_type)
-4. **MappedType Verification**: Confirmed already implemented correctly
+### Phase 3: Union/Intersection Member Resolution
 
-**Commit**: 186d17223 - "feat: implement advanced type node emission for declaration emit"
+**File**: `src/solver/operations.rs`
 
-**Impact:**
-- Advanced type nodes now emit correctly in .d.ts files
-- Precedence handling prevents syntax errors in complex type expressions
-- Unblocks tsz-5 (Import/Export Elision) with accurate type foundation
+**Task**: Handle property access on unions and intersections
 
-**Next Steps:**
-1. Run conformance tests to measure impact
-2. If significant improvement, consider tsz-5 ready to resume
-3. Otherwise, identify remaining missing type nodes
+**Logic**:
+- **Unions**: `(T | U).prop` - property must exist in all constituents, result is union of types
+- **Intersections**: `(T & U).prop` - property can exist in any constituent, result is union of found types
+
+## Success Criteria
+
+### Test Case 1: Array Method
+```typescript
+function map<T, U>(arr: T[], f: (x: T) => U): U[] {
+    return arr.map(f);
+}
+// Expected: Resolves Array.map() with val: T
+```
+
+### Test Case 2: Type Parameter Constraint
+```typescript
+function getId<T extends { id: string }>(obj: T) {
+    return obj.id;
+}
+// Expected: Resolves 'id' property from constraint
+```
+
+### Test Case 3: Union Property
+```typescript
+function getProp<T extends { a: string }, U extends { a: number }>(x: T | U) {
+    return x.a;
+}
+// Expected: Resolves 'a' as string | number
+```
+
+## Dependencies
+
+- **tsz-5**: Multi-Pass Generic Inference (COMPLETE) - provides two-pass inference infrastructure
+- **tsz-4**: Strict Null Checks & Lawyer Layer (COMPLETE) - provides constraint handling
+
+## MANDATORY Gemini Workflow
+
+Per AGENTS.md, **MUST ask Gemini TWO questions**:
+
+### Question 1 (PRE-implementation) - REQUIRED
+Before modifying `src/solver/operations.rs`:
+
+```bash
+./scripts/ask-gemini.mjs --include=src/solver/operations.rs --include=src/solver/instantiate.rs "
+I am starting tsz-6: Member Resolution on Generic and Placeholder Types.
+The goal is to make 'arr.map(f)' work when 'arr' is 'T[]'.
+
+My planned approach:
+1) Modify property lookup in Solver to handle TypeParameter by checking constraints.
+2) Implement 'member projection' for TypeApplications (e.g., Array<T>) by substituting the interface's type parameters with the application's arguments.
+3) Ensure the Checker's property access logic correctly calls these new Solver capabilities.
+
+Questions:
+1) What is the exact function in src/solver/operations.rs that handles property/member lookup?
+2) How should I handle the substitution of interface members? Should I use the existing 'instantiate_type' or is there a specialized 'instantiate_signature'?
+3) Are there pitfalls with 'this' types when resolving members on generic interfaces?
+4) How does tsc handle member lookup on a naked TypeParameter with no constraint? (Does it default to Object members?)
+"
+```
+
+### Question 2 (POST-implementation) - REQUIRED
+After implementing changes:
+
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/operations.rs --include=src/solver/instantiate.rs "
+I implemented [FEATURE] in [FILE].
+
+Changes: [PASTE CODE OR DESCRIBE CHANGES]
+
+Please review:
+1) Is this logic correct for TypeScript?
+2) Did I miss any edge cases?
+3) Are there type system bugs?
+
+Be specific if it's wrong - tell me exactly what to fix.
+"
+```
+
+## Related Sessions
+
+- **tsz-5**: Multi-Pass Generic Inference (COMPLETE)
+- **tsz-4**: Strict Null Checks & Lawyer Layer (COMPLETE)
+- **tsz-2**: Coinductive Subtyping (COMPLETE)
+
+## Session History
+
+Created 2026-02-05 following completion of tsz-5 (Multi-Pass Generic Inference).
