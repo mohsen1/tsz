@@ -17,6 +17,7 @@ use crate::solver::types::*;
 use crate::solver::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
@@ -37,11 +38,12 @@ pub struct TypeLowering<'a> {
     def_id_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<DefId>>,
     /// Optional value resolver for typeof queries.
     value_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<u32>>,
-    type_param_scopes: RefCell<Vec<Vec<(Atom, TypeId)>>>,
+    /// Type parameter scopes - wrapped in Rc for sharing across arena contexts
+    type_param_scopes: Rc<RefCell<Vec<Vec<(Atom, TypeId)>>>>,
     /// Operation counter to prevent infinite loops
-    operations: RefCell<u32>,
+    operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
-    limit_exceeded: RefCell<bool>,
+    limit_exceeded: Rc<RefCell<bool>>,
 }
 
 struct InterfaceParts {
@@ -200,9 +202,9 @@ impl<'a> TypeLowering<'a> {
             type_resolver: None,
             def_id_resolver: None,
             value_resolver: None,
-            type_param_scopes: RefCell::new(Vec::new()),
-            operations: RefCell::new(0),
-            limit_exceeded: RefCell::new(false),
+            type_param_scopes: Rc::new(RefCell::new(Vec::new())),
+            operations: Rc::new(RefCell::new(0)),
+            limit_exceeded: Rc::new(RefCell::new(false)),
         }
     }
 
@@ -219,9 +221,9 @@ impl<'a> TypeLowering<'a> {
             type_resolver: Some(resolver),
             def_id_resolver: None,
             value_resolver: Some(resolver),
-            type_param_scopes: RefCell::new(Vec::new()),
-            operations: RefCell::new(0),
-            limit_exceeded: RefCell::new(false),
+            type_param_scopes: Rc::new(RefCell::new(Vec::new())),
+            operations: Rc::new(RefCell::new(0)),
+            limit_exceeded: Rc::new(RefCell::new(false)),
         }
     }
 
@@ -238,9 +240,9 @@ impl<'a> TypeLowering<'a> {
             type_resolver: Some(type_resolver),
             def_id_resolver: None,
             value_resolver: Some(value_resolver),
-            type_param_scopes: RefCell::new(Vec::new()),
-            operations: RefCell::new(0),
-            limit_exceeded: RefCell::new(false),
+            type_param_scopes: Rc::new(RefCell::new(Vec::new())),
+            operations: Rc::new(RefCell::new(0)),
+            limit_exceeded: Rc::new(RefCell::new(false)),
         }
     }
 
@@ -261,9 +263,9 @@ impl<'a> TypeLowering<'a> {
             type_resolver: None,
             def_id_resolver: Some(def_id_resolver),
             value_resolver: Some(value_resolver),
-            type_param_scopes: RefCell::new(Vec::new()),
-            operations: RefCell::new(0),
-            limit_exceeded: RefCell::new(false),
+            type_param_scopes: Rc::new(RefCell::new(Vec::new())),
+            operations: Rc::new(RefCell::new(0)),
+            limit_exceeded: Rc::new(RefCell::new(false)),
         }
     }
 
@@ -284,9 +286,9 @@ impl<'a> TypeLowering<'a> {
             type_resolver: Some(type_resolver),
             def_id_resolver: Some(def_id_resolver),
             value_resolver: Some(value_resolver),
-            type_param_scopes: RefCell::new(Vec::new()),
-            operations: RefCell::new(0),
-            limit_exceeded: RefCell::new(false),
+            type_param_scopes: Rc::new(RefCell::new(Vec::new())),
+            operations: Rc::new(RefCell::new(0)),
+            limit_exceeded: Rc::new(RefCell::new(false)),
         }
     }
 
@@ -302,10 +304,10 @@ impl<'a> TypeLowering<'a> {
             type_resolver: self.type_resolver,
             def_id_resolver: self.def_id_resolver,
             value_resolver: self.value_resolver,
-            // Clone the RefCells to share state across arenas
-            type_param_scopes: self.type_param_scopes.clone(),
-            operations: self.operations.clone(),
-            limit_exceeded: self.limit_exceeded.clone(),
+            // Rc::clone() shares the underlying Rc instead of copying data
+            type_param_scopes: Rc::clone(&self.type_param_scopes),
+            operations: Rc::clone(&self.operations),
+            limit_exceeded: Rc::clone(&self.limit_exceeded),
         }
     }
 
@@ -401,9 +403,9 @@ impl<'a> TypeLowering<'a> {
 
     /// Initialize with existing type parameter bindings.
     /// These are added to a new scope that persists for the lifetime of the TypeLowering.
-    pub fn with_type_param_bindings(mut self, bindings: Vec<(Atom, TypeId)>) -> Self {
+    pub fn with_type_param_bindings(self, bindings: Vec<(Atom, TypeId)>) -> Self {
         if !bindings.is_empty() {
-            self.type_param_scopes = RefCell::new(vec![bindings]);
+            *self.type_param_scopes.borrow_mut() = vec![bindings];
         }
         self
     }
