@@ -30,7 +30,55 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 
 ## Progress Log
 
-### 2025-02-05 Session 9: Callback Formatting Investigation (IN PROGRESS)
+### 2025-02-05 Session 11: Namespace ES5 Transformation - Classes Working! (IN PROGRESS)
+
+**Major Breakthrough:**
+Fixed namespace ES5 transformation to properly transform classes inside namespaces.
+Previously, classes were being emitted as `/* ASTRef */` placeholders instead of ES5 IIFE patterns.
+
+**Root Cause:**
+The `NamespaceES5Transformer` was using `IRNode::ASTRef(class_idx)` for classes, which
+tried to emit the source text directly. But classes need to be pre-transformed to ES5 before
+being included in the namespace IR.
+
+**Fix Implemented (commit b82a09613):**
+```rust
+// In transform_class_in_namespace:
+let mut class_transformer = ES5ClassTransformer::new(self.arena);
+let class_ir = class_transformer.transform_class_to_ir(class_idx)?;
+// Use class_ir instead of IRNode::ASTRef(class_idx)
+```
+
+**Test Results:**
+Before: `namespace X namespace Y` (ES6 raw text)
+After:
+```javascript
+var X;
+(function (X) {
+    var Y;
+    (function (Y) {
+        var Point = /** @class */ (function () {
+            function Point(x, y) {
+                this.x = x;
+                this.y = y;
+            }
+            return Point;
+        }());
+        Y.Point = Point;
+    })(Y = X.Y || (X.Y = {}));
+})(X || (X = {}));
+```
+
+**Remaining Issue:**
+Minor formatting problem - variable declaration has wrong indentation (16 spaces instead of 8).
+The closing `}());` and export `Y.Point = Point;` are correctly indented.
+
+**Next Steps:**
+1. Fix variable declaration indentation in class ES5 transformer
+2. Run full test suite to measure pass rate improvement
+3. Continue with other namespace-related tests
+
+### 2025-02-05 Session 9: Callback Formatting Investigation (STOPPED - PIVOTED)
 
 **Issue:**
 Callbacks like `function (val) { return val.isSunk; }` are being emitted multi-line
