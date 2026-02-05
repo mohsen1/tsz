@@ -57,14 +57,40 @@ TSZ_LOG=trace cargo nextest run --test_name
 - Enforce `MAX_EVALUATE_DEPTH` strictly
 - Implement "Lazy" evaluation (one level at a time)
 
-**Step 3: MANDATORY Pre-Implementation Question** ⏳
-```bash
-./scripts/ask-gemini.mjs --include=src/solver/subtype.rs --include=src/solver/evaluate.rs "
-I am seeing a stack overflow in check_subtype. I suspect expansive recursion.
-How should I modify check_subtype and evaluate_type to implement coinductive
-subtyping and prevent infinite expansion?
-"
-```
+**Step 3: MANDATORY Pre-Implementation Question** ✅ COMPLETE (Gemini Flash)
+
+**Key Insights from Gemini**:
+1. **Two Types of Recursion**:
+   - **Finite Recursion**: `interface List { next: List }` - TypeIds stay same, handled by `in_progress`
+   - **Expansive Recursion**: `type T<X> = T<Box<X>>` - New TypeIds each time, needs `seen_defs` tracking
+
+2. **Critical Functions to Modify**:
+   - `src/solver/subtype.rs::check_subtype` - Add `seen_defs` check for Lazy/Enum types
+   - `src/solver/subtype.rs::check_lazy_lazy_subtype` - Implement robust `seen_defs` logic
+   - `src/solver/evaluate.rs::evaluate_application` - Add `visiting_defs: FxHashSet<DefId>` for expansive recursion
+
+3. **Edge Cases**:
+   - Mutual recursion: `type A = B; type B = A`
+   - Distributive conditional types (exponential explosion)
+   - Variance ping-pong between checks
+   - Lazy resolution failure
+
+4. **TypeScript Behaviors**:
+   - TS2589: "Type instantiation is excessively deep"
+   - TS2456: "Type alias circularly references itself"
+
+5. **Recommended Implementation Plan**:
+   - Extract `DefId`s from Lazy/Enum before calling `evaluate_type`
+   - Check `seen_defs` before evaluation
+   - Add `visiting_defs` to `TypeEvaluator` for `evaluate_application`
+   - Use tracing to verify: `TSZ_LOG=trace cargo nextest run`
+
+**Step 4: Implementation** ⏳
+Based on Gemini's guidance, implement:
+1. Modify `check_subtype` to extract and check `DefId`s before evaluation
+2. Add `visiting_defs` to `TypeEvaluator`
+3. Implement `seen_defs` logic in `check_lazy_lazy_subtype`
+4. Test with tracing
 
 **Step 4: Verify Fix** ⏳
 - Test should pass or fail with type error (not crash)
