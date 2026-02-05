@@ -161,6 +161,25 @@ impl<'a> CheckerState<'a> {
         checker.is_assignable_with_overrides(source, target, &overrides)
     }
 
+    /// Check if two types have any overlap (can ever be equal).
+    ///
+    /// Used for TS2367: "This condition will always return 'false'/'true' since
+    /// the types 'X' and 'Y' have no overlap."
+    ///
+    /// Returns true if the types can potentially be equal, false if they can never
+    /// have any common value.
+    pub fn are_types_overlapping(&mut self, left: TypeId, right: TypeId) -> bool {
+        // CRITICAL: Ensure all Ref types are resolved before overlap check.
+        self.ensure_refs_resolved(left);
+        self.ensure_refs_resolved(right);
+
+        let env = self.ctx.type_env.borrow();
+        let mut checker = crate::solver::SubtypeChecker::with_resolver(self.ctx.types, &*env);
+        checker.strict_null_checks = self.ctx.strict_null_checks();
+
+        checker.are_types_overlapping(left, right)
+    }
+
     // =========================================================================
     // Weak Union and Excess Property Checking
     // =========================================================================

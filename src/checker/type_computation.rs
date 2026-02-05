@@ -933,6 +933,32 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             };
+
+            // Check for type overlap for equality/inequality operators (TS2367)
+            let is_equality_op = matches!(
+                op_kind,
+                k if k == SyntaxKind::EqualsEqualsToken as u16
+                    || k == SyntaxKind::EqualsEqualsEqualsToken as u16
+            );
+            let is_inequality_op = matches!(
+                op_kind,
+                k if k == SyntaxKind::ExclamationEqualsToken as u16
+                    || k == SyntaxKind::ExclamationEqualsEqualsToken as u16
+            );
+
+            if is_equality_op || is_inequality_op {
+                // Check if the types have any overlap
+                if !self.are_types_overlapping(left_type, right_type) {
+                    // TS2367: This condition will always return 'false'/'true'
+                    self.error_comparison_no_overlap(
+                        left_type,
+                        right_type,
+                        is_equality_op,
+                        node_idx,
+                    );
+                }
+            }
+
             type_stack.push(result_type);
         }
 
