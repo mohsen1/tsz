@@ -85,6 +85,61 @@ Mixing "completed narrowing logic" with "broken integration" in one session make
 - `src/checker/control_flow.rs` - TypeResolver wiring in narrow_type_by_condition_inner
 - `src/solver/db.rs` - Fixed PropertyAccessEvaluator compilation error
 
+## Later Session Work (2026-02-05)
+
+### Task 2: instanceof Narrowing - COMPLETED ✅
+
+**Implementation**: `narrow_by_instanceof` in `src/solver/narrowing.rs` (line ~751)
+
+**Gemini Code Review Results**:
+- Asked Gemini Pro to review the instanceof narrowing implementation
+- Overall logic approved as correct
+- **BUG FOUND**: `are_object_like` helper didn't handle TypeParameter
+- Fixed by checking constraint recursively for type parameters
+
+**Changes**:
+- Added TypeParameter case to `are_object_like` function
+- Added TODO comment for Symbol.hasInstance custom instanceof behavior
+- Commit: `5736afc35` - fix(solver): handle TypeParameter in are_object_like
+
+**Test Results**:
+- Simple instanceof: Works correctly ✅
+- Generic constrained types: Works correctly after fix ✅
+- Compound conditions (`&&`): Known limitation in checker (separate issue)
+
+**Known Limitations**:
+- Compound conditions don't narrow both sides - checker issue, not solver
+- Symbol.hasInstance not supported - added TODO for future work
+
+### Task 6: Exhaustiveness Checking - ATTEMPTED, REVERTED ❌
+
+**Initial Implementation**: Added diagnostic emission in `check_switch_exhaustiveness`
+
+**Gemini Code Review Results**:
+- Asked Gemini Pro to review the exhaustiveness checking implementation
+- **CRITICAL BUGS FOUND** - Implementation was incorrect
+
+**Issues Identified**:
+1. **False positives**: Reported errors even when code after switch handles missing cases
+   - Example: Fallthrough with return statement after switch
+2. **Incorrect void check**: Used strict equality (`!=`) instead of assignability check
+   - Failed for union return types like `number | undefined`
+3. **Architectural error**: TS2366 should be reported at function level in CFA, not switch level
+   - Cannot determine exhaustiveness by looking at individual switch in isolation
+   - Must consider entire function body and code after switch
+
+**Correct Approach** (per Gemini):
+- `no_match_type` calculation is useful for narrowing infrastructure
+- Error emission must happen in Control Flow Analysis at function level
+- Must check if `undefined` is assignable to return type (using `is_assignable_to`)
+- Must consider code after switch statement
+- This requires deeper CFA integration than initially estimated
+
+**Action**: Reverted diagnostic emission, kept narrowing infrastructure
+**Commit**: `d63a638b0` - revert(checker): remove incorrect exhaustiveness diagnostic emission
+
+**Conclusion**: Task 6 requires function-level flow analysis integration, not just switch-level checks. The narrowing infrastructure exists and works correctly, but the diagnostic emission is blocked on TSZ-11 CFA integration work.
+
 ## References
 
 - North Star Architecture: docs/architecture/NORTH_STAR.md
