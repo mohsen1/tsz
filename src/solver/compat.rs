@@ -874,6 +874,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Private brand assignability override.
     /// If both source and target types have private brands, they must match exactly.
     /// This implements nominal typing for classes with private fields.
+    ///
+    /// Uses recursive structure to preserve Union/Intersection semantics:
+    /// - Union (A | B): OR logic - must satisfy at least one branch
+    /// - Intersection (A & B): AND logic - must satisfy all branches
     pub fn private_brand_assignability_override(
         &self,
         source: TypeId,
@@ -881,13 +885,71 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     ) -> Option<bool> {
         use crate::solver::types::Visibility;
 
-        // TSZ-4 Priority 2: Implement true nominal checking for private/protected members
-        // using parent_id comparison instead of string prefix matching.
-        //
-        // Rule: Two types are compatible only if their private/protected members
-        // originate from the EXACT SAME declaration symbol (same parent_id).
+        // 1. Handle Target Union (OR logic)
+        // S -> (A | B) : Valid if S -> A OR S -> B
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(target) {
+            let members = self.interner.type_list(members);
+            // If source matches ANY target member, it's valid
+            for &member in members.iter() {
+                match self.private_brand_assignability_override(source, member) {
+                    Some(true) | None => return None, // Pass (or structural fallback)
+                    Some(false) => {}                 // Keep checking other members
+                }
+            }
+            return Some(false); // Failed against all members
+        }
 
-        // 1. Extract shapes using the existing helper
+        // 2. Handle Source Union (AND logic)
+        // (A | B) -> T : Valid if A -> T AND B -> T
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(source) {
+            let members = self.interner.type_list(members);
+            for &member in members.iter() {
+                if let Some(false) = self.private_brand_assignability_override(member, target) {
+                    return Some(false); // Fail if any member fails
+                }
+            }
+            return None; // All passed or fell back
+        }
+
+        // 3. Handle Target Intersection (AND logic)
+        // S -> (A & B) : Valid if S -> A AND S -> B
+        if let Some(TypeKey::Intersection(members)) = self.interner.lookup(target) {
+            let members = self.interner.type_list(members);
+            for &member in members.iter() {
+                if let Some(false) = self.private_brand_assignability_override(source, member) {
+                    return Some(false); // Fail if any member fails
+                }
+            }
+            return None; // All passed or fell back
+        }
+
+        // 4. Handle Source Intersection (OR logic)
+        // (A & B) -> T : Valid if A -> T OR B -> T
+        if let Some(TypeKey::Intersection(members)) = self.interner.lookup(source) {
+            let members = self.interner.type_list(members);
+            for &member in members.iter() {
+                match self.private_brand_assignability_override(member, target) {
+                    Some(true) | None => return None, // Pass (or structural fallback)
+                    Some(false) => {}                 // Keep checking other members
+                }
+            }
+            return Some(false); // Failed against all members
+        }
+
+        // 5. Handle Lazy types (recursive resolution)
+        if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(source) {
+            if let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner) {
+                return self.private_brand_assignability_override(resolved, target);
+            }
+        }
+
+        if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(target) {
+            if let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner) {
+                return self.private_brand_assignability_override(source, resolved);
+            }
+        }
+
+        // 6. Base case: Extract and compare object shapes
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
 
         // Get source shape
@@ -903,13 +965,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             .interner
             .object_shape(crate::solver::types::ObjectShapeId(target_shape_id));
 
-        // 2. Check Target requirements (Nominality)
+        let mut has_private_brands = false;
+
+        // Check Target requirements (Nominality)
         // If Target has a private/protected property, Source MUST match its origin exactly.
         for target_prop in &target_shape.properties {
             if target_prop.visibility == Visibility::Private
                 || target_prop.visibility == Visibility::Protected
             {
-                // Find corresponding property in source
+                has_private_brands = true;
                 let source_prop = source_shape
                     .properties
                     .iter()
@@ -918,42 +982,38 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 match source_prop {
                     Some(sp) => {
                         // CRITICAL: The parent_id must match exactly.
-                        // This handles the "separate declarations" rule.
                         if sp.parent_id != target_prop.parent_id {
                             return Some(false);
                         }
                     }
                     None => {
-                        // Target has private prop, Source missing it.
                         return Some(false);
                     }
                 }
             }
         }
 
-        // 3. Check Source restrictions (Visibility leakage)
+        // Check Source restrictions (Visibility leakage)
         // If Source has a private/protected property, it cannot be assigned to a Target
-        // that expects it to be Public (or doesn't have the same brand).
+        // that expects it to be Public.
         for source_prop in &source_shape.properties {
             if source_prop.visibility == Visibility::Private
                 || source_prop.visibility == Visibility::Protected
             {
+                has_private_brands = true;
                 if let Some(target_prop) = target_shape
                     .properties
                     .iter()
                     .find(|p| p.name == source_prop.name)
                 {
-                    // If Target has the property but it is Public, and Source is Private/Protected
                     if target_prop.visibility == Visibility::Public {
                         return Some(false);
                     }
-                    // If Target has it as Private/Protected, we already checked identity in step 2.
                 }
             }
         }
 
-        // If we passed all nominal checks, return None to let structural checking proceed
-        None
+        if has_private_brands { Some(true) } else { None }
     }
 
     /// Enum member assignability override.
