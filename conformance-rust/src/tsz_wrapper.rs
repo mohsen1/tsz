@@ -107,18 +107,75 @@ pub fn compile_test(
     }
 }
 
+/// Test harness-specific directives that should NOT be passed to tsconfig.json
+const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
+    "filename",
+    "allowNonTsExtensions",
+    "useCaseSensitiveFileNames",
+    "baselineFile",
+    "noErrorTruncation",
+    "suppressOutputPathCheck",
+    "noImplicitReferences",
+    "currentDirectory",
+    "symlink",
+    "link",
+    "noTypesAndSymbols",
+    "fullEmitPaths",
+    "noCheck",
+    "nocheck",
+    "reportDiagnostics",
+    "captureSuggestions",
+    "typeScriptVersion",
+    "skip",
+];
+
+/// List-type compiler options that accept comma-separated values
+const LIST_OPTIONS: &[&str] = &[
+    "lib",
+    "types",
+    "typeRoots",
+    "rootDirs",
+    "moduleSuffixes",
+    "customConditions",
+];
+
 /// Convert test directive options to tsconfig compiler options
+/// 
+/// Handles:
+/// - Boolean options (true/false)
+/// - List options (comma-separated values like @lib: es6,dom)
+/// - String/enum options (target, module, etc.)
+/// - Filters out test harness-specific directives
 fn convert_options_to_tsconfig(
     options: &HashMap<String, String>,
 ) -> serde_json::Value {
     let mut opts = serde_json::Map::new();
 
     for (key, value) in options {
-        let json_value = match value.as_str() {
-            "true" => serde_json::Value::Bool(true),
-            "false" => serde_json::Value::Bool(false),
-            _ => serde_json::Value::String(value.clone()),
+        // Skip test harness-specific directives
+        let key_lower = key.to_lowercase();
+        if HARNESS_ONLY_DIRECTIVES.iter().any(|&d| d.to_lowercase() == key_lower) {
+            continue;
+        }
+
+        let json_value = if value == "true" {
+            serde_json::Value::Bool(true)
+        } else if value == "false" {
+            serde_json::Value::Bool(false)
+        } else if LIST_OPTIONS.iter().any(|&opt| opt.to_lowercase() == key_lower) {
+            // Parse comma-separated list
+            let items: Vec<serde_json::Value> = value
+                .split(',')
+                .map(|s| serde_json::Value::String(s.trim().to_string()))
+                .collect();
+            serde_json::Value::Array(items)
+        } else if let Ok(num) = value.parse::<i64>() {
+            // Handle numeric options (e.g., maxNodeModuleJsDepth)
+            serde_json::Value::Number(num.into())
+        } else {
+            serde_json::Value::String(value.clone())
         };
+        
         opts.insert(key.clone(), json_value);
     }
 

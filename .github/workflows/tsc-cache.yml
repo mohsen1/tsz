@@ -1,0 +1,186 @@
+name: TSC Cache
+
+on:
+  push:
+    branches: [main, rust]
+    paths:
+      - 'TypeScript'  # Submodule reference
+      - 'scripts/typescript-versions.json'
+      - 'conformance-rust/**'
+      - '.github/workflows/tsc-cache.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  generate-cache:
+    name: Generate TSC Cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify TypeScript submodule
+        run: |
+          if [ ! -d "TypeScript/tests/cases" ]; then
+            echo "TypeScript submodule not properly checked out"
+            echo "Attempting manual checkout..."
+            git submodule update --init --recursive --depth 1 -- TypeScript
+          fi
+          ls -la TypeScript/ | head -10
+          echo "Test cases directory:"
+          ls TypeScript/tests/cases/ | head -5
+
+      - name: Get TypeScript version info
+        id: ts-version
+        run: |
+          # Get the submodule SHA
+          TS_SHA=$(git rev-parse HEAD:TypeScript 2>/dev/null || echo "unknown")
+          echo "sha=$TS_SHA" >> $GITHUB_OUTPUT
+          
+          # Try to get npm version from our mapping
+          TS_NPM=$(jq -r ".mappings[\"$TS_SHA\"].npm // .default.npm" scripts/typescript-versions.json)
+          echo "npm=$TS_NPM" >> $GITHUB_OUTPUT
+          
+          # Create a short version for artifact naming
+          TS_SHORT="${TS_SHA:0:8}"
+          echo "short=$TS_SHORT" >> $GITHUB_OUTPUT
+          
+          echo "TypeScript SHA: $TS_SHA"
+          echo "TypeScript npm: $TS_NPM"
+
+      - name: Check for existing cache
+        id: cache-check
+        uses: actions/cache@v4
+        with:
+          path: tsc-cache-full.json
+          key: tsc-cache-${{ steps.ts-version.outputs.sha }}
+          lookup-only: true
+
+      - name: Setup Node.js
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install TypeScript
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        run: |
+          npm install -g typescript@${{ steps.ts-version.outputs.npm }}
+          tsc --version
+
+      - name: Install Rust
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache Cargo
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            conformance-rust/target
+          key: ${{ runner.os }}-cargo-cache-gen-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-cache-gen-
+            ${{ runner.os }}-cargo-
+
+      - name: Build cache generator
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        run: |
+          cd conformance-rust
+          cargo build --release --bin generate-tsc-cache
+          mkdir -p ../.target/release
+          cp target/release/generate-tsc-cache ../.target/release/
+
+      - name: Generate TSC cache
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        run: |
+          echo "Generating cache for TypeScript ${{ steps.ts-version.outputs.npm }} (${{ steps.ts-version.outputs.short }})"
+          ./.target/release/generate-tsc-cache \
+            --test-dir ./TypeScript/tests/cases \
+            --output ./tsc-cache-full.json \
+            --workers 4
+
+      - name: Save cache
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: tsc-cache-full.json
+          key: tsc-cache-${{ steps.ts-version.outputs.sha }}
+
+      - name: Restore cache for artifact upload
+        if: steps.cache-check.outputs.cache-hit == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: tsc-cache-full.json
+          key: tsc-cache-${{ steps.ts-version.outputs.sha }}
+
+      - name: Upload cache artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tsc-cache-${{ steps.ts-version.outputs.short }}
+          path: tsc-cache-full.json
+          retention-days: 90
+
+      - name: Create latest cache artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tsc-cache-latest
+          path: tsc-cache-full.json
+          retention-days: 90
+          overwrite: true
+
+  update-cache-info:
+    name: Update Cache Info
+    runs-on: ubuntu-latest
+    needs: generate-cache
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/rust'
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Get TypeScript version
+        id: ts-version
+        run: |
+          TS_SHA=$(git rev-parse HEAD:TypeScript 2>/dev/null || echo "unknown")
+          echo "sha=$TS_SHA" >> $GITHUB_OUTPUT
+          echo "short=${TS_SHA:0:8}" >> $GITHUB_OUTPUT
+
+      - name: Download cache artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tsc-cache-${{ steps.ts-version.outputs.short }}
+          path: .
+
+      - name: Get cache stats
+        run: |
+          ENTRIES=$(jq 'length' tsc-cache-full.json)
+          SIZE=$(du -h tsc-cache-full.json | cut -f1)
+          echo "Cache entries: $ENTRIES"
+          echo "Cache size: $SIZE"
+          
+          # Create/update cache info file
+          cat > .tsc-cache-info.json << EOF
+          {
+            "typescript_sha": "${{ steps.ts-version.outputs.sha }}",
+            "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "entries": $ENTRIES,
+            "workflow_run": "${{ github.run_id }}"
+          }
+          EOF
+          
+          cat .tsc-cache-info.json
