@@ -102,6 +102,11 @@ pub mod syntax;
 #[path = "tests/parser_state_tests.rs"]
 mod parser_state_tests;
 
+// TS1038 - declare modifier in ambient context tests
+#[cfg(test)]
+#[path = "tests/parser_ts1038_tests.rs"]
+mod parser_ts1038_tests;
+
 // Regex flag error detection tests
 #[cfg(test)]
 #[path = "tests/regex_flag_tests.rs"]
