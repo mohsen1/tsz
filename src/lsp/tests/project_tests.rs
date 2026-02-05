@@ -1070,11 +1070,12 @@ fn test_project_completions_auto_import_named() {
         detail.contains("auto-import")
             && detail.contains("./a")
             && doc.contains("import { foo } from \"./a\";")
+            && item.additional_text_edits.is_some()
     });
 
     assert!(
         has_auto_import,
-        "Should include auto-import completion for foo"
+        "Should include auto-import completion for foo with additionalTextEdits"
     );
 }
 
