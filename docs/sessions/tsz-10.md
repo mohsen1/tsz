@@ -187,25 +187,25 @@ function foo(x: unknown) {
 
 **Status**: 🔄 IN PROGRESS - Simple aliases ✅, Generic aliases ❌ (BLOCKS Task 6)
 
-**Gemini Session Redefinition** (2026-02-05):
-**Decision**: MUST COMPLETE generic alias narrowing before Task 6/7
+**Updated Session Structure** (Gemini Redefinition, 2026-02-05):
+
+**Decision**: CONTINUE with Task 5.5 - Fix generic alias expansion in evaluate.rs
 
 **Why**:
-1. **Hard Dependency**: Task 6 (Exhaustiveness) relies on narrowing output. If narrowing fails for generics, exhaustiveness reports false errors
-2. **Core Feature**: Generic unions (`Result<T>`, `Option<T>`) are fundamental to TypeScript
-3. **Architecture Gap**: Highlights missing Application type resolution in Solver
+1. **Fundamental Correctness Issue**: If TypeKey::Application doesn't expand for type aliases,
+   ALL downstream features (narrowing, assignability, inference) fail for generic types
+2. **Architecture Alignment**: Solver is "single source of truth" (NORTH_STAR 3.1).
+   If truth is wrong (alias not expanded), Checker cannot be right
+3. **Not a Landmine**: Fixing now prevents confusing bugs in every subsequent session
 
-**Priority**:
-1. **Task 5.5** (IMMEDIATE): Fix `TypeKey::Application` resolution in Discriminant Narrowing
-2. Task 6: Exhaustiveness Checking
-3. Task 7: Unreachable Code Detection
-
-**Next Steps** (Two-Question Rule):
-- Question 3: Ask Gemini for Application type handling approach
-- Implement based on guidance
-- Question 4: Ask Gemini for implementation review
-
-**Complexity**: Medium (missing recursive step, not massive refactor)
+**Sub-Tasks**:
+- [x] 5.1: Implement basic discriminant check
+- [x] 5.2: Handle simple type aliases
+- [ ] **5.3 (CRITICAL): Fix Generic Type Alias Expansion**
+  - *Context*: `evaluate_type` treats `Application` as opaque
+  - *Action*: Modify `src/solver/evaluate.rs` to expand `TYPE_ALIAS` symbols via `instantiate()`
+  - *Protocol*: **MANDATORY GEMINI REVIEW** (Question 5) after implementation
+- [ ] 5.4: Verify generic narrowing (`type Result<T> = ...`)
 
 **Root Cause Identified** (Question 4, 2026-02-05):
 **The Problem**: `evaluate_type()` in `src/solver/evaluate.rs` treats `TypeKey::Application` as a final type
@@ -219,6 +219,13 @@ Modify `src/solver/evaluate.rs` to detect `SymbolFlags::TYPE_ALIAS` and call `in
 to unwrap `Application` types into their structural form (Union, Object, etc.)
 
 **Code Location**: `src/solver/evaluate.rs` - Application type evaluation logic
+
+**Execution Plan**:
+1. Update session file ✅
+2. Implement fix in evaluate.rs
+3. **MANDATORY**: Ask Gemini Question 5 (implementation review)
+4. Verify with `Result<T>` test case
+5. ⚠️ **WARNING**: Respect `MAX_EVALUATE_DEPTH` to prevent stack overflow with recursive generics
 
 **Completed Work** (2026-02-05):
 1. ✅ Implemented TypeResolver injection into NarrowingContext
