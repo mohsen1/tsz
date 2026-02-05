@@ -303,19 +303,25 @@ impl<'a> CheckerState<'a> {
                     self.cache_symbol_type(sym_id, declared);
                 }
             } else {
-                // No type annotation - use element type
+                // No type annotation - use element type (with freshness stripped)
+                let widened_element_type = if !self.ctx.compiler_options.sound_mode {
+                    crate::solver::freshness::widen_freshness(self.ctx.types, element_type)
+                } else {
+                    element_type
+                };
+
                 // Assign types for binding patterns (e.g., `for (const [a] of arr)`).
                 if let Some(name_node) = self.ctx.arena.get(var_decl.name)
                     && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                         || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                 {
-                    self.assign_binding_pattern_symbol_types(var_decl.name, element_type);
+                    self.assign_binding_pattern_symbol_types(var_decl.name, widened_element_type);
                 }
 
                 if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
-                    self.cache_symbol_type(sym_id, element_type);
+                    self.cache_symbol_type(sym_id, widened_element_type);
                 } else if let Some(sym_id) = self.ctx.binder.get_node_symbol(var_decl.name) {
-                    self.cache_symbol_type(sym_id, element_type);
+                    self.cache_symbol_type(sym_id, widened_element_type);
                 }
             }
         }

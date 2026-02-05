@@ -188,9 +188,20 @@ Be brutal - if wrong, tell me exactly what to fix.
 - [x] Priority 2: let/var use widening, const doesn't
 - [x] Priority 3: Object properties widened correctly
 - [x] Priority 4: as const syntax implemented
-- [ ] Priority 5: Freshness stripped after assignment
+- [x] Priority 5: Freshness stripped after assignment
 - [x] All tests passing
 - [x] Conformance improvement (fewer TS2322 errors)
+
+## Session Status: ✅ COMPLETE
+
+All 5 priorities of TSZ-6 have been successfully implemented:
+1. Literal type widening (widen_type)
+2. Variable declaration widening integration
+3. Object literal property widening
+4. Const assertions (as const)
+5. Freshness stripping after assignment
+
+Total tests added: 27 (6 widening + 11 const assertion + 10 freshness)
 
 ## Work Log
 
@@ -351,5 +362,59 @@ Be brutal - if wrong, tell me exactly what to fix.
 **Commit**: `feat(tsz-6): implement const assertions (Priority 4)`
 
 **Next Priority**: Priority 5 - Freshness stripping after assignment
+
+### 2026-02-05: Priority 5 Complete - Freshness Stripping After Assignment
+
+**Discovery**: Freshness stripping was ALREADY IMPLEMENTED in the codebase!
+
+**Verification Process**:
+1. Created initial tests based on wrong understanding of freshness
+2. Gemini Pro corrected my understanding:
+   - Freshness is about SOURCE objects, not target variables
+   - `let x = { a: 1 }; x = { a: 2, b: 3 };` correctly errors because RHS is a NEW fresh literal
+   - `let x = { a: 1, b: 2 }; let y: { a: number } = x;` should PASS (x is non-fresh source)
+
+**Existing Implementation**:
+- `src/solver/freshness.rs`: `widen_freshness()` function strips FRESH_LITERAL flag
+- `src/checker/state_checking.rs:495`: Called during variable declaration
+- Only applied when NOT in sound mode (matches TypeScript)
+
+**Changes Made**:
+- Fixed `src/checker/state_checking.rs:assign_for_in_of_initializer_types` to apply widen_freshness
+- Added 10 comprehensive tests to verify correct behavior
+
+**Test Coverage** (10 tests):
+1. Freshness-stripped variable can be used as source without EPC
+2. Fresh object literals still trigger EPC (baseline)
+3. Multiple assignments from same non-fresh source
+4. Function arguments with non-fresh sources
+5. Fresh literals in function arguments trigger EPC
+6. Passing to stricter types works correctly
+7. Nested object freshness handling
+8. const declarations also strip freshness
+9. Each variable declaration gets fresh literal
+10. Reassignment with non-fresh source
+
+**Key Learning**:
+Freshness stripping means: When a variable with excess properties is used
+as a SOURCE in an assignment, it doesn't trigger EPC. The RHS of an assignment
+is always checked for freshness if it's a literal.
+
+**Result**: All 10 tests pass ✅
+
+**Commit**: `feat(tsz-6): verify and test freshness stripping (Priority 5)`
+
+## 🎉 SESSION COMPLETE: TSZ-6 All Priorities Finished
+
+**Summary**:
+- Priority 1: Literal type widening ✅
+- Priority 2: Variable declaration widening ✅
+- Priority 3: Object property widening ✅
+- Priority 4: Const assertions ✅
+- Priority 5: Freshness stripping ✅
+
+**Total Implementation**: 27 tests, 4 major features
+**Commits**: 4 commits across solver and checker modules
+**Gemini Consultations**: 3 (Pre-implementation for Priority 4, Debug for Priority 5)
 
 
