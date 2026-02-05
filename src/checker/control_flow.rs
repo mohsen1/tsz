@@ -402,6 +402,8 @@ impl<'a> FlowAnalyzer<'a> {
                 flow.has_any_flags(flow_flags::SWITCH_CLAUSE) && flow.antecedent.len() > 1;
             let is_loop_header = flow.has_any_flags(flow_flags::LOOP_LABEL);
             let is_call = flow.has_any_flags(flow_flags::CALL);
+            // Note: ARRAY_MUTATION merge point check is handled below since we need to check
+            // if the mutation actually affects the reference we're analyzing
             let is_merge_point = flow
                 .has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL)
                 || is_switch_fallthrough
@@ -619,7 +621,31 @@ impl<'a> FlowAnalyzer<'a> {
                     }
                 };
 
-                if self.array_mutation_affects_reference(call, reference) {
+                // Check if this array mutation affects our reference
+                let affects_ref = self.array_mutation_affects_reference(call, reference);
+
+                // For affected references, ARRAY_MUTATION acts as a merge point to preserve narrowing
+                let needs_antecedent = affects_ref && !flow.antecedent.is_empty();
+
+                if needs_antecedent {
+                    // Check if antecedent is ready (similar to merge point logic)
+                    let &ant = flow.antecedent.first().unwrap();
+                    if !visited.contains(&ant) && !results.contains_key(&ant) {
+                        // Antecedent not ready - schedule it and defer self
+                        if !in_worklist.contains(&ant) {
+                            worklist.push_front((ant, current_type));
+                            in_worklist.insert(ant);
+                        }
+                        if !in_worklist.contains(&current_flow) {
+                            worklist.push_back((current_flow, current_type));
+                            in_worklist.insert(current_flow);
+                        }
+                        continue;
+                    }
+                    // Antecedent is ready - get its result
+                    *results.get(&ant).unwrap_or(&current_type)
+                } else if affects_ref {
+                    // For local variables, TypeScript preserves narrowing across method calls
                     current_type
                 } else if let Some(&ant) = flow.antecedent.first() {
                     if !in_worklist.contains(&ant) && !visited.contains(&ant) {
