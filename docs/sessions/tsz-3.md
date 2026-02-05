@@ -286,7 +286,7 @@ Implemented project-wide Go to Implementation with transitive search support.
 
 ## Session Status
 
-**Status**: 🔄 ACTIVE - Working on Cross-File Member Support
+**Status**: 🔄 ACTIVE - Heritage-Aware References & Rename
 
 **Completed LSP Features** (all working with SymbolIndex optimization):
 - ✅ File Rename (with directory support, dynamic imports, and require calls)
@@ -300,12 +300,25 @@ Implemented project-wide Go to Implementation with transitive search support.
 - ✅ Prefix Matching (partial identifier completion, e.g., "use" → "useEffect")
 - ✅ Shorthand Property Rename (fixed detection for PROPERTY_ASSIGNMENT with name==initializer)
 
+**Current Work: Heritage-Aware References & Rename** (2026-02-05)
+
+**Per Gemini consultation**, the highest priority next step is **Heritage-Aware References & Rename**. Now that we have `heritage_clauses` tracking in SymbolIndex, we should ensure that finding references to (or renaming) a method in a base class/interface correctly identifies all implementations and overrides in derived classes across the project.
+
 **Completed Tasks**:
-1. ✅ **Enhance SymbolIndex for identifier mentions** - Pool Scan optimization
-2. ✅ **Cross-File Go to Implementation** - Heritage tracking + transitive search
-3. ✅ **Shorthand Property Rename** - Fixed parser node detection
+1. ✅ **Enhance SymbolIndex for identifier mentions** - Pool Scan optimization (Task #25)
+2. ✅ **Enhance SymbolIndex for heritage tracking** - Heritage clause tracking (Task #29)
+3. ✅ **Cross-File Go to Implementation** - Transitive search (Task #27, #30)
+4. ✅ **Shorthand Property Rename** - Fixed parser node detection (Task #28)
+
+**Remaining Tasks**:
+1. **Upward/Downward Reference Discovery** - Modify `Project::find_references` to use `heritage_clauses` for member references
+2. **Heritage-Aware Rename** - Update `Project::get_rename_edits` to handle inheritance hierarchies
+3. **Unify find_references with Pool Scan** - Use `symbol_index.get_files_with_symbol()` for O(1) filtering
 
 **Task Status Updates**:
+- ✅ **Task #27 (Cross-File Go to Implementation)** - COMPLETE (consolidated as Tasks #29 and #30)
+- ❌ **Task #26 (Type-aware reference filtering)** - ABANDONED per Gemini guidance
+- ❌ **Task #31 (Update GoToImplementationProvider)** - COMPLETE (part of Task #30)
 - ❌ **Task #26 (Type-aware reference filtering)** - ABANDONED per Gemini guidance as too complex for LSP session (requires Checker integration). Will revisit later with Symbol-ID Matching approach (Phase 1).
 - ✅ **Task #28 (Shorthand property rename)** - FIXED. The parser creates `PROPERTY_ASSIGNMENT` (303) nodes for both regular and shorthand properties, not `SHORTHAND_PROPERTY_ASSIGNMENT` (304). Fixed by detecting shorthand via `name == initializer` check.
 
