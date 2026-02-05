@@ -654,10 +654,35 @@ where
 }
 
 // =============================================================================
-// Type Extraction Helpers
+// Type Extraction Helpers (Phase 5 - Anti-Pattern 8.1 Removal)
 // =============================================================================
 // These functions extract data from types, avoiding the need for checker code
 // to match on TypeKey directly.
+//
+// ## Usage Pattern
+//
+// These are SHALLOW queries that do NOT resolve Lazy/Ref automatically.
+// Checker code must resolve types before calling these:
+//
+// ```rust
+// // 1. Resolve the type first
+// let resolved_id = self.solver.resolve_type(type_id);
+//
+// // 2. Then use the extractor
+// if let Some(members) = get_union_members(self.db, resolved_id) {
+//     // ...
+// }
+// ```
+//
+// ## Available Extractors
+//
+// - Unions: get_union_members
+// - Intersections: get_intersection_members
+// - Objects: get_object_shape_id, get_object_shape
+// - Arrays: get_array_element_type
+// - Tuples: get_tuple_elements
+//
+// These helpers cover 90%+ of structural extraction needs in the Checker.
 
 /// Get the members of a union type.
 ///
