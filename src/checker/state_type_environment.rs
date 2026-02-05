@@ -249,22 +249,34 @@ impl<'a> CheckerState<'a> {
                         s_def
                     );
 
+                    let mut found_enum_in_union = false;
+                    let mut all_enums_match = true;
+
                     for &member in member_list.iter() {
                         if let Some(TypeKey::Enum(member_def, _)) = self.ctx.types.lookup(member) {
                             // Found an enum in the union
+                            found_enum_in_union = true;
                             if s_def != member_def {
-                                // Nominal mismatch: EnumA.X is not assignable to (EnumB | T)
-                                tracing::debug!(
-                                    "Union contains enum with different DefId: {:?} vs {:?} - returning false",
-                                    s_def,
-                                    member_def
-                                );
-                                return Some(false);
+                                // This constituent doesn't match
+                                all_enums_match = false;
                             }
                         }
                     }
-                    // All enum constituents in the union match (or there are no enum constituents)
-                    tracing::debug!("All union enum constituents match - falling through");
+
+                    if found_enum_in_union && !all_enums_match {
+                        // Union contains enums, but at least one doesn't match
+                        // For example: Z.Foo.A assigned to (X.Foo | Y.Foo)
+                        // Z.Foo doesn't match either X.Foo or Y.Foo
+                        tracing::debug!(
+                            "Union contains enums with different DefIds - returning false"
+                        );
+                        return Some(false);
+                    }
+
+                    // Either: no enums in union (fall through), or all enums match (fall through)
+                    tracing::debug!(
+                        "Union check passed - falling through to primitive compatibility"
+                    );
                 }
             }
             tracing::debug!("Not both TypeKey::Enum - checking primitive compatibility");
