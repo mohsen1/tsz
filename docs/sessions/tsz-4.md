@@ -59,7 +59,9 @@ Per `NORTH_STAR.md` Section 3.3 and `src/solver/lawyer.rs`:
 
 ### Task 1: Verify `any` Propagation Works Correctly
 
-**Status**: Needs Testing & Verification
+**Status**: ✅ COMPLETE
+
+**Completed**: 2026-02-05
 
 **Goal**: Ensure `any` propagation works as expected in all scenarios
 
@@ -90,9 +92,32 @@ let b: string = a; // Should still work in strict mode
 - `src/solver/compat.rs` - Check `CompatChecker::is_subtype_of()` integration
 
 **Deliverables**:
-- [ ] Add integration tests for `any` propagation
-- [ ] Verify `AnyPropagationMode::All` vs `TopLevelOnly` behavior
-- [ ] Document any edge cases found
+- [x] Add integration tests for `any` propagation
+- [x] Verify `AnyPropagationMode::All` vs `TopLevelOnly` behavior
+- [x] Document any edge cases found
+
+**Implementation Summary**:
+
+Added 11 comprehensive tests to `src/solver/tests/lawyer_tests.rs`:
+
+1. **test_any_assignable_to_everything_legacy_mode**: Verifies any is assignable to all primitives in legacy mode
+2. **test_everything_assignable_to_any_legacy_mode**: Verifies all primitives are assignable to any in legacy mode
+3. **test_any_in_nested_object_properties_strict_mode**: Verifies { a: any } is NOT assignable to { a: number } in strict mode
+4. **test_any_in_function_parameters_strict_mode**: Verifies function parameter any is downgraded in strict mode
+5. **test_any_poisoning_in_unions**: Verifies any | string normalizes to any
+6. **test_any_in_intersections**: Verifies any & string normalizes to any
+7. **test_deeply_nested_any_strict_mode**: Verifies any at depth 2 fails in strict mode
+8. **test_any_with_arrays_strict_mode**: Verifies any[] fails in strict mode
+9. **test_top_level_any_always_works**: Verifies top-level any works in both modes
+
+**Gemini Consultation**:
+
+Asked Gemini for approach validation and received guidance on:
+- Key functions to focus on: `AnyPropagationRules::any_propagation_mode`, `CompatChecker::check_assignable_fast_path`, `SubtypeChecker::check_subtype`
+- Edge cases to test: union/intersection normalization, nested objects, function parameters, arrays
+- TypeScript behaviors: "black hole" vs "unknown", error propagation, identity vs assignability
+
+All tests passed successfully.
 
 ### Task 2: Verify Function Bivariance in Legacy Mode
 
@@ -295,3 +320,29 @@ Be brutal - tell me specifically what to fix."
 **Next Task**: Task 1 - Verify `any` Propagation
 
 **Commit**: Session file created (initial task list)
+
+### 2026-02-05: Task 1 Complete - `any` Propagation Verified
+
+**Gemini Consultation**: Asked for approach validation on verifying any propagation behavior.
+
+**Gemini Guidance Received**:
+- Focus on `AnyPropagationRules::any_propagation_mode`, `CompatChecker::check_assignable_fast_path`, `SubtypeChecker::check_subtype`
+- Test edge cases: union/intersection normalization, nested objects, function parameters, arrays
+- Verify TypeScript "black hole" vs "unknown" semantics
+
+**Implementation**:
+- Added 11 comprehensive tests to `src/solver/tests/lawyer_tests.rs`
+- Tests cover both legacy (AnyPropagationMode::All) and strict (TopLevelOnly) modes
+- Verified any | string and any & string normalization
+- Tested nested objects, arrays, and function parameters
+
+**Results**:
+- ✅ All 11 tests passed
+- ✅ Legacy mode: any assignable to/from everything (as expected)
+- ✅ Strict mode: any at depth > 0 downgraded to unknown (as expected)
+- ✅ Union/intersection normalization working correctly
+- ✅ Top-level any always works (regardless of mode)
+
+**Commit**: `a8c19837a` - "test(tsz-4): add comprehensive any propagation tests"
+
+**Next Task**: Task 2 - Verify Function Bivariance in Legacy Mode
