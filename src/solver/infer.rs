@@ -3261,10 +3261,7 @@ impl<'a> InferenceContext<'a> {
                     if let Some(&upper_var) = var_for_param.get(&param_info.name) {
                         let upper_root = self.table.find(upper_var);
                         // Add edge: root extends upper_root
-                        graph
-                            .entry(root)
-                            .or_default()
-                            .insert(upper_root);
+                        graph.entry(root).or_default().insert(upper_root);
                     }
                 }
             }

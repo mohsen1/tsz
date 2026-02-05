@@ -375,7 +375,7 @@ impl<'a> Printer<'a> {
         self.write_semicolon();
     }
 
-    pub(super) fn emit_module_declaration(&mut self, node: &Node, _idx: NodeIndex) {
+    pub(super) fn emit_module_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(module) = self.arena.get_module(node) else {
             return;
         };
@@ -385,6 +385,20 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // ES5 target: Transform namespace to IIFE pattern
+        if self.ctx.target_es5 {
+            use crate::transforms::NamespaceES5Emitter;
+            let mut es5_emitter = NamespaceES5Emitter::new(self.arena);
+            es5_emitter.set_indent_level(self.writer.indent_level());
+            if let Some(text) = self.source_text_for_map() {
+                es5_emitter.set_source_text(text);
+            }
+            let output = es5_emitter.emit_namespace(idx);
+            self.write(&output);
+            return;
+        }
+
+        // ES6 target: Emit namespace keyword directly
         self.write("namespace ");
         self.emit(module.name);
         self.write(" ");

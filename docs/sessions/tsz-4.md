@@ -89,6 +89,37 @@ Possible issues:
 
 **Status**: Pivoting to structural issues. Formatting is polish; merging is architecture.
 
+### 2025-02-05 Session 10: Critical Bug Found - Namespace ES5 Transform Missing
+
+**Test Case:** ClassAndModuleWithSameNameAndCommonRoot
+
+**Bug:**
+Namespaces are NOT being transformed to ES5 IIFEs when targeting ES5.
+They're being emitted as raw text: "namespace X namespace Y"
+
+**Root Cause:**
+`emit_module_declaration` in src/emitter/declarations.rs (line 378) doesn't check
+`self.ctx.target_es5` and doesn't call NamespaceES5Emitter.
+
+**Comparison with Classes (working):**
+```rust
+// emit_class_declaration (lines 152-174)
+if self.ctx.target_es5 {
+    let mut es5_emitter = ClassES5Emitter::new(self.arena);
+    // ... transform and emit
+    return;
+}
+```
+
+**Fix Needed:**
+Add ES5 transformation to `emit_module_declaration` similar to how classes do it.
+
+**Gemini Flash Response:**
+Identified that "namespace X namespace Y" text comes from default AST printer
+when ES5 transformation is skipped or returns None.
+
+**Next:** Implement ES5 namespace transformation in emit_module_declaration.
+
 ### 2025-02-05 Session 8: Declaration Emit Discovery (COMPLETE)
 
 **Critical Discovery:**
