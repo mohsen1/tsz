@@ -1791,35 +1791,55 @@ impl<'a> CheckerState<'a> {
         // Must be checked AFTER type parameters are pushed so heritage can reference type params
         self.check_heritage_clauses_for_unresolved_names(&class.heritage_clauses, true);
 
-        // Check for abstract members in non-abstract class (error 1253)
-        // and private identifiers in ambient classes (error 2819)
+        // Check for abstract members in non-abstract class (error 1253),
+        // private identifiers in ambient classes (error 2819),
+        // and private identifiers when targeting ES5 or lower (error 18028)
         for &member_idx in &class.members.nodes {
             if let Some(member_node) = self.ctx.arena.get(member_idx) {
-                // TS2819: Check for private identifiers in ambient classes
-                if is_declared {
-                    let member_name_idx = match member_node.kind {
-                        syntax_kind_ext::PROPERTY_DECLARATION => self
-                            .ctx
-                            .arena
-                            .get_property_decl(member_node)
-                            .map(|p| p.name),
-                        syntax_kind_ext::METHOD_DECLARATION => {
-                            self.ctx.arena.get_method_decl(member_node).map(|m| m.name)
-                        }
-                        syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
-                            self.ctx.arena.get_accessor(member_node).map(|a| a.name)
-                        }
-                        _ => None,
-                    };
+                // Get member name for private identifier checks
+                let member_name_idx = match member_node.kind {
+                    syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_property_decl(member_node)
+                        .map(|p| p.name),
+                    syntax_kind_ext::METHOD_DECLARATION => {
+                        self.ctx.arena.get_method_decl(member_node).map(|m| m.name)
+                    }
+                    syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                        self.ctx.arena.get_accessor(member_node).map(|a| a.name)
+                    }
+                    _ => None,
+                };
 
-                    if let Some(name_idx) = member_name_idx
-                        && !name_idx.is_none()
-                        && let Some(name_node) = self.ctx.arena.get(name_idx)
-                        && name_node.kind == crate::scanner::SyntaxKind::PrivateIdentifier as u16
-                    {
-                        use crate::checker::types::diagnostics::diagnostic_messages;
+                // Check if member has a private identifier name
+                let is_private_identifier = member_name_idx
+                    .filter(|idx| !idx.is_none())
+                    .and_then(|idx| self.ctx.arena.get(idx))
+                    .map(|node| node.kind == crate::scanner::SyntaxKind::PrivateIdentifier as u16)
+                    .unwrap_or(false);
+
+                if is_private_identifier {
+                    use crate::checker::context::ScriptTarget;
+                    use crate::checker::types::diagnostics::diagnostic_messages;
+
+                    // TS18028: Check for private identifiers when targeting ES5 or lower
+                    let is_es5_or_lower = matches!(
+                        self.ctx.compiler_options.target,
+                        ScriptTarget::ES3 | ScriptTarget::ES5
+                    );
+                    if is_es5_or_lower {
                         self.error_at_node(
-                            name_idx,
+                            member_name_idx.unwrap(),
+                            diagnostic_messages::PRIVATE_IDENTIFIER_ES2015_REQUIRED,
+                            diagnostic_codes::PRIVATE_IDENTIFIER_ES2015_REQUIRED,
+                        );
+                    }
+
+                    // TS2819: Check for private identifiers in ambient classes
+                    if is_declared {
+                        self.error_at_node(
+                            member_name_idx.unwrap(),
                             diagnostic_messages::PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT,
                             diagnostic_codes::PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT,
                         );

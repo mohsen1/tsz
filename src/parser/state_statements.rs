@@ -1215,8 +1215,13 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ClassKeyword);
 
         // Parse optional name (class expressions can be anonymous)
-        let name = if self.is_token(SyntaxKind::Identifier) {
-            self.parse_identifier()
+        // Like class declarations, keywords can be used as class names
+        // EXCEPT extends/implements which start heritage clauses
+        let name = if self.is_identifier_or_keyword()
+            && !self.is_token(SyntaxKind::ExtendsKeyword)
+            && !self.is_token(SyntaxKind::ImplementsKeyword)
+        {
+            self.parse_identifier_name()
         } else {
             NodeIndex::NONE
         };
@@ -2939,11 +2944,17 @@ impl ParserState {
         let name = if self.is_property_name() {
             self.parse_property_name()
         } else {
-            // Report error for unknown token
-            self.parse_error_at_current_token(
-                "Unexpected token. A constructor, method, accessor, or property was expected.",
-                diagnostic_codes::UNEXPECTED_TOKEN_CLASS_MEMBER,
-            );
+            // Report error for unknown/missing token
+            // After asterisk (*), we specifically expect an identifier (method name)
+            // so emit TS1003 "Identifier expected" to match tsc
+            if asterisk_token {
+                self.error_identifier_expected();
+            } else {
+                self.parse_error_at_current_token(
+                    "Unexpected token. A constructor, method, accessor, or property was expected.",
+                    diagnostic_codes::UNEXPECTED_TOKEN_CLASS_MEMBER,
+                );
+            }
             self.next_token();
             return NodeIndex::NONE;
         };
