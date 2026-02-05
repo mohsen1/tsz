@@ -11,12 +11,14 @@ tsz's parser error recovery produces different (usually more) errors than TSC wh
 
 ## Conformance Stats
 
-- Parser tests: 49.8% pass rate (414/831)
+- Parser tests: 50.3% pass rate (420/835)
 - Top error mismatches:
-  - TS2304: 84 extra (cannot find name)
-  - TS1005: 32 extra (token expected)
-  - TS1109: 28 extra (expression expected)
-  - TS1128: 28 extra (declaration expected)
+  - TS2304: missing=35, extra=84 (cannot find name)
+  - TS1005: missing=29, extra=32 (token expected)
+  - TS1109: missing=11, extra=28 (expression expected)
+  - TS1128: missing=2, extra=28 (declaration expected)
+
+**Note**: Many TS2304 errors are caused by the default lib loading bug (see DEFAULT_LIB_LOADING_BUG.md).
 
 ## Examples
 
@@ -92,6 +94,14 @@ tsz's parser:
 - **User Impact**: Medium - more errors shown for malformed code, but valid code works fine
 - **Conformance Impact**: High - many parser tests fail
 - **Fix Complexity**: Very High - requires fundamental parser architecture changes
+
+## Fixes Applied
+
+### Modifier keywords as property names (commit 3b8061e)
+
+Fixed issue where `class C { public }` caused TS1068 errors because the parser was consuming `public` as a modifier expecting more tokens after it. The fix treats modifier keywords as property names when followed by `}` or EOF.
+
+**File**: `src/parser/state_statements.rs` - `should_stop_class_member_modifier()`
 
 ## Recommended Approach
 
