@@ -14,7 +14,7 @@
 //! This module extends CheckerState with utilities for constructor-related
 //! type checking operations.
 
-use crate::binder::symbol_flags;
+use crate::binder::{SymbolId, symbol_flags};
 use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
 use crate::interner::Atom;
 use crate::parser::NodeIndex;
@@ -720,5 +720,185 @@ impl<'a> CheckerState<'a> {
         }
         let env_ref = self.ctx.type_env.borrow();
         env_ref.get(symbol)
+    }
+
+    /// Check constructor accessibility for a `new` expression.
+    ///
+    /// Emits TS2673 for private constructors and TS2674 for protected constructors
+    /// when called from an invalid scope (outside the class or hierarchy).
+    pub(crate) fn check_constructor_accessibility_for_new(
+        &mut self,
+        new_expr_idx: crate::parser::NodeIndex,
+        constructor_type: TypeId,
+    ) {
+        
+        
+
+        // Skip check for `any` and `error` types
+        if constructor_type == TypeId::ANY || constructor_type == TypeId::ERROR {
+            return;
+        }
+
+        // Check if constructor is private or protected
+        let is_private = self.is_private_ctor(constructor_type);
+        let is_protected = self.is_protected_ctor(constructor_type);
+
+        if !is_private && !is_protected {
+            return; // Public constructor - no restrictions
+        }
+
+        // Find the class symbol being instantiated
+        let class_sym = match self.class_symbol_from_new_expr(new_expr_idx) {
+            Some(sym) => sym,
+            None => return, // Can't determine class - skip check
+        };
+
+        // Find the enclosing class by walking up the AST
+        let enclosing_class_sym = match self.find_enclosing_class_for_new(new_expr_idx) {
+            Some(sym) => sym,
+            None => {
+                // No enclosing class - this is an external instantiation
+                // Emit error based on constructor visibility
+                self.emit_constructor_access_error(new_expr_idx, class_sym, is_private);
+                return;
+            }
+        };
+
+        // Check if we're in the same class
+        if enclosing_class_sym == class_sym {
+            // Same class - always allowed (even for private constructors)
+            return;
+        }
+
+        // Check if we're in a subclass
+        let is_subclass = self
+            .ctx
+            .inheritance_graph
+            .is_derived_from(enclosing_class_sym, class_sym);
+
+        if is_private {
+            // Private constructor: only accessible within the same class
+            if enclosing_class_sym != class_sym {
+                self.emit_constructor_access_error(new_expr_idx, class_sym, true);
+            }
+        } else if is_protected {
+            // Protected constructor: accessible within the class hierarchy
+            if !is_subclass {
+                self.emit_constructor_access_error(new_expr_idx, class_sym, false);
+            }
+        }
+    }
+
+    /// Find the class symbol from a `new` expression node.
+    fn class_symbol_from_new_expr(&self, idx: crate::parser::NodeIndex) -> Option<SymbolId> {
+        use crate::binder::symbol_flags;
+
+        let node = self.ctx.arena.get(idx)?;
+        let call_expr = self.ctx.arena.get_call_expr(node)?;
+
+        // Get the expression being instantiated
+        let expr_node = self.ctx.arena.get(call_expr.expression)?;
+        let ident = self.ctx.arena.get_identifier(expr_node)?;
+
+        // Try to find the symbol
+        let sym_id = self
+            .ctx
+            .binder
+            .get_node_symbol(call_expr.expression)
+            .or_else(|| self.ctx.binder.file_locals.get(&ident.escaped_text))
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbols()
+                    .find_by_name(&ident.escaped_text)
+            })?;
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+        // Verify it's a class
+        if symbol.flags & symbol_flags::CLASS != 0 {
+            Some(sym_id)
+        } else {
+            None
+        }
+    }
+
+    /// Find the enclosing class symbol by walking up the AST parent chain.
+    ///
+    /// This is similar to the logic in `super_checker.rs` but returns the class symbol.
+    fn find_enclosing_class_for_new(&self, idx: crate::parser::NodeIndex) -> Option<SymbolId> {
+        use crate::parser::syntax_kind_ext;
+
+        let mut current = idx;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let parent_node = self.ctx.arena.get(parent_idx)?;
+
+            // Arrow functions capture the class context, so skip them
+            // Check for arrow function syntax kind
+            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
+                current = parent_idx;
+                continue;
+            }
+
+            // Found the enclosing class
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                // Get the class symbol
+                return self.ctx.binder.get_node_symbol(parent_idx).or_else(|| {
+                    // Try to get symbol by class name
+                    let class_data = self.ctx.arena.get_class(parent_node)?;
+                    let name_node = self.ctx.arena.get(class_data.name)?;
+                    let ident = self.ctx.arena.get_identifier(name_node)?;
+                    self.ctx.binder.file_locals.get(&ident.escaped_text)
+                });
+            }
+
+            current = parent_idx;
+        }
+
+        None
+    }
+
+    /// Emit the appropriate constructor accessibility error.
+    fn emit_constructor_access_error(
+        &mut self,
+        idx: crate::parser::NodeIndex,
+        class_sym: SymbolId,
+        is_private: bool,
+    ) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        let class_name = self.get_symbol_display_name(class_sym);
+
+        if is_private {
+            // TS2673: Constructor of class 'X' is private
+            let message = format!(
+                "Constructor of class '{}' is private and only accessible within the class declaration.",
+                class_name
+            );
+            self.error_at_node(idx, &message, diagnostic_codes::PRIVATE_CONSTRUCTOR);
+        } else {
+            // TS2674: Constructor of class 'X' is protected
+            let message = format!(
+                "Constructor of class '{}' is protected and only accessible within the class declaration.",
+                class_name
+            );
+            self.error_at_node(idx, &message, diagnostic_codes::PROTECTED_CONSTRUCTOR);
+        }
+    }
+
+    /// Get the display name of a symbol for error messages.
+    fn get_symbol_display_name(&self, sym_id: SymbolId) -> String {
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            symbol.escaped_name.clone()
+        } else {
+            "<unknown>".to_string()
+        }
     }
 }

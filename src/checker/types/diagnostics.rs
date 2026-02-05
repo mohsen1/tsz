@@ -469,6 +469,10 @@ pub mod diagnostic_codes {
     // Class errors
     pub const CLASS_NAME_CANNOT_BE_ANY: u32 = 2414; // Class name cannot be 'any'.
     pub const CANNOT_CREATE_INSTANCE_OF_ABSTRACT_CLASS: u32 = 2511; // Cannot create an instance of an abstract class.
+    /// TS2673: Constructor of class 'X' is private and only accessible within the class declaration.
+    pub const PRIVATE_CONSTRUCTOR: u32 = 2673;
+    /// TS2674: Constructor of class 'X' is protected and only accessible within the class declaration.
+    pub const PROTECTED_CONSTRUCTOR: u32 = 2674;
     pub const CANNOT_FIND_NAME_DID_YOU_MEAN_STATIC: u32 = 2662; // Cannot find name 'X'. Did you mean the static member 'C.X'?
     pub const ABSTRACT_PROPERTY_IN_CONSTRUCTOR: u32 = 2715; // Abstract property 'X' in class 'C' cannot be accessed in the constructor.
     pub const PROPERTY_USED_BEFORE_INITIALIZATION: u32 = 2729; // Property '{0}' is used before its initialization.
