@@ -16,7 +16,7 @@ use crate::solver::types::{
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
     ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, SymbolRef, TemplateLiteralId,
     TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeId, TypeKey,
-    TypeListId, TypeParamInfo,
+    TypeListId, TypeParamInfo, Variance,
 };
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -505,6 +505,12 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     fn new_inference_context(&self) -> crate::solver::infer::InferenceContext<'_> {
         crate::solver::infer::InferenceContext::new(self.as_type_database())
     }
+
+    /// Task #41: Get the variance mask for a generic type definition.
+    ///
+    /// Returns the variance of each type parameter for the given DefId.
+    /// Returns None if the DefId is not a generic type or variance cannot be determined.
+    fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>>;
 }
 
 impl QueryDatabase for TypeInterner {
@@ -657,6 +663,12 @@ impl QueryDatabase for TypeInterner {
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator.resolve_property_access(object_type, prop_name)
     }
+
+    fn get_type_param_variance(&self, _def_id: DefId) -> Option<Arc<[Variance]>> {
+        // TypeInterner doesn't have access to type parameter information.
+        // The Checker will override this to provide the actual implementation.
+        None
+    }
 }
 
 type EvalCacheKey = (TypeId, bool);
@@ -672,6 +684,9 @@ pub struct QueryCache<'a> {
     /// don't contaminate strict subtype checks.
     assignability_cache: RwLock<FxHashMap<RelationCacheKey, bool>>,
     property_cache: RwLock<FxHashMap<PropertyAccessCacheKey, PropertyAccessResult>>,
+    /// Task #41: Variance cache for generic type parameters.
+    /// Stores computed variance masks for DefIds to enable O(1) generic assignability.
+    variance_cache: RwLock<FxHashMap<DefId, Arc<[Variance]>>>,
     no_unchecked_indexed_access: AtomicBool,
 }
 
@@ -683,6 +698,7 @@ impl<'a> QueryCache<'a> {
             subtype_cache: RwLock::new(FxHashMap::default()),
             assignability_cache: RwLock::new(FxHashMap::default()),
             property_cache: RwLock::new(FxHashMap::default()),
+            variance_cache: RwLock::new(FxHashMap::default()),
             no_unchecked_indexed_access: AtomicBool::new(false),
         }
     }
@@ -702,6 +718,10 @@ impl<'a> QueryCache<'a> {
             Err(e) => e.into_inner().clear(),
         }
         match self.property_cache.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        match self.variance_cache.write() {
             Ok(mut cache) => cache.clear(),
             Err(e) => e.into_inner().clear(),
         }
@@ -1173,6 +1193,16 @@ impl QueryDatabase for QueryCache<'_> {
         self.no_unchecked_indexed_access
             .store(enabled, Ordering::Relaxed);
     }
+
+    fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
+        // Check cache first
+        let cached = match self.variance_cache.read() {
+            Ok(cache) => cache.get(&def_id).cloned(),
+            Err(e) => e.into_inner().get(&def_id).cloned(),
+        };
+
+        cached
+    }
 }
 
 /// Wrapper that combines QueryCache with Binder access for class hierarchy lookups.
@@ -1630,6 +1660,10 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
 
     fn new_inference_context(&self) -> crate::solver::infer::InferenceContext<'_> {
         crate::solver::infer::InferenceContext::new(self)
+    }
+
+    fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
+        self.query_cache.get_type_param_variance(def_id)
     }
 }
 
