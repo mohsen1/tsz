@@ -1,4 +1,5 @@
 use super::*;
+use crate::binder::SymbolId;
 use crate::solver::freshness::{is_fresh_object_type, widen_freshness};
 use crate::solver::intern::PROPERTY_MAP_THRESHOLD;
 
@@ -627,4 +628,105 @@ fn test_intersection_disjoint_property_types() {
     // Objects with disjoint property types should reduce to NEVER
     // This is detected in intersection_has_disjoint_primitives
     assert_eq!(intersection, TypeId::NEVER);
+}
+
+#[test]
+fn test_visibility_interning_distinct_shape_ids() {
+    let interner = TypeInterner::new();
+
+    // Create two objects with identical structure but different visibility
+    let obj_public = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    let obj_private = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Private,
+        parent_id: None,
+    }]);
+
+    // These should have different TypeIds because visibility differs
+    assert_ne!(
+        obj_public, obj_private,
+        "Objects with different visibility should have different TypeIds"
+    );
+
+    // They should also have different ObjectShapeIds
+    let shape_public = match interner.lookup(obj_public) {
+        Some(TypeKey::Object(shape_id)) => shape_id,
+        other => panic!("Expected object type, got {:?}", other),
+    };
+
+    let shape_private = match interner.lookup(obj_private) {
+        Some(TypeKey::Object(shape_id)) => shape_id,
+        other => panic!("Expected object type, got {:?}", other),
+    };
+
+    assert_ne!(
+        shape_public, shape_private,
+        "Objects with different visibility should have different ObjectShapeIds"
+    );
+}
+
+#[test]
+fn test_parent_id_interning_distinct_shape_ids() {
+    let interner = TypeInterner::new();
+
+    // Create two objects with identical structure but different parent_id
+    // This tests nominal property identity (different declaring classes)
+    let obj_class1 = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: Some(SymbolId(1)),
+    }]);
+
+    let obj_class2 = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: Some(SymbolId(2)),
+    }]);
+
+    // These should have different TypeIds because parent_id differs
+    assert_ne!(
+        obj_class1, obj_class2,
+        "Objects with different parent_id should have different TypeIds"
+    );
+
+    // They should also have different ObjectShapeIds
+    let shape_class1 = match interner.lookup(obj_class1) {
+        Some(TypeKey::Object(shape_id)) => shape_id,
+        other => panic!("Expected object type, got {:?}", other),
+    };
+
+    let shape_class2 = match interner.lookup(obj_class2) {
+        Some(TypeKey::Object(shape_id)) => shape_id,
+        other => panic!("Expected object type, got {:?}", other),
+    };
+
+    assert_ne!(
+        shape_class1, shape_class2,
+        "Objects with different parent_id should have different ObjectShapeIds"
+    );
 }
