@@ -1386,7 +1386,7 @@ No fix needed. The interning system correctly distinguishes objects based on bot
 
 ---
 
-### Priority 1: Task #32 (Graph Isomorphism) 🔄 IN PROGRESS
+### Priority 1: Task #32 (Graph Isomorphism) ✅ PARTIAL COMPLETE
 **Why**: "Final Boss" of North Star - structural identity for recursive types
 
 **Why Now**:
@@ -1394,27 +1394,30 @@ No fix needed. The interning system correctly distinguishes objects based on bot
 - All reduction infrastructure is in place
 - Ready to tackle the final North Star requirement
 
-**Status**: ⚙️ Implementation Phase - Pattern Match Fixes Required
+**Status**: ⚙️ Implementation Phase - Foundation Complete
 
 **Progress**:
 ✅ Added TypeKey::Recursive(u32) variant to types.rs
 ✅ Added visitor support (visit_recursive, for_each_child, TypeKind)
-✅ Fixed pattern matches in: emitter/type_printer.rs, evaluate_rules/infer_pattern.rs (1/2)
-⏳ Need to fix 19 more pattern matches in 8 files
+✅ Fixed all 21 pattern match errors across 10 files
+✅ All tests pass, code compiles successfully
 
-**Remaining Pattern Match Fixes**:
-- format.rs (1 error)
-- infer.rs (2 errors)
-- instantiate.rs (1 error)
-- lower.rs (2 errors)
-- operations.rs (2 errors)
-- type_queries.rs (9 errors)
-- visitor.rs (2 errors)
-- evaluate_rules/infer_pattern.rs (1 more error)
+**Completed Work** (Commit: dca01dde7):
+- TypeKey::Recursive variant with De Bruijn index support
+- Visitor pattern integration (visit_recursive, for_each_child, TypeKind::Reference)
+- Pattern match fixes in: type_printer.rs, infer_pattern.rs, format.rs,
+  infer.rs, instantiate.rs, lower.rs, operations.rs, type_queries.rs (9 locations),
+  visitor.rs
+- Added is_type_reference() updates to handle Recursive alongside Lazy
 
-**Next Step**: Fix remaining pattern matches by adding `TypeKey::Recursive(_)` to all leaf type lists (similar to how Lazy is handled).
-
-**Status**: 📋 Planning Phase - Gemini Consultation Complete
+**Next Steps** (from Gemini Question 1):
+1. Implement Canonicalizer struct in src/solver/intern.rs
+   - Stack-based cycle detection
+   - canonicalize() method that transforms Lazy -> Recursive
+2. Add intern_canonical() entry point (separate from hot path intern())
+3. Add canonical_cache: DashMap<TypeId, TypeId> to TypeInterner
+4. Implement get_def_kind() in TypeResolver (distinguish TypeAlias vs Class)
+5. Ask Gemini Question 2 (Pro) for implementation review
 
 **Gemini Guidance Summary**:
 
@@ -1430,9 +1433,9 @@ No fix needed. The interning system correctly distinguishes objects based on bot
 4. **Memoization**: Cache `DefId -> Canonical TypeId` to avoid repeated unrolling
 
 **Files to Modify**:
-- `src/solver/types.rs`: Add `TypeKey::Recursive(u32)` variant
+- `src/solver/types.rs`: Add `TypeKey::Recursive(u32)` variant ✅ DONE
 - `src/solver/intern.rs`: Add `canonicalize()` helper, modify `intern()` logic
-- `src/solver/visitor.rs`: Update `TypeVisitor` to handle `Recursive` variant
+- `src/solver/visitor.rs`: Update `TypeVisitor` to handle `Recursive` variant ✅ DONE
 
 **Critical Edge Cases**:
 - **Expansive Recursion**: Enforce MAX_SUBTYPE_DEPTH limit to prevent infinite unroll
