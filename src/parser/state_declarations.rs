@@ -647,6 +647,32 @@ impl ParserState {
                 self.parse_identifier_name()
             };
 
+            // Check for unexpected token after enum member name - emit TS1357
+            // Valid tokens after name are: '=', ',', '}'
+            if !self.is_token(SyntaxKind::EqualsToken)
+                && !self.is_token(SyntaxKind::CommaToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                self.parse_error_at_current_token(
+                    "An enum member name must be followed by a ',', '=', or '}'.",
+                    diagnostic_codes::ENUM_MEMBER_NAME_MUST_BE_FOLLOWED_BY,
+                );
+                // Skip to next comma, closing brace, or EOF to recover
+                while !self.is_token(SyntaxKind::CommaToken)
+                    && !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    self.next_token();
+                }
+                // Also skip the comma if we landed on one to avoid triggering TS1132
+                // on the next iteration
+                if self.is_token(SyntaxKind::CommaToken) {
+                    self.next_token();
+                }
+                continue;
+            }
+
             let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
                 self.parse_assignment_expression()
             } else {
