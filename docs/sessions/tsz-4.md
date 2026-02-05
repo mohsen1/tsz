@@ -17,9 +17,27 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 - Declaration Emit: **0%** pass rate (0/3 tests passed, 3 failed)
 - Overall: Many tests failing due to structural issues
 
-**Priority Pivot:** Per Gemini consultation, stopped formatting work (low ROI) and pivoted to structural correctness.
+**Recent Work:**
+- Expanded "use strict" emission (commit e9eb11dce)
+- No immediate pass rate improvement (tests fail for other reasons)
+- Ready to tackle declaration emit (0% pass rate)
 
 ## Progress Log
+
+### 2025-02-05 Session 6: Implemented "Use Strict" Emission
+
+**Completed:** Expanded "use strict" emission in `src/emitter/mod.rs`
+- Now emits for CommonJS/AMD/UMD (existing)
+- Also emits for ES modules when target < ES2015
+- Added proper comments explaining the logic
+
+**Test Result:** Pass rate unchanged at 4.9%
+- Most tests fail for other structural reasons (module merging, declarations, etc.)
+- Confirms Gemini's advice: "use strict" is necessary but not sufficient
+
+**Commit:** e9eb11dce
+
+**Next Priority:** Declaration emit (0% pass rate)
 
 ### 2025-02-05 Session 5: Strategic Pivot - Gemini Consultation
 
