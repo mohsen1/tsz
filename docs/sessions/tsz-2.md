@@ -1,75 +1,102 @@
-# Session TSZ-5: Template Literal Complexity Management
+# Session TSZ-5: Discriminant Narrowing Robustness
 
 **Started**: 2026-02-05
 **Status**: 🔄 IN PROGRESS
-**Focus**: Fix template literal expansion timeout
+**Focus**: Fix critical bugs in discriminant narrowing implementation
 
 ## Problem Statement
 
-The test `test_template_literal_expansion_limit_widens_to_string` is timing out, indicating an exponential complexity explosion in template literal expansion. This is a critical stability issue that can hang the entire compiler.
+Recent implementation of discriminant narrowing (commit f2d4ae5d5) had **3 critical bugs** identified by Gemini Pro:
+1. **Reversed subtype check** - Asked `is_subtype_of(property_type, literal)` instead of `is_subtype_of(literal, property_type)`
+2. **Missing type resolution** - Didn't handle `Lazy`/`Ref`/`Intersection` types
+3. **Broken for optional properties** - Failed on `{ prop?: "a" | "b" }` cases
 
 ## Goal
 
-Implement complexity limits for template literal expansion to prevent compiler timeouts, matching `tsc` behavior by widening to `string` when the Cartesian product of unions exceeds a threshold.
+Harden discriminant narrowing in `src/solver/narrowing.rs` to handle full complexity of `tsc` narrowing behavior.
 
-## Why This is Priority
+## Focus Areas
 
-1. **Stability**: Timeouts are "denial of service" bugs for the compiler
-2. **Conformance**: TypeScript has a hard limit (~100,000 members) for template literal unions
-3. **North Star**: Section 4.4 of NORTH_STAR.md lists MAX_TOTAL_EVALUATIONS and MAX_EVALUATE_DEPTH as critical
+### 1. Optional Property Discriminants
+- Narrowing on unions where discriminant is an optional property
+- Example: `{ prop?: "a" | "b" }`
+- Must handle `undefined` in the union correctly
 
-## Planned Approach
+### 2. Type Resolution
+- Properly resolve `Lazy`/`Ref`/`Intersection` types before narrowing
+- Ensure subtype checks work on resolved types, not wrappers
 
-### Step 1: Locate Expansion Logic
-Find the function responsible for Cartesian product expansion of template literals.
-- Likely in `src/solver/intern.rs` (template_literal constructor)
-- Or `src/solver/evaluate.rs` (meta-type evaluation)
+### 3. In Operator Narrowing
+- Discriminant narrowing via `in` operator
+- Example: `"a" in obj` where obj has optional property `a`
 
-### Step 2: Implement Fuel/Counter
-- Introduce a counter to track members generated during expansion
-- Check against constant: `MAX_TEMPLATE_EXPANSION_SIZE = 100_000`
+### 4. Instanceof Narrowing
+- Discriminant narrowing via `instanceof` operator
+- Class constructor discriminants
 
-### Step 3: Implement Widening
-- If limit hit, abort expansion and return `TypeId::STRING`
-- Ensure correct fallback for base types (string, number, bigint, boolean)
-
-### Step 4: Visitor Integration
-- Use visitor pattern from `src/solver/visitor.rs` if needed
-- Calculate potential size before performing allocation
+### 5. Intersection Type Discriminants
+- Handle `Intersection` types as discriminants
+- Resolve all members of intersection for checking
 
 ## Files to Modify
 
-- `src/solver/types.rs`: Define limit constants
-- `src/solver/intern.rs`: Template literal expansion logic
-- `src/solver/evaluate.rs`: If expansion happens during meta-type evaluation
+- `src/solver/narrowing.rs` - Main narrowing logic
+- `src/solver/subtype.rs` - Relation foundation (may need fixes)
+- Test files in `src/solver/tests/` or `src/checker/tests/`
 
-## Potential Pitfalls
+## Mandatory Pre-Implementation Steps
 
-1. **Memory Usage**: Check should happen during generation, not after
-2. **Recursive Templates**: Nested template literals must accumulate complexity correctly
-3. **Early Detection**: Need to estimate size before allocating massive vectors
+Per AGENTS.md, MUST ask Gemini TWO questions:
 
-## Mandatory Pre-Implementation Step
-
-Before modifying any code, MUST ask Gemini Pro Question 1:
-
+### Question 1 (Approach Validation)
 ```bash
-./scripts/ask-gemini.mjs --include=src/solver "I need to fix the timeout in test_template_literal_expansion_limit_widens_to_string.
-I plan to add a counter to the Cartesian product expansion in the template literal constructor and return TypeId::STRING if it exceeds 100,000.
-Which specific function in src/solver handles this expansion, and is there an existing 'fuel' mechanism I should hook into?"
+./scripts/ask-gemini.mjs --include=src/solver/narrowing --include=src/solver/subtype \
+  "I need to harden discriminant narrowing to handle Lazy/Ref/Intersection types and optional properties.
+
+  Current issues:
+  1. Reversed subtype check in literal comparison
+  2. Missing type resolution for wrapper types
+  3. Optional properties not handled correctly
+
+  What's the right approach? Should I:
+  - Add resolution step before narrowing checks?
+  - Modify the subtype check logic?
+  - Add special handling for optional properties?
+
+  Please provide: 1) File paths, 2) Function names, 3) Edge cases"
 ```
 
-## Next Steps
+### Question 2 (Implementation Review)
+After implementing, MUST ask:
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/narrowing \
+  "I implemented discriminant narrowing fixes for optional properties and type resolution.
 
-1. Run failing test with `TSZ_LOG=trace` to see where expansion explodes
-2. Ask Gemini Pro Question 1 (MANDATORY - do not skip!)
-3. Implement based on Gemini's guidance
-4. Ask Gemini Pro Question 2: Review my implementation
-5. Test and commit
+  Changes: [PASTE CODE OR DIFF]
+
+  Please review: 1) Is this correct for TypeScript? 2) Did I miss edge cases?
+  Be specific if it's wrong - tell me exactly what to fix."
+```
+
+## Debugging Approach
+
+Use `tsz-tracing` skill to understand current behavior:
+```bash
+TSZ_LOG="wasm::solver::narrowing=trace" TSZ_LOG_FORMAT=tree \
+  cargo test test_name -- --nocapture 2>&1 | head -200
+```
 
 ## Dependencies
 
-- Session tsz-1: Core type relations (coordinate to avoid conflicts)
+- Session tsz-1: Core type relations (may need coordination)
 - Session tsz-2: Complete (circular inference)
-- Session tsz-3: Narrowing (different domain)
+- Session tsz-3: Narrowing (different domain - control flow)
 - Session tsz-4: Emitter (different domain)
+
+## Why This Is Priority
+
+Per Gemini Pro and AGENTS.md:
+- **High Impact**: Core TypeScript feature used daily
+- **Recent Bugs**: 3 critical bugs found in recent implementation
+- **Conformance**: Essential for matching `tsc` behavior exactly
+- **User Experience**: Breaks common patterns with optional properties
