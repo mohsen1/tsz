@@ -12,8 +12,11 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use walkdir::WalkDir;
+
+/// Timeout for reading tsserver responses (in seconds)
+const RESPONSE_TIMEOUT_SECS: u64 = 30;
 
 #[derive(Parser, Debug)]
 #[command(name = "generate-tsc-cache-tsserver")]
@@ -283,8 +286,20 @@ fn main() -> Result<()> {
     let mut cache = HashMap::new();
     let mut processed = 0;
     let mut errors = 0;
+    
+    // Restart tsserver every N files to prevent memory/state buildup
+    const RESTART_INTERVAL: usize = 500;
 
     for path in &test_files {
+        // Restart tsserver periodically to prevent hangs and memory buildup
+        if processed > 0 && processed % RESTART_INTERVAL == 0 {
+            print!("\r[{}/{}] Restarting tsserver...                    ", processed, test_files.len());
+            std::io::stdout().flush()?;
+            let _ = client.shutdown();
+            client = TsServerClient::new(&args.tsserver, args.verbose)?;
+        }
+
+        let file_start = Instant::now();
         match process_test_file(&mut client, path, &temp_dir) {
             Ok(Some((hash, entry))) => {
                 cache.insert(hash, entry);
@@ -297,7 +312,21 @@ fn main() -> Result<()> {
                     eprintln!("✗ Error processing {}: {}", path.display(), e);
                 }
                 errors += 1;
+                
+                // Restart tsserver after errors to recover
+                let _ = client.shutdown();
+                client = TsServerClient::new(&args.tsserver, args.verbose)?;
             }
+        }
+        
+        // Check if this file took too long (might indicate tsserver is stuck)
+        let elapsed = file_start.elapsed();
+        if elapsed > Duration::from_secs(RESPONSE_TIMEOUT_SECS) {
+            if args.verbose {
+                eprintln!("⚠ File {} took {:.1}s, restarting tsserver", path.display(), elapsed.as_secs_f64());
+            }
+            let _ = client.shutdown();
+            client = TsServerClient::new(&args.tsserver, args.verbose)?;
         }
 
         processed += 1;
@@ -307,7 +336,7 @@ fn main() -> Result<()> {
         }
     }
 
-    println!("\r✓ Completed in {:.1}s ({:.0} tests/sec)", 
+    println!("\r✓ Completed in {:.1}s ({:.0} tests/sec)                    ", 
         start.elapsed().as_secs_f64(),
         test_files.len() as f64 / start.elapsed().as_secs_f64()
     );
@@ -317,7 +346,7 @@ fn main() -> Result<()> {
     }
 
     println!("\n🛑 Shutting down tsserver...");
-    client.shutdown()?;
+    let _ = client.shutdown();
 
     // Clean up temp directory
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -369,6 +398,82 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// Test harness-specific directives that should NOT be passed to tsconfig.json
+/// These are handled by the test infrastructure, not the TypeScript compiler
+const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
+    "filename",
+    "allowNonTsExtensions",
+    "useCaseSensitiveFileNames",
+    "baselineFile",
+    "noErrorTruncation",
+    "suppressOutputPathCheck",
+    "noImplicitReferences",
+    "currentDirectory",
+    "symlink",
+    "link",
+    "noTypesAndSymbols",
+    "fullEmitPaths",
+    "noCheck",
+    "nocheck",
+    "reportDiagnostics",
+    "captureSuggestions",
+    "typeScriptVersion",
+    "skip",
+];
+
+/// List-type compiler options that accept comma-separated values
+const LIST_OPTIONS: &[&str] = &[
+    "lib",
+    "types",
+    "typeRoots",
+    "rootDirs",
+    "moduleSuffixes",
+    "customConditions",
+];
+
+/// Convert test directive options to tsconfig compiler options JSON
+/// 
+/// Handles:
+/// - Boolean options (true/false)
+/// - List options (comma-separated values like @lib: es6,dom)
+/// - String/enum options (target, module, etc.)
+/// - Filters out test harness-specific directives
+fn convert_options_to_tsconfig(
+    options: &std::collections::HashMap<String, String>,
+) -> serde_json::Value {
+    let mut opts = serde_json::Map::new();
+
+    for (key, value) in options {
+        // Skip test harness-specific directives
+        let key_lower = key.to_lowercase();
+        if HARNESS_ONLY_DIRECTIVES.iter().any(|&d| d.to_lowercase() == key_lower) {
+            continue;
+        }
+
+        let json_value = if value == "true" {
+            serde_json::Value::Bool(true)
+        } else if value == "false" {
+            serde_json::Value::Bool(false)
+        } else if LIST_OPTIONS.iter().any(|&opt| opt.to_lowercase() == key_lower) {
+            // Parse comma-separated list
+            let items: Vec<serde_json::Value> = value
+                .split(',')
+                .map(|s| serde_json::Value::String(s.trim().to_string()))
+                .collect();
+            serde_json::Value::Array(items)
+        } else if let Ok(num) = value.parse::<i64>() {
+            // Handle numeric options (e.g., maxNodeModuleJsDepth)
+            serde_json::Value::Number(num.into())
+        } else {
+            serde_json::Value::String(value.clone())
+        };
+        
+        opts.insert(key.clone(), json_value);
+    }
+
+    serde_json::Value::Object(opts)
+}
+
 fn process_test_file(
     client: &mut TsServerClient,
     path: &Path,
@@ -405,6 +510,16 @@ fn process_test_file(
     let unique_id = COUNTER.fetch_add(1, Ordering::SeqCst);
     let test_dir = temp_dir.join(format!("test_{}", unique_id));
     fs::create_dir_all(&test_dir)?;
+
+    // CRITICAL FIX: Create tsconfig.json with parsed @-directives
+    // This ensures tsserver respects options like @target: es6, @module: commonjs, etc.
+    let tsconfig_path = test_dir.join("tsconfig.json");
+    let tsconfig_content = serde_json::json!({
+        "compilerOptions": convert_options_to_tsconfig(&parsed.directives.options),
+        "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
+        "exclude": ["node_modules"]
+    });
+    fs::write(&tsconfig_path, serde_json::to_string_pretty(&tsconfig_content)?)?;
 
     // Track all files we open
     let mut opened_files: Vec<String> = Vec::new();

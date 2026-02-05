@@ -1,6 +1,19 @@
-# How to improve Conformance
+# How to Improve Conformance
 
-## Finding Low-Hanging Fruits from Conformance
+## Quick Start
+
+```bash
+# Download cache from GitHub (fastest) and run tests
+./scripts/conformance.sh all
+
+# Or just download the cache
+./scripts/conformance.sh download
+
+# Run tests on specific error code
+./scripts/conformance.sh run --error-code 2339 --max 50
+```
+
+## Finding Low-Hanging Fruits
 
 ### Step 1: Look at "Extra" Errors (False Positives)
 These block valid code from compiling - highest user impact:
@@ -21,7 +34,7 @@ TS2345: missing=84, extra=334    # Argument type false positives
 ### Step 2: Investigate High-Volume "Extra" Codes
 ```bash
 # Pick the top "extra" error code and filter tests
-./scripts/conformance.sh run --error-code 2339 --verbose 2>&1 | head -100
+./scripts/conformance.sh run --error-code 2339 --verbose --max 50 2>&1
 ```
 
 ### Step 3: Find Patterns
@@ -39,50 +52,94 @@ npx tsc <test_file> --noEmit 2>&1
 | **TS1xxx** | Parser | Often simple (1-line fixes like ASI) |
 | **TS2304** | Symbol resolution | Medium |
 | **TS2339** | Property access | Medium-Hard |
-| **TS2322/2345** | Type compatibility | Hard (Solver/Lawyer) |
+| **TS2322/2345** | Type compatibility | Hard (Solver) |
 
-### Current Best Targets
+## Cache Management
 
-Based on the last conformance run, here are the next low-hanging fruits:
+The conformance tests use a pre-generated cache of expected TSC errors. This cache is keyed by TypeScript version (submodule SHA).
+
+### Downloading the Cache
+
+The fastest way to get the cache is to download it from GitHub:
 
 ```bash
-# TS2339 has 621 extra errors - property access issues
-./scripts/conformance.sh run --error-code 2339 --verbose --max 50 2>&1
+# Download from GitHub artifacts (requires gh CLI)
+./scripts/conformance.sh download
 
-# TS2345 has 334 extra errors - argument type issues
-./scripts/conformance.sh run --error-code 2345 --verbose --max 50 2>&1
+# Or use the script directly
+./scripts/download-tsc-cache.sh
 ```
 
-## Known Cache Reliability Issues
+Requirements:
+- GitHub CLI (`gh`) - install with `brew install gh`
+- `jq` - install with `brew install jq`
+- Authenticated: `gh auth login`
 
-**Important**: The TSC cache (`tsc-cache-full.json`) was generated using `tsserver`, which does NOT respect @-directives in test file comments (like `// @target: es6`). This causes many false positives in conformance results.
+### Generating the Cache Locally
 
-### Examples of Cache Problems
+If download is unavailable, generate locally:
 
-1. **TS18028 (Private identifiers ES2015)**: Cache expects this error for files with `@target: es6`, but TSC doesn't emit it because ES6 >= ES2015.
-
-2. **TS2705 vs TS1064 (Async function return types)**: Cache expects TS2705 for ES6+ targets, but TSC actually emits TS1064 for ES6+ and TS1055 for ES5.
-
-3. **Missing errors that aren't missing**: Some tests show as "missing" errors when tsz actually matches TSC behavior.
-
-### How to Verify
-
-Always verify mismatches by running tsc directly:
 ```bash
-# Create test file with @-directives stripped into tsconfig.json
-cat > /tmp/test_dir/test.ts << 'EOF'
-<test code without @-directives>
-EOF
-cat > /tmp/test_dir/tsconfig.json << 'EOF'
-{ "compilerOptions": { "target": "es6" /* from @target directive */ } }
-EOF
+# Generate with default workers (takes ~10-15 minutes)
+./scripts/conformance.sh generate --no-cache
 
-# Compare outputs
-npx tsc --project /tmp/test_dir --noEmit 2>&1
-./.target/release/tsz --project /tmp/test_dir 2>&1
+# Or with custom options
+./.target/release/generate-tsc-cache \
+  --test-dir ./TypeScript/tests/cases \
+  --output ./tsc-cache-full.json \
+  --workers 16
 ```
 
-### Future Work
+### How Cache Generation Works
 
-The cache should be regenerated using tsc with proper @-directive parsing, not tsserver. This would significantly improve conformance test accuracy.
+For each test file:
+1. Parse `@-directives` from comments (e.g., `// @target: es6`)
+2. Create a `tsconfig.json` with those compiler options
+3. Run `tsc --noEmit` with that configuration
+4. Store the resulting error codes
 
+### Supported Directive Types
+
+- **Boolean**: `@strict: true`, `@noImplicitAny: false`
+- **String/enum**: `@target: es6`, `@module: commonjs`, `@jsx: react`
+- **List**: `@lib: es6,dom`, `@types: node,jest`
+- **Numeric**: `@maxNodeModuleJsDepth: 2`
+
+Test harness-specific directives (`@filename`, `@noCheck`, `@skip`, etc.) are filtered out.
+See `docs/specs/TSC_DIRECTIVES.md` for the full list.
+
+## GitHub Workflow
+
+The cache is automatically generated when TypeScript version changes via `.github/workflows/tsc-cache.yml`.
+
+**Triggers:**
+- Push to main/rust with changes to TypeScript submodule
+- Changes to `scripts/typescript-versions.json`
+- Manual dispatch
+
+**What it does:**
+1. Checks if cache exists for current TypeScript SHA
+2. If not, builds `generate-tsc-cache` and runs it
+3. Stores cache in GitHub Actions cache and artifacts
+
+**CI integration:**
+The CI workflow (`ci.yml`) automatically restores the cache before running conformance tests.
+
+## Verifying Results
+
+If you suspect a cache mismatch:
+
+```bash
+# Compare outputs for a specific test
+./.target/release/tsz <test_file> --noEmit 2>&1
+npx tsc <test_file> --noEmit 2>&1
+```
+
+## Updating TypeScript Version
+
+When updating the TypeScript submodule:
+
+1. Update the submodule: `git submodule update --remote TypeScript`
+2. Find the commit date and matching nightly version
+3. Update `scripts/typescript-versions.json` with the SHA mapping
+4. Push - the `tsc-cache.yml` workflow will generate the new cache

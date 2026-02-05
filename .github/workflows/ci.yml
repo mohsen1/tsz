@@ -199,7 +199,7 @@ jobs:
           path: .target/release/
 
       - name: Make binaries executable
-        run: chmod +x .target/release/tsz .target/release/tsz-conformance .target/release/generate-tsc-cache-tsserver || true
+        run: chmod +x .target/release/tsz .target/release/tsz-conformance .target/release/generate-tsc-cache || true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -208,6 +208,20 @@ jobs:
 
       - name: Fetch TypeScript conformance tests
         run: git submodule update --init --depth 1 -- TypeScript || echo "No TypeScript submodule"
+
+      - name: Get TypeScript version
+        id: ts-version
+        run: |
+          TS_SHA=$(git rev-parse HEAD:TypeScript 2>/dev/null || echo "unknown")
+          echo "sha=$TS_SHA" >> $GITHUB_OUTPUT
+          echo "TypeScript SHA: $TS_SHA"
+
+      - name: Try to restore TSC cache
+        id: tsc-cache
+        uses: actions/cache@v4
+        with:
+          path: tsc-cache-full.json
+          key: tsc-cache-${{ steps.ts-version.outputs.sha }}
 
       - name: Install Rust (for conformance-rust build if needed)
         uses: dtolnay/rust-toolchain@stable
@@ -226,14 +240,13 @@ jobs:
         run: |
           cd conformance-rust
           cargo build --release
-          # Copy binaries to expected location
           mkdir -p ../.target/release
           cp target/release/tsz-conformance ../.target/release/ || true
-          cp target/release/generate-tsc-cache-tsserver ../.target/release/ || true
+          cp target/release/generate-tsc-cache ../.target/release/ || true
 
       - name: Run conformance tests (quick)
         run: |
-          timeout 600 ./scripts/conformance.sh run --max 500 --workers 4 || {
+          timeout 600 ./scripts/conformance.sh run --no-download --max 500 --workers 4 || {
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
               echo "::warning::Conformance tests timed out"

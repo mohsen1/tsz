@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_DIR="$REPO_ROOT/TypeScript/tests/cases"
 CACHE_FILE="$REPO_ROOT/tsc-cache-full.json"
 TSZ_BIN="$REPO_ROOT/.target/release/tsz"
-CACHE_GEN_BIN="$REPO_ROOT/.target/release/generate-tsc-cache-tsserver"
+CACHE_GEN_BIN="$REPO_ROOT/.target/release/generate-tsc-cache"
 RUNNER_BIN="$REPO_ROOT/.target/release/tsz-conformance"
 WORKERS=16
 
@@ -27,9 +27,10 @@ ${YELLOW}TSZ Conformance Test Runner${NC}
 Usage: ./scripts/conformance.sh [COMMAND] [OPTIONS]
 
 Commands:
-  generate    Generate TSC cache (required before first run)
+  download    Download TSC cache from GitHub artifacts (fastest)
+  generate    Generate TSC cache locally (required if download unavailable)
   run         Run conformance tests against TSC cache
-  all         Generate cache and run tests (default)
+  all         Download/generate cache and run tests (default)
   clean       Remove cache file
 
 Options:
@@ -39,16 +40,21 @@ Options:
   --filter PAT      Filter test files by pattern
   --error-code N    Only show tests with this error code (e.g., 2304)
   --no-cache        Force cache regeneration even if cache exists
+  --no-download     Skip trying to download cache from GitHub
 
 Examples:
-  ./scripts/conformance.sh all                        # Full pipeline
+  ./scripts/conformance.sh all                        # Download cache (or generate) and run
+  ./scripts/conformance.sh download                   # Download cache from GitHub artifacts
   ./scripts/conformance.sh run --max 100              # Test first 100 files
   ./scripts/conformance.sh run --filter "strict"      # Run tests matching "strict"
   ./scripts/conformance.sh run --error-code 2304      # Only show tests with TS2304
   ./scripts/conformance.sh generate --workers 32      # Regenerate cache with 32 workers
-  ./scripts/conformance.sh generate --no-cache       # Force regenerate cache
+  ./scripts/conformance.sh generate --no-cache        # Force regenerate cache
 
 Note: Binaries are automatically built if not found.
+      Cache is downloaded from GitHub artifacts when available (per TypeScript version).
+      Use 'generate' to create cache locally if download fails.
+
 Cache location: tsc-cache-full.json (in repo root)
 Test directory: TypeScript/tests/cases/conformance
 EOF
@@ -99,6 +105,28 @@ ensure_binaries() {
     fi
 }
 
+download_cache() {
+    local force="${1:-false}"
+    
+    if [ "$force" != "true" ] && [ -f "$CACHE_FILE" ]; then
+        echo -e "${YELLOW}Cache already exists: $CACHE_FILE${NC}"
+        return 0
+    fi
+
+    echo -e "${GREEN}Attempting to download TSC cache from GitHub...${NC}"
+    
+    if [ -x "$REPO_ROOT/scripts/download-tsc-cache.sh" ]; then
+        if [ "$force" = "true" ]; then
+            "$REPO_ROOT/scripts/download-tsc-cache.sh" --force && return 0
+        else
+            "$REPO_ROOT/scripts/download-tsc-cache.sh" && return 0
+        fi
+    fi
+    
+    echo -e "${YELLOW}Download failed or unavailable${NC}"
+    return 1
+}
+
 generate_cache() {
     local force_regenerate="${1:-false}"
     
@@ -114,17 +142,41 @@ generate_cache() {
         echo ""
     fi
 
-    echo -e "${GREEN}Generating TSC cache (using tsserver)...${NC}"
+    echo -e "${GREEN}Generating TSC cache (using tsc directly)...${NC}"
     echo "Test directory: $TEST_DIR"
+    echo "Workers: $WORKERS"
     echo ""
 
     cd "$REPO_ROOT"
     $CACHE_GEN_BIN \
         --test-dir "$TEST_DIR" \
-        --output "$CACHE_FILE"
+        --output "$CACHE_FILE" \
+        --workers "$WORKERS"
 
     echo ""
     echo -e "${GREEN}Cache generated: $CACHE_FILE${NC}"
+}
+
+# Ensure cache exists - try download first, then generate
+ensure_cache() {
+    local no_download="${1:-false}"
+    
+    if [ -f "$CACHE_FILE" ]; then
+        return 0
+    fi
+    
+    # Try downloading first (faster)
+    if [ "$no_download" != "true" ]; then
+        if download_cache; then
+            return 0
+        fi
+        echo ""
+    fi
+    
+    # Fall back to generation
+    echo -e "${YELLOW}Generating cache locally (this may take 10-15 minutes)...${NC}"
+    ensure_binaries
+    generate_cache
 }
 
 run_tests() {
@@ -286,18 +338,28 @@ else
     shift || true
 fi
 
-# Check for --no-cache flag
+# Check for flags
 NO_CACHE=false
+NO_DOWNLOAD=false
 REMAINING_ARGS=()
 for arg in "$@"; do
     if [ "$arg" = "--no-cache" ]; then
         NO_CACHE=true
+    elif [ "$arg" = "--no-download" ]; then
+        NO_DOWNLOAD=true
     else
         REMAINING_ARGS+=("$arg")
     fi
 done
 
 case "$COMMAND" in
+    download)
+        if [ "$NO_CACHE" = "true" ]; then
+            download_cache "true"
+        else
+            download_cache
+        fi
+        ;;
     generate)
         ensure_binaries
         if [ "$NO_CACHE" = "true" ]; then
@@ -308,18 +370,12 @@ case "$COMMAND" in
         ;;
     run)
         ensure_binaries
-        if [ "$NO_CACHE" = "true" ] || [ ! -f "$CACHE_FILE" ]; then
-            if [ "$NO_CACHE" = "true" ]; then
-                echo -e "${YELLOW}--no-cache flag set, regenerating cache...${NC}"
-            else
-                echo -e "${YELLOW}Cache not found, generating first...${NC}"
-            fi
+        if [ "$NO_CACHE" = "true" ]; then
+            echo -e "${YELLOW}--no-cache flag set, regenerating cache...${NC}"
+            generate_cache "true"
             echo ""
-            if [ "$NO_CACHE" = "true" ]; then
-                generate_cache "true"
-            else
-                generate_cache
-            fi
+        elif [ ! -f "$CACHE_FILE" ]; then
+            ensure_cache "$NO_DOWNLOAD"
             echo ""
         fi
         run_tests "${REMAINING_ARGS[@]}"
@@ -329,7 +385,7 @@ case "$COMMAND" in
         if [ "$NO_CACHE" = "true" ]; then
             generate_cache "true"
         else
-            generate_cache
+            ensure_cache "$NO_DOWNLOAD"
         fi
         echo ""
         run_tests "${REMAINING_ARGS[@]}"
