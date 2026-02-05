@@ -20,6 +20,7 @@ use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 use rustc_hash::FxHashSet;
+use std::rc::Rc;
 
 // =============================================================================
 // Type Checking Methods
@@ -2333,7 +2334,8 @@ impl<'a> CheckerState<'a> {
                 && let Some(for_data) = self.ctx.arena.get_for_in_of(parent_node)
             {
                 let analyzer = FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types)
-                    .with_flow_cache(&self.ctx.flow_analysis_cache);
+                    .with_flow_cache(&self.ctx.flow_analysis_cache)
+                    .with_type_environment(Rc::clone(&self.ctx.type_environment));
                 return analyzer.assignment_targets_reference(for_data.initializer, idx);
             }
             current = parent;

@@ -34,6 +34,7 @@ use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::{FlowTypeEvaluator, TypeId};
 use rustc_hash::FxHashSet;
+use std::rc::Rc;
 
 // =============================================================================
 // Property Key Types
@@ -1353,7 +1354,8 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             &self.ctx.node_types,
         )
-        .with_flow_cache(&self.ctx.flow_analysis_cache);
+        .with_flow_cache(&self.ctx.flow_analysis_cache)
+        .with_type_environment(Rc::clone(&self.ctx.type_environment));
 
         analyzer.get_flow_type(idx, declared_type, flow_node)
     }
@@ -1805,7 +1807,8 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             &self.ctx.node_types,
         )
-        .with_flow_cache(&self.ctx.flow_analysis_cache);
+        .with_flow_cache(&self.ctx.flow_analysis_cache)
+        .with_type_environment(Rc::clone(&self.ctx.type_environment));
 
         analyzer.is_definitely_assigned(idx, flow_node)
     }

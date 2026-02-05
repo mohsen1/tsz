@@ -248,6 +248,40 @@ impl TypeResolver for NoopResolver {
     }
 }
 
+/// Blanket implementation of TypeResolver for references to resolver types.
+///
+/// This allows `&dyn TypeResolver` (which is Sized) to be used wherever
+/// `R: TypeResolver` is expected. This is critical for passing resolvers
+/// through contexts like `NarrowingContext` that store `Option<&dyn TypeResolver>`.
+///
+/// # Example
+/// ```rust
+/// let env: TypeEnvironment = ...;
+/// let resolver: &dyn TypeResolver = &env;
+/// // resolver can now be passed to functions expecting R: TypeResolver
+/// ```
+impl<T: TypeResolver + ?Sized> TypeResolver for &T {
+    fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        (**self).resolve_ref(symbol, interner)
+    }
+
+    fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        (**self).resolve_lazy(def_id, interner)
+    }
+
+    fn get_type_params(&self, symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
+        (**self).get_type_params(symbol)
+    }
+
+    fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        (**self).get_lazy_type_params(def_id)
+    }
+
+    fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
+        (**self).symbol_to_def_id(symbol)
+    }
+}
+
 /// A type environment that maps symbol refs to their resolved types.
 /// This is populated before type checking and passed to the SubtypeChecker.
 #[derive(Clone, Debug, Default)]
