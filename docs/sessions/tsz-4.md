@@ -61,40 +61,63 @@
 
 ---
 
-## Priority 2: Weak Type Detection (TS2559) ← **CURRENT TASK**
+## Priority 2: Weak Type Detection (TS2559) ✅ COMPLETE
 
-**Status**: 🔄 In Progress - Awaiting Gemini Approach Validation
+**Status**: ✅ Complete - Fixed and reviewed by Gemini Pro
 
-**Problem**: TypeScript's "Weak Type" rule prevents assigning object literals to types with only optional properties when they share no common properties.
+**Completed:**
+1. ✅ Fixed `ShapeExtractor` visitor to resolve Lazy/Ref types
+2. ✅ Added cycle detection for recursive types
+3. ✅ Implemented Phase 3.4 DefId migration support
+4. ✅ Updated all call sites to pass resolver
+5. ✅ Commit `bbdd4ac9f` pushed to origin
+6. ✅ Gemini Pro review: Implementation verified correct
 
-**Example:**
-```typescript
-interface Weak { a?: string }
-const obj = { b: 1 };  // Error: Type '{ b: number; }' has no properties in common with 'Weak'
+**Problem Fixed:**
+Weak type detection was failing for interfaces and classes because `ShapeExtractor` couldn't resolve `Lazy(DefId)` or `Ref(SymbolRef)` types. This caused false positives in TS2559 errors.
+
+**Changes Made:**
+```rust
+// Before: ShapeExtractor had no resolver
+struct ShapeExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+// After: ShapeExtractor has resolver and cycle detection
+struct ShapeExtractor<'a, R: TypeResolver> {
+    db: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    visiting: FxHashSet<TypeId>,
+}
+
+// Added visit_lazy and visit_ref implementations
+fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+    let def_id = DefId(def_id);
+    if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.db) {
+        return self.extract(resolved);
+    }
+    None
+}
+
+fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
+    let symbol_ref = SymbolRef(symbol_ref);
+    if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
+        return self.visit_lazy(def_id.0);
+    }
+    // Fallback to deprecated resolve_ref
+    if let Some(resolved) = self.resolver.resolve_ref(symbol_ref, self.db) {
+        return self.extract(resolved);
+    }
+    None
+}
 ```
 
-**Planned Approach:**
-1. Add `is_weak_type()` query to detect types where all properties are optional
-2. Integrate into Lawyer layer assignability checks (`src/solver/lawyer.rs` or `compat.rs`)
-3. Emit TS2559 when source type has no overlapping properties with weak target type
-4. Handle union types, index signatures, and generic types correctly
+**Gemini Consultations (Two-Question Rule):**
+- Question 1: Approach validation ✅
+- Question 2: Implementation review by Gemini Pro ✅ - "Implementation is correct"
 
-**Validation Steps:**
-```bash
-# Step 1: Ask Gemini for approach validation (MANDATORY per AGENTS.md)
-./scripts/ask-gemini.mjs --include=src/solver "I need to implement Weak Type detection (TS2559).
-Problem: In TypeScript, a type is 'weak' if it only contains optional properties. Assigning a type to a weak type is an error if they share no properties in common.
-Planned approach:
-1. Add a method to `TypeInterner` or `Solver` to identify if a `TypeId` represents a weak type.
-2. In `src/solver/lawyer.rs` (or `compat.rs`), during assignability checks, if the target is a weak type, verify the source has at least one matching property.
-3. If it fails, return a specific diagnostic error code (TS2559).
-
-Is this approach correct? Should this logic live in `Lawyer` or `CompatChecker`? How should I handle union types where one member is weak?"
-
-# Step 2: Implement based on Gemini guidance
-# Step 3: Write tests to verify TS2559 emission
-# Step 4: Ask Gemini Pro to review implementation
-```
+**Next Priority:**
+- Priority 3: Verify Object Literal Freshness (Excess Property Checking) logic
 
 ## Priority 2: Implement "Weak Type" Detection (Lawyer Layer)
 
