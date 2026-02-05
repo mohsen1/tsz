@@ -185,7 +185,27 @@ function foo(x: unknown) {
 
 ### Task 5: Discriminant Union Refinement
 
-**Status**: ✅ PARTIALLY COMPLETE (Simple aliases working, generic aliases TODO)
+**Status**: 🔄 IN PROGRESS - Simple aliases ✅, Generic aliases ❌ (BLOCKS Task 6)
+
+**Gemini Session Redefinition** (2026-02-05):
+**Decision**: MUST COMPLETE generic alias narrowing before Task 6/7
+
+**Why**:
+1. **Hard Dependency**: Task 6 (Exhaustiveness) relies on narrowing output. If narrowing fails for generics, exhaustiveness reports false errors
+2. **Core Feature**: Generic unions (`Result<T>`, `Option<T>`) are fundamental to TypeScript
+3. **Architecture Gap**: Highlights missing Application type resolution in Solver
+
+**Priority**:
+1. **Task 5.5** (IMMEDIATE): Fix `TypeKey::Application` resolution in Discriminant Narrowing
+2. Task 6: Exhaustiveness Checking
+3. Task 7: Unreachable Code Detection
+
+**Next Steps** (Two-Question Rule):
+- Question 3: Ask Gemini for Application type handling approach
+- Implement based on guidance
+- Question 4: Ask Gemini for implementation review
+
+**Complexity**: Medium (missing recursive step, not massive refactor)
 
 **Completed Work** (2026-02-05):
 1. ✅ Implemented TypeResolver injection into NarrowingContext
