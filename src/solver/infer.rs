@@ -1401,14 +1401,16 @@ impl<'a> InferenceContext<'a> {
         let result = if !candidates.is_empty() {
             self.resolve_from_candidates(&candidates, is_const)
         } else if !upper_bounds.is_empty() {
-            // No lower bounds, use intersection of upper bounds
+            // RESTORED: Fall back to upper bounds (constraints) when no candidates exist.
+            // This matches TypeScript: un-inferred generics default to their constraint.
+            // We use intersection in case there are multiple upper bounds (T extends A, T extends B).
             if upper_bounds.len() == 1 {
                 upper_bounds[0]
             } else {
                 self.interner.intersection(upper_bounds.clone())
             }
         } else {
-            // No constraints at all - return unknown
+            // Only return UNKNOWN if there are NO candidates AND NO upper bounds
             TypeId::UNKNOWN
         };
 
@@ -1435,18 +1437,10 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn resolve_from_candidates(&self, candidates: &[InferenceCandidate], is_const: bool) -> TypeId {
-        // Check if we have circular candidates
-        let has_circular = candidates
-            .iter()
-            .any(|c| c.priority == InferencePriority::Circular);
-
-        let filtered = if has_circular {
-            // When we have circular candidates, don't filter by priority
-            // This ensures that all candidates (including circular ones) are considered
-            candidates.to_vec()
-        } else {
-            self.filter_candidates_by_priority(candidates)
-        };
+        // CRITICAL FIX: Always filter by priority, even with circular candidates.
+        // High-priority direct candidates should win over low-priority propagated ones.
+        // Previously: has_circular check disabled filtering, causing unwanted widening.
+        let filtered = self.filter_candidates_by_priority(candidates);
 
         if filtered.is_empty() {
             return TypeId::UNKNOWN;
@@ -3242,78 +3236,91 @@ impl<'a> InferenceContext<'a> {
     /// For example, if T <: U and we know T = string, then U must be at least string.
     pub fn strengthen_constraints(&mut self) -> Result<(), InferenceError> {
         let type_params: Vec<_> = self.type_params.clone();
+        let mut changed = true;
+        let mut iterations = 0;
 
-        // Iterate multiple times to propagate constraints, but with a safety limit
-        // to prevent infinite loops in pathological type structures
-        let max_iterations = type_params.len().min(MAX_CONSTRAINT_ITERATIONS);
-        for _ in 0..max_iterations {
+        // Iterate to fixed point - continue until no new candidates are added
+        while changed && iterations < MAX_CONSTRAINT_ITERATIONS {
+            changed = false;
+            iterations += 1;
+
             for (name, var, _) in type_params.iter() {
                 let root = self.table.find(*var);
-                let info = self.table.probe_value(root);
 
-                // Propagate lower bounds to other type parameters
-                for candidate in info.candidates.iter() {
-                    self.propagate_lower_bound(root, candidate.type_id, *name);
-                }
+                // We need to clone info to avoid borrow checker issues while mutating
+                // This is expensive but necessary for correctness in this design
+                let info = self.table.probe_value(root).clone();
 
-                // Propagate upper bounds to other type parameters
+                // Propagate candidates UP the extends chain
+                // If T extends U (T <: U), then candidates of T are also candidates of U
                 for &upper in info.upper_bounds.iter() {
-                    self.propagate_upper_bound(root, upper, *name);
+                    if self.propagate_candidates_to_upper(root, upper, *name)? {
+                        changed = true;
+                    }
                 }
             }
         }
-
         Ok(())
     }
 
-    fn propagate_lower_bound(&mut self, var: InferenceVar, lower: TypeId, exclude_param: Atom) {
-        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(lower)
-            && info.name != exclude_param
-            && let Some(lower_var) = self.find_type_param(info.name)
-        {
-            let lower_root = self.table.find(lower_var);
-            let lower_info = self.table.probe_value(lower_root);
+    /// Propagates candidates from a subtype (var) to its supertype (upper).
+    /// If `var extends upper` (var <: upper), then candidates of `var` are also candidates of `upper`.
+    fn propagate_candidates_to_upper(
+        &mut self,
+        var_root: InferenceVar,
+        upper: TypeId,
+        exclude_param: Atom,
+    ) -> Result<bool, InferenceError> {
+        // Check if 'upper' is a type parameter we are inferring
+        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(upper) {
+            if info.name != exclude_param {
+                if let Some(upper_var) = self.find_type_param(info.name) {
+                    let upper_root = self.table.find(upper_var);
 
-            // CRITICAL FIX: When S <: T (S is a lower bound of T), S's lower bounds
-            // should also be lower bounds of T (transitivity: L <: S <: T)
-            //
-            // Previous (WRONG) implementation added S's upper bounds to T
-            // Correct implementation: Add S's candidates (lower bounds) to T
-            for candidate in lower_info.candidates.iter() {
-                self.add_candidate(var, candidate.type_id, InferencePriority::Circular);
-            }
+                    // Don't propagate to self
+                    if var_root == upper_root {
+                        return Ok(false);
+                    }
 
-            // Also: Our upper bounds should flow to S (T <: U => S <: U)
-            let root = self.table.find(var);
-            let info = self.table.probe_value(root);
-            for &upper in info.upper_bounds.iter() {
-                self.add_upper_bound(lower_var, upper);
+                    // Get candidates from the subtype (var)
+                    let var_candidates = self.table.probe_value(var_root).candidates.clone();
+
+                    // Add them to the supertype (upper)
+                    let mut changed = false;
+                    for candidate in var_candidates {
+                        // Use Circular priority to indicate this came from propagation
+                        if self.add_candidate_if_new(
+                            upper_root,
+                            candidate.type_id,
+                            InferencePriority::Circular,
+                        ) {
+                            changed = true;
+                        }
+                    }
+                    return Ok(changed);
+                }
             }
         }
+        Ok(false)
     }
 
-    fn propagate_upper_bound(&mut self, var: InferenceVar, upper: TypeId, exclude_param: Atom) {
-        if let Some(TypeKey::TypeParameter(info)) = self.interner().lookup(upper)
-            && info.name != exclude_param
-            && let Some(upper_var) = self.find_type_param(info.name)
-        {
-            let upper_root = self.table.find(upper_var);
-            let upper_info = self.table.probe_value(upper_root);
+    /// Helper to track if we actually added something (for fixed-point loop)
+    fn add_candidate_if_new(
+        &mut self,
+        var: InferenceVar,
+        ty: TypeId,
+        priority: InferencePriority,
+    ) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
 
-            // CRITICAL FIX: Transitivity T <: U <: V implies T <: V
-            // We must propagate U's upper bounds DOWN to T (not up to U)
-            // Previous (WRONG) implementation added U's upper bounds back to U (no-op)
-            for &upper_bound_of_u in upper_info.upper_bounds.iter() {
-                self.add_upper_bound(var, upper_bound_of_u);
-            }
-
-            // Also: Our lower bounds should flow to U (L <: T => L <: U)
-            let root = self.table.find(var);
-            let info = self.table.probe_value(root);
-            for candidate in info.candidates.iter() {
-                self.add_candidate(upper_var, candidate.type_id, InferencePriority::Circular);
-            }
+        // Check if type already exists in candidates
+        if info.candidates.iter().any(|c| c.type_id == ty) {
+            return false;
         }
+
+        self.add_candidate(var, ty, priority);
+        true
     }
 
     /// Validate that resolved types respect variance constraints.

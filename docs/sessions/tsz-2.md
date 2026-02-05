@@ -88,11 +88,119 @@ Based on Gemini Pro's recommendation:
 
 ## Next Steps
 
-1. Run the 5 failing tests to see current error messages
-2. Add tracing to understand the current inference flow
-3. Ask Gemini Pro: "What's the right algorithm for coinductive type parameter resolution?"
-4. Implement SCC-based constraint resolution
+1. ✅ Run the 5 failing tests to see current error messages
+2. ✅ Add tracing to understand the current inference flow
+3. ✅ Ask Gemini Pro: "What's the right algorithm for coinductive type parameter resolution?"
+4. **IN PROGRESS**: Implement the fixes per Gemini Pro guidance
 5. Test and iterate
+
+## Gemini Pro Algorithm (2026-02-05)
+
+### Core Issues Identified
+
+1. **Incorrect Fallback**: `resolve_with_constraints` defaults to upper bound when no candidates found. Should return `UNKNOWN` instead.
+2. **Insufficient Propagation**: `strengthen_constraints` needs fixed-point iteration, not fixed count.
+3. **Direction of Flow**: Candidates flow **up** the extends chain (T <: U means T's candidates are also U's candidates).
+
+### Required Fixes
+
+#### Fix 1: `compute_constraint_result` - Remove Upper Bound Fallback
+
+**Location**: `src/solver/infer.rs`
+
+```rust
+let result = if !candidates.is_empty() {
+    self.resolve_from_candidates(&candidates, is_const)
+} else {
+    // CRITICAL: Do NOT fall back to upper_bounds
+    // If no lower bounds (candidates), inference failed - return UNKNOWN
+    TypeId::UNKNOWN
+};
+```
+
+**Why**: `T extends U` should NOT resolve `T = U` when T has no candidates. T should be UNKNOWN.
+
+#### Fix 2: `strengthen_constraints` - Fixed-Point Propagation
+
+```rust
+pub fn strengthen_constraints(&mut self) -> Result<(), InferenceError> {
+    let type_params: Vec<_> = self.type_params.clone();
+    let mut changed = true;
+    let mut iterations = 0;
+
+    // Iterate to fixed point
+    while changed && iterations < MAX_CONSTRAINT_ITERATIONS {
+        changed = false;
+        iterations += 1;
+
+        for (name, var, _) in type_params.iter() {
+            let root = self.table.find(*var);
+            let info = self.table.probe_value(root).clone();
+
+            // Propagate candidates UP the extends chain
+            for &upper in info.upper_bounds.iter() {
+                if self.propagate_candidates_to_upper(root, upper, *name)? {
+                    changed = true;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+#### Fix 3: `propagate_candidates_to_upper` - New Helper
+
+```rust
+/// Propagates candidates from subtype to supertype
+/// If var extends upper (var <: upper), then candidates of var are also candidates of upper
+fn propagate_candidates_to_upper(
+    &mut self,
+    var_root: InferenceVar,
+    upper: TypeId,
+    exclude_param: Atom
+) -> Result<bool, InferenceError> {
+    // Check if upper is a type parameter we're inferring
+    if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(upper) {
+        if info.name != exclude_param {
+            if let Some(upper_var) = self.find_type_param(info.name) {
+                let upper_root = self.table.find(upper_var);
+
+                // Don't propagate to self
+                if var_root == upper_root {
+                    return Ok(false);
+                }
+
+                // Get candidates from subtype (var)
+                let var_candidates = self.table.probe_value(var_root).candidates.clone();
+
+                // Add them to supertype (upper)
+                for candidate in var_candidates {
+                    if self.add_candidate_if_new(upper_root, candidate.type_id, InferencePriority::Circular) {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+```
+
+### Answers to Key Questions
+
+1. **Chain vs Cycle Propagation**:
+   - Chains (T extends U): Candidates flow UP. T's candidates become U's candidates.
+   - Cycles (T extends U, U extends T): Candidates flow both ways, unifying them.
+
+2. **Literal Type Preservation**:
+   - Preserved: If `is_const` OR literal is the only candidate
+   - Simplified: If not `const` and has multiple candidates
+   - In cycles: `const` T keeps literal, non-const U widens to primitive
+
+3. **Concrete Lower Bounds in Cycles**:
+   - All params in cycle share candidates through propagation
+   - Resolve from shared candidate set
 
 ## Notes
 
