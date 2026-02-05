@@ -6,7 +6,7 @@
 
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::utils::find_node_at_offset;
-use crate::parser::node::{NodeAccess, NodeArena};
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 
 /// Result of a linked editing request.

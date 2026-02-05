@@ -1295,6 +1295,7 @@ impl Project {
     /// let edits = project.handle_will_rename_files(&renames);
     /// // Returns edits for all files that import utils.ts
     /// ```
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn handle_will_rename_files(&mut self, renames: &[FileRename]) -> WorkspaceEdit {
         use std::path::Path;
 
@@ -1337,6 +1338,7 @@ impl Project {
     /// Process a single file rename (internal helper).
     ///
     /// Updates imports in all dependent files that reference the renamed file.
+    #[cfg(not(target_arch = "wasm32"))]
     fn process_file_rename(
         &mut self,
         old_path: &Path,
@@ -1413,6 +1415,7 @@ impl Project {
     /// * `importer` - Path of the file containing the import
     /// * `specifier` - The import specifier (e.g., "./utils" or "../types")
     /// * `target` - The target file path we're checking against
+    #[cfg(not(target_arch = "wasm32"))]
     fn is_import_pointing_to_file(&self, importer: &Path, specifier: &str, target: &Path) -> bool {
         let importer_dir = match importer.parent() {
             Some(p) => p,
@@ -1452,6 +1455,7 @@ impl Project {
     }
 
     /// Simple path normalization that resolves . and .. components without filesystem access.
+    #[cfg(not(target_arch = "wasm32"))]
     fn normalize_path(&self, path: &Path) -> String {
         let path_str = path.to_string_lossy();
 
@@ -1481,6 +1485,7 @@ impl Project {
     /// This is a heuristic check for LSP file rename operations.
     /// In a real LSP server, you would use file system metadata, but here
     /// we check if the path exists in our project as a prefix to other files.
+    #[cfg(not(target_arch = "wasm32"))]
     fn is_directory(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
         let path_str_ref = path_str.as_ref();
@@ -1502,6 +1507,7 @@ impl Project {
     /// Recursively find all TypeScript files within a directory path.
     ///
     /// Returns all .ts and .tsx files that have the given directory as a prefix.
+    #[cfg(not(target_arch = "wasm32"))]
     fn find_files_in_directory(&self, directory: &Path) -> Vec<String> {
         let dir_str = directory.to_string_lossy();
         let dir_str_ref = dir_str.as_ref();
