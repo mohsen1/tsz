@@ -873,21 +873,153 @@ impl<'a> NarrowingContext<'a> {
 
         // Now narrow based on the sense (positive or negative)
         if sense {
-            // Positive: x instanceof Constructor - narrow to the instance type
-            // First, try standard assignability-based narrowing
-            let narrowed = self.narrow_to_type(resolved_source, instance_type);
+            // CRITICAL: instanceof DOES narrow any/unknown (unlike equality checks)
+            if resolved_source == TypeId::ANY {
+                // any narrows to the instance type with instanceof
+                trace!("Narrowing any to instance type via instanceof");
+                return instance_type;
+            }
 
-            // If that returns NEVER, try intersection approach for interface vs class cases
-            // In TypeScript, instanceof on an interface narrows to intersection, not NEVER
-            if narrowed == TypeId::NEVER && resolved_source != TypeId::NEVER {
-                // Use intersection for interface vs class (or other non-assignable but overlapping types)
-                self.db.intersection2(resolved_source, instance_type)
+            if resolved_source == TypeId::UNKNOWN {
+                // unknown narrows to the instance type with instanceof
+                trace!("Narrowing unknown to instance type via instanceof");
+                return instance_type;
+            }
+
+            // Handle Union: filter members based on instanceof relationship
+            if let Some(members_id) = union_list_id(self.db, resolved_source) {
+                let members = self.db.type_list(members_id);
+                let filtered_members: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&member| {
+                        // Check if member is assignable to instance type
+                        if is_subtype_of(self.db, member, instance_type) {
+                            trace!(
+                                "Union member {} is assignable to instance type {}, keeping",
+                                member.0,
+                                instance_type.0
+                            );
+                            return Some(member);
+                        }
+
+                        // Check if instance type is assignable to member (subclass case)
+                        // If we have a Dog and instanceof Animal, Dog is an instance of Animal
+                        if is_subtype_of(self.db, instance_type, member) {
+                            trace!(
+                                "Instance type {} is assignable to union member {} (subclass), narrowing to instance type",
+                                instance_type.0,
+                                member.0
+                            );
+                            return Some(instance_type);
+                        }
+
+                        // Interface overlap: both are object-like but not assignable
+                        // Use intersection to preserve properties from both
+                        if self.are_object_like(member) && self.are_object_like(instance_type) {
+                            trace!(
+                                "Interface overlap between {} and {}, using intersection",
+                                member.0,
+                                instance_type.0
+                            );
+                            return Some(self.db.intersection2(member, instance_type));
+                        }
+
+                        trace!(
+                            "Union member {} excluded by instanceof check",
+                            member.0
+                        );
+                        None
+                    })
+                    .collect();
+
+                if filtered_members.is_empty() {
+                    trace!("All union members excluded, resulting in NEVER");
+                    TypeId::NEVER
+                } else if filtered_members.len() == 1 {
+                    filtered_members[0]
+                } else {
+                    self.db.union(filtered_members)
+                }
             } else {
-                narrowed
+                // Non-union type: use standard narrowing with intersection fallback
+                let narrowed = self.narrow_to_type(resolved_source, instance_type);
+
+                // If that returns NEVER, try intersection approach for interface vs class cases
+                // In TypeScript, instanceof on an interface narrows to intersection, not NEVER
+                if narrowed == TypeId::NEVER && resolved_source != TypeId::NEVER {
+                    // Check for interface overlap before using intersection
+                    if self.are_object_like(resolved_source) && self.are_object_like(instance_type)
+                    {
+                        trace!("Interface vs class detected, using intersection instead of NEVER");
+                        self.db.intersection2(resolved_source, instance_type)
+                    } else {
+                        narrowed
+                    }
+                } else {
+                    narrowed
+                }
             }
         } else {
             // Negative: !(x instanceof Constructor) - exclude the instance type
-            self.narrow_excluding_type(resolved_source, instance_type)
+            // For unions, exclude members that are subtypes of the instance type
+            if let Some(members_id) = union_list_id(self.db, resolved_source) {
+                let members = self.db.type_list(members_id);
+                let filtered_members: Vec<TypeId> = members
+                    .iter()
+                    .filter(|&&member| {
+                        // Exclude members that are definitely subtypes of the instance type
+                        !is_subtype_of(self.db, member, instance_type)
+                    })
+                    .copied()
+                    .collect();
+
+                if filtered_members.is_empty() {
+                    trace!("All union members excluded, resulting in NEVER");
+                    TypeId::NEVER
+                } else if filtered_members.len() == 1 {
+                    filtered_members[0]
+                } else {
+                    self.db.union(filtered_members)
+                }
+            } else {
+                // Non-union: use standard exclusion
+                self.narrow_excluding_type(resolved_source, instance_type)
+            }
+        }
+    }
+
+    /// Check if a type is object-like (has object structure)
+    ///
+    /// This is used to determine if two types can form an intersection
+    /// for instanceof narrowing when they're not directly assignable.
+    fn are_object_like(&self, type_id: TypeId) -> bool {
+        use crate::solver::types::TypeKey;
+
+        match self.db.lookup(type_id) {
+            Some(TypeKey::Object(_))
+            | Some(TypeKey::ObjectWithIndex(_))
+            | Some(TypeKey::Function(_))
+            | Some(TypeKey::Callable(_)) => true,
+
+            // Interface and class types (which are object-like)
+            Some(TypeKey::Application(_)) => {
+                // Check if the application type has construct signatures or object structure
+                use crate::solver::type_queries_extended::InstanceTypeKind;
+                use crate::solver::type_queries_extended::classify_for_instance_type;
+
+                matches!(
+                    classify_for_instance_type(self.db, type_id),
+                    InstanceTypeKind::Callable(_) | InstanceTypeKind::Function(_)
+                )
+            }
+
+            // Intersection of object types
+            Some(TypeKey::Intersection(members)) => {
+                let members = self.db.type_list(members);
+                members.iter().any(|&member| self.are_object_like(member))
+            }
+
+            _ => false,
         }
     }
 
