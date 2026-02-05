@@ -655,7 +655,20 @@ fn split_path_pattern(pattern: &str) -> (String, String) {
     }
 }
 
-pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
+/// Resolve lib files from names, optionally following `/// <reference lib="..." />` directives.
+///
+/// When `follow_references` is true, each lib file is scanned for reference directives
+/// and those referenced libs are also loaded. When false, only the explicitly listed
+/// libs are loaded without following their internal references.
+///
+/// IMPORTANT: TypeScript does NOT follow references when loading default libs based on target.
+/// The `/// <reference lib="..." />` directives in lib files (like `lib.dom.d.ts` referencing
+/// `es2015`) are only used when you explicitly include libs via `--lib`. This prevents
+/// ES2015 types (like Map) from leaking into ES5 target builds.
+pub(crate) fn resolve_lib_files_with_options(
+    lib_list: &[String],
+    follow_references: bool,
+) -> Result<Vec<PathBuf>> {
     if lib_list.is_empty() {
         return Ok(Vec::new());
     }
@@ -733,21 +746,45 @@ pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
         };
         resolved.push(path.clone());
 
-        let contents = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read lib file {}", path.display()))?;
-        for reference in extract_lib_references(&contents) {
-            pending.push_back(reference);
+        // Only follow /// <reference lib="..." /> directives if requested
+        if follow_references {
+            let contents = std::fs::read_to_string(&path)
+                .with_context(|| format!("failed to read lib file {}", path.display()))?;
+            for reference in extract_lib_references(&contents) {
+                pending.push_back(reference);
+            }
         }
     }
 
     Ok(resolved)
 }
 
-pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<PathBuf>> {
-    let default_lib = default_lib_name_for_target(target);
+/// Resolve lib files from names, following `/// <reference lib="..." />` directives.
+/// This is used when explicitly specifying libs via `--lib`.
+pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
+    resolve_lib_files_with_options(lib_list, true)
+}
 
-    // Try to resolve the full lib (includes DOM) first
-    match resolve_lib_files(&[default_lib.to_string()]) {
+/// Resolve default lib files for a given target.
+///
+/// CRITICAL: TypeScript does NOT follow `/// <reference lib="..." />` directives when loading
+/// default libs. For example, `lib.dom.d.ts` references `es2015`, but when you use `--target es5`,
+/// tsc does NOT load ES2015 libs just because DOM is loaded.
+///
+/// This matches tsc's behavior by:
+/// 1. For ES5/ES2015: explicitly listing all required libs without following references
+/// 2. For ES2016+: using .full variants with reference following (they're cumulative)
+pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<PathBuf>> {
+    // Get the explicit list of default libs for this target
+    let default_libs = default_libs_for_target(target);
+
+    // Determine whether to follow references based on target
+    // ES2016+ use .full variants that need reference following
+    // ES5/ES2015 use explicit lib lists to avoid DOM's es2015 reference
+    let follow_refs = should_follow_references_for_target(target);
+
+    // Try to resolve libs
+    match resolve_lib_files_with_options(&default_libs, follow_refs) {
         Ok(files) if !files.is_empty() => return Ok(files),
         _ => {} // Fall through to fallbacks
     };
@@ -755,11 +792,9 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
     // Fallback to core lib (without DOM) if full lib not available
     // This maintains compatibility when only core libs are present
     let core_lib = core_lib_name_for_target(target);
-    if core_lib != default_lib {
-        if let Ok(files) = resolve_lib_files(&[core_lib.to_string()]) {
-            if !files.is_empty() {
-                return Ok(files);
-            }
+    if let Ok(files) = resolve_lib_files_with_options(&[core_lib.to_string()], follow_refs) {
+        if !files.is_empty() {
+            return Ok(files);
         }
     }
 
@@ -775,6 +810,76 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
 
     // Return empty vec if no lib files found
     Ok(Vec::new())
+}
+
+/// Get the explicit list of default libs for a target.
+///
+/// This returns the libs that tsc loads for each target. For ES5, we explicitly list
+/// the ES5 component libs (not following DOM's es2015 reference). For ES2015+, we use
+/// the .full variants which correctly include all necessary libs.
+fn default_libs_for_target(target: ScriptTarget) -> Vec<String> {
+    match target {
+        // ES3/ES5: explicitly list ES5 and its dependencies, plus DOM libs
+        // We list these explicitly to avoid following DOM's es2015 reference
+        ScriptTarget::ES3 | ScriptTarget::ES5 => vec![
+            // ES5 core (these are the actual libs, not meta-libs with references)
+            "es5".to_string(),
+            // DOM libs (we'll load these without following their references)
+            "dom".to_string(),
+            "dom.iterable".to_string(),
+            "webworker.importscripts".to_string(),
+            "scripthost".to_string(),
+            // Decorators (referenced by es5)
+            "decorators".to_string(),
+            "decorators.legacy".to_string(),
+        ],
+        // ES2015: include ES5 base + ES2015 components + DOM
+        ScriptTarget::ES2015 => vec![
+            "es5".to_string(),
+            "es2015.core".to_string(),
+            "es2015.collection".to_string(),
+            "es2015.iterable".to_string(),
+            "es2015.generator".to_string(),
+            "es2015.promise".to_string(),
+            "es2015.proxy".to_string(),
+            "es2015.reflect".to_string(),
+            "es2015.symbol".to_string(),
+            "es2015.symbol.wellknown".to_string(),
+            "dom".to_string(),
+            "dom.iterable".to_string(),
+            "webworker.importscripts".to_string(),
+            "scripthost".to_string(),
+            "decorators".to_string(),
+            "decorators.legacy".to_string(),
+        ],
+        // ES2016+: use .full variants (they include all necessary component libs)
+        // For these, we DO follow references since they're cumulative
+        ScriptTarget::ES2016 => vec!["es2016.full".to_string()],
+        ScriptTarget::ES2017 => vec!["es2017.full".to_string()],
+        ScriptTarget::ES2018 => vec!["es2018.full".to_string()],
+        ScriptTarget::ES2019 => vec!["es2019.full".to_string()],
+        ScriptTarget::ES2020 => vec!["es2020.full".to_string()],
+        ScriptTarget::ES2021 => vec!["es2021.full".to_string()],
+        ScriptTarget::ES2022 => vec!["es2022.full".to_string()],
+        ScriptTarget::ESNext => vec!["esnext.full".to_string()],
+    }
+}
+
+/// Check if a target should follow lib references.
+/// ES2016+ use .full variants that need reference following.
+/// ES5 and ES2015 use explicit lib lists to avoid DOM's es2015 reference.
+fn should_follow_references_for_target(target: ScriptTarget) -> bool {
+    matches!(
+        target,
+        ScriptTarget::ES2016
+            | ScriptTarget::ES2017
+            | ScriptTarget::ES2018
+            | ScriptTarget::ES2019
+            | ScriptTarget::ES2020
+            | ScriptTarget::ES2021
+            | ScriptTarget::ES2022
+            | ScriptTarget::ESNext
+    )
 }
 
 /// Get the default lib name for a target.
@@ -1020,6 +1125,8 @@ pub fn checker_target_from_emitter(target: ScriptTarget) -> CheckerScriptTarget 
 /// When embedded libs are compiled in and disk lib files are not found,
 /// materialize embedded libs to a cache directory so they can be resolved
 /// by the standard file-based lib resolution pipeline.
+///
+/// Uses the same logic as resolve_default_lib_files for following references.
 #[cfg(feature = "embedded_libs")]
 fn materialize_embedded_libs(target: ScriptTarget) -> Result<Vec<PathBuf>> {
     use std::sync::OnceLock;
@@ -1050,17 +1157,21 @@ fn materialize_embedded_libs(target: ScriptTarget) -> Result<Vec<PathBuf>> {
 
     // Use the standard lib resolution with the cache directory
     let lib_map = build_lib_map(cache_dir)?;
-    let default_lib = default_lib_name_for_target(target);
+
+    // Get the explicit list of default libs for this target
+    let default_libs = default_libs_for_target(target);
+    let follow_refs = should_follow_references_for_target(target);
 
     let mut resolved = Vec::new();
-    let mut pending: VecDeque<String> = VecDeque::new();
-    pending.push_back(normalize_lib_name(&default_lib));
+    let mut pending: VecDeque<String> =
+        default_libs.iter().map(|s| normalize_lib_name(s)).collect();
     let mut visited = HashSet::new();
 
     while let Some(lib_name) = pending.pop_front() {
         if lib_name.is_empty() || !visited.insert(lib_name.clone()) {
             continue;
         }
+
         let path = match lib_map.get(&lib_name) {
             Some(path) => path.clone(),
             None => {
@@ -1077,9 +1188,13 @@ fn materialize_embedded_libs(target: ScriptTarget) -> Result<Vec<PathBuf>> {
             }
         };
         resolved.push(path.clone());
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            for reference in extract_lib_references(&contents) {
-                pending.push_back(reference);
+
+        // Follow references only if appropriate for target
+        if follow_refs {
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                for reference in extract_lib_references(&contents) {
+                    pending.push_back(reference);
+                }
             }
         }
     }
