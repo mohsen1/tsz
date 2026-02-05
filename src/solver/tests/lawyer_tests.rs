@@ -681,8 +681,8 @@ fn test_methods_always_bivariant() {
     };
 
     // Intern the function shapes
-    let method_string_id = interner.intern_function_shape(method_string);
-    let method_any_id = interner.intern_function_shape(method_any);
+    let method_string_id = interner.function(method_string);
+    let method_any_id = interner.function(method_any);
 
     // Test in strict mode
     let mut checker = CompatChecker::new(&interner);
@@ -782,5 +782,252 @@ fn test_function_variance_with_return_types() {
     assert!(
         !checker.is_assignable(returns_any, returns_string),
         "() => any should NOT be assignable to () => string (covariant return types)"
+    );
+}
+
+// =============================================================================
+// TSZ-4 Task 4: Private/Protected Brand Tests
+// =============================================================================
+
+#[test]
+fn test_private_brands_nominality() {
+    // Classes with identical private members but different declarations should NOT be compatible
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let x_atom = interner.intern_string("x");
+
+    // Class A with private x: number (parent_id = SymbolId(1))
+    let class_a = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Private,
+        parent_id: Some(crate::binder::SymbolId(1)), // Class A's declaration
+    }]);
+
+    // Class B with private x: number (parent_id = SymbolId(2))
+    let class_b = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Private,
+        parent_id: Some(crate::binder::SymbolId(2)), // Class B's declaration (different!)
+    }]);
+
+    // Should NOT be assignable due to different private declarations
+    assert!(
+        !checker.is_assignable(class_b, class_a),
+        "Classes with different private declarations should NOT be assignable"
+    );
+
+    assert!(
+        !checker.is_assignable(class_a, class_b),
+        "Classes with different private declarations should NOT be assignable (reverse)"
+    );
+}
+
+#[test]
+fn test_subclass_inherits_parent_brand() {
+    // Subclass should be assignable to parent because it inherits the same private member
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let x_atom = interner.intern_string("x");
+
+    // Parent class A with private x: number (parent_id = SymbolId(1))
+    let class_a = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Private,
+        parent_id: Some(crate::binder::SymbolId(1)), // Parent's declaration
+    }]);
+
+    // Subclass C extends A, inherits private x (parent_id = SymbolId(1) - same as parent!)
+    let class_c = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Private,
+        parent_id: Some(crate::binder::SymbolId(1)), // Inherited from parent (same!)
+    }]);
+
+    // Should be assignable because the private member has the same declaration
+    assert!(
+        checker.is_assignable(class_c, class_a),
+        "Subclass should be assignable to parent (same private declaration)"
+    );
+}
+
+#[test]
+fn test_protected_brands_nominality() {
+    // Protected members should behave the same as private - nominal typing
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let x_atom = interner.intern_string("x");
+
+    // Class A with protected x: number (parent_id = SymbolId(1))
+    let class_a = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Protected,
+        parent_id: Some(crate::binder::SymbolId(1)),
+    }]);
+
+    // Class B with protected x: number (parent_id = SymbolId(2))
+    let class_b = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Protected,
+        parent_id: Some(crate::binder::SymbolId(2)),
+    }]);
+
+    // Should NOT be assignable due to different protected declarations
+    assert!(
+        !checker.is_assignable(class_b, class_a),
+        "Classes with different protected declarations should NOT be assignable"
+    );
+}
+
+#[test]
+fn test_public_members_structural() {
+    // Public members should remain structural - assignable if shapes match
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let x_atom = interner.intern_string("x");
+
+    // Class A with public x: number (parent_id = SymbolId(1))
+    let class_a = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: Some(crate::binder::SymbolId(1)),
+    }]);
+
+    // Class B with public x: number (parent_id = SymbolId(2))
+    let class_b = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: Some(crate::binder::SymbolId(2)),
+    }]);
+
+    // Should be assignable because public members are structural
+    assert!(
+        checker.is_assignable(class_b, class_a),
+        "Classes with public members should be structurally assignable"
+    );
+}
+
+#[test]
+fn test_visibility_leakage_prevented() {
+    // A type with a private member cannot be assigned to a type that expects it to be public
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let x_atom = interner.intern_string("x");
+
+    // Source: class with private x
+    let source = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Private,
+        parent_id: Some(crate::binder::SymbolId(1)),
+    }]);
+
+    // Target: interface with public x
+    let target = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: Some(crate::binder::SymbolId(2)),
+    }]);
+
+    // Should NOT be assignable (visibility leakage prevented)
+    assert!(
+        !checker.is_assignable(source, target),
+        "Private source should NOT be assignable to public target (visibility leakage)"
+    );
+}
+
+#[test]
+fn test_private_brands_in_intersection() {
+    // Private brands should work correctly with intersection types
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let x_atom = interner.intern_string("x");
+    let y_atom = interner.intern_string("y");
+
+    // Class A with private x
+    let class_a = interner.object(vec![PropertyInfo {
+        name: x_atom,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Private,
+        parent_id: Some(crate::binder::SymbolId(1)),
+    }]);
+
+    // Additional type with public y
+    let additional = interner.object(vec![PropertyInfo {
+        name: y_atom,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    // Intersection: A & { y: string }
+    let intersection = interner.intersection(vec![class_a, additional]);
+
+    // Should be assignable to A (intersection contains the private brand)
+    assert!(
+        checker.is_assignable(intersection, class_a),
+        "Intersection with private brand should be assignable to original class"
     );
 }
