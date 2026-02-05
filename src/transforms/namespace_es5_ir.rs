@@ -161,12 +161,19 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Root name is the first part
         let name = name_parts.first().cloned().unwrap_or_default();
 
+        // Check if we need to emit `var name;` declaration
+        // This is a simplified check - we don't have full sibling context here
+        // For now, default to true (always emit var) to maintain current behavior
+        // TODO: Pass sibling context to properly detect merging
+        let should_declare_var = true;
+
         Some(IRNode::NamespaceIIFE {
             name,
             name_parts,
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
+            should_declare_var,
         })
     }
 
@@ -562,6 +569,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
+            should_declare_var: true,
         })
     }
 
@@ -603,6 +611,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
+            should_declare_var: true,
         })
     }
 }
@@ -663,6 +672,7 @@ impl<'a> NamespaceTransformContext<'a> {
             body,
             is_exported,
             attach_to_exports: self.is_commonjs,
+            should_declare_var: true,
         })
     }
 
@@ -1066,6 +1076,7 @@ impl<'a> NamespaceTransformContext<'a> {
             body,
             is_exported,
             attach_to_exports: self.is_commonjs,
+            should_declare_var: true,
         })
     }
 
@@ -1107,6 +1118,7 @@ impl<'a> NamespaceTransformContext<'a> {
             body,
             is_exported,
             attach_to_exports: self.is_commonjs,
+            should_declare_var: true,
         })
     }
 }

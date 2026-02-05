@@ -65,6 +65,7 @@ fn test_ir_namespace_iife() {
         ],
         is_exported: false,
         attach_to_exports: false,
+        should_declare_var: true,
     };
 
     let output = IRPrinter::emit_to_string(&namespace_ir);
@@ -82,6 +83,7 @@ fn test_ir_namespace_qualified() {
         body: vec![],
         is_exported: false,
         attach_to_exports: false,
+        should_declare_var: true,
     };
 
     let output = IRPrinter::emit_to_string(&namespace_ir);

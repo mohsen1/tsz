@@ -404,6 +404,9 @@ pub enum IRNode {
         body: Vec<IRNode>,
         is_exported: bool,
         attach_to_exports: bool,
+        /// Whether to emit the `var name;` declaration for this namespace.
+        /// Set to false when merging with a class/function/enum that already declared it.
+        should_declare_var: bool,
     },
 
     /// Namespace export: `NS.foo = ...;`
