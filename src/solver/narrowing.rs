@@ -1934,16 +1934,13 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Handle primitive types
-        // CRITICAL FIX: TypeScript DOES narrow primitives to their falsy literals in falsy branches
-        // For example: `string` -> `""`, `number` -> `0`, `bigint` -> `0n`, `boolean` -> `false`
-        match resolved {
-            TypeId::STRING => return self.db.literal_string(""),
-            TypeId::NUMBER => return self.db.literal_number(0.0),
-            TypeId::BIGINT => return self.db.literal_bigint("0"),
-            TypeId::BOOLEAN => return self.db.literal_boolean(false),
-            _ => {}
+        // CRITICAL: TypeScript does NOT narrow these primitives in falsy branches
+        if matches!(
+            resolved,
+            TypeId::BOOLEAN | TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT
+        ) {
+            return resolved;
         }
-
         if matches!(resolved, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID) {
             return resolved;
         }
