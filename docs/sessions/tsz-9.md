@@ -40,17 +40,45 @@ Conditional type evaluation needs to:
 
 ## Implementation Strategy
 
-### Phase 1: Investigation (Pre-Implementation)
-1. Read `docs/architecture/NORTH_STAR.md` sections on Conditional Types
-2. Ask Gemini: "What's the correct approach for implementing `infer` in conditional types?"
-3. Review existing conditional type evaluation in `src/solver/evaluate.rs`
+### Phase 1: Investigation (Pre-Implementation) ✅ COMPLETE
 
-### Phase 2: Implementation
-1. Add `InferType` variant to `TypeKey` (if not present)
-2. Implement inference extraction during conditional type evaluation
-3. Handle variance (contravariant in function parameters)
-4. Add support for `infer` in type parameter positions
-5. Test with utility types (ReturnType, Parameters, etc.)
+1. ✅ Read `docs/architecture/NORTH_STAR.md` sections on Conditional Types
+2. ✅ Ask Gemini: "What's the correct approach for implementing `infer` in conditional types?"
+3. ⏳ Review existing conditional type evaluation in `src/solver/evaluate_rules/`
+
+**Gemini Guidance Summary** (Question 1 - Approach Validation):
+
+**Discovery**: Much of the `infer` infrastructure already exists!
+- `src/solver/evaluate_rules/infer_pattern.rs` - Pattern matching logic
+- `src/solver/evaluate_rules/conditional.rs` - Conditional type evaluation
+- `src/solver/instantiate.rs` - Type substitution
+
+**Key Implementation Files**:
+- `match_infer_pattern()` - Recursively walks source against pattern
+- `bind_infer()` - Assigns discovered type to `infer` name
+- `substitute_infer()` - Replaces `infer` placeholders with inferred types
+
+**Main Gap to Fix**:
+- **Contravariant Intersection Logic**: Multiple `infer` declarations in contravariant positions (function parameters) should produce **intersections**, not unions
+- Need to add `polarity` flag to distinguish covariant vs contravariant positions
+- Covariant → use `union2`
+- Contravariant → use `intersection2`
+
+**Edge Cases to Handle**:
+- Multiple `infer` declarations for same type parameter
+- Naked type parameters (distributivity)
+- Recursive inference (tail recursion)
+- `any` and `never` special cases
+- Lazy/DefId resolution before matching
+
+### Phase 2: Implementation (Current Phase)
+
+1. ✅ TypeKey::Infer already exists in types.rs
+2. ⏳ Review existing `match_infer_pattern` implementation
+3. ⏳ Add `polarity` parameter for variance handling
+4. ⏳ Fix contravariant intersection logic
+5. ⏳ Handle Lazy/DefId resolution in pattern matching
+6. ⏳ Test with utility types (ReturnType, Parameters, etc.)
 
 ### Phase 3: Validation
 1. Write unit tests for `infer` extraction
