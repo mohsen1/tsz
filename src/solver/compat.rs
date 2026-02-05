@@ -725,7 +725,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Weak type violations
-        if self.violates_weak_union(source, target) {
+        let violates = self.violates_weak_union(source, target);
+        if violates {
             return Some(SubtypeFailureReason::TypeMismatch {
                 source_type: source,
                 target_type: target,
@@ -801,10 +802,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn violates_weak_union(&self, source: TypeId, target: TypeId) -> bool {
-        let target = self.resolve_weak_type_ref(target);
+        // Don't resolve the target - check it directly for union type
+        // (resolve_weak_type_ref was converting unions to objects, which is wrong)
         let target_key = match self.interner.lookup(target) {
             Some(TypeKey::Union(members)) => members,
-            _ => return false,
+            _ => {
+                return false;
+            }
         };
 
         let members = self.interner.type_list(target_key);
@@ -819,7 +823,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             let resolved_member = self.resolve_weak_type_ref(*member);
             let member_shape_id = match extractor.extract(resolved_member) {
                 Some(id) => id,
-                None => continue,
+                None => {
+                    continue;
+                }
             };
 
             let member_shape = self
@@ -830,6 +836,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 || member_shape.string_index.is_some()
                 || member_shape.number_index.is_some()
             {
+                eprintln!(
+                    "DEBUG: violates_weak_union - member has empty props or index sig, returning false"
+                );
                 return false;
             }
 
@@ -842,7 +851,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
-        self.source_lacks_union_common_property(source, members.as_ref())
+        let lacks_common = self.source_lacks_union_common_property(source, members.as_ref());
+        lacks_common
     }
 
     pub fn is_weak_union_violation(&self, source: TypeId, target: TypeId) -> bool {
