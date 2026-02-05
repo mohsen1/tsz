@@ -652,16 +652,48 @@ impl<'a> CheckerState<'a> {
         base: &[crate::solver::PropertyInfo],
     ) -> Vec<crate::solver::PropertyInfo> {
         use crate::interner::Atom;
-        use rustc_hash::FxHashMap;
+        use rustc_hash::{FxHashMap, FxHashSet};
 
-        let mut merged: FxHashMap<Atom, crate::solver::PropertyInfo> = FxHashMap::default();
-        for prop in base {
-            merged.insert(prop.name, prop.clone());
+        let total_len = derived.len() + base.len();
+        if total_len <= 32 {
+            let mut merged = Vec::with_capacity(total_len);
+            merged.extend_from_slice(base);
+            for prop in derived {
+                if let Some(pos) = merged.iter().position(|p| p.name == prop.name) {
+                    merged[pos] = prop.clone();
+                } else {
+                    merged.push(prop.clone());
+                }
+            }
+            return merged;
         }
+
+        let mut derived_map: FxHashMap<Atom, &crate::solver::PropertyInfo> =
+            FxHashMap::with_capacity_and_hasher(derived.len(), Default::default());
         for prop in derived {
-            merged.insert(prop.name, prop.clone());
+            derived_map.insert(prop.name, prop);
         }
-        merged.into_values().collect()
+
+        let mut merged = Vec::with_capacity(total_len);
+        let mut processed: FxHashSet<Atom> =
+            FxHashSet::with_capacity_and_hasher(derived.len(), Default::default());
+
+        for base_prop in base {
+            if let Some(derived_prop) = derived_map.get(&base_prop.name) {
+                merged.push((*derived_prop).clone());
+                processed.insert(base_prop.name);
+            } else {
+                merged.push(base_prop.clone());
+            }
+        }
+
+        for prop in derived {
+            if !processed.contains(&prop.name) {
+                merged.push(prop.clone());
+            }
+        }
+
+        merged
     }
 
     // =============================================================================
