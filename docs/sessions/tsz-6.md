@@ -185,8 +185,8 @@ Be brutal - if wrong, tell me exactly what to fix.
 
 ## Success Criteria
 - [x] Priority 1: widen_type function implemented
-- [ ] Priority 2: let/var use widening, const doesn't
-- [ ] Priority 3: Object properties widened correctly
+- [x] Priority 2: let/var use widening, const doesn't
+- [x] Priority 3: Object properties widened correctly
 - [ ] Priority 4: as const syntax implemented
 - [ ] Priority 5: Freshness stripped after assignment
 - [ ] All tests passing
@@ -194,7 +194,32 @@ Be brutal - if wrong, tell me exactly what to fix.
 
 ## Work Log
 
-### 2026-02-05: Priority 1 Complete - widen_type Implementation
+### 2026-02-05: Priority 3 Complete - Object Literal Property Widening
+
+**Verification**: Created integration tests to verify object property widening
+
+**Test Coverage**: 6 integration tests in `src/checker/tests/widening_integration_tests.rs`
+1. `test_const_object_literal_property_widening` - Properties widened even for const objects
+2. `test_let_object_literal_property_widening` - Properties widened for let objects
+3. `test_nested_object_property_widening` - Nested properties recursively widened
+4. `test_const_primitive_literal_preserved` - const preserves primitive literals
+5. `test_let_primitive_literal_widened` - let widens primitive literals
+6. `test_for_of_loop_variable_widening` - for-of loop variables widened correctly
+
+**Result**: All 6 tests pass ✅
+
+**Key Finding**: The `widen_type` function already handles recursive object property widening correctly (implemented in Priority 1). When a variable declaration uses widening (let/var), the function recursively traverses object types and widens all mutable properties while preserving readonly properties.
+
+**Fixed Issues**:
+- PropertyCollectionResult enum compatibility from remote merge
+- Updated objects.rs tests to use proper match patterns
+- Updated subtype.rs to handle PropertyCollectionResult
+
+**Commit**: `f84d31657` - "test(tsz-6): add widening integration tests, verify Priority 3"
+
+**Next Priority**: Priority 4 - Const assertions (`as const`)
+
+### 2026-02-05: Priority 2 Complete - Variable Declaration Widening Integration
 
 **Implemented**: `src/solver/widening.rs` with full literal type widening support
 
@@ -227,4 +252,49 @@ Be brutal - if wrong, tell me exactly what to fix.
 
 **Commit**: `fd8cf1a50` - "feat(tsz-6): implement widen_type for literal types in Solver"
 
-**Next Priority**: Integrate widening into variable declarations (let vs const)
+**Next Priority**: Priority 2 - Integrate widening into variable declarations (let vs const)
+
+### 2026-02-05: Priority 2 Complete - Variable Declaration Widening Integration
+
+**Implemented**: Integrated `widen_type` into variable declaration type inference
+
+**Changes**:
+1. **src/checker/state_checking.rs**: Updated `compute_final_type` closure
+   - Prefer literal_type from AST (more precise) over init_type
+   - Apply widen_type for let/var declarations
+   - Preserve literal types for const declarations
+
+2. **src/checker/state_checking.rs**: Updated `assign_for_in_of_initializer_types`
+   - Apply widen_type for let/var loop variables in for...of/for...in
+   - Preserve types for const loop variables
+
+3. **src/checker/type_computation.rs**: Updated `get_type_of_variable_declaration`
+   - Replaced `widen_literal_type` with `widen_type`
+
+4. **src/solver/mod.rs**: Made widening module public
+
+5. **src/solver/widening.rs**: Changed function signature
+   - From `&impl TypeDatabase` to `&dyn TypeDatabase`
+   - Required because self.ctx.types is a trait object
+
+6. **src/solver/subtype.rs**: Fixed PropertyCollectionResult import issue
+   - Updated to use tuple return value from collect_properties
+
+**Key Design Decisions**:
+- Widening happens at variable declaration time (not during type inference)
+- const declarations preserve literal types (non-widening context)
+- let/var declarations widen literals to primitives (widening context)
+- Loop variables follow same rules as regular variables
+
+**Code Review**: Gemini Pro approved the implementation
+- Correctly distinguishes const vs let/var widening behavior
+- Consistently applies widening across declarations and loop variables
+- Properly integrates solver's widen_type into checker's type inference
+
+**Known Issues**: 3 pre-existing test failures in control_flow_tests (not caused by these changes)
+
+**Commit**: `77a73bfb4` - "feat(tsz-6): integrate widening into variable declarations (Priority 2)"
+
+**Next Priority**: Priority 3 - Object literal property widening (already handled by widen_type, needs verification)
+
+
