@@ -235,7 +235,39 @@ impl<'a> CheckerState<'a> {
                 }
             }
         } else {
-            tracing::debug!("Not both TypeKey::Enum - skipping nominal check");
+            // At least one is NOT a TypeKey::Enum
+            // Check if source is enum and target is a union containing an enum
+            // Need to re-lookup since source_key and target_key were moved above
+            let source_key_relook = self.ctx.types.lookup(source);
+            let target_key_relook = self.ctx.types.lookup(target);
+
+            if let Some(TypeKey::Enum(s_def, _)) = source_key_relook {
+                if let Some(TypeKey::Union(members)) = target_key_relook {
+                    let member_list = self.ctx.types.type_list(members);
+                    tracing::debug!(
+                        "Source is enum {:?}, target is union - checking constituents",
+                        s_def
+                    );
+
+                    for &member in member_list.iter() {
+                        if let Some(TypeKey::Enum(member_def, _)) = self.ctx.types.lookup(member) {
+                            // Found an enum in the union
+                            if s_def != member_def {
+                                // Nominal mismatch: EnumA.X is not assignable to (EnumB | T)
+                                tracing::debug!(
+                                    "Union contains enum with different DefId: {:?} vs {:?} - returning false",
+                                    s_def,
+                                    member_def
+                                );
+                                return Some(false);
+                            }
+                        }
+                    }
+                    // All enum constituents in the union match (or there are no enum constituents)
+                    tracing::debug!("All union enum constituents match - falling through");
+                }
+            }
+            tracing::debug!("Not both TypeKey::Enum - checking primitive compatibility");
         }
 
         // 2. Handle Primitive Compatibility (Rule #7: Numeric Enums <-> number)
