@@ -1468,9 +1468,6 @@ pub fn classify_for_abstract_constructor(
 /// Classification for resolving types for property access.
 #[derive(Debug, Clone)]
 pub enum PropertyAccessResolutionKind {
-    /// Ref type - resolve the symbol (deprecated)
-    #[deprecated(note = "Lazy types don't use SymbolRef")]
-    Ref(crate::solver::types::SymbolRef),
     /// Lazy type (DefId) - needs resolution to actual type
     Lazy(DefId),
     /// TypeQuery (typeof) - resolve the symbol
@@ -1540,9 +1537,6 @@ pub enum ContextualLiteralAllowKind {
     Members(Vec<TypeId>),
     /// Type parameter - check constraint
     TypeParameter { constraint: Option<TypeId> },
-    /// Ref - resolve and check (deprecated)
-    #[deprecated(note = "Lazy types don't use SymbolRef")]
-    Ref(crate::solver::types::SymbolRef),
     /// Application - needs evaluation
     Application,
     /// Mapped type - needs evaluation
@@ -1940,9 +1934,6 @@ pub enum SymbolResolutionTraversalKind {
     },
     /// Lazy(DefId) type - resolve via DefId
     Lazy(crate::solver::def::DefId),
-    /// Deprecated: Ref type - use Lazy instead
-    #[deprecated(note = "Use Lazy instead")]
-    Ref(crate::solver::def::DefId),
     /// Type parameter - recurse into constraint/default
     TypeParameter {
         constraint: Option<TypeId>,
