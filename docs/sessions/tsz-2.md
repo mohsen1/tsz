@@ -44,39 +44,59 @@ Harden discriminant narrowing in `src/solver/narrowing.rs` to handle full comple
 - `src/solver/subtype.rs` - Relation foundation (may need fixes)
 - Test files in `src/solver/tests/` or `src/checker/tests/`
 
-## Mandatory Pre-Implementation Steps
+## Gemini Pro Guidance (2026-02-05)
 
-Per AGENTS.md, MUST ask Gemini TWO questions:
+### Validated Approach
 
-### Question 1 (Approach Validation)
-```bash
-./scripts/ask-gemini.mjs --include=src/solver/narrowing --include=src/solver/subtype \
-  "I need to harden discriminant narrowing to handle Lazy/Ref/Intersection types and optional properties.
+**Key Functions to Modify:**
+1. `NarrowingContext::resolve_type` - Handle Ref/Lazy/Intersection wrapper types
+2. `NarrowingContext::get_type_at_path` - Pass resolver to PropertyAccessEvaluator
+3. `NarrowingContext::narrow_by_discriminant` - Use classify_for_union_members
+4. `NarrowingContext::narrow_by_excluding_discriminant` - Fix subtype direction
 
-  Current issues:
-  1. Reversed subtype check in literal comparison
-  2. Missing type resolution for wrapper types
-  3. Optional properties not handled correctly
+### Implementation Steps
 
-  What's the right approach? Should I:
-  - Add resolution step before narrowing checks?
-  - Modify the subtype check logic?
-  - Add special handling for optional properties?
+**Step A: Unified Resolution**
+- Modify `resolve_type` to handle `TypeKey::Ref` by mapping to `DefId` or legacy `resolve_ref`
+- Ensure all wrapper types are resolved before narrowing checks
 
-  Please provide: 1) File paths, 2) Function names, 3) Edge cases"
-```
+**Step B: Fix Property Access (Line 261 TODO)**
+- Update `PropertyAccessEvaluator::new()` to accept `self.resolver`
+- Critical for looking up properties on Lazy aliases and complex inheritance
+- Optional properties already return `PossiblyNullOrUndefined` - wrap with `undefined` union
 
-### Question 2 (Implementation Review)
-After implementing, MUST ask:
-```bash
-./scripts/ask-gemini.mjs --pro --include=src/solver/narrowing \
-  "I implemented discriminant narrowing fixes for optional properties and type resolution.
+**Step C: Correct Subtype Logic**
+- Positive Narrowing (`===`): `is_subtype_of(literal_value, property_type)` ✅
+- Negative Narrowing (`!==`): `is_subtype_of(property_type, excluded_value)` ✅
+- Direction matters! Double-check: `is_subtype_of(narrower, candidate)`
 
-  Changes: [PASTE CODE OR DIFF]
+**Step D: Intersection Handling**
+- Positive: If ANY part matches, whole intersection matches
+- Negative: If ANY part matches excluded value, exclude entire intersection
 
-  Please review: 1) Is this correct for TypeScript? 2) Did I miss edge cases?
-  Be specific if it's wrong - tell me exactly what to fix."
-```
+### Edge Cases
+
+1. **Nested Paths**: `x.payload.type === "a"` - recurse correctly
+2. **Optional Discriminants**: `{ type?: "a" } | { type: "b" }`
+3. **any/unknown in Unions**: Preserve `any` as it could satisfy any discriminant
+4. **Unit Tuples**: Ensure tuple element narrowing works
+
+### Potential Pitfalls
+
+1. **Fuel Exhaustion**: Counter needs to be high enough (100 is usually fine)
+2. **Missing classify_for_union_members**: Always use classifier, not `union_list_id` directly
+3. **Direction Reversal**: Easy to flip source/target - verify carefully
+4. **Resolver Availability**: Check if `Option<&dyn TypeResolver>` is `None`
+
+## Progress
+
+- [ ] Read current narrowing.rs implementation
+- [ ] Identify line 261 TODO in get_type_at_path
+- [ ] Implement unified resolution for Ref/Lazy/Intersection types
+- [ ] Fix PropertyAccessEvaluator resolver passing
+- [ ] Verify and fix subtype direction logic
+- [ ] Test with existing discriminant narrowing tests
+- [ ] Ask Gemini Question 2 for implementation review
 
 ## Debugging Approach
 
