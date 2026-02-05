@@ -99,30 +99,37 @@ The blocker is an "Eager vs. Lazy" issue. `instantiate_type` on the entire Calla
 
 #### Task 2.1: Fix Interface Lowering Scope
 **File**: `src/solver/lower.rs`
-**Function**: `with_arena` (line 241), `lower_merged_interface_declarations` (line 261)
+**Function**: `with_arena` (line 295), `lower_merged_interface_declarations` (line 315)
 
 **Issue Found** (2026-02-05 via Gemini):
 The `type_param_scopes.clone()` in `with_arena` creates a **copy** of the RefCell data, not a shared reference.
 
 **Impact**:
 - When `lower_merged_interface_declarations` processes `Array<T>`:
-  1. Creates child lowerer via `with_arena(line 281)` with COPIED scope stack
-  2. Pushes type param scope to `self` (line 291)
-  3. Child lowerer collects type params (line 293)
+  1. Creates child lowerer via `with_arena` with COPIED scope stack
+  2. Pushes type param scope to `self`
+  3. Child lowerer collects type params
   4. **BUG**: Child's scope changes are NOT visible to `self` or other children
   5. Methods lowered without `T` in scope → default to `Error`
 
-**Fix Required**:
-Wrap shared state in `Rc<RefCell<...>>` so `clone()` shares the underlying data.
+**Fix Applied** (2026-02-05):
+Wrapped shared state in `Rc<RefCell<...>>` so `clone()` shares the underlying data.
 
-**Changes Needed**:
-1. Modify `TypeLowering` struct to use `Rc<RefCell<Vec<TypeParamScope>>>`
-2. Update `with_arena` to use `Rc::clone()` instead of `RefCell::clone()`
-3. Ensure all scope operations work with `Rc<RefCell<...>>`
+**Changes Made**:
+1. ✅ Modified `TypeLowering` struct to use `Rc<RefCell<Vec<Vec<(Atom, TypeId)>>>>`
+2. ✅ Changed `operations` to `Rc<RefCell<u32>>`
+3. ✅ Changed `limit_exceeded` to `Rc<RefCell<bool>>`
+4. ✅ Updated `with_arena` to use `Rc::clone()` instead of `RefCell::clone()`
+5. ✅ Updated all constructors to wrap in `Rc::new()`
+6. ✅ Updated `with_type_param_bindings` to modify contents via `*self.type_param_scopes.borrow_mut()`
 
-**Reference Examples**:
-- `lower_function_type` (line 545) uses `with_type_params` helper (line 441)
-- Correctly wraps parameters/return types in push/pop block
+**Status**: ✅ COMPLETE (2026-02-05)
+
+**Test Results**:
+- `map<T, U>(arr: T[], f: (x: T) => U): U[]` - ✅ Compiles without errors
+- `arr.map(f)` where `arr: T[]` - ✅ Property found and typed correctly
+
+**Commit**: `fix(solver): share type_param_scopes across arena contexts via Rc`
 
 #### Task 2.2: Implement Lazy Member Instantiation
 **File**: `src/solver/operations_property.rs`
