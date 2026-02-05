@@ -1052,63 +1052,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if object_shape_id(self.interner, target).is_some()
                 || object_with_index_shape_id(self.interner, target).is_some()
             {
-                let mut merged_properties: Vec<PropertyInfo> = Vec::new();
-                let mut merged_string_index: Option<IndexSignature> = None;
-                let mut merged_number_index: Option<IndexSignature> = None;
-                let mut has_object_members = false;
+                // Use PropertyCollector to merge all properties from intersection members
+                // This handles Lazy/Ref resolution and avoids infinite recursion
+                use crate::solver::objects::{PropertyCollectionResult, collect_properties};
 
-                for &member in member_list.iter() {
-                    if let Some(shape_id) = object_shape_id(self.interner, member) {
-                        has_object_members = true;
-                        let shape = self.interner.object_shape(shape_id);
-                        for prop in &shape.properties {
-                            if let Some(existing) =
-                                merged_properties.iter_mut().find(|p| p.name == prop.name)
-                            {
-                                *existing = prop.clone();
+                match collect_properties(source, self.interner, self.resolver) {
+                    PropertyCollectionResult::Any => {
+                        // any & T = any, so check if any is subtype of target
+                        return self.check_subtype(TypeId::ANY, target);
+                    }
+                    PropertyCollectionResult::NonObject => {
+                        // No object properties to check, fall through to other checks
+                    }
+                    PropertyCollectionResult::Properties {
+                        properties,
+                        string_index,
+                        number_index,
+                    } => {
+                        if !properties.is_empty()
+                            || string_index.is_some()
+                            || number_index.is_some()
+                        {
+                            let merged_type = if string_index.is_some() || number_index.is_some() {
+                                self.interner.object_with_index(ObjectShape {
+                                    flags: ObjectFlags::empty(),
+                                    properties,
+                                    string_index,
+                                    number_index,
+                                    symbol: None,
+                                })
                             } else {
-                                merged_properties.push(prop.clone());
+                                self.interner.object(properties)
+                            };
+                            if self.check_subtype(merged_type, target).is_true() {
+                                return SubtypeResult::True;
                             }
                         }
-                        continue;
-                    }
-
-                    if let Some(shape_id) = object_with_index_shape_id(self.interner, member) {
-                        has_object_members = true;
-                        let shape = self.interner.object_shape(shape_id);
-                        for prop in &shape.properties {
-                            if let Some(existing) =
-                                merged_properties.iter_mut().find(|p| p.name == prop.name)
-                            {
-                                *existing = prop.clone();
-                            } else {
-                                merged_properties.push(prop.clone());
-                            }
-                        }
-                        if let Some(ref idx) = shape.string_index {
-                            merged_string_index = Some(idx.clone());
-                        }
-                        if let Some(ref idx) = shape.number_index {
-                            merged_number_index = Some(idx.clone());
-                        }
-                    }
-                }
-
-                if has_object_members && !merged_properties.is_empty() {
-                    let merged_type =
-                        if merged_string_index.is_some() || merged_number_index.is_some() {
-                            self.interner.object_with_index(ObjectShape {
-                                flags: ObjectFlags::empty(),
-                                properties: merged_properties,
-                                string_index: merged_string_index,
-                                number_index: merged_number_index,
-                                symbol: None,
-                            })
-                        } else {
-                            self.interner.object(merged_properties)
-                        };
-                    if self.check_subtype(merged_type, target).is_true() {
-                        return SubtypeResult::True;
                     }
                 }
             }
