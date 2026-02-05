@@ -210,6 +210,17 @@ pub trait TypeResolver {
         false
     }
 
+    /// Get the parent Enum's DefId for an Enum Member's DefId.
+    ///
+    /// Used to check nominal relationships between enum members and their parent types.
+    /// For example, to determine if `E.A` (member) can be assigned to `E` (parent type).
+    ///
+    /// Returns Some(parent_def_id) if the DefId is an enum member.
+    /// Returns None if the DefId is not an enum member (e.g., it's the enum type itself).
+    fn get_enum_parent_def_id(&self, _member_def_id: DefId) -> Option<DefId> {
+        None
+    }
+
     /// Get the base class type for a class/interface type.
     ///
     /// This is used by the Best Common Type (BCT) algorithm to find common base classes.

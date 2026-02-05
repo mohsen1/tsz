@@ -2177,4 +2177,45 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
             false
         }
     }
+
+    /// Get the parent Enum's DefId for an Enum Member's DefId.
+    ///
+    /// This enables the Solver to check nominal relationships between enum members
+    /// and their parent types (e.g., E.A -> E) without directly accessing Binder symbols.
+    fn get_enum_parent_def_id(
+        &self,
+        member_def_id: crate::solver::DefId,
+    ) -> Option<crate::solver::DefId> {
+        use crate::binder::symbol_flags;
+
+        // Convert member DefId to SymbolId
+        let Some(sym_id) = self.def_to_symbol_id(member_def_id) else {
+            return None;
+        };
+
+        // Get the symbol
+        let Some(symbol) = self.binder.get_symbol(sym_id) else {
+            return None;
+        };
+
+        // Check if this is an enum member
+        if (symbol.flags & symbol_flags::ENUM_MEMBER) == 0 {
+            return None;
+        }
+
+        // Get the parent symbol (the enum itself)
+        let parent_sym_id = symbol.parent;
+
+        // Convert parent SymbolId back to DefId
+        // The parent should have a DefId from when it was bound
+        if let Some(parent_def_id) =
+            self.symbol_to_def_id(crate::solver::types::SymbolRef(parent_sym_id.0))
+        {
+            return Some(parent_def_id);
+        }
+
+        // Fallback: If the parent doesn't have a DefId mapping yet,
+        // we can't provide one. This shouldn't happen in well-formed code.
+        None
+    }
 }
