@@ -1,54 +1,45 @@
 # Session TSZ-2: Array Destructuring Type Narrowing
 
 **Started**: 2026-02-05
-**Status**: ⚠️ BLOCKED - Need to find FlowAnalyzer assignment logic
+**Status**: 🔬 DEEP DEBUGGING - Following Gemini Pro guidance
 
 ## Goal
 
 Fix type narrowing invalidation for array destructuring assignments.
 
-## Completed Work
+## Progress
 
-✅ Fixed test_truthiness_false_branch_narrows_to_falsy (boolean narrowing bug)
-✅ Extended CheckerState::collect_array_destructuring_assignments
-   - Added handling for simple identifiers: [x] = [1]
-   - Added handling for binary expressions (defaults): [x = 1] = []
+✅ **Completed**: test_truthiness_false_branch_narrows_to_falsy (boolean narrowing bug)
+⚠️ **Blocked**: 2 array destructuring tests (code looks correct but tests fail)
 
-## Root Cause Discovery (from Gemini Pro)
+## Gemini Pro Assessment
 
-**CRITICAL:** I modified the WRONG component!
+"This is a classic 'logic looks correct but behavior is wrong' scenario. **Do not abandon this.** Correct control flow analysis is non-negotiable for the 'Match tsc' goal."
 
-- ✅ Modified: `CheckerState::collect_array_destructuring_assignments` in `src/checker/flow_analysis.rs`
-- ❌ This is for **Definite Assignment** analysis (TS2454 "used before assigned")
-- ✅ Need to modify: `FlowAnalyzer` for **Type Narrowing**
-- ✅ FlowAnalyzer likely has separate logic that doesn't see my CheckerState changes
+**Recommendation**: Continue debugging - likely very close to solution.
 
-## Current Blocker
+## Debugging Strategy (from Gemini Pro)
 
-The failing tests expect narrowing to be cleared when:
-- `[x] = [1]` (simple identifier in array destructuring)
-- `[x = 1] = []` (array destructuring with default)
+### Step 1: Verify Flow Node Creation
+Check if ASSIGNMENT flow node is created for destructuring:
+```bash
+TSZ_LOG="wasm::checker::flow_graph_builder=debug" TSZ_LOG_FORMAT=tree \
+  cargo test test_array_destructuring_assignment_clears_narrowing
+```
 
-But `FlowAnalyzer` doesn't recognize these as assignments that should clear narrowing.
+### Step 2: Verify Target Matching
+Add tracing to `assignment_targets_reference_node`:
+```rust
+tracing::debug!(is_op=?is_op, targets=?targets,
+  "Checking binary assignment target");
+```
 
-## Error Details
+### Step 3: Verify Internal Recursion
+Check if `assignment_targets_reference_internal` correctly matches `[x]` against `x`
 
-Tests fail with: `TypeId(111) instead of TypeId(130)`
-- TypeId(111): The narrowed type (should have been cleared)
-- TypeId(130): The full union type (expected after assignment)
-
-## Next Steps (from Gemini Pro Guidance)
-
-1. **Ask Gemini Question 1**: Find where `FlowAnalyzer` handles `FlowNode::Assignment`
-   ```bash
-   ./scripts/ask-gemini.mjs --include=src/checker --include=src/solver \
-   "Where is FlowAnalyzer implemented? Does it handle FlowNode::Assignment?
-   Where does it determine which variables to invalidate?"
-   ```
-
-2. **Implement Destructuring Support**: Add array destructuring logic to FlowAnalyzer
-
-3. **Verify Tests**: Run the 2 failing tests to confirm fix
+### Step 4: Analyze Results
+- If `targets_reference` is `false`: Bug in matching logic
+- If `targets_reference` is `true`: Bug in `check_flow` or `get_assigned_type`
 
 ## Test Cases
 
@@ -58,7 +49,7 @@ let x: string | number;
 if (typeof x === "string") {
   x;           // narrowed to string
   [x] = [1];    // should clear narrowing
-  x;           // should be string | number (union)
+  x;           // expected: string | number, actual: string
 }
 ```
 
@@ -68,32 +59,21 @@ let x: string | number;
 if (typeof x === "string") {
   x;             // narrowed to string
   [x = 1] = [];  // should clear narrowing
-  x;             // should be string | number (union)
+  x;             // expected: string | number, actual: string
 }
 ```
 
-## Technical Context
+## Code Locations Found
 
-- **src/checker/flow_analysis.rs**: Contains CheckerState (definite assignment)
-- **src/checker/control_flow.rs**: Contains FlowAnalyzer (type narrowing)
-- **src/checker/control_flow_narrowing.rs**: Contains assignment matching logic
-- **src/checker/flow_graph_builder.rs**: Creates ASSIGNMENT flow nodes
+- `src/checker/control_flow.rs:536-575`: Assignment handling in `check_flow`
+- `src/checker/control_flow.rs:1591-1653`: `assignment_targets_reference_node`
+- `src/checker/control_flow_narrowing.rs:138-232`: `assignment_targets_reference_internal`
+- `src/checker/control_flow.rs:1261-1400`: `match_destructuring_rhs`
+- `src/checker/flow_graph_builder.rs:1341-1427`: `handle_expression_for_assignments`
 
-## Investigation Status
+## Next Actions
 
-✅ Found that FlowAnalyzer DOES handle array destructuring:
-- `assignment_targets_reference_internal` (line 138-232 in control_flow_narrowing.rs)
-- `match_destructuring_rhs` (line 1261-1400 in control_flow.rs)
-- `handle_expression_for_assignments` (line 1341+ in flow_graph_builder.rs)
-
-❓ Tests still failing - code logic looks correct
-- Flow nodes ARE being created for assignments
-- Matching logic DOES iterate through array elements
-- Need to debug why narrowing isn't being cleared
-
-## Next Investigation Steps
-
-1. Add tracing to see if assignment_targets_reference_internal returns true
-2. Check if get_assigned_type returns the correct type
-3. Verify flow node has ASSIGNMENT flag set
-4. Check if the narrowing is being cleared but then reapplied
+1. Add tracing to identify where the logic breaks
+2. Run test with TSZ_LOG to capture execution
+3. Ask Gemini Pro specific question about recursion edge cases
+4. Fix the identified issue
