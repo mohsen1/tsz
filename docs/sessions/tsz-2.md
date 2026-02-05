@@ -56,8 +56,33 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
 - 109 TypeKey usages across 18 checker files identified
 - Top files: assignability_checker.rs (15), generators.rs (10), iterators.rs (9)
 
+**✅ Completed (2026-02-05):**
+- Implemented `for_each_child` traversal helper in `src/solver/visitor.rs`
+- Handles ALL 24+ TypeKey variants with complete field coverage:
+  - Object properties: type_id + write_type
+  - Index signatures: key_type + value_type
+  - Functions/Callables: return_type, this_type, type_predicate.type_id, params, type_params constraints/defaults
+  - Mapped types: type_param constraint + default, constraint, template, name_type
+- Refactored `assignability_checker.rs` ensure_refs_resolved_inner from ~170 to ~70 lines
+- Gemini Pro review confirmed complete implementation
+
 ### Step 2: Refactor Primitives (Low Risk)
 Target: Simple type identity checks
+
+**✅ Completed (2026-02-05):**
+- Implemented `for_each_child` helper in visitor.rs
+- Refactored assignability_checker.rs to use the helper
+
+**Next Steps:**
+1. Use `for_each_child` pattern in other Checker files with complex TypeKey traversal:
+   - generators.rs (10 usages)
+   - iterators.rs (9 usages)
+   - state_type_environment.rs (19 usages)
+   - state_type_analysis.rs (18 usages)
+2. For simple type identity checks, add Solver API methods like:
+   - `is_string(type_id)`, `is_any(type_id)`, `is_never(type_id)`
+   - `get_object_properties(type_id) -> Option<&[Property]>`
+   - `get_union_members(type_id) -> Option<&[TypeId]>`
 
 **Process:**
 1. Ask Gemini (Question 1): "I found TypeKey matching for primitives. Plan: expose is_string(TypeId) in Solver. Is this correct?"
@@ -106,6 +131,8 @@ Does this handle all edge cases correctly?"
 - 2026-02-05: Completed Phase 4.3 Migration (Ref → Lazy/DefId)
 - 2026-02-05: Redefined session to Phase 5 - Anti-Pattern 8.1 Removal
 - 2026-02-05: Gemini consultation complete - clear path forward
+- 2026-02-05: Implemented `for_each_child` traversal helper with Gemini review
+- 2026-02-05: Refactored assignability_checker.rs using new helper (60% code reduction)
 
 ## Notes
 
