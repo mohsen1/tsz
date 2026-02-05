@@ -197,9 +197,15 @@ impl<'a, 'b> CheckerOverrideProvider<'a, 'b> {
 }
 
 impl<'a, 'b> crate::solver::AssignabilityOverrideProvider for CheckerOverrideProvider<'a, 'b> {
-    fn enum_assignability_override(&self, source: TypeId, target: TypeId) -> Option<bool> {
-        self.checker
-            .enum_assignability_override(source, target, self.env)
+    fn enum_assignability_override(&self, _source: TypeId, _target: TypeId) -> Option<bool> {
+        // Phase 5 (Anti-Pattern 8.1): Delegate to Solver's enumeration assignability override.
+        // The Solver's CompatChecker now has complete enumeration logic:
+        // - Parent identity checks (E.A -> E)
+        // - String enumeration opacity (StringEnum -> string rejected)
+        // - Member -> member nominality (E.A -> E.B rejected)
+        // - Rule #7 numeric enumeration assignability (number -> numeric enumeration TYPE allowed)
+        // Returning None allows the Solver to handle all enumeration assignability checks.
+        None
     }
 
     fn abstract_constructor_assignability_override(
