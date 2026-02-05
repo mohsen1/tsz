@@ -43,7 +43,19 @@ Fix the 3 failing control flow tests to ensure `instanceof` narrowing works corr
 ⏳ IN PROGRESS: 2 remaining array destructuring tests
    - test_array_destructuring_default_initializer_clears_narrowing
    - test_array_destructuring_assignment_clears_narrowing
+   - Added handling for identifiers and binary expressions in collect_array_destructuring_assignments
+   - Tests still failing - issue is likely in how assignments are applied, not collected
 ⏸️ 5 failing circular extends tests identified (solver::infer) - NOT STARTED
+
+## Latest Changes (2026-02-05)
+
+### Extended collect_array_destructuring_assignments
+Added support for:
+1. Simple identifiers: `[x] = [1]` - should clear narrowing on x
+2. Assignment expressions with defaults: `[x = 1] = []` - should clear narrowing on x
+
+### Tests Still Failing
+Both array destructuring tests still fail with TypeId mismatch. The assignments are being collected correctly, but the narrowing is not being cleared. This suggests the issue is in how the `assigned` set is applied to clear narrowing, possibly in `get_flow_type` or the flow node resolution.
 
 ## Session Progress Summary
 
