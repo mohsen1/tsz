@@ -26,8 +26,8 @@ use crate::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 #[allow(unused_imports)]
 use crate::solver::{
-    NarrowingContext, ParamInfo, QueryDatabase, TypeDatabase, TypeGuard, TypeId, TypePredicate,
-    Visibility,
+    NarrowingContext, ParamInfo, QueryDatabase, TypeDatabase, TypeGuard, TypeId, TypeKey,
+    TypePredicate, Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -1271,6 +1271,95 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         };
 
+        // CRITICAL FIX: Handle compound assignments (+=, -=, *=, etc.)
+        // Compound assignments compute the result of a binary operation and assign it back.
+        // Example: x += 1 where x: string | number should narrow x to number after assignment.
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let bin = self.arena.get_binary_expr(node)?;
+            // Check if this is an assignment to our target reference
+            if self.is_matching_reference(bin.left, target) {
+                // Check if this is a compound assignment operator (not simple =)
+                if bin.operator_token != SyntaxKind::EqualsToken as u16
+                    && self.is_compound_assignment_operator(bin.operator_token)
+                {
+                    use crate::solver::{BinaryOpEvaluator, BinaryOpResult};
+
+                    // When node_types is not available, use heuristics for flow narrowing
+                    if self.node_types.is_none() {
+                        // For operators that ONLY produce number, kill narrowing
+                        return match bin.operator_token {
+                            k if k == SyntaxKind::MinusEqualsToken as u16
+                                || k == SyntaxKind::AsteriskEqualsToken as u16
+                                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+                                || k == SyntaxKind::SlashEqualsToken as u16
+                                || k == SyntaxKind::PercentEqualsToken as u16
+                                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
+                                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
+                                    as u16
+                                || k == SyntaxKind::AmpersandEqualsToken as u16
+                                || k == SyntaxKind::BarEqualsToken as u16
+                                || k == SyntaxKind::CaretEqualsToken as u16 =>
+                            {
+                                Some(TypeId::NUMBER)
+                            }
+                            // For +=: check if RHS is a number literal (common case: x += 1)
+                            k if k == SyntaxKind::PlusEqualsToken as u16 => {
+                                // If RHS is a numeric literal, we can safely infer NUMBER
+                                if let Some(literal_type) = self.literal_type_from_node(bin.right) {
+                                    if self.is_number_type(literal_type) {
+                                        return Some(TypeId::NUMBER);
+                                    }
+                                }
+                                // Otherwise, preserve narrowing (could be string concatenation)
+                                None
+                            }
+                            // ??= could be any type - preserve narrowing without type info
+                            k if k == SyntaxKind::QuestionQuestionEqualsToken as u16 => None,
+                            // For logical assignments, preserve narrowing (don't kill it)
+                            k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                                || k == SyntaxKind::BarBarEqualsToken as u16 =>
+                            {
+                                None
+                            }
+                            _ => None,
+                        };
+                    }
+
+                    // Get LHS type (current narrowed type of the variable)
+                    let left_type = if let Some(node_types) = self.node_types
+                        && let Some(&lhs_type) = node_types.get(&bin.left.0)
+                    {
+                        lhs_type
+                    } else {
+                        // Fall back - shouldn't happen due to the check above
+                        return None;
+                    };
+
+                    // Get RHS type
+                    let right_type = if let Some(node_types) = self.node_types
+                        && let Some(&rhs_type) = node_types.get(&bin.right.0)
+                    {
+                        rhs_type
+                    } else {
+                        // Fall back - shouldn't happen due to the check above
+                        return None;
+                    };
+
+                    // Map compound assignment operator to binary operator
+                    let op_str = self.map_compound_operator_to_binary(bin.operator_token)?;
+
+                    // Evaluate the binary operation to get result type
+                    let evaluator = BinaryOpEvaluator::new(self.interner);
+                    return match evaluator.evaluate(left_type, right_type, op_str) {
+                        BinaryOpResult::Success(result) => Some(result),
+                        // For type errors, return ANY to prevent cascading errors
+                        BinaryOpResult::TypeError { .. } => Some(TypeId::ANY),
+                    };
+                }
+            }
+        }
+
         if let Some(rhs) = self.assignment_rhs_for_reference(assignment_node, target) {
             // For flow narrowing, prefer literal types from AST nodes over the type checker's widened types
             // This ensures that `x = 42` narrows to literal 42.0, not just NUMBER
@@ -1309,6 +1398,75 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    /// Check if an operator token is a compound assignment operator.
+    /// Returns true for +=, -=, *=, /=, etc., but not for simple =.
+    fn is_compound_assignment_operator(&self, operator_token: u16) -> bool {
+        matches!(
+            operator_token,
+            k if k == SyntaxKind::PlusEqualsToken as u16
+                || k == SyntaxKind::MinusEqualsToken as u16
+                || k == SyntaxKind::AsteriskEqualsToken as u16
+                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+                || k == SyntaxKind::SlashEqualsToken as u16
+                || k == SyntaxKind::PercentEqualsToken as u16
+                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::AmpersandEqualsToken as u16
+                || k == SyntaxKind::BarEqualsToken as u16
+                || k == SyntaxKind::CaretEqualsToken as u16
+                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                || k == SyntaxKind::BarBarEqualsToken as u16
+                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
+        )
+    }
+
+    /// Map a compound assignment operator to its corresponding binary operator.
+    /// Returns None if the operator is not a recognized compound assignment.
+    fn map_compound_operator_to_binary(&self, operator_token: u16) -> Option<&'static str> {
+        match operator_token {
+            k if k == SyntaxKind::PlusEqualsToken as u16 => Some("+"),
+            k if k == SyntaxKind::MinusEqualsToken as u16 => Some("-"),
+            k if k == SyntaxKind::AsteriskEqualsToken as u16 => Some("*"),
+            k if k == SyntaxKind::AsteriskAsteriskEqualsToken as u16 => Some("**"),
+            k if k == SyntaxKind::SlashEqualsToken as u16 => Some("/"),
+            k if k == SyntaxKind::PercentEqualsToken as u16 => Some("%"),
+            k if k == SyntaxKind::LessThanLessThanEqualsToken as u16 => Some("<<"),
+            k if k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16 => Some(">>"),
+            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16 => {
+                Some(">>>")
+            }
+            k if k == SyntaxKind::AmpersandEqualsToken as u16 => Some("&"),
+            k if k == SyntaxKind::BarEqualsToken as u16 => Some("|"),
+            k if k == SyntaxKind::CaretEqualsToken as u16 => Some("^"),
+            k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16 => Some("&&"),
+            k if k == SyntaxKind::BarBarEqualsToken as u16 => Some("||"),
+            k if k == SyntaxKind::QuestionQuestionEqualsToken as u16 => Some("??"),
+            _ => None,
+        }
+    }
+
+    /// Check if a type is a number type (NUMBER or number literal).
+    /// Used to infer result types for compound assignments when type checker results aren't available.
+    fn is_number_type(&self, type_id: TypeId) -> bool {
+        // Check if it's the primitive NUMBER type
+        if type_id == TypeId::NUMBER {
+            return true;
+        }
+        // Check if it's a number literal by inspecting the type key
+        if let Some(type_key) = self.interner.lookup(type_id) {
+            if let TypeKey::Literal(_) = type_key {
+                // Could be number, bigint, or other literal
+                // For our purposes, check if it's a number literal
+                return matches!(
+                    type_key,
+                    TypeKey::Literal(crate::solver::types::LiteralValue::Number(_))
+                );
+            }
+        }
+        false
     }
 
     pub(crate) fn assignment_rhs_for_reference(
