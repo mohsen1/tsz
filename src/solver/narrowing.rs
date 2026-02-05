@@ -1782,6 +1782,14 @@ impl<'a> NarrowingContext<'a> {
             }
 
             TypeGuard::Predicate { type_id, asserts } => {
+                // CRITICAL: asserts predicates only narrow in the true branch
+                // In the false branch (where assertion throws/returns false), the type
+                // remains unchanged because the assertion failure could be due to
+                // other reasons or the state is indeterminate
+                if *asserts && !sense {
+                    return source_type;
+                }
+
                 match type_id {
                     Some(target_type) => {
                         // Type guard with specific type: is T or asserts T
