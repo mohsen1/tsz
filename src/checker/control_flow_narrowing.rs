@@ -390,7 +390,14 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
-        let narrowing = NarrowingContext::new(self.interner);
+        // Create narrowing context and wire up TypeEnvironment if available
+        let env_borrow;
+        let narrowing = if let Some(env) = &self.type_environment {
+            env_borrow = env.borrow();
+            NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+        } else {
+            NarrowingContext::new(self.interner)
+        };
 
         if let Some(predicate_type) = predicate.type_id {
             if is_true_branch {
@@ -435,7 +442,14 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
-            let narrowing = NarrowingContext::new(self.interner);
+            // Create narrowing context and wire up TypeEnvironment if available
+            let env_borrow;
+            let narrowing = if let Some(env) = &self.type_environment {
+                env_borrow = env.borrow();
+                NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+            } else {
+                NarrowingContext::new(self.interner)
+            };
             return narrowing.narrow_to_type(type_id, instance_type);
         }
 
