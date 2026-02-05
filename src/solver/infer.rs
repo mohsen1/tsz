@@ -15,7 +15,7 @@ use crate::solver::TypeDatabase;
 use crate::solver::instantiate::TypeSubstitution;
 use crate::solver::types::*;
 use crate::solver::utils;
-use crate::solver::visitor::is_literal_type;
+use crate::solver::visitor::{self, is_literal_type};
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
 use rustc_hash::FxHashSet;
 
@@ -1839,9 +1839,25 @@ impl<'a> InferenceContext<'a> {
             return self.is_subtype(*s_elem, *t_elem);
         }
 
-        if let (Some(TypeKey::Tuple(s_elems)), Some(TypeKey::Tuple(t_elems))) =
+        if let (Some(TypeKey::Tuple(_)), Some(TypeKey::Tuple(_))) =
             (source_key.as_ref(), target_key.as_ref())
         {
+            // OPTIMIZATION: Unit-tuple disjointness fast-path
+            // Two different unit tuples (tuples of literals/enums only) are guaranteed disjoint.
+            // Since we already checked source == target at the top and returned true,
+            // reaching here means source != target. If both are unit tuples, they're disjoint.
+            // This avoids O(N) structural recursion for each comparison.
+            if visitor::is_unit_type(self.interner, source)
+                && visitor::is_unit_type(self.interner, target)
+            {
+                return false;
+            }
+            // Fall through to structural check for non-unit tuples
+            let (Some(TypeKey::Tuple(s_elems)), Some(TypeKey::Tuple(t_elems))) =
+                (source_key.as_ref(), target_key.as_ref())
+            else {
+                unreachable!()
+            };
             let s_elems = self.interner.tuple_list(*s_elems);
             let t_elems = self.interner.tuple_list(*t_elems);
             return self.tuple_subtype_of(&s_elems, &t_elems);

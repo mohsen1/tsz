@@ -2,9 +2,9 @@
 //!
 //! Defines the structure of TSC cache entries and test results.
 
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use dashmap::DashMap;
 
 /// File metadata for fast cache validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +47,8 @@ pub enum TestResult {
     Skipped(&'static str),
     /// Compiler crashed
     Crashed,
+    /// Test timed out
+    Timeout,
 }
 
 impl TestResult {
@@ -63,6 +65,11 @@ impl TestResult {
     /// Check if test crashed
     pub fn is_crashed(&self) -> bool {
         matches!(self, TestResult::Crashed)
+    }
+
+    /// Check if test timed out
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, TestResult::Timeout)
     }
 }
 
@@ -118,6 +125,7 @@ pub struct TestStats {
     pub failed: AtomicUsize,
     pub skipped: AtomicUsize,
     pub crashed: AtomicUsize,
+    pub timeout: AtomicUsize,
 }
 
 impl TestStats {

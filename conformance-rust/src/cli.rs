@@ -63,6 +63,10 @@ pub struct Args {
     /// Path to tsz binary for compilation
     #[arg(long, default_value = "../target/release/tsz")]
     pub tsz_binary: String,
+
+    /// Timeout per test in seconds (0 = no timeout)
+    #[arg(long, default_value_t = 5)]
+    pub timeout: u64,
 }
 
 impl Args {

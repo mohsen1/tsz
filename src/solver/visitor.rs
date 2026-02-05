@@ -1246,6 +1246,77 @@ pub fn is_generic_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool
     matches!(types.lookup(type_id), Some(TypeKey::Application(_)))
 }
 
+/// Check if a type is a "unit type" - a type that represents exactly one value.
+///
+/// Unit types are types where subtyping reduces to identity: two different unit types
+/// are always disjoint (neither is a subtype of the other, except for identity).
+///
+/// This is used as an optimization to skip structural recursion in subtype checking.
+/// For example, comparing `[E.A, E.B]` vs `[E.C, E.D]` can return `source == target`
+/// in O(1) instead of walking into each tuple element.
+///
+/// Unit types include:
+/// - Literal types (string, number, boolean, bigint literals)
+/// - Enum members (TypeKey::Enum)
+/// - Unique symbols
+/// - null, undefined, void
+/// - Tuples where ALL elements are unit types (and no rest elements)
+///
+/// NOTE: This does NOT handle ReadonlyType - readonly tuples must be checked separately
+/// because `["a"]` is a subtype of `readonly ["a"]` even though they have different TypeIds.
+pub fn is_unit_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_unit_type_impl(types, type_id, 0)
+}
+
+const MAX_UNIT_TYPE_DEPTH: u32 = 10;
+
+fn is_unit_type_impl(types: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
+    // Prevent stack overflow on pathological types
+    if depth > MAX_UNIT_TYPE_DEPTH {
+        return false;
+    }
+
+    // Check well-known singleton types first
+    if type_id == TypeId::NULL
+        || type_id == TypeId::UNDEFINED
+        || type_id == TypeId::VOID
+        || type_id == TypeId::NEVER
+    {
+        return true;
+    }
+
+    match types.lookup(type_id) {
+        // Literal types are unit types
+        Some(TypeKey::Literal(_)) => true,
+
+        // Enum members are unit types (nominal)
+        Some(TypeKey::Enum(_, _)) => true,
+
+        // Unique symbols are unit types
+        Some(TypeKey::UniqueSymbol(_)) => true,
+
+        // Tuples are unit types if ALL elements are unit types (no rest elements)
+        Some(TypeKey::Tuple(list_id)) => {
+            let elements = types.tuple_list(list_id);
+            // Check for rest elements - if any, not a unit type
+            if elements.iter().any(|e| e.rest) {
+                return false;
+            }
+            // All elements must be unit types
+            elements
+                .iter()
+                .all(|e| is_unit_type_impl(types, e.type_id, depth + 1))
+        }
+
+        // ReadonlyType of a unit tuple is NOT considered a unit type for optimization purposes
+        // because ["a"] <: readonly ["a"] but they have different TypeIds
+        Some(TypeKey::ReadonlyType(_)) => false,
+
+        // Everything else is not a unit type
+        _ => false,
+    }
+}
+
 // =============================================================================
 // Recursive Type Visitor - Traverses into nested types
 // =============================================================================
