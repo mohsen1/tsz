@@ -122,16 +122,43 @@ function test(animal: Animal) {
 }
 ```
 
-**Next Steps** (requires Gemini consultation):
-1. Investigate where FlowAnalyzer results are consumed by expression checking
-2. Verify that `get_type_at_flow()` or equivalent is being called
-3. Check if narrowed types are stored in `node_types` map
-4. May need to trace through property access checking to see if it uses flow types
+**Root Cause Found**:
+**FlowAnalyzer is NOT integrated into the main expression type checking path!**
+
+Evidence:
+- FlowAnalyzer is created on-demand in specific functions (e.g., `assignment_targets_reference`)
+- It's NOT a persistent field in CheckerState
+- The main `get_type_of_symbol()` function in state_type_analysis.rs:751 does NOT query FlowAnalyzer
+- It uses a simple cache `symbol_types.get(&sym_id)` which is flow-INSENSITIVE
+
+**Why narrowing fails**:
+1. When checking `animal.bark()`, the checker calls `get_type_of_node` → `get_type_of_symbol`
+2. `get_type_of_symbol` returns the cached declared type (Animal)
+3. FlowAnalyzer has the narrowed type (Dog) but it's never queried!
+4. The narrowed types are calculated but not consumed
+
+**Required Fix** (architectural change):
+This requires integrating FlowAnalyzer into the main type checking path:
+
+Option A: Add FlowAnalyzer to CheckerState
+- Store `flow_analyzer: Option<FlowAnalyzer>` in CheckerState
+- Initialize it when checking function bodies
+- Modify `get_type_of_symbol()` to query it for flow-aware types
+
+Option B: Create FlowAnalyzer on-demand during symbol resolution
+- In `get_type_of_symbol()`, check if we're inside a function body
+- If yes, create temporary FlowAnalyzer and query for narrowed type
+- Cache results by (SymbolId, FlowNodeId) instead of just SymbolId
+
+**Impact**: This is a SIGNIFICANT architectural change affecting:
+- `src/checker/state.rs` - CheckerState structure
+- `src/checker/state_type_analysis.rs` - get_type_of_symbol()
+- Potentially the entire type caching strategy
+
+**Recommendation**: This should be a separate task/phase. Task 2 infrastructure is complete, but the integration work is larger in scope.
 
 **Files modified**:
 - `src/checker/control_flow_narrowing.rs` - wired TypeEnvironment resolver to narrowing contexts
-
-**Gemini Consultation**: Need to ask where/how narrowed types from FlowAnalyzer are applied during expression type checking.
 
 ### Task 3: User-Defined Type Guards
 
