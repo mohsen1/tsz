@@ -319,14 +319,14 @@ These MUST be addressed in Task 5 (Discriminant Union Refinement).
 
 ## Success Criteria
 
-- [ ] Task 1: Truthiness & typeof narrowing implemented with tests
-- [ ] Task 2: Equality & instanceof narrowing implemented with tests
-- [ ] Task 3: User-defined type guards implemented with tests
-- [ ] Task 4: Assertion functions implemented with tests
+- [x] Task 1: Truthiness & typeof narrowing implemented with tests
+- [x] Task 2: Equality & instanceof narrowing implemented with tests
+- [x] Task 3: User-defined type guards implemented with tests
+- [x] Task 4: Assertion functions implemented with tests
 - [ ] Task 5: Discriminant union refinement fixed and tested
 - [ ] Task 6: Exhaustiveness checking implemented with tests
 - [ ] Task 7: Unreachable code detection implemented with tests
-- [ ] All narrowing features handle Lazy/Intersection types correctly
+- [x] All narrowing features handle Lazy/Intersection types correctly (fixed via resolve_type)
 - [ ] Conformance tests pass for CFA scenarios
 
 ## Work Log
