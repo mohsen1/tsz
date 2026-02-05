@@ -79,17 +79,23 @@
 
 ---
 
-### Priority 2: Task #40 - Template Literal Deconstruction 🚀 NEXT
-**Status**: 📋 IN PROGRESS
+### Priority 2: Task #40 - Template Literal Deconstruction ✅ COMPLETE
+**Status**: ✅ COMPLETE
 **Why**: Inference from template literals requires "Reverse String Matcher" for `infer` patterns.
 
-**Implementation Goals**:
-1. **Pattern Matching**: Inverse of template literal subtyping - extract `infer ID` from `` `user_${ID}` ``
-2. **Greedy vs Non-Greedy**: Handle multiple `infer` positions correctly (e.g., `` `${infer A}_${infer B}` ``)
-3. **Backtracking**: Implement proper backtracking for ambiguous matches
-4. **Canonical Results**: Ensure extracted strings are interned as `Literal(String)` types
+**Implementation Completed** (Commits: `c9ee174f3`, `5484ab6e7`):
+1. ✅ **Pattern Matching**: Implemented `infer_from_template_literal` in InferenceContext
+2. ✅ **Non-Greedy Matching**: Correctly handles multiple `infer` positions with anchor-based matching
+3. ✅ **Adjacent Placeholders**: Fixed bug for `${infer A}${infer B}` patterns (empty string capture)
+4. ✅ **Special Cases**: Handles `any` and `string` intrinsic types correctly
+5. ✅ **Union Support**: Matches each union member against the pattern
 
-**Files**: `src/solver/evaluate_rules/template_literal.rs`, `src/solver/infer.rs`
+**Examples**:
+- `"user_123" extends `user_${infer ID}` → ID = "123"
+- `"a_b_c" extends `${infer A}_${infer B}_${infer C}` → A = "a", B = "b", C = "c"
+- `"abc" extends `${infer A}${infer B}` → A = "", B = "abc" (adjacent placeholders)
+
+**Files**: `src/solver/infer.rs`
 
 ---
 
