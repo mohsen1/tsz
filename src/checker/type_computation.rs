@@ -1352,6 +1352,21 @@ impl<'a> CheckerState<'a> {
         let mut getter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
         let mut setter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
 
+        // Check for ThisType<T> marker in contextual type (Vue 2 / Options API pattern)
+        // We need to extract this BEFORE the for loop so it's available for the pop at the end
+        let marker_this_type: Option<TypeId> = if let Some(ctx_type) = self.ctx.contextual_type {
+            use crate::solver::ContextualTypeContext;
+            let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, ctx_type);
+            ctx_helper.get_this_type_from_marker()
+        } else {
+            None
+        };
+
+        // Push this type onto stack if found (methods will pick it up)
+        if let Some(this_type) = marker_this_type {
+            self.ctx.this_type_stack.push(this_type);
+        }
+
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
@@ -1675,6 +1690,11 @@ impl<'a> CheckerState<'a> {
         // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
         // This fixes the "Zombie Freshness" bug by distinguishing fresh vs
         // non-fresh object types at interning time.
+
+        // Pop this type from stack if we pushed it earlier
+        if marker_this_type.is_some() {
+            self.ctx.this_type_stack.pop();
+        }
 
         object_type
     }
