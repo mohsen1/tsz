@@ -10,37 +10,62 @@ Implement advanced Control Flow Analysis features to achieve 100% TypeScript par
 
 ## Progress
 
-### Phase 1: Bidirectional Narrowing (PAUSED - Needs Architecture Decision)
+### Phase 1: Bidirectional Narrowing (✅ COMPLETE)
 
-**Status**: ⏸️ ANALYSIS COMPLETE, AWAITING ARCHITECTURE DECISION
+**Status**: ✅ IMPLEMENTED & TESTED
 
 **Problem**: Implement narrowing for `x === y` where both are references.
 
-**Analysis Complete**:
-- Current code in `narrow_by_binary_expr` (line ~2362) already has symmetric checks
-- **CRITICAL BUG**: Uses `node_types` (declared types) instead of flow types
-- Example: If `y` was narrowed to `string` in outer scope, `x === y` should narrow `x` to `string`
-- Currently uses `y`'s declared type, not its flow-narrowed type
+**Solution Implemented**:
+1. **Flow Context Architecture**: Modified `narrow_type_by_condition` and related functions to accept `antecedent_id` parameter, allowing access to flow-narrowed types of the "other" reference
+2. **Bidirectional Narrowing Logic**: Enhanced `narrow_by_binary_expr` to handle `x === y` where both are references by:
+   - Getting the flow type of the "other" reference using `get_flow_type`
+   - Narrowing the target to the intersection of its type and the other's type
+3. **Subtype Narrowing Fix**: Fixed `narrow_to_type` in `src/solver/narrowing.rs` to handle cases where target type is a subtype of a union member (e.g., narrowing `string | number` by `"hello"`)
 
-**Architectural Challenge**:
-- `narrow_by_binary_expr` doesn't have access to flow context (no flow node ID)
-- Can't query flow type of "other" reference without flow context
-- Passing flow context through entire call chain would be significant refactor
+**Files Modified**:
+- `src/checker/control_flow.rs`:
+  - Updated `check_flow` to pass `antecedent_id` to `narrow_type_by_condition`
+  - Updated `narrow_type_by_condition` signature to accept `antecedent_id`
+  - Updated `narrow_type_by_condition_inner` signature
+  - Updated `narrow_by_logical_expr` signature
+  - Updated `narrow_by_binary_expr` signature
+  - Added call to `narrow_by_binary_expr` in binary expression handling path
+  - Implemented bidirectional narrowing logic with flow type lookup
+- `src/solver/narrowing.rs`:
+  - Fixed `narrow_to_type` to check if target_type is a subtype of union member
+  - Added `is_subtype_of_with_db` check for proper narrowing behavior
 
-**Gemini Guidance**:
-- Need helper method like `get_type_of_reference_at_antecedent(other, flow_id)`
-- Query type from antecedent flow node (state before this comparison)
-- Use `results` cache to look up computed types
+**Test Cases Verified**:
+```typescript
+// Test 1: Basic bidirectional narrowing (✅ WORKING)
+function test1(x: string | number, y: string) {
+    if (x === y) {
+        x.toLowerCase(); // x correctly narrowed to string
+    }
+}
 
-**Decision Needed**:
-1. Refactor to pass flow context through call chain?
-2. Create new API to query flow types from within `narrow_by_binary_expr`?
-3. Different architectural approach?
+// Test 2: Error when incompatible types (✅ WORKING)
+function test2(x: string | number, y: string) {
+    if (x === y) {
+        x.toFixed(); // Error: Property 'toFixed' does not exist on type 'string'
+    }
+}
 
-**Next Steps**:
-1. Ask Gemini: How to get flow type in `narrow_by_binary_expr` without major refactor?
-2. Implement the recommended approach
-3. Ask Gemini Question 2 for code review
+// Test 3: Literal type narrowing (✅ WORKING)
+function test4(x: string | number, y: string) {
+    y = "hello";
+    if (x === y) {
+        x.toLowerCase(); // x correctly narrowed to "hello" (literal type)
+    }
+}
+```
+
+**Gemini Consultation**:
+- Question 1: Asked about architectural approach for passing flow context
+- Answer: Pass `antecedent_id` through call chain, use `get_flow_type` to query flow types
+- Question 2: Asked about literal type narrowing edge case
+- Answer: Fixed `narrow_to_type` to check `is_subtype_of(target_type, member)` for proper narrowing
 
 ---
 

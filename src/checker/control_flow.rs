@@ -506,15 +506,21 @@ impl<'a> FlowAnalyzer<'a> {
                 )
             } else if flow.has_any_flags(flow_flags::CONDITION) {
                 // Condition node - apply narrowing
-                let pre_type = if let Some(&ant) = flow.antecedent.first() {
+                let (pre_type, antecedent_id) = if let Some(&ant) = flow.antecedent.first() {
                     // Get the result from antecedent if available, otherwise use current_type
-                    *results.get(&ant).unwrap_or(&current_type)
+                    (*results.get(&ant).unwrap_or(&current_type), ant)
                 } else {
-                    current_type
+                    (current_type, FlowNodeId::NONE)
                 };
 
                 let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
-                self.narrow_type_by_condition(pre_type, flow.node, reference, is_true_branch)
+                self.narrow_type_by_condition(
+                    pre_type,
+                    flow.node,
+                    reference,
+                    is_true_branch,
+                    antecedent_id,
+                )
             } else if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
                 // CRITICAL FIX: Schedule antecedent 0 (switch header) for traversal
                 // Fallthrough cases are handled by the is_merge_point block above,
@@ -772,7 +778,6 @@ impl<'a> FlowAnalyzer<'a> {
 
         let clause_idx = flow.node;
         let Some(switch_idx) = self.binder.get_switch_for_clause(clause_idx) else {
-            eprintln!("DEBUG handle_switch_clause_iterative: no switch_idx");
             return current_type;
         };
         let Some(switch_node) = self.arena.get(switch_idx) else {
@@ -813,7 +818,6 @@ impl<'a> FlowAnalyzer<'a> {
                 &narrowing,
             )
         } else {
-            eprintln!("DEBUG handle_switch_clause_iterative: calling narrow_by_switch_clause");
             self.narrow_by_switch_clause(
                 pre_switch_type,
                 switch_data.expression,
@@ -1642,7 +1646,7 @@ impl<'a> FlowAnalyzer<'a> {
             right: case_expr,
         };
 
-        self.narrow_by_binary_expr(type_id, &binary, target, true, narrowing)
+        self.narrow_by_binary_expr(type_id, &binary, target, true, narrowing, FlowNodeId::NONE)
     }
 
     pub(crate) fn narrow_by_default_switch_clause(
@@ -1659,11 +1663,9 @@ impl<'a> FlowAnalyzer<'a> {
         );
 
         let Some(case_block_node) = self.arena.get(case_block) else {
-            eprintln!("DEBUG narrow_by_default_switch_clause: no case_block_node");
             return type_id;
         };
         let Some(case_block) = self.arena.get_block(case_block_node) else {
-            eprintln!("DEBUG narrow_by_default_switch_clause: no case_block");
             return type_id;
         };
 
@@ -1688,7 +1690,14 @@ impl<'a> FlowAnalyzer<'a> {
                 "DEBUG narrow_by_default_switch_clause: calling narrow_by_binary_expr with narrowed={}",
                 narrowed.0
             );
-            narrowed = self.narrow_by_binary_expr(narrowed, &binary, target, false, narrowing);
+            narrowed = self.narrow_by_binary_expr(
+                narrowed,
+                &binary,
+                target,
+                false,
+                narrowing,
+                FlowNodeId::NONE,
+            );
             eprintln!(
                 "DEBUG narrow_by_default_switch_clause: after narrowing, result={}",
                 narrowed.0
@@ -1709,10 +1718,11 @@ impl<'a> FlowAnalyzer<'a> {
         condition_idx: NodeIndex,
         target: NodeIndex,
         is_true_branch: bool,
+        antecedent_id: FlowNodeId,
     ) -> TypeId {
         eprintln!(
-            "DEBUG narrow_type_by_condition: type_id={}, condition={}, target={}, is_true_branch={}",
-            type_id.0, condition_idx.0, target.0, is_true_branch
+            "DEBUG narrow_type_by_condition: type_id={}, condition={}, target={}, is_true_branch={}, antecedent={}",
+            type_id.0, condition_idx.0, target.0, is_true_branch, antecedent_id.0
         );
         let mut visited_aliases = Vec::new();
         let result = self.narrow_type_by_condition_inner(
@@ -1720,9 +1730,9 @@ impl<'a> FlowAnalyzer<'a> {
             condition_idx,
             target,
             is_true_branch,
+            antecedent_id,
             &mut visited_aliases,
         );
-        eprintln!("DEBUG narrow_type_by_condition: result={}", result.0);
         result
     }
 
@@ -1732,6 +1742,7 @@ impl<'a> FlowAnalyzer<'a> {
         condition_idx: NodeIndex,
         target: NodeIndex,
         is_true_branch: bool,
+        antecedent_id: FlowNodeId,
         visited_aliases: &mut Vec<SymbolId>,
     ) -> TypeId {
         eprintln!(
@@ -1740,14 +1751,9 @@ impl<'a> FlowAnalyzer<'a> {
         );
         let condition_idx = self.skip_parenthesized(condition_idx);
         let Some(cond_node) = self.arena.get(condition_idx) else {
-            eprintln!("DEBUG narrow_type_by_condition_inner: no cond_node");
             return type_id;
         };
 
-        eprintln!(
-            "DEBUG narrow_type_by_condition_inner: cond kind={}",
-            cond_node.kind
-        );
         let narrowing = NarrowingContext::new(self.interner);
 
         if cond_node.kind == SyntaxKind::Identifier as u16
@@ -1760,6 +1766,7 @@ impl<'a> FlowAnalyzer<'a> {
                 initializer,
                 target,
                 is_true_branch,
+                antecedent_id,
                 visited_aliases,
             );
             visited_aliases.pop();
@@ -1769,7 +1776,6 @@ impl<'a> FlowAnalyzer<'a> {
         match cond_node.kind {
             // typeof x === "string", x instanceof Class, "prop" in x, etc.
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                eprintln!("DEBUG narrow_type_by_condition_inner: is binary expression");
                 if let Some(bin) = self.arena.get_binary_expr(cond_node) {
                     eprintln!(
                         "DEBUG narrow_type_by_condition_inner: operator={}",
@@ -1781,6 +1787,7 @@ impl<'a> FlowAnalyzer<'a> {
                         bin,
                         target,
                         is_true_branch,
+                        antecedent_id,
                         visited_aliases,
                     ) {
                         eprintln!(
@@ -1813,16 +1820,30 @@ impl<'a> FlowAnalyzer<'a> {
                         }
                     }
 
+                    // CRITICAL: Try bidirectional narrowing for x === y where both are references
+                    // This handles cases that don't match traditional type guard patterns
+                    // Example: if (x === y) { x } should narrow x based on y's type
                     eprintln!(
-                        "DEBUG narrow_type_by_condition_inner: no guard extracted or guard doesn't match, returning type_id"
+                        "DEBUG narrow_type_by_condition_inner: no guard extracted, trying narrow_by_binary_expr for bidirectional narrowing"
                     );
-                    return type_id;
+                    let narrowed = self.narrow_by_binary_expr(
+                        type_id,
+                        bin,
+                        target,
+                        is_true_branch,
+                        &narrowing,
+                        antecedent_id,
+                    );
+                    eprintln!(
+                        "DEBUG narrow_type_by_condition_inner: narrow_by_binary_expr returned {}",
+                        narrowed.0
+                    );
+                    return narrowed;
                 }
             }
 
             // User-defined type guards: isString(x), obj.isString(), assertsIs(x), etc.
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                eprintln!("DEBUG narrow_type_by_condition_inner: is call expression");
                 // CRITICAL: Use Solver-First architecture for call expressions
                 // Extract TypeGuard from AST (Checker responsibility: WHERE + WHAT)
                 if let Some((guard, guard_target, is_optional)) =
@@ -1873,6 +1894,7 @@ impl<'a> FlowAnalyzer<'a> {
                             unary.operand,
                             target,
                             !is_true_branch,
+                            antecedent_id,
                             visited_aliases,
                         );
                     }
@@ -2274,6 +2296,7 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         is_true_branch: bool,
         narrowing: &NarrowingContext,
+        antecedent_id: FlowNodeId,
     ) -> TypeId {
         let operator = bin.operator_token;
 
@@ -2360,49 +2383,57 @@ impl<'a> FlowAnalyzer<'a> {
         // This handles cases like: if (x === y) { ... }
         // where both x and y are variables (not just literals)
         if is_strict {
-            // Check if target is on the left side
+            // Helper to get flow type of the "other" node
+            let get_other_flow_type = |other_node: NodeIndex| -> Option<TypeId> {
+                let node_types = self.node_types?;
+                let initial_type = *node_types.get(&other_node.0)?;
+
+                // CRITICAL FIX: Use flow analysis if we have a valid flow node
+                // This gets the flow-narrowed type of the other reference
+                if !antecedent_id.is_none() {
+                    Some(self.get_flow_type(other_node, initial_type, antecedent_id))
+                } else {
+                    // Fallback for tests or when no flow context exists
+                    Some(initial_type)
+                }
+            };
+
+            // Check if target is on the left side (x === y, target is x)
             if self.is_matching_reference(bin.left, target) {
-                if let Some(node_types) = self.node_types {
-                    if let Some(&right_type) = node_types.get(&bin.right.0) {
-                        // For === (effective_truth = true): always narrow
-                        // For !== (effective_truth = false): only narrow if right_type is a unit type
-                        if effective_truth {
-                            return narrowing.narrow_type(
-                                type_id,
-                                &TypeGuard::LiteralEquality(right_type),
-                                true,
-                            );
-                        } else if self.is_unit_type(right_type) {
-                            // For !==, only narrow if other side is a unit type
-                            // Example: if (x !== "foo") narrows x to exclude "foo"
-                            // But: if (x !== y) where both are strings, does NOT narrow
-                            return narrowing.narrow_type(
-                                type_id,
-                                &TypeGuard::LiteralEquality(right_type),
-                                false,
-                            );
-                        }
+                // We need the type of the RIGHT side (y)
+                if let Some(right_type) = get_other_flow_type(bin.right) {
+                    if effective_truth {
+                        return narrowing.narrow_type(
+                            type_id,
+                            &TypeGuard::LiteralEquality(right_type),
+                            true,
+                        );
+                    } else if self.is_unit_type(right_type) {
+                        return narrowing.narrow_type(
+                            type_id,
+                            &TypeGuard::LiteralEquality(right_type),
+                            false,
+                        );
                     }
                 }
             }
 
-            // Check if target is on the right side
+            // Check if target is on the right side (y === x, target is x)
             if self.is_matching_reference(bin.right, target) {
-                if let Some(node_types) = self.node_types {
-                    if let Some(&left_type) = node_types.get(&bin.left.0) {
-                        if effective_truth {
-                            return narrowing.narrow_type(
-                                type_id,
-                                &TypeGuard::LiteralEquality(left_type),
-                                true,
-                            );
-                        } else if self.is_unit_type(left_type) {
-                            return narrowing.narrow_type(
-                                type_id,
-                                &TypeGuard::LiteralEquality(left_type),
-                                false,
-                            );
-                        }
+                // We need the type of the LEFT side (y)
+                if let Some(left_type) = get_other_flow_type(bin.left) {
+                    if effective_truth {
+                        return narrowing.narrow_type(
+                            type_id,
+                            &TypeGuard::LiteralEquality(left_type),
+                            true,
+                        );
+                    } else if self.is_unit_type(left_type) {
+                        return narrowing.narrow_type(
+                            type_id,
+                            &TypeGuard::LiteralEquality(left_type),
+                            false,
+                        );
                     }
                 }
             }
@@ -2417,6 +2448,7 @@ impl<'a> FlowAnalyzer<'a> {
         bin: &crate::parser::node::BinaryExprData,
         target: NodeIndex,
         is_true_branch: bool,
+        antecedent_id: FlowNodeId,
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<TypeId> {
         let operator = bin.operator_token;
@@ -2428,6 +2460,7 @@ impl<'a> FlowAnalyzer<'a> {
                     bin.left,
                     target,
                     true,
+                    antecedent_id,
                     visited_aliases,
                 );
                 let right_true = self.narrow_type_by_condition_inner(
@@ -2435,6 +2468,7 @@ impl<'a> FlowAnalyzer<'a> {
                     bin.right,
                     target,
                     true,
+                    antecedent_id,
                     visited_aliases,
                 );
                 return Some(right_true);
@@ -2445,6 +2479,7 @@ impl<'a> FlowAnalyzer<'a> {
                 bin.left,
                 target,
                 false,
+                antecedent_id,
                 visited_aliases,
             );
             let left_true = self.narrow_type_by_condition_inner(
@@ -2452,6 +2487,7 @@ impl<'a> FlowAnalyzer<'a> {
                 bin.left,
                 target,
                 true,
+                antecedent_id,
                 visited_aliases,
             );
             let right_false = self.narrow_type_by_condition_inner(
@@ -2459,6 +2495,7 @@ impl<'a> FlowAnalyzer<'a> {
                 bin.right,
                 target,
                 false,
+                antecedent_id,
                 visited_aliases,
             );
             return Some(self.union_types(left_false, right_false));
@@ -2471,6 +2508,7 @@ impl<'a> FlowAnalyzer<'a> {
                     bin.left,
                     target,
                     true,
+                    antecedent_id,
                     visited_aliases,
                 );
                 let left_false = self.narrow_type_by_condition_inner(
@@ -2478,6 +2516,7 @@ impl<'a> FlowAnalyzer<'a> {
                     bin.left,
                     target,
                     false,
+                    antecedent_id,
                     visited_aliases,
                 );
                 let right_true = self.narrow_type_by_condition_inner(
@@ -2485,6 +2524,7 @@ impl<'a> FlowAnalyzer<'a> {
                     bin.right,
                     target,
                     true,
+                    antecedent_id,
                     visited_aliases,
                 );
                 return Some(self.union_types(left_true, right_true));
@@ -2495,6 +2535,7 @@ impl<'a> FlowAnalyzer<'a> {
                 bin.left,
                 target,
                 false,
+                antecedent_id,
                 visited_aliases,
             );
             let right_false = self.narrow_type_by_condition_inner(
@@ -2502,6 +2543,7 @@ impl<'a> FlowAnalyzer<'a> {
                 bin.right,
                 target,
                 false,
+                antecedent_id,
                 visited_aliases,
             );
             return Some(right_false);

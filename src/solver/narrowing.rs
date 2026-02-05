@@ -512,7 +512,6 @@ impl<'a> NarrowingContext<'a> {
             self.db.union(matching)
         };
 
-        eprintln!("DEBUG narrow_by_discriminant: result={}", result.0);
         result
     }
 
@@ -1205,6 +1204,12 @@ impl<'a> NarrowingContext<'a> {
                     }
                     if self.is_assignable_to(member, target_type) {
                         return Some(member);
+                    }
+                    // CRITICAL FIX: Check if target_type is a subtype of member
+                    // This handles cases like narrowing string | number by "hello"
+                    // where "hello" is a subtype of string, so we should narrow to "hello"
+                    if crate::solver::subtype::is_subtype_of_with_db(self.db, target_type, member) {
+                        return Some(target_type);
                     }
                     None
                 })
