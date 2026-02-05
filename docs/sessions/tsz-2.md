@@ -86,17 +86,21 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
 - All implementation reviewed by Gemini Pro (Questions 1 and 2)
 - Changes committed and pushed to origin (commit: 5b8c56551)
 
-**⚠️ Known Issue:**
-Pre-existing test compilation failures in `src/solver/objects.rs`:
-- PropertyInfo struct missing `parent_id` field in test instances
-- From tsz-1/tsz-4 sessions (nominal subtyping work)
-- Unrelated to enumeration logic migration
-- Library builds successfully; only test compilation affected
+**✅ FIXED PRE-EXISTING COMPILATION ERROR (2026-02-05):**
+- Fixed PropertyCollectionResult missing enum in src/solver/objects.rs
+- Added PropertyCollectionResult enum with Any/NonObject/Properties variants
+- Added has_any flag to PropertyCollector to track Any in intersections
+- Changed collect_properties return type from tuple to PropertyCollectionResult
+- Implementation reviewed by Gemini Pro (Question 2) - APPROVED
+- Committed and pushed to origin (commit: 544313e07)
+- Tests now compile successfully
 
-**Next Steps:**
-1. Continue with other TypeKey removals (generators.rs, iterators.rs, etc.)
-2. Use `for_each_child` pattern for complex type traversal
-3. Add simple type identity helpers to Solver API (is_string, is_any, etc.)
+**Next Steps (per Gemini consultation):**
+Priority order:
+1. Add Solver queries for iterator/generator info (get_iterator_info, get_generator_info)
+2. Refactor Checker files (generators.rs, iterators.rs) to use these new queries
+3. Clean up dead code in state_type_environment.rs (~217 lines)
+4. Continue with other TypeKey removals
 
 ### Step 2: Refactor Primitives (Low Risk)
 Target: Simple type identity checks
