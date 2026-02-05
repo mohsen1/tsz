@@ -855,7 +855,7 @@ impl ParserState {
 
                 // In async context, parse as await expression
                 let start_pos = self.token_pos();
-                self.next_token();
+                self.consume_keyword(); // TS1260 check for await keyword with escapes
 
                 // Check for missing operand (e.g., just "await" with nothing after it)
                 if self.can_parse_semicolon()
@@ -951,7 +951,7 @@ impl ParserState {
                     // Fall through to parse as yield expression
                 }
 
-                self.next_token();
+                self.consume_keyword(); // TS1260 check for yield keyword with escapes
 
                 // Check for yield* (delegate yield)
                 let asterisk_token = self.parse_optional(SyntaxKind::AsteriskToken);
@@ -1767,10 +1767,125 @@ impl ParserState {
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
         let text = self.scanner.get_token_value_ref().to_string();
+        let token_flags = self.scanner.get_token_flags();
+
+        // Check for legacy octal literal (e.g., 01, 0777, 01.0) - TS1121
+        // Legacy octals start with 0 followed by octal digits (0-7), without 0o/0O prefix
+        // Numbers like 009 start with 0 but contain non-octal digits 8-9, so they emit TS1489 instead
+        if (token_flags & TokenFlags::Octal as u32) != 0 {
+            // Find the integer part (before any decimal point or exponent)
+            let integer_part = text
+                .split(|c: char| c == '.' || c == 'e' || c == 'E')
+                .next()
+                .unwrap_or(&text);
+            // Verify the integer part digits after the leading 0 are all octal (0-7)
+            // Skip leading 0 and check remaining digits don't contain 8 or 9
+            let has_non_octal =
+                integer_part.len() > 1 && integer_part[1..].bytes().any(|b| b == b'8' || b == b'9');
+            if has_non_octal {
+                // TS1489: Decimals with leading zeros are not allowed (e.g., 009, 08)
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    end_pos - start_pos,
+                    "Decimals with leading zeros are not allowed.",
+                    diagnostic_codes::DECIMALS_WITH_LEADING_ZEROS_NOT_ALLOWED,
+                );
+            } else if integer_part.len() > 1 {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                // Convert legacy octal to modern octal for the suggestion (e.g., "01" -> "0o1")
+                let suggested = format!("0o{}", &integer_part[1..]);
+                let message = format!(
+                    "Octal literals are not allowed. Use the syntax '{}'.",
+                    suggested
+                );
+                self.parse_error_at(
+                    start_pos,
+                    end_pos - start_pos,
+                    &message,
+                    diagnostic_codes::OCTAL_LITERALS_NOT_ALLOWED,
+                );
+            }
+        }
+
+        // Check for missing exponent digits (e.g., 1e+, 1e-, 1e) - TS1124
+        // If there's a Scientific flag but the text ends without digits after e/E
+        if (token_flags & TokenFlags::Scientific as u32) != 0 {
+            let bytes = text.as_bytes();
+            let len = bytes.len();
+            // Check if ends with e, E, e+, e-, E+, E- (no digit after exponent)
+            let missing_digit = if len > 0 {
+                let last = bytes[len - 1];
+                last == b'e'
+                    || last == b'E'
+                    || last == b'+'
+                    || last == b'-'
+                    || (len > 1
+                        && (last == b'+' || last == b'-')
+                        && (bytes[len - 2] == b'e' || bytes[len - 2] == b'E'))
+            } else {
+                false
+            };
+            if missing_digit {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                // Find position of the missing digit (at the end)
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    "Digit expected.",
+                    diagnostic_codes::DIGIT_EXPECTED,
+                );
+            }
+        }
+
+        // Check for missing hex digits (e.g., 0x, 0X) - TS1125
+        if (token_flags & TokenFlags::HexSpecifier as u32) != 0 {
+            // Hex literal should be at least 3 chars (0x followed by at least one digit)
+            // If it's just "0x" or "0X", no hex digits were provided
+            if text.len() == 2 {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    "Hexadecimal digit expected.",
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            }
+        }
+
+        // Check for missing binary digits (e.g., 0b, 0B) - TS1177
+        if (token_flags & TokenFlags::BinarySpecifier as u32) != 0 {
+            // Binary literal should be at least 3 chars (0b followed by at least one digit)
+            // If it's just "0b" or "0B", no binary digits were provided
+            if text.len() == 2 {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    "Binary digit expected.",
+                    diagnostic_codes::BINARY_DIGIT_EXPECTED,
+                );
+            }
+        }
+
+        // Check for missing octal digits (e.g., 0o, 0O) - TS1178
+        if (token_flags & TokenFlags::OctalSpecifier as u32) != 0 {
+            // Octal literal should be at least 3 chars (0o followed by at least one digit)
+            // If it's just "0o" or "0O", no octal digits were provided
+            if text.len() == 2 {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    "Octal digit expected.",
+                    diagnostic_codes::OCTAL_DIGIT_EXPECTED,
+                );
+            }
+        }
 
         // Check if this numeric literal has an invalid separator (for TS1351 check)
         let has_invalid_separator =
-            (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidSeparator as u32) != 0;
+            (token_flags & TokenFlags::ContainsInvalidSeparator as u32) != 0;
 
         self.report_invalid_numeric_separator();
         let value = if text.as_bytes().contains(&b'_') {
