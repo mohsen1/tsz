@@ -1181,6 +1181,14 @@ impl TypeInterner {
         if self.intersection_has_disjoint_object_literals(&flat) {
             return TypeId::NEVER;
         }
+
+        // Distributivity: A & (B | C) → (A & B) | (A & C)
+        // This enables better normalization and is required for soundness
+        // Must be done before object/callable merging to ensure we operate on distributed members
+        if let Some(distributed) = self.distribute_intersection_over_unions(&flat) {
+            return distributed;
+        }
+
         if flat.is_empty() {
             return TypeId::UNKNOWN;
         }
@@ -2016,6 +2024,93 @@ impl TypeInterner {
                 i += 1;
             }
         }
+    }
+
+    /// Distribute an intersection over unions: A & (B | C) → (A & B) | (A & C)
+    ///
+    /// This is a critical normalization rule for the Judge layer that enables
+    /// better simplification and canonical form detection.
+    ///
+    /// # Cardinality Guard
+    /// To prevent exponential explosion (e.g., (A|B) & (C|D) & (E|F)...),
+    /// we limit distribution to cases where the resulting union would have ≤ 25 members.
+    ///
+    /// # Returns
+    /// - Some(result) if distribution was applied and should replace the intersection
+    /// - None if no distribution occurred (no union members, or would exceed cardinality limit)
+    fn distribute_intersection_over_unions(&self, flat: &TypeListBuffer) -> Option<TypeId> {
+        // Find all union members in the intersection and calculate total combinations
+        let mut union_indices = Vec::new();
+        let mut total_combinations = 1;
+
+        for (i, &id) in flat.iter().enumerate() {
+            if let Some(TypeKey::Union(members)) = self.lookup(id) {
+                let member_count = self.type_list(members).len();
+
+                // Calculate total combinations: product of all union sizes
+                // e.g., (A|B|C) & (D|E) → 3 * 2 = 6 combinations
+                total_combinations *= member_count;
+
+                // Conservative guard: abort early if would exceed 25 members
+                if total_combinations > 25 {
+                    return None; // Too many combinations, skip distribution
+                }
+
+                union_indices.push(i);
+            }
+        }
+
+        // No unions to distribute
+        if union_indices.is_empty() {
+            return None;
+        }
+
+        // Build the distributed union
+        // Start with the first non-union member as the base
+        let base_members: Vec<_> = flat
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !union_indices.contains(i))
+            .map(|(_, &id)| id)
+            .collect();
+
+        // If all members are unions, start with an empty intersection (unknown)
+        let initial_intersection = if base_members.is_empty() {
+            vec![]
+        } else {
+            base_members
+        };
+
+        // Recursively distribute: for each union, create intersections with all combinations
+        let mut combinations = vec![initial_intersection];
+
+        for &union_idx in &union_indices {
+            let union_type = flat[union_idx];
+            let TypeKey::Union(union_members) = self.lookup(union_type)? else {
+                continue;
+            };
+            let union_members = self.type_list(union_members);
+
+            // For each existing combination, create new combinations with each union member
+            let mut new_combinations = Vec::new();
+            for combination in &combinations {
+                for &union_member in union_members.iter() {
+                    let mut new_combination = combination.clone();
+                    new_combination.push(union_member);
+                    new_combinations.push(new_combination);
+                }
+            }
+            combinations = new_combinations;
+        }
+
+        // Convert each combination to an intersection TypeId
+        let intersection_results: Vec<_> = combinations
+            .iter()
+            .map(|combination| self.intersection(combination.clone()))
+            .collect();
+
+        // Return the union of all intersections
+        Some(self.union(intersection_results))
     }
 
     /// Intern an array type
