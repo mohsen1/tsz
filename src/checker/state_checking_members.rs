@@ -1979,13 +1979,32 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // 2. Get the implementation's type
-        let impl_type = self.get_type_of_node(impl_node_idx);
+        // 2. Create TypeLowering instance for manual signature lowering
+        // This unblocks overload validation for methods/constructors where get_type_of_node returns ERROR
+        let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
+            self.ctx.binder.get_node_symbol(node_idx).map(|id| id.0)
+        };
+        let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
+            self.ctx.binder.get_node_symbol(node_idx).map(|id| id.0)
+        };
+        let lowering = crate::solver::TypeLowering::with_resolvers(
+            self.ctx.arena,
+            self.ctx.types,
+            &type_resolver,
+            &value_resolver,
+        );
+
+        // 3. Get the implementation's type using manual lowering
+        let impl_type = lowering.lower_signature_from_declaration(impl_node_idx, None);
         if impl_type == crate::solver::TypeId::ERROR {
-            return;
+            // Fall back to get_type_of_node for cases where manual lowering fails
+            let impl_type = self.get_type_of_node(impl_node_idx);
+            if impl_type == crate::solver::TypeId::ERROR {
+                return;
+            }
         }
 
-        // 3. Check each overload declaration
+        // 4. Check each overload declaration
         for &decl_idx in &symbol.declarations {
             // Skip the implementation itself
             if decl_idx == impl_node_idx {
@@ -1996,7 +2015,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // 4. Check if this declaration is an overload (has no body)
+            // 5. Check if this declaration is an overload (has no body)
             // We must handle Functions, Methods, and Constructors
             let is_overload = match decl_node.kind {
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
@@ -2024,13 +2043,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // 5. Get the overload's type
-            let overload_type = self.get_type_of_node(decl_idx);
+            // 6. Get the overload's type using manual lowering
+            let overload_type = lowering.lower_signature_from_declaration(decl_idx, None);
             if overload_type == crate::solver::TypeId::ERROR {
-                continue;
+                // Fall back to get_type_of_node for cases where manual lowering fails
+                let overload_type = self.get_type_of_node(decl_idx);
+                if overload_type == crate::solver::TypeId::ERROR {
+                    continue;
+                }
             }
 
-            // 6. Check assignability: Impl <: Overload
+            // 7. Check assignability: Impl <: Overload
             if !self.is_assignable_to(impl_type, overload_type) {
                 self.error_at_node(
                     decl_idx,
