@@ -73,3 +73,66 @@ Recent implementation of discriminant narrowing (commit `f2d4ae5d5`) introduced 
 *Created 2026-02-05 after TSZ-9 encountered implementation complexity.*
 *Recommended by Gemini as high-value, tractable task.*
 *Focuses on fixing known regressions in localized code area.*
+
+---
+
+## Investigation Results (2026-02-05)
+
+### Code Review: narrowing.rs
+
+**Good News**: Bug #1 (Reversed Subtype Check) is **ALREADY FIXED**! ✅
+
+Location: `src/solver/narrowing.rs`, line 437
+```rust
+let matches = is_subtype_of(self.db, literal_value, prop_type);
+```
+
+Comment on lines 435-436 explicitly states:
+```rust
+// CRITICAL: Use is_subtype_of(literal_value, property_type)
+// NOT the reverse! This was the bug in the reverted commit.
+```
+
+**Existing Implementation Also Has**:
+- ✅ Lazy type resolution (line 306, 411)
+- ✅ Union type property handling (lines 309-324)
+- ✅ Intersection type handling (lines 414-421)
+- ✅ Function `get_type_at_path` for property path traversal
+
+### Remaining Issue: Bug #3 - Optional Properties
+
+**Location**: `src/solver/narrowing.rs`, line 330
+
+**Current Code**:
+```rust
+let prop = shape.properties.iter().find(|p| p.name == prop_name)?;
+```
+
+**Problem**: This only finds properties that exist. For optional properties 
+(`prop?.type`), we need to handle them differently:
+- If property is optional AND doesn't exist on object, still match
+- Use the optional property's type for the subtype check
+
+**Example**:
+```typescript
+type Opt = { type?: "stop", speed: number } | { type: "go", speed: number };
+function test(o: Opt) {
+    if (o.type === "stop") {
+        // Should narrow to { type?: "stop", speed: number }
+        // even though 'type' is optional
+    }
+}
+```
+
+### Updated Assessment
+
+**Bugs Status**:
+1. ✅ Reversed subtype check - ALREADY FIXED
+2. ✅ Missing type resolution - ALREADY IMPLEMENTED
+3. ⚠️ Optional properties - NEEDS FIX
+
+**Action Plan Update**:
+- Focus on fixing optional property handling in `get_type_at_path`
+- Single, focused fix in one location
+- Much more tractable than originally thought
+
