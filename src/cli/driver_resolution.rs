@@ -1702,7 +1702,16 @@ pub(crate) fn emit_outputs(
 
         if let Some(js_path) = js_output_path(base_dir, root_dir, out_dir, options.jsx, &input_path)
         {
-            let mut printer = Printer::with_options(&file.arena, options.printer.clone());
+            // Run the lowering pass to generate transform directives
+            let ctx = crate::emit_context::EmitContext::with_options(options.printer.clone());
+            let transforms =
+                crate::lowering_pass::LoweringPass::new(&file.arena, &ctx).run(file.source_file);
+
+            let mut printer = Printer::with_transforms_and_options(
+                &file.arena,
+                transforms,
+                options.printer.clone(),
+            );
             let map_info = if options.source_map {
                 map_output_info(&js_path)
             } else {

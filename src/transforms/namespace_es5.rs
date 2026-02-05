@@ -54,6 +54,7 @@ pub struct NamespaceES5Emitter<'a> {
     arena: &'a NodeArena,
     source_text: Option<&'a str>,
     indent_level: u32,
+    should_declare_var: bool,
     transformer: NamespaceES5Transformer<'a>,
 }
 
@@ -63,6 +64,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             arena,
             source_text: None,
             indent_level: 0,
+            should_declare_var: true, // Default to true for backward compatibility
             transformer: NamespaceES5Transformer::new(arena),
         }
     }
@@ -73,6 +75,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             arena,
             source_text: None,
             indent_level: 0,
+            should_declare_var: true, // Default to true for backward compatibility
             transformer: NamespaceES5Transformer::with_commonjs(arena, is_commonjs),
         }
     }
@@ -82,9 +85,17 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.source_text = Some(text);
     }
 
+    /// Set whether to emit a 'var' declaration for the namespace
+    /// When false (e.g., when merging with a class/enum/function), the 'var' is omitted
+    pub fn set_should_declare_var(&mut self, value: bool) {
+        self.should_declare_var = value;
+    }
+
     /// Emit a namespace declaration
     pub fn emit_namespace(&mut self, ns_idx: NodeIndex) -> String {
-        let ir = self.transformer.transform_namespace(ns_idx);
+        let ir = self
+            .transformer
+            .transform_namespace_with_var_flag(ns_idx, self.should_declare_var);
         let ir = match ir {
             Some(ir) => ir,
             None => return String::new(),

@@ -67,6 +67,8 @@ pub struct LoweringPass<'a> {
     has_export_assignment: bool,
     /// Current recursion depth for stack overflow protection
     visit_depth: u32,
+    /// Track declared names for namespace/class/enum/function merging detection
+    declared_names: rustc_hash::FxHashSet<String>,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -79,6 +81,7 @@ impl<'a> LoweringPass<'a> {
             commonjs_mode: false,
             has_export_assignment: false,
             visit_depth: 0,
+            declared_names: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -776,6 +779,11 @@ impl<'a> LoweringPass<'a> {
             None
         };
 
+        // Track class name for namespace/class merging detection
+        if let Some(name) = self.get_identifier_text_ref(class.name) {
+            self.declared_names.insert(name.to_string());
+        }
+
         let heritage = self.get_extends_heritage(&class.heritage_clauses);
         if self.ctx.target_es5 {
             self.mark_class_helpers(idx, heritage);
@@ -859,6 +867,11 @@ impl<'a> LoweringPass<'a> {
         } else {
             None
         };
+
+        // Track function name for namespace/function merging detection
+        if let Some(name) = self.get_identifier_text_ref(func.name) {
+            self.declared_names.insert(name.to_string());
+        }
 
         // Check if this is an async function targeting ES5
         let base_directive = if self.ctx.target_es5 && self.has_async_modifier(idx) {
@@ -944,6 +957,11 @@ impl<'a> LoweringPass<'a> {
             None
         };
 
+        // Track enum name for namespace/enum merging detection
+        if let Some(name) = self.get_identifier_text_ref(enum_decl.name) {
+            self.declared_names.insert(name.to_string());
+        }
+
         let base_directive = if self.ctx.target_es5 {
             TransformDirective::ES5Enum { enum_node: idx }
         } else {
@@ -995,6 +1013,22 @@ impl<'a> LoweringPass<'a> {
             return;
         }
 
+        // Get the namespace root name for merging detection
+        let namespace_name = self.get_module_root_name_text(module_decl.name);
+
+        // Check if this name has already been declared (class/enum/function/namespace)
+        // If so, we should NOT emit 'var' for this namespace
+        let should_declare_var = if let Some(ref name) = namespace_name {
+            !self.declared_names.contains(name)
+        } else {
+            true
+        };
+
+        // Track this name as declared
+        if let Some(name) = namespace_name {
+            self.declared_names.insert(name);
+        }
+
         let mut is_exported = self.is_commonjs()
             && !self.has_export_assignment
             && (force_export || self.has_export_modifier(&module_decl.modifiers));
@@ -1011,6 +1045,7 @@ impl<'a> LoweringPass<'a> {
         let base_directive = if self.ctx.target_es5 {
             TransformDirective::ES5Namespace {
                 namespace_node: idx,
+                should_declare_var,
             }
         } else {
             TransformDirective::Identity
@@ -1462,6 +1497,13 @@ impl<'a> LoweringPass<'a> {
         }
 
         None
+    }
+
+    /// Get the root name of a module as a String for merging detection
+    fn get_module_root_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        let id = self.get_module_root_name(name_idx)?;
+        let ident = self.arena.identifiers.get(id as usize)?;
+        Some(ident.escaped_text.clone())
     }
 
     fn get_block_like(&self, node: &Node) -> Option<&crate::parser::node::BlockData> {
