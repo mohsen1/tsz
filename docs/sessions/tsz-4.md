@@ -740,3 +740,60 @@ This check needs to happen in class declaration validation, not in `get_type_of_
 3. Fix test infrastructure properly (remove global type mocks)
 
 **Status**: Priority 3 SUBSTANTIALLY COMPLETE 🟡
+
+### Commit: `fc06762b9` - feat(tsz-4): add TS2675 check for class inheritance with private constructor ✅
+
+**Priority 3 COMPLETE - Constructor Accessibility!**
+
+**What Was Done**:
+Per Gemini Pro guidance, implemented TS2675 check for class inheritance with private constructors.
+
+**Implementation**:
+1. Added diagnostic code TS2675 in `diagnostics.rs`
+2. Added check in `check_heritage_clauses_for_unresolved_names()` in `state_checking.rs`
+3. Enhanced `class_constructor_access_level()` to walk inheritance chain for inherited private constructors
+4. Fixed test expectations (TS2675 instead of TS2673 for inheritance)
+
+**Key Features**:
+- Checks if base class has private/protected constructor
+- Allows nested classes to extend (enclosing_class check)
+- Recursively walks inheritance chain for implicit constructors
+- Emits TS2675 for invalid inheritance attempts
+
+**Bug Fixes** (per Gemini Pro review):
+1. **Fixed False Positive**: Added check for `self.ctx.enclosing_class` to allow nested classes to extend private constructor
+2. **Fixed False Negative**: Modified `class_constructor_access_level` to walk inheritance chain and check base class constructor
+
+**Test Results**: All 13 constructor accessibility tests passing ✅
+- 11/11 original tests (including fixed `test_private_constructor_in_subclass`)
+- 1/1 new test for nested class private constructor
+- 1/1 new test for inherited private constructor
+
+**Files Modified**:
+- `src/checker/state_checking.rs`: Added TS2675 check in heritage clause validation
+- `src/checker/type_checking_utilities.rs`: Enhanced `class_constructor_access_level` to walk inheritance chain
+- `src/checker/tests/constructor_accessibility.rs`: Fixed test expectations, added 2 new tests
+- `src/checker/types/diagnostics.rs`: Added TS2675 diagnostic code and message
+
+**Mandatory Gemini Workflow Completed**:
+- ✅ PRE-implementation consultation (asked Gemini about approach)
+- ✅ POST-implementation review #1 (found false positive and false negative bugs)
+- ✅ POST-implementation review #2 (verified recursive inheritance walk is correct)
+- ✅ Applied all fixes per Gemini guidance
+- ✅ Verified all tests pass
+
+**Status**: Priority 3 COMPLETE ✅
+
+**Remaining Edge Cases** (per Gemini Pro, rare in practice):
+- Deep nesting: `class A { class B { class C extends A {} } }` - requires walking parent chain
+- Recursion guard: Could add depth limit to `class_constructor_access_level`
+
+**Next Steps**:
+1. Move to Priority 4: Literal Type Widening
+2. OR address remaining edge cases if needed
+
+**Overall Session Status**:
+- ✅ Priority 1: Enum Nominality COMPLETE
+- ✅ Priority 2: Private Brand Checking COMPLETE
+- ✅ Priority 3: Constructor Accessibility COMPLETE
+- 🔄 Priority 4: Literal Type Widening (PENDING)
