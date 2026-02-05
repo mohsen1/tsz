@@ -18,9 +18,9 @@ Previous tsz-3 Phase 1 successfully delivered:
 
 ---
 
-## Phase 1: Nested Discriminants (🔄 ACTIVE - ARCHITECTURAL INVESTIGATION)
+## Phase 1: Nested Discriminants (🔄 ACTIVE - IMPLEMENTATION)
 
-**Status**: 🟡 IN PROGRESS - ARCHITECTURAL INVESTIGATION
+**Status**: 🟡 IN PROGRESS - IMPLEMENTATION
 
 **Problem**: Support narrowing for nested discriminant paths like `action.payload.kind`.
 
@@ -40,23 +40,39 @@ function reducer(action: Action) {
 }
 ```
 
-**Current Limitation**:
-- `discriminant_property_info` only returns immediate parent property
-- Need to recursively walk `PropertyAccessExpression` to build full path
+**Implementation (2026-02-05)**:
 
-**Implementation Plan**:
-1. Modify `discriminant_property_info` to build `property_path: Vec<Atom>`
-2. Update `narrow_by_discriminant` to handle paths of any length
-3. Handle optional chaining (a?.b.c) in the path
-4. Test with nested patterns 3-4 levels deep
+Modified `discriminant_property_info` (control_flow_narrowing.rs:964):
+- Added `relative_path_info` tracking to capture intermediate narrowing targets
+- Checks `is_matching_reference(current, target)` BEFORE adding segment to path
+- Returns `Option<(Vec<Atom>, bool, NodeIndex, Option<(Vec<Atom>, bool, NodeIndex)>)>`
+- Fourth tuple element is relative path info if target matches intermediate node
 
-**Root Cause from Previous Attempt**:
-The check `if self.is_matching_reference(base, target)` prevents nested narrowing:
-- For `action.payload.kind === 'item'`: `base` is `action`, `target` is `action.payload.kind`
-- They are NOT the same reference, so discriminant guard is not created
-- Removing the check broke other narrowing cases
+Modified `discriminant_comparison` (control_flow_narrowing.rs:1073):
+- Prioritizes relative_info for nested narrowing
+- Falls back to base narrowing for root-level narrowing
+- Returns `None` when `rel_path.is_empty()` (target is leaf, should use literal comparison)
 
-**Requires**: AccessPath/FlowContainer abstraction or alternative approach
+Modified `discriminant_property` (control_flow_narrowing.rs:957):
+- Uses relative_info when available
+- Falls back to base narrowing logic
+- Handles optional chaining correctly
+
+**Current Status**:
+- ✅ Code compiles successfully
+- ✅ Discriminant comparison correctly identifies relative paths
+- ⚠️ Test case `tests/nested_discriminant.test.ts` shows narrowing is NOT being applied
+- 🐛 Issue: Narrowing for `action.payload` in true branch is not being requested by checker
+
+**Debug Investigation**:
+- `discriminant_comparison` correctly returns `rel_path=['kind'], rel_base=action.payload` for target=`action.payload`
+- But `narrow_type_by_condition` is only called for `target=action`, not for `target=action.payload`
+- This is a checker flow issue, not a solver narrowing issue
+
+**Next Steps**:
+1. Investigate why checker doesn't request narrowing for intermediate property references
+2. May need to modify flow graph building to track all references that need narrowing
+3. Or may need to apply narrowing transitively (if `action` is narrowed, `action.payload` should also be narrowed)
 
 ---
 

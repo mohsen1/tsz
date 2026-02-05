@@ -954,15 +954,39 @@ impl<'a> FlowAnalyzer<'a> {
         expr: NodeIndex,
         target: NodeIndex,
     ) -> Option<Vec<Atom>> {
-        self.discriminant_property_info(expr, target)
-            .and_then(|(path, is_optional, _base)| if is_optional { None } else { Some(path) })
+        let (_full_path, _is_optional, _base, relative_info) =
+            self.discriminant_property_info(expr, target)?;
+
+        // Prefer relative path if available (nested narrowing)
+        if let Some((rel_path, is_optional, _)) = relative_info {
+            if is_optional || rel_path.is_empty() {
+                return None;
+            }
+            return Some(rel_path);
+        }
+
+        // Fallback to base narrowing
+        self.discriminant_property_info(expr, target).and_then(
+            |(path, is_optional, base, _relative)| {
+                if is_optional || !self.is_matching_reference(base, target) {
+                    None
+                } else {
+                    Some(path)
+                }
+            },
+        )
     }
 
     pub(crate) fn discriminant_property_info(
         &self,
         expr: NodeIndex,
-        _target: NodeIndex,
-    ) -> Option<(Vec<Atom>, bool, NodeIndex)> {
+        target: NodeIndex,
+    ) -> Option<(
+        Vec<Atom>,
+        bool,
+        NodeIndex,
+        Option<(Vec<Atom>, bool, NodeIndex)>,
+    )> {
         let expr = self.skip_parenthesized(expr);
         let _node = self.arena.get(expr)?;
 
@@ -972,7 +996,20 @@ impl<'a> FlowAnalyzer<'a> {
         let mut is_optional = false;
         let mut current = expr;
 
+        // Track relative path if target matches an intermediate node
+        let mut relative_path_info: Option<(Vec<Atom>, bool, NodeIndex)> = None;
+
         loop {
+            // CRITICAL: Check if CURRENT matches target BEFORE adding the next segment
+            // This ensures the relative path is from the target to the leaf
+            if self.is_matching_reference(current, target) {
+                // Found the target at an intermediate level
+                // Clone the current path for the relative path (from target to leaf)
+                let mut relative = path.clone();
+                relative.reverse();
+                relative_path_info = Some((relative, is_optional, current));
+            }
+
             let current_node = self.arena.get(current)?;
             let access = if current_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 self.arena.get_access_expr(current_node)?
@@ -1030,7 +1067,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // current is now the base (e.g., "action" in action.payload.kind)
-        Some((path, is_optional, current))
+        Some((path, is_optional, current, relative_path_info))
     }
 
     pub(crate) fn discriminant_comparison(
@@ -1039,26 +1076,84 @@ impl<'a> FlowAnalyzer<'a> {
         right: NodeIndex,
         target: NodeIndex,
     ) -> Option<(Vec<Atom>, TypeId, bool, NodeIndex)> {
-        if let Some((path, is_optional, base)) = self.discriminant_property_info(left, target)
+        eprintln!(
+            "DEBUG discriminant_comparison: left={}, right={}, target={}",
+            left.0, right.0, target.0
+        );
+
+        if let Some((full_path, is_optional, base, relative_info)) =
+            self.discriminant_property_info(left, target)
             && let Some(literal) = self.literal_type_from_node(right)
         {
-            // CRITICAL FIX: Only apply discriminant narrowing if we are narrowing the BASE object.
-            // If target is the property access itself (e.g. switch(obj.kind)),
-            // we should use literal comparison, not discriminant narrowing.
+            eprintln!(
+                "DEBUG discriminant_comparison: full_path={:?}, base={}, relative_info={:?}",
+                full_path,
+                base.0,
+                relative_info.is_some()
+            );
+
+            // Check if target matches an intermediate node (nested narrowing)
+            if let Some((rel_path, rel_optional, rel_base)) = relative_info {
+                // CRITICAL: If rel_path is empty, target is the leaf node
+                // In this case, we should use literal comparison, not discriminant narrowing
+                if !rel_path.is_empty() {
+                    eprintln!(
+                        "DEBUG discriminant_comparison: MATCHED relative - rel_path={:?}, rel_base={}",
+                        rel_path, rel_base.0
+                    );
+                    // For action.payload.kind === 'item' where target is action.payload:
+                    // - rel_path = ['kind']
+                    // - rel_base = action.payload
+                    // - This narrows action.payload based on the 'kind' property
+                    return Some((rel_path, literal, rel_optional, rel_base));
+                }
+                eprintln!(
+                    "DEBUG discriminant_comparison: rel_path is empty (target is leaf), falling through"
+                );
+            }
+
+            // Check if target matches the base (root narrowing)
             if self.is_matching_reference(base, target) {
-                return Some((path, literal, is_optional, base));
+                eprintln!("DEBUG discriminant_comparison: MATCHED base");
+                // For action.payload.kind === 'item' where target is action:
+                // - full_path = ['payload', 'kind']
+                // - base = action
+                // This narrows action based on the full path
+                return Some((full_path, literal, is_optional, base));
             }
         }
 
-        if let Some((path, is_optional, base)) = self.discriminant_property_info(right, target)
+        if let Some((full_path, is_optional, base, relative_info)) =
+            self.discriminant_property_info(right, target)
             && let Some(literal) = self.literal_type_from_node(left)
         {
-            // CRITICAL FIX: Only apply discriminant narrowing if we are narrowing the BASE object.
+            eprintln!(
+                "DEBUG discriminant_comparison (swapped): full_path={:?}, base={}, relative_info={:?}",
+                full_path,
+                base.0,
+                relative_info.is_some()
+            );
+
+            // Check if target matches an intermediate node (nested narrowing)
+            if let Some((rel_path, rel_optional, rel_base)) = relative_info {
+                // CRITICAL: If rel_path is empty, target is the leaf node
+                if !rel_path.is_empty() {
+                    eprintln!(
+                        "DEBUG discriminant_comparison (swapped): MATCHED relative - rel_path={:?}, rel_base={}",
+                        rel_path, rel_base.0
+                    );
+                    return Some((rel_path, literal, rel_optional, rel_base));
+                }
+            }
+
+            // Check if target matches the base (root narrowing)
             if self.is_matching_reference(base, target) {
-                return Some((path, literal, is_optional, base));
+                eprintln!("DEBUG discriminant_comparison (swapped): MATCHED base");
+                return Some((full_path, literal, is_optional, base));
             }
         }
 
+        eprintln!("DEBUG discriminant_comparison: NO MATCH");
         None
     }
 
