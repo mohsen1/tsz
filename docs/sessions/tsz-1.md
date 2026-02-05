@@ -2,6 +2,31 @@
 
 ## Completed Tasks
 
+### ✅ ASI (Automatic Semicolon Insertion) Fix - Completed 2026-02-05
+
+**Problem**: Variable declarations without semicolons followed by keywords caused false TS1005 "comma expected" errors:
+```typescript
+var x = 1
+const y = 2  // tsz: TS1005 ',' expected - WRONG!
+```
+
+**Root Cause** (`src/parser/state_statements.rs` lines 765-782):
+In `parse_variable_declaration_list`, after parsing a variable without a comma, the code checks if the next token could start another declaration. If so, it emits a comma error - but it didn't check for a preceding line break (ASI).
+
+**Fix Applied**:
+```rust
+// Added check for ASI before emitting comma error
+if can_start_next
+    && !self.scanner.has_preceding_line_break()  // NEW: ASI check
+    && !self.is_token(SyntaxKind::SemicolonToken)
+    // ...
+```
+
+**Conformance Impact**: 40.6% -> 41.8% (+152 tests, +1.2%)
+- **TS1005 extra errors: 972 -> 283** (-689 false positives!)
+
+---
+
 ### ✅ Lib Loading Target Respect Fix - Completed 2026-02-05
 
 **Problem**: After fixing cross-arena cache poisoning, conformance dropped because `tsz` was loading ES2015+ types even when `--target es5` was specified.
@@ -222,16 +247,46 @@ See detailed description at top of file.
 
 ---
 
-## Next Steps (Missing Diagnostics Focus)
+## Next Steps
 
-1. **TS2564 Property Initialization** (Next Priority):
-   - Refactor to use `FxHashSet` for performance
-   - Complete constructor flow graph analysis
-   - Handle multiple constructors and getter/setter properties
+### 1. Fix Binder Method Overload Issue (IMMEDIATE PRIORITY)
 
-2. **TS2454 Definite Assignment** (Deferred):
-   - Requires binder changes for module-level flow nodes
-   - Architectural complexity makes this lower priority
+**Problem**: TS2394 validation for method overloads doesn't work correctly because binder doesn't distinguish overload declarations from implementations.
+
+**Root Cause**: In `src/binder/state.rs`, `MethodDeclaration` handling likely doesn't check for presence of `body` to correctly mark overloads.
+
+**Impact**: Current TS2394 implementation reports TS2393 (Duplicate function implementation) instead of TS2394 for incompatible method overloads.
+
+**Action Items**:
+- Investigate `src/binder/state.rs` method declaration handling
+- Ensure overload declarations (no body) are correctly flagged
+- Verify fix by testing method overload TS2394 reporting
+
+**Note**: Use Gemini consultation for this fix even though it's in the binder.
+
+---
+
+### 2. TS2564 Property Initialization (NEXT MAJOR TASK)
+
+After fixing binder issue, proceed to TS2564:
+
+1. **Refactor to `FxHashSet`** for performance
+2. **Complete constructor CFG traversal**
+3. **Handle edge cases**:
+   - Multiple constructors (must assign in all)
+   - Properties with initializers
+   - Getter/setter properties
+
+**Approach**:
+- Ask Gemini Question 1: CFG walking strategy for property initialization
+- Implement in `src/checker/class_checker.rs`
+- Ask Gemini Question 2: Implementation review
+
+---
+
+### 3. TS2454 Definite Assignment (DEFERRED)
+
+Keep as low priority - requires significant binder architectural changes for module-level flow nodes.
    - Test with function overloads that have incompatible implementations
 
 2. **TS2564 Property Initialization**:
@@ -254,6 +309,46 @@ Based on architectural review, the highest-impact missing diagnostics that fit T
 1. Overload implementation validation (directly completes overload resolution work)
 2. TS2564 property initialization (class constructor flow analysis)
 3. TS2454 definite assignment (general flow analysis, but architecturally complex)
+
+---
+
+---
+
+## Investigation Results: Remaining TS1005 Issues (2026-02-05)
+
+After ASI fix, investigated remaining TS1005 errors. These are **parser gaps** that should be reported to TSZ-2 (Parser track):
+
+### 1. Object Shorthand with `!` Assertion
+```typescript
+const foo = { a! }  // tsc: TS1162, tsz: TS1128
+```
+Parser doesn't recognize definite assignment assertion in shorthand properties.
+
+### 2. Optional Method Syntax in Object Literals
+```typescript
+const bar = { a ? () { } }  // tsc: TS1255, tsz: TS1005
+```
+Parser doesn't recognize `?` as optional marker for methods.
+
+### 3. ES2022 String Import Specifiers
+```typescript
+import { "missing" as x } from "./module";  // Valid ES2022
+```
+Parser fails to parse string literal as import binding name.
+
+### 4. Reserved Words as Class Names
+```typescript
+class void {}  // tsc: TS1005, tsz: no error
+```
+Parser accepts `void` as class name, should reject.
+
+### 5. `await` in Async Arrow Default Parameters
+```typescript
+var foo = async (a = await => await) => {}  // tsc: TS1005, tsz: no error
+```
+Parser should reject `await` as parameter name in async context.
+
+**Recommendation**: These findings should be incorporated into TSZ-2 (Parser) session work.
 
 ---
 
