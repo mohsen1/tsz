@@ -1257,3 +1257,47 @@ Unions and intersections are already interned in canonical sorted order, achievi
 
 **Missing Enhancement**:
 The recursive `is_subtype_shallow` logic recommended by Gemini (for handling A & B as subtype of A) is NOT implemented. This would improve reduction but is not required for canonical forms.
+
+---
+
+### Task #30: Template Literal Type Subtyping 🚧 NEXT SESSION
+**Status**: 📋 Next Priority - Confirmed by Conformance Tests
+**Estimated Impact**: High (Modern TypeScript patterns)
+
+**Conformance Test Results** (2025-02-05):
+- Template literal tests: **10/19 passed (52.6%)**
+- Missing error codes: TS2304, TS2339, TS2345, TS2322, TS1125, TS1121, TS2552, TS5093, TS2367, TS2344
+- **This is a functional gap that needs implementation**
+
+**Gemini Guidance Received** (Question 1):
+
+**Files to Modify**:
+- `src/solver/subtype.rs`:
+  - `check_subtype_inner`: Add TemplateLiteral cases
+  - `check_literal_matches_template_literal`: Implement non-greedy matching
+  - `check_template_to_template_subtype`: New function for template-to-template
+  - `are_types_overlapping`: Add disjointness logic
+- `src/solver/infer.rs`:
+  - `infer_from_types`: Add template literal deconstruction
+
+**Implementation Approach**:
+1. **Non-greedy left-to-right matching** for literal against template
+2. **Template-to-template**: A <: B if all strings matched by A are also matched by B
+3. **Disjointness detection**: Different starting/ending text spans = disjoint
+4. **Intrinsic coercion**: number/bigint/boolean/null/undefined → their string names
+
+**Edge Cases**:
+- Empty strings (`${string}` matches "")
+- Union expansion (small unions → union of strings)
+- Intrinsic string types (Uppercase<T>, Lowercase<T>)
+- Recursion depth limits
+
+**Next Steps** (Two-Question Rule):
+1. ✅ Question 1 complete - received comprehensive guidance
+2. ⏭️ Write failing test in `src/solver/tests/template_literal_tests.rs`
+3. ⏭️ Implement `check_literal_matches_template_literal`
+4. ⏭️ Ask Gemini Question 2: Implementation review
+5. ⏭️ Implement remaining functions
+6. ⏭️ Test and commit
+
+**Implementation Complexity**: High - this is a multi-function task requiring careful attention to TypeScript's pattern matching semantics.
