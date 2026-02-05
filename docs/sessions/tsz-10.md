@@ -41,7 +41,18 @@ Per `NORTH_STAR.md` and the existing codebase:
 
 ### Task 1: Truthiness & Type-of Narrowing
 
-**Status**: Pending
+**Status**: 🔄 IN PROGRESS (Started 2026-02-05)
+
+**Gemini Consultation**: Asked for approach validation. Key findings:
+- Bugs from commit f2d4ae5d5 appear to already be fixed in current codebase
+- `narrow_by_typeof` (line 506) and `narrow_by_truthiness` (line 926) exist
+- Need to verify they handle edge cases correctly (any, unknown, null, NaN, 0n)
+
+**Current Approach**:
+1. Verify existing discriminant narrowing works for edge cases
+2. Implement/refine `typeof` narrowing
+3. Implement/refine truthiness narrowing
+4. Add comprehensive integration tests
 
 **Goal**: Implement narrowing for `typeof` and truthiness checks
 
