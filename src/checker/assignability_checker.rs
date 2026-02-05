@@ -250,17 +250,23 @@ impl<'a> CheckerState<'a> {
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
-        // TSZ-4: Debug logging to trace assignability checking
-        tracing::debug!("is_assignable_to: source={:?} target={:?}", source, target);
+        // TSZ-4: Debug logging to trace assignability checking (use eprintln for test visibility)
+        eprintln!(
+            "TSZ-4 DEBUG: is_assignable_to: source={:?} target={:?}",
+            source, target
+        );
 
         let env = self.ctx.type_env.borrow();
         let overrides = CheckerOverrideProvider::new(self, Some(&*env));
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
         self.ctx.configure_compat_checker(&mut checker);
 
-        tracing::debug!("Calling is_assignable_with_overrides...");
+        eprintln!("TSZ-4 DEBUG: Calling is_assignable_with_overrides...");
         let result = checker.is_assignable_with_overrides(source, target, &overrides);
-        tracing::debug!("is_assignable_with_overrides returned: {:?}", result);
+        eprintln!(
+            "TSZ-4 DEBUG: is_assignable_with_overrides returned: {:?}",
+            result
+        );
         trace!(
             source = source.0,
             target = target.0,

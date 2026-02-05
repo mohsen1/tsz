@@ -2547,6 +2547,34 @@ impl<'a> CheckerState<'a> {
                 None
             }
 
+            // TSZ-4: Handle Enum types for enum member property access (E.A)
+            NamespaceMemberKind::Enum(def_id) => {
+                // Resolve the DefId to a SymbolId and reuse the enum member lookup logic
+                let sym_id = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
+                let Some(sym_id) = sym_id else {
+                    return None;
+                };
+
+                let symbol = match self.ctx.binder.get_symbol(sym_id) {
+                    Some(symbol) => symbol,
+                    None => return None,
+                };
+
+                if symbol.flags & symbol_flags::ENUM == 0 {
+                    return None;
+                }
+
+                // Check direct exports first
+                if let Some(exports) = symbol.exports.as_ref()
+                    && let Some(member_id) = exports.get(property_name)
+                {
+                    return Some(self.get_type_of_symbol(member_id));
+                }
+
+                // Fallback to enum_member_type_for_name
+                self.enum_member_type_for_name(sym_id, property_name)
+            }
+
             NamespaceMemberKind::Other => None,
         }
     }
@@ -2694,6 +2722,12 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                false
+            }
+
+            // TSZ-4: Handle Enum types - enum members are value members, not type-only
+            NamespaceMemberKind::Enum(_def_id) => {
+                // Enum members are always value members, never type-only
                 false
             }
 
