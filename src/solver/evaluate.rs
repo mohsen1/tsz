@@ -13,6 +13,7 @@
 
 use crate::solver::TypeDatabase;
 use crate::solver::db::QueryDatabase;
+use crate::solver::def::DefId;
 use crate::solver::instantiate::instantiate_generic;
 use crate::solver::subtype::{NoopResolver, TypeResolver};
 use crate::solver::types::*;
@@ -60,6 +61,9 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     no_unchecked_indexed_access: bool,
     cache: FxHashMap<TypeId, TypeId>,
     visiting: FxHashSet<TypeId>,
+    /// DefId-level cycle detection for expansive recursion
+    /// Prevents infinite expansion of recursive type aliases like `type T<X> = T<Box<X>>`
+    visiting_defs: FxHashSet<DefId>,
     depth: u32,
     /// Total number of evaluate calls (iteration limit)
     total_evaluations: u32,
@@ -120,6 +124,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
             visiting: FxHashSet::default(),
+            visiting_defs: FxHashSet::default(),
             depth: 0,
             total_evaluations: 0,
             depth_exceeded: false,
@@ -137,6 +142,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
             visiting: FxHashSet::default(),
+            visiting_defs: FxHashSet::default(),
             depth: 0,
             total_evaluations: 0,
             depth_exceeded: false,
@@ -412,11 +418,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // If the base is a Lazy(DefId), try to resolve and instantiate (Phase 4.3)
         if let TypeKey::Lazy(def_id) = base_key {
+            // =======================================================================
+            // DEFD-LEVEL CYCLE DETECTION (before resolution!)
+            // =======================================================================
+            // This catches expansive recursion in type aliases like `type T<X> = T<Box<X>>`
+            // that produce new TypeIds on each evaluation, bypassing the `visiting` set.
+            //
+            // We check if we're already visiting this DefId. If so, we return early
+            // to prevent infinite expansion. This implements coinductive semantics:
+            // assume the type expands consistently, don't expand infinitely.
+            // =======================================================================
+            if self.visiting_defs.contains(&def_id) {
+                // We're in a cycle at the DefId level - return the application as-is
+                // This prevents infinite expansion of recursive type aliases
+                return self.interner.application(app.base, app.args.clone());
+            }
+
+            // Mark this DefId as being visited
+            self.visiting_defs.insert(def_id);
+
             // Try to get the type parameters for this DefId
             let type_params = self.resolver.get_lazy_type_params(def_id);
             let resolved = self.resolver.resolve_lazy(def_id, self.interner);
 
-            if let Some(type_params) = type_params {
+            let result = if let Some(type_params) = type_params {
                 // Resolve the base type to get the body
                 if let Some(resolved) = resolved {
                     // Pre-expand type arguments that are TypeQuery or Application
@@ -426,7 +451,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let instantiated =
                         instantiate_generic(self.interner, resolved, &type_params, &expanded_args);
                     // Recursively evaluate the result
-                    return self.evaluate(instantiated);
+                    self.evaluate(instantiated)
+                } else {
+                    self.interner.application(app.base, app.args.clone())
                 }
             } else if let Some(resolved) = resolved {
                 // Fallback: try to extract type params from the resolved type's properties
@@ -441,13 +468,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &extracted_params,
                         &expanded_args,
                     );
-                    return self.evaluate(instantiated);
+                    self.evaluate(instantiated)
+                } else {
+                    self.interner.application(app.base, app.args.clone())
                 }
-            }
-        }
+            } else {
+                self.interner.application(app.base, app.args.clone())
+            };
 
-        // If we can't expand, return the original application
-        self.interner.application(app.base, app.args.clone())
+            // Remove from visiting_defs after evaluation
+            self.visiting_defs.remove(&def_id);
+
+            result
+        } else {
+            // If we can't expand, return the original application
+            self.interner.application(app.base, app.args.clone())
+        }
     }
 
     /// Expand type arguments by evaluating any that are TypeQuery or Application.
