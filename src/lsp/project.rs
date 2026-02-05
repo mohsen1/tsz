@@ -1519,6 +1519,28 @@ impl Project {
         result
     }
 
+    /// Get candidate files that might contain references to a symbol.
+    ///
+    /// This uses the SymbolIndex for O(1) lookup, turning cross-file searches
+    /// from O(N) where N = all files to O(M) where M = files containing the symbol.
+    ///
+    /// # Arguments
+    /// * `symbol_name` - The symbol name to search for
+    ///
+    /// # Returns
+    /// A list of file paths that contain references to the symbol.
+    /// Falls back to all files if the index is empty (e.g., for wildcard re-exports).
+    pub(crate) fn get_candidate_files_for_symbol(&self, symbol_name: &str) -> Vec<String> {
+        let candidate_files = self.symbol_index.get_files_with_symbol(symbol_name);
+        if candidate_files.is_empty() {
+            // Fallback to all files if index is empty
+            // This handles wildcard re-exports (export * from './mod')
+            self.files.keys().cloned().collect()
+        } else {
+            candidate_files.into_iter().collect()
+        }
+    }
+
     /// Go to definition within a single file.
     pub fn get_definition(&mut self, file_name: &str, position: Position) -> Option<Vec<Location>> {
         let start = Instant::now();
