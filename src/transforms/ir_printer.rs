@@ -157,6 +157,17 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
+    /// Create an IR printer with both arena and source text for ASTRef emission
+    pub fn with_arena_and_source(arena: &'a NodeArena, source_text: &'a str) -> Self {
+        Self {
+            output: String::with_capacity(4096),
+            indent_level: 0,
+            indent_str: "    ",
+            arena: Some(arena),
+            source_text: Some(source_text),
+        }
+    }
+
     /// Set the source text for ASTRef emission
     pub fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
@@ -869,10 +880,8 @@ impl<'a> IRPrinter<'a> {
             }
             IRNode::ASTRef(idx) => {
                 // Emit AST node by using its source text.
-                // node.pos includes leading trivia, and node.end may extend past the
-                // node's actual content into the next sibling's trivia or the parent
-                // block's closing brace. We skip leading trivia and find the actual
-                // statement end by scanning for ';' or balanced '}' at depth 0.
+                // For expressions, just emit the trimmed text directly.
+                // For statements, we need to find the statement end.
                 if let Some(arena) = self.arena
                     && let Some(text) = self.source_text
                     && let Some(node) = arena.get(*idx)
@@ -881,19 +890,16 @@ impl<'a> IRPrinter<'a> {
                     let end = std::cmp::min(node.end as usize, text.len());
                     if start < end {
                         let raw = &text[start..end];
-                        // Skip leading whitespace/trivia
-                        let trimmed = raw.trim_start_matches(|c: char| c.is_whitespace());
+                        // Trim both leading and trailing whitespace for expressions
+                        let trimmed = raw.trim();
                         if !trimmed.is_empty() {
-                            let stmt_end = find_statement_end(trimmed);
-                            let result = &trimmed[..stmt_end];
-                            if !result.is_empty() {
-                                self.write(result);
-                                return;
-                            }
+                            self.write(trimmed);
+                            return;
                         }
                     }
                 }
-                self.write("/* ASTRef */");
+                // Fallback: emit placeholder
+                self.write("undefined");
             }
 
             // CommonJS Module Transform Specific
