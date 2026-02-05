@@ -639,6 +639,56 @@ function area(shape: Shape) {
 
 All CFA and narrowing features are now implemented and working correctly.
 The compiler now matches TypeScript's control flow analysis behavior.
+
+---
+
+## Recommended Follow-up Tasks (From Gemini Consultation)
+
+### Priority 1: Assertion Functions Integration
+**File**: `src/checker/control_flow_narrowing.rs`
+**Function**: `handle_call_iterative`
+
+Issue: Assertion functions (`asserts x is T`) currently only work in conditionals. In `tsc`, they narrow the entire subsequent flow of the current block.
+
+Task: Update `handle_call_iterative` to detect assertion calls and update `current_flow` for all subsequent statements in the block.
+
+---
+
+### Priority 2: Bidirectional Narrowing for References
+**File**: `src/checker/control_flow_narrowing.rs`
+**Function**: `narrow_by_binary_expr`
+
+Issue: Current logic handles `x === "literal"` but not `x === y` where both are references. `tsc` supports bidirectional narrowing - if `y` is narrowed to `string`, then `x` should also be narrowed.
+
+Task: When `is_strict` and both sides are references, fetch the flow-type of the "other" side and apply it as a guard to the target.
+
+---
+
+### Priority 3: Deeply Nested Discriminants
+**File**: `src/checker/control_flow_narrowing.rs`
+**Function**: `discriminant_property_info`
+
+Issue: Real-world patterns (Redux) use `action.payload.kind === 'type'`. Current implementation only handles immediate parent.
+
+Task: Extend to recursively walk `PropertyAccessExpression` nodes to build `property_path: Vec<Atom>` (e.g., `["payload", "kind"]`).
+
+---
+
+### Edge Cases to Investigate
+
+1. **Zombie Freshness**: Check if narrowed fresh literals maintain `ObjectFlags::FRESH_LITERAL`
+2. **Truthiness of 0 and ""**: Verify `0` and `""` are correctly excluded from unions
+3. **Narrowing `any`**: `typeof` check on `any` should narrow to the specific type
+
+---
+
+## Migration to Next Session
+
+This session (tsz-10) is **COMPLETE**. The recommended follow-up tasks can be:
+1. Created as a new session (tsz-11, tsz-12, etc.)
+2. Or moved to the existing session files if they align with current work
+
+All code has been committed and pushed to `origin/main`.
 **Status**: ⏸️ DEFERRED (after Phase 2)
 
 **Description**: Check that switches cover all union members.
