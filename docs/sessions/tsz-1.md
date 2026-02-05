@@ -1217,3 +1217,43 @@ Ensure `interface A { next: A }` and `interface B { next: B }` are recognized as
 - Essential for true structural soundness across file boundaries
 - Requires detecting isomorphic graphs in recursive types
 - Most challenging North Star requirement
+
+---
+
+### Task #33: Intersection and Union Order Normalization ✅ ALREADY IMPLEMENTED (2025-02-05)
+**Status**: ✅ Feature Already Complete (2025-02-05)
+**Priority**: Critical for North Star (O(1) type equality)
+
+**Investigation Findings**:
+Commutative normalization is **ALREADY FULLY IMPLEMENTED** in `src/solver/intern.rs`.
+
+**Existing Implementation**:
+
+1. **normalize_union** (Lines 852-893):
+   - ✅ Sorts all members by TypeId (line 854)
+   - ✅ Deduplicates (line 855)
+   - ✅ Handles special cases (ERROR, NEVER, ANY, UNKNOWN)
+   - ✅ Removes `never` from unions
+   - ✅ Absorbs literals into primitives
+
+2. **normalize_intersection** (Lines 1088-1138):
+   - ✅ Detects callables vs structural types
+   - ✅ Separates callables (preserves order for overloads)
+   - ✅ Sorts structural types (canonical form)
+   - ✅ Deduplicates both groups separately
+   - ✅ Merges structural + callables (structural first)
+
+**Implementation Quality**:
+The implementation is **excellent** and follows best practices:
+- Fast path for intersections without callables (line 1096-1099)
+- SmallVec for stack allocation (line 1103)
+- O(1) deduplication using FxHashSet (line 1122-1123)
+- Correctly handles overload ordering (line 1125-1127)
+
+**Test Status**: All 53 intern tests pass
+
+**North Star Impact**:
+Unions and intersections are already interned in canonical sorted order, achieving O(1) type equality for commutative types.
+
+**Missing Enhancement**:
+The recursive `is_subtype_shallow` logic recommended by Gemini (for handling A & B as subtype of A) is NOT implemented. This would improve reduction but is not required for canonical forms.
