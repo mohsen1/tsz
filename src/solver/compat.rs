@@ -16,22 +16,33 @@ use crate::solver::TypeInterner;
 // =============================================================================
 
 /// Visitor to extract object shape ID from types.
-struct ShapeExtractor<'a> {
+struct ShapeExtractor<'a, R: TypeResolver> {
     db: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    visiting: rustc_hash::FxHashSet<TypeId>,
 }
 
-impl<'a> ShapeExtractor<'a> {
-    fn new(db: &'a dyn TypeDatabase) -> Self {
-        Self { db }
+impl<'a, R: TypeResolver> ShapeExtractor<'a, R> {
+    fn new(db: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
+        Self {
+            db,
+            resolver,
+            visiting: rustc_hash::FxHashSet::default(),
+        }
     }
 
     /// Extract shape from a type, returning None if not an object type.
     fn extract(&mut self, type_id: TypeId) -> Option<u32> {
-        self.visit_type(self.db, type_id)
+        if !self.visiting.insert(type_id) {
+            return None; // Cycle detected
+        }
+        let result = self.visit_type(self.db, type_id);
+        self.visiting.remove(&type_id);
+        result
     }
 }
 
-impl<'a> TypeVisitor for ShapeExtractor<'a> {
+impl<'a, R: TypeResolver> TypeVisitor for ShapeExtractor<'a, R> {
     type Output = Option<u32>;
 
     fn visit_intrinsic(&mut self, _kind: crate::solver::types::IntrinsicKind) -> Self::Output {
@@ -48,6 +59,27 @@ impl<'a> TypeVisitor for ShapeExtractor<'a> {
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         Some(shape_id)
+    }
+
+    fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+        let def_id = crate::solver::def::DefId(def_id);
+        if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.db) {
+            return self.extract(resolved);
+        }
+        None
+    }
+
+    fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
+        let symbol_ref = crate::solver::types::SymbolRef(symbol_ref);
+        // Phase 3.4: Prefer DefId resolution if available
+        if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
+            return self.visit_lazy(def_id.0);
+        }
+        #[allow(deprecated)]
+        if let Some(resolved) = self.resolver.resolve_ref(symbol_ref, self.db) {
+            return self.extract(resolved);
+        }
+        None
     }
 
     fn default_output() -> Self::Output {
@@ -473,7 +505,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
-        let mut extractor = ShapeExtractor::new(self.interner);
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
 
         let target_shape_id = match extractor.extract(target) {
             Some(id) => id,
@@ -511,7 +543,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
-        let mut extractor = ShapeExtractor::new(self.interner);
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
         let mut has_weak_member = false;
 
         for member in members.iter() {
@@ -561,7 +593,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 .all(|member| self.violates_weak_type_with_target_props(*member, target_props));
         }
 
-        let mut extractor = ShapeExtractor::new(self.interner);
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
         let source_shape_id = match extractor.extract(source) {
             Some(id) => id,
             None => return false,
@@ -603,7 +635,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Use visitor for Object types
-        let mut extractor = ShapeExtractor::new(self.interner);
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
         let source_shape_id = match extractor.extract(source) {
             Some(id) => id,
             None => return false,
@@ -825,7 +857,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Use visitor for Object types
-        let mut extractor = ShapeExtractor::new(self.interner);
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
         let shape_id = extractor.extract(type_id)?;
         let shape = self
             .interner
