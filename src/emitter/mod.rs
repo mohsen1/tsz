@@ -1248,9 +1248,6 @@ impl<'a> Printer<'a> {
 
             // Function expression
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                if std::env::var("TSZ_DEBUG_EMIT").is_ok() {
-                    self.write("/* DEBUG FUNCTION_EXPRESSION */");
-                }
                 self.emit_function_expression(node, idx);
             }
 

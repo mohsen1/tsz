@@ -36,24 +36,15 @@ impl<'a> Printer<'a> {
         // 2. OR if block has a single simple return statement (TypeScript behavior)
         let is_single_statement = block.statements.nodes.len() == 1;
 
-        if std::env::var("TSZ_DEBUG_EMIT").is_ok() {
-            eprintln!(
-                "DEBUG emit_block: stmt_count={}, is_single_line={}",
-                is_single_statement,
-                self.is_single_line(node)
-            );
-        }
+        // Check if it's a simple return statement
+        let is_simple_return =
+            is_single_statement && self.is_simple_return_statement(block.statements.nodes[0]);
 
-        let should_emit_single_line = is_single_statement
-            && (self.is_single_line(node)
-                || self.is_simple_return_statement(block.statements.nodes[0]));
-
-        if std::env::var("TSZ_DEBUG_EMIT").is_ok() {
-            eprintln!(
-                "DEBUG emit_block: should_emit_single_line={}",
-                should_emit_single_line
-            );
-        }
+        // Emit single-line if:
+        // 1. Source was single-line OR
+        // 2. It's a simple return statement (TypeScript behavior for callbacks)
+        let should_emit_single_line =
+            is_single_statement && (self.is_single_line(node) || is_simple_return);
 
         if should_emit_single_line {
             self.write("{ ");

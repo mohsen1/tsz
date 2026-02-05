@@ -427,11 +427,6 @@ impl<'a> Printer<'a> {
         let param_transforms = self.emit_function_parameters_es5(&func.parameters.nodes);
         self.write(") ");
 
-        // DEBUG MARKER
-        if std::env::var("TSZ_DEBUG_EMIT").is_ok() {
-            self.write("/* DEBUG es5_helpers */");
-        }
-
         // Emit body - check if it's a simple single-statement body
         let body_node = self.arena.get(func.body);
         let is_simple_body = if let Some(body) = body_node {
