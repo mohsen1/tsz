@@ -315,6 +315,50 @@ Implemented project-wide Go to Implementation with transitive search support.
 2. **Heritage-Aware Rename** - Update `Project::get_rename_edits` to handle inheritance hierarchies
 3. **Unify find_references with Pool Scan** - Use `symbol_index.get_files_with_symbol()` for O(1) filtering
 
+**Implementation Notes for Heritage-Aware References**:
+
+To implement Task #1 (Upward/Downward Reference Discovery), the following approach is needed in `src/lsp/project_operations.rs`:
+
+```rust
+// After resolving the target symbol at position (around line 657):
+let symbol = file.binder().symbols.get(symbol_id)?;
+
+// Check if this is a member symbol (property, method, constructor, accessor)
+use crate::binder::symbol_flags;
+let is_member = symbol.has_any_flags(
+    symbol_flags::PROPERTY |
+    symbol_flags::METHOD |
+    symbol_flags::CONSTRUCTOR |
+    symbol_flags::GET_ACCESSOR |
+    symbol_flags::SET_ACCESSOR
+);
+
+if is_member && symbol.parent != SymbolId::NONE {
+    // This is a member - get parent class/interface name
+    let parent_symbol = file.binder().symbols.get(symbol.parent)?;
+    let parent_name = parent_symbol.escaped_name.clone();
+
+    // Find all files that extend/implement the parent
+    let derived_files = self.symbol_index.get_files_with_heritage(&parent_name);
+
+    // For each derived file, search for references to the member
+    for derived_file_path in derived_files {
+        let derived_file = self.files.get(&derived_file_path);
+        if let Some(file) = derived_file {
+            // Find the corresponding class/interface in this file
+            // Then search for references to the member within that class
+            // This requires matching the member by name and type
+        }
+    }
+}
+```
+
+**Key Challenges**:
+- **Member Matching**: When finding `Base.method` references, derived classes might override it. Need to match by name, not by symbol ID.
+- **This/Super References**: References to `this.method()` or `super.method()` need special handling.
+- **Private Identifiers**: Private members (`#field`) are strictly class-local and should NOT be found across files.
+- **Structural Typing**: TypeScript's structural typing means objects can implement interfaces without explicit `implements` clauses. This requires full type checking (out of scope for LSP-only session).
+
 **Task Status Updates**:
 - ✅ **Task #27 (Cross-File Go to Implementation)** - COMPLETE (consolidated as Tasks #29 and #30)
 - ❌ **Task #26 (Type-aware reference filtering)** - ABANDONED per Gemini guidance
