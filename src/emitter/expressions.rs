@@ -145,6 +145,20 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // If the inner expression is a type assertion/as/satisfies expression,
+        // the parens were only needed for the TS syntax (e.g., `(<Type>x).foo`).
+        // In JS emit, the type assertion is stripped, making the parens unnecessary.
+        if let Some(inner) = self.arena.get(paren.expression) {
+            if inner.kind == syntax_kind_ext::TYPE_ASSERTION
+                || inner.kind == syntax_kind_ext::AS_EXPRESSION
+                || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            {
+                // Emit the inner expression directly, without parens
+                self.emit(paren.expression);
+                return;
+            }
+        }
+
         self.write("(");
         self.emit(paren.expression);
         self.write(")");
@@ -202,6 +216,9 @@ impl<'a> Printer<'a> {
 
         // ES5 computed/spread lowering is handled via TransformDirective::ES5ObjectLiteral.
 
+        // Check if source had a trailing comma after the last element
+        let has_trailing_comma = self.has_trailing_comma_in_source(node, &obj.elements.nodes);
+
         // Preserve single-line formatting from source
         if self.is_single_line(node) || obj.elements.nodes.len() == 1 {
             self.write("{ ");
@@ -219,7 +236,7 @@ impl<'a> Printer<'a> {
             self.increase_indent();
             for (i, &prop) in obj.elements.nodes.iter().enumerate() {
                 self.emit(prop);
-                if i < obj.elements.nodes.len() - 1 {
+                if i < obj.elements.nodes.len() - 1 || has_trailing_comma {
                     self.write(",");
                 }
                 self.write_line();

@@ -136,7 +136,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::diagnostic_codes;
-        
+
         use crate::solver::{CallEvaluator, CallResult, CallableShape, CompatChecker};
 
         let Some(node) = self.ctx.arena.get(idx) else {
