@@ -19,6 +19,46 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 
 ## Progress Log
 
+### 2025-02-05 Session 4: Discovered IR Code Path (BREAKTHROUGH!)
+
+**THE REAL CODE PATH:**
+Callback functions in ES5 class methods are emitted via the **IR (Intermediate Representation)** path, NOT via the regular statement/block emission!
+
+**Discovery Process:**
+1. Initially tried fixing `emit_block` in `src/emitter/statements.rs` - didn't work
+2. Added debug markers - they didn't appear in output
+3. Traced through the code and found that classes use `ClassES5Emitter`
+4. `ClassES5Emitter` transforms classes to IR and uses `IRPrinter` to emit
+5. The callback function bodies are emitted by `IRPrinter::emit_function_expr` in `src/transforms/ir_printer.rs`
+
+**Fix Implemented:**
+Modified `IRPrinter::emit_function_expr` (line 327) to detect single-return anonymous functions and emit them as single-line:
+```rust
+let is_simple_return = body.len() == 1
+    && matches!(&body[0], IRNode::ReturnStatement(Some(_)));
+let should_be_single_line = *is_expression_body || is_source_single_line
+    || (name.is_none() && is_simple_return);
+```
+
+**Current Issue:**
+The fix makes BOTH callbacks AND outer methods single-line because both are anonymous in the IR.
+- Callback: `function (val) { return val.isSunk; }` ✓ (correctly single-line)
+- Method: `Board.prototype.allShipsSunk = function () { return ... };` ✗ (should be multi-line)
+
+Both are anonymous in the IR, so `name.is_none()` is true for both. Need a better heuristic to distinguish them.
+
+**Test Result:** Still 14.3% pass rate (same as before), but with different formatting.
+
+**Commit:** 245c560a1
+
+**Next Steps:**
+1. Find a way to distinguish callbacks from methods in the IR
+   - Check if function body contains a call expression?
+   - Use nesting context?
+   - Check if assigned to property vs used as argument?
+2. Alternative: Fix `body_source_range` detection in the transformer
+3. Consider reverting to focusing on structural issues instead of formatting (per Gemini's recommendation)
+
 ### 2025-02-05 Session 1: Initial Work
 
 #### Fix 1: Test Runner Timeout (RESOLVED)
