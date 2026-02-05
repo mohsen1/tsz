@@ -76,7 +76,26 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
 - All implementations reviewed by Gemini Pro (identified and fixed critical bugs)
 - All changes committed and pushed to origin
 
-**🎯 Current Focus: Moving enum comparison logic from Checker to Solver (Priority 1 per Gemini session redefinition)**
+**🎯 Current Focus: Investigating enum_assignability_override removal (Priority 1)**
+
+**⚠️ Blocking Issue Found (2026-02-05):**
+Attempted to remove `enum_assignability_override` from Checker (per Gemini's Approach A recommendation), but this broke enum tests because:
+
+1. **Problem**: Checker's enum logic distinguishes between "enum type E" vs "enum member E.A" using symbol flags (`symbol_flags::ENUM` vs `symbol_flags::ENUM_MEMBER`)
+2. **Why it matters**: `number` IS assignable to enum type `E` but NOT assignable to enum member `E.A`
+3. **Solver limitation**: `CompatChecker.enum_assignability_override` doesn't have access to symbol flags through TypeResolver
+4. **Test failure**: `test_number_to_numeric_enum_type` expects `let x: E = 1` to be valid, but removing Checker's override breaks this
+
+**Code Analysis:**
+- Checker's logic (lines 338-375): Uses `get_symbol_globally()` to check symbol flags
+- Solver's logic (compat.rs:1265-1280): Returns `None` for numeric enums, delegates to SubtypeChecker
+- SubtypeChecker doesn't distinguish enum type vs member without flag access
+
+**Pending Question:**
+Should we:
+A) Add symbol flag access to Solver's TypeResolver?
+B) Refactor Checker's enum logic to use Solver API helpers (without removing it)?
+C) Enhance Solver to handle enum type vs member distinction differently?
 
 ### Step 2: Refactor Primitives (Low Risk)
 Target: Simple type identity checks
