@@ -5717,8 +5717,9 @@ fn test_circular_extends_three_way_with_one_lower_bound() {
     assert_eq!(results[2], (v_name, TypeId::BOOLEAN));
     // U extends V, so U gets boolean through propagation
     assert_eq!(results[1], (u_name, TypeId::BOOLEAN));
-    // T extends U, but propagation stops at one level in current impl
-    assert_eq!(results[0], (t_name, TypeId::UNKNOWN));
+    // T extends U, and with fixed-point propagation T also gets boolean
+    // (previous impl limitation: propagation stopped at one level, T was UNKNOWN)
+    assert_eq!(results[0], (t_name, TypeId::BOOLEAN));
 }
 
 #[test]
@@ -5799,10 +5800,10 @@ fn test_circular_extends_with_literal_types() {
     let results = ctx.resolve_all_with_constraints().unwrap();
 
     assert_eq!(results.len(), 2);
-    // T gets string (simplified from union of "hello" | "world")
+    // Both T and U get string (widened from union of "hello" | "world")
+    // In a cycle with conflicting literals, both unify to the common primitive type
     assert_eq!(results[0], (t_name, TypeId::STRING));
-    // U gets its direct lower bound
-    assert_eq!(results[1], (u_name, world));
+    assert_eq!(results[1], (u_name, TypeId::STRING));
 }
 
 #[test]
