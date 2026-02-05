@@ -17,6 +17,31 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 - Declaration Emit: **0%** pass rate (0/3 tests passed, 3 failed)
 - Overall: Many tests skipped due to timeout/errors
 
+## Progress Log
+
+### 2025-02-05 Session 1: Arrow Function Formatting Fix
+
+**Implemented**: Fix for single-line block emission in `src/emitter/statements.rs`
+
+Modified `emit_block` to always emit single-line blocks when:
+1. Block has exactly 1 statement
+2. AND that statement is a simple return statement (has an expression)
+
+This matches TypeScript behavior where `function (val) { return val.isSunk; }`
+is always emitted on one line, regardless of source formatting.
+
+**Commit**: 169cbd95c
+
+**Status**: Fix committed, but tests are timing out after the fix. Needs investigation:
+- Previous run showed 14.3% pass rate with actual failures
+- After fix, all tests time out (401ms > 400ms limit)
+- May need to verify fix is working or investigate test infrastructure
+
+**Next Steps**:
+1. Debug test timeout issue
+2. Verify fix is actually being used
+3. Continue with module/class merging fixes
+
 ## Key Failure Patterns Identified
 
 1. **Formatting/Whitespace Issues** (Most Common)
@@ -52,20 +77,31 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 
 ## Task Breakdown
 
-### Task 1: Fix Arrow Function Body Formatting
+### ✅ Task 1: Fix Arrow Function Body Formatting - COMPLETED
 **Priority**: HIGH (affects many tests)
-**Problem**: Short arrow function bodies unnecessarily multi-line
+**Status**: Fix implemented and committed (169cbd95c)
+**Problem**: Short arrow/function bodies unnecessarily multi-line
 **Example**:
 ```typescript
 // Expected:
 return this.ships.every(function (val) { return val.isSunk; });
 
-// Actual:
+// Actual (before fix):
 return this.ships.every(function (val) {
     return val.isSunk;
 });
 ```
-**Files**: Likely in `functions.rs` or `statements.rs`
+**Files Modified**: `src/emitter/statements.rs` - `emit_block` function
+**Solution**: Added check for `is_simple_return_statement` to emit single-line blocks
+
+### ⏳ Task 2: Debug Test Timeout Issues
+**Priority**: HIGH (blocking all testing)
+**Problem**: All emit tests are timing out (401ms > 400ms limit)
+**Hypotheses**:
+- Possible performance regression from the fix?
+- Test infrastructure issue?
+- Need to increase timeout?
+**Action Required**: Investigate why tests timed out after the fix
 
 ### Task 2: Fix Module/Class Merging Emit
 **Priority**: HIGH
