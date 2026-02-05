@@ -306,7 +306,33 @@ This explains why enum_assignability_override is never triggered for type annota
 **Resolution**:
 Need to ensure `TypeLowering.lower_type()` preserves `TypeKey::Enum` wrappers for enum member type references, OR modify the type resolution path to use `compute_type_of_symbol` for enum members.
 
-**Status**: Investigation complete. Root cause identified. Fix requires understanding `TypeLowering` behavior.
+**Status**: Investigation complete. Root cause identified.
+
+**Gemini Recommendation**: Wait for rate limit recovery before implementing.
+- Modifying `src/solver/lower.rs` without Gemini review has 100% failure rate per AGENTS.md
+- Enum nominality is notoriously tricky - high regression risk
+- Wait time (15-60 min) is faster than debugging broken type system
+
+**Prepared Gemini Prompt** (for when rate limit resets):
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/lower.rs --include=src/checker/state_type_resolution.rs "
+I need to fix Enum Nominality in TypeLowering (TSZ-4).
+Problem: TypeLowering unwraps Enum Members to primitives for type annotations (e.g., 'let x: E.B'), while property access ('E.A') preserves the TypeKey::Enum wrapper. This causes assignability mismatches.
+
+Planned approach: Modify src/solver/lower.rs to ensure that when lowering a type reference to an enum member, we return the interned TypeKey::Enum instead of the underlying primitive.
+
+Is this the right approach? Specifically:
+1) Which function in lower.rs should I target (lower_type_reference or a specific member handler)?
+2) How should I handle the underlying primitive for assignability (should the Solver handle the 'unwrapping' during subtype checks instead of during lowering)?
+3) Are there edge cases with 'const enum' or 'string enums' I'm missing?
+"
+```
+
+**Next Steps** (when rate limit resets):
+1. Ask Gemini the pre-implementation question above
+2. Implement the fix in `src/solver/lower.rs` per Gemini's guidance
+3. Run tests to validate fix
+4. Ask Gemini for POST-implementation review
 
 ### Commit: `f1542996b` - feat(tsz-4): implement enum member nominal typing (WIP)
 
