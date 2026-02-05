@@ -133,20 +133,28 @@ Wrapped shared state in `Rc<RefCell<...>>` so `clone()` shares the underlying da
 
 #### Task 2.2: Implement Lazy Member Instantiation
 **File**: `src/solver/operations_property.rs`
-**Function**: `resolve_application_property`
+**Function**: `resolve_application_property` (Callable case)
 
-**New Logic**:
+**Status**: ✅ COMPLETE (2026-02-05)
+
+**Implementation**:
 1. Find property in CallableShape (e.g., `map`)
 2. Get TypeSubstitution from Application args → type params
-3. Call `instantiate_type` **ONLY on `prop.type_id`** (not the whole Callable)
-4. This avoids recursing into other 37 Array methods
+3. Call `instantiate_type_with_infer` ONLY on `prop.type_id` (not the whole Callable)
+4. This avoids recursing into other 37+ Array methods
 
 **Key Insight**: Don't instantiate the entire Callable. Instantiate just the property type we found.
 
 #### Task 2.3: Handle `this` Types
 **File**: `src/solver/operations_property.rs`
-**Issue**: Array methods return `this` or `this[]`
-**Fix**: Use `substitute_this_type` from `instantiate.rs` before returning result
+**Function**: `resolve_application_property`
+
+**Status**: ✅ COMPLETE (2026-02-05)
+
+**Implementation**:
+- Added `substitute_this_type` call after property instantiation
+- Handles methods that return `this` or `this[]`
+- Substitutes `ThisType` with the actual Application type (e.g., `T[]`)
 
 ### Potential Pitfalls
 1. **Circular Refs**: `Array.map` returns `U[]` which is another Array Application. Ensure `PropertyAccessGuard` prevents cycles.
