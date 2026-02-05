@@ -143,6 +143,20 @@ Integrated `SymbolIndex` into `Project` for O(1) auto-import candidate lookup.
 
 **Value**: Auto-import completions now scale efficiently to large projects for the common case (named exports).
 
+### Workspace Symbols (2026-02-05)
+**Status**: ✅ COMPLETE - Commit 93e197ef8
+
+Added `Project::get_workspace_symbols()` method to enable the `workspace/symbol` LSP request (Cmd+T / Ctrl+T in editors).
+
+**Implementation** (`src/lsp/project.rs`):
+- Added `get_workspace_symbols(query: &str) -> Vec<SymbolInformation>` method
+- Uses existing `WorkspaceSymbolsProvider` and `SymbolIndex`
+- O(S) search where S = number of unique symbols across project
+- Results sorted by relevance: exact > prefix > substring (case-insensitive)
+- Maximum 100 results returned
+
+**Value**: Users can now instantly search across all symbols in their project (functions, classes, interfaces, constants, etc.) using the SymbolIndex that was already integrated.
+
 ## Session Status
 
 **Status**: 🔄 ACTIVE - Ready for next feature
@@ -152,11 +166,12 @@ Integrated `SymbolIndex` into `Project` for O(1) auto-import candidate lookup.
 - ✅ Auto-Import Completions (with additionalTextEdits and O(1) lookup for named exports)
 - ✅ JSX Linked Editing
 - ✅ SymbolIndex integration (O(1) auto-import candidate lookup)
+- ✅ Workspace Symbols (project-wide symbol search via Cmd+T / Ctrl+T)
 
 **Next Options** (per Gemini consultation):
-1. **Implement Workspace Symbols** - Use existing SymbolIndex + WorkspaceSymbolsProvider to enable `workspace/symbol` LSP request
-2. **Add Prefix Matching** - Suggest completions for partial matches (e.g., `Lis` → `List`)
-3. **Index Transitive Re-exports** - Enhance SymbolIndex to track wildcard reexports (`export * from './mod'`)
+1. **Add Prefix Matching** - Suggest completions for partial matches (e.g., `Lis` → `List`)
+2. **Index Transitive Re-exports** - Enhance SymbolIndex to track wildcard reexports (`export * from './mod'`)
+3. **Deep Indexing** - Enhance SymbolIndex to track nested symbols (class members, interface members)
 4. **Move to different session** - Solver/Checker work, coordination work, or other LSP features
 
 **Previous Blocked Work** (CFA):
