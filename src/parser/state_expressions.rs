@@ -855,7 +855,7 @@ impl ParserState {
 
                 // In async context, parse as await expression
                 let start_pos = self.token_pos();
-                self.next_token();
+                self.consume_keyword(); // TS1260 check for await keyword with escapes
 
                 // Check for missing operand (e.g., just "await" with nothing after it)
                 if self.can_parse_semicolon()
@@ -951,7 +951,7 @@ impl ParserState {
                     // Fall through to parse as yield expression
                 }
 
-                self.next_token();
+                self.consume_keyword(); // TS1260 check for yield keyword with escapes
 
                 // Check for yield* (delegate yield)
                 let asterisk_token = self.parse_optional(SyntaxKind::AsteriskToken);
