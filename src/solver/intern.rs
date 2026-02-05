@@ -23,7 +23,7 @@
 use crate::interner::{Atom, ShardedInterner};
 use crate::solver::def::DefId;
 use crate::solver::types::*;
-use crate::solver::visitor::{is_literal_type, is_object_like_type};
+use crate::solver::visitor::{is_literal_type, is_object_like_type, is_unit_type};
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
@@ -307,6 +307,8 @@ pub struct TypeInterner {
     conditional_types: ConcurrentValueInterner<ConditionalType>,
     mapped_types: ConcurrentValueInterner<MappedType>,
     applications: ConcurrentValueInterner<TypeApplication>,
+    /// Cache for is_unit_type checks (memoized O(1) lookup after first computation)
+    unit_type_cache: DashMap<TypeId, bool, FxBuildHasher>,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -339,6 +341,7 @@ impl TypeInterner {
             conditional_types: ConcurrentValueInterner::new(),
             mapped_types: ConcurrentValueInterner::new(),
             applications: ConcurrentValueInterner::new(),
+            unit_type_cache: DashMap::with_hasher(FxBuildHasher),
         }
     }
 
@@ -349,6 +352,21 @@ impl TypeInterner {
     ) -> &DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher> {
         self.object_property_maps
             .get_or_init(|| DashMap::with_hasher(FxBuildHasher))
+    }
+
+    /// Check if a type is a "unit type" (represents exactly one value).
+    /// Results are cached for O(1) lookup after first computation.
+    /// This is used for optimization in BCT and subtype checking.
+    #[inline]
+    pub fn is_unit_type(&self, type_id: TypeId) -> bool {
+        // Fast path: check cache first
+        if let Some(cached) = self.unit_type_cache.get(&type_id) {
+            return *cached;
+        }
+        // Compute and cache
+        let result = is_unit_type(self, type_id);
+        self.unit_type_cache.insert(type_id, result);
+        result
     }
 
     /// Intern a string into an Atom.

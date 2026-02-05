@@ -161,6 +161,20 @@ pub fn compute_best_common_type<R: TypeResolver>(
     // Example: [1, 2] -> number[], ["a", "b"] -> string[]
     let widened = widen_literals(interner, types);
 
+    // OPTIMIZATION: Unit-type fast-path
+    // If ALL types are unit types (tuples of literals/enums, or literals themselves),
+    // no single type can be a supertype of the others (unit types are disjoint).
+    // Skip the O(N²) subtype loop and go directly to union creation.
+    // This turns O(N²) into O(N) for cases like enumLiteralsSubtypeReduction.ts
+    // which has 500 distinct enum-tuple return types.
+    if widened.len() > 2 {
+        let all_unit = widened.iter().all(|&ty| interner.is_unit_type(ty));
+        if all_unit {
+            // All unit types -> no common supertype exists, create union
+            return interner.union(widened.to_vec());
+        }
+    }
+
     // Step 2: Find the best common type from the candidate types
     // TypeScript rule: The best common type must be one of the input types
     // For example: [Dog, Cat] -> Dog | Cat (NOT Animal, even if both extend Animal)
