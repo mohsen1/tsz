@@ -153,6 +153,12 @@ pub mod checker;
 #[cfg(test)]
 #[path = "tests/checker_state_tests.rs"]
 mod checker_state_tests;
+
+// Cross-file module resolution tests
+#[cfg(test)]
+#[path = "tests/module_resolution_tests.rs"]
+mod module_resolution_tests;
+
 pub use checker::state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 
 // Emitter - Emitter using NodeArena (Phase 0.1)
