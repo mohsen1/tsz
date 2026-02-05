@@ -382,3 +382,50 @@ impl<'a, R: TypeResolver> TypeVisitor for InferPatternMatcher<'a, R> {
 Ready to implement with clear guidance!
 Visitor pattern approach validated by Gemini.
 
+
+---
+
+## Implementation Attempt #2: Visitor Pattern ⏸️
+
+### Changes Made
+
+1. ✅ Added `InferPatternMatcher` struct (line 2034+)
+2. ✅ Implemented `TypeVisitor` trait
+3. ✅ Added polarity-aware binding logic
+4. ✅ Implemented `visit_function` with polarity flip
+5. ✅ Implemented `visit_callable`, `visit_array`, `visit_tuple`, `visit_union`
+
+### Compilation Errors Found ⚠️
+
+**API Integration Issues:**
+1. `InferencePolarity` enum needs to be used (currently defined but not accessible)
+2. `filter_inferred_by_constraint` method not found (needs `self` reference)
+3. `lookup_key` method doesn't exist on TypeDatabase
+4. Type mismatches with ID wrappers (TupleListId, FunctionShapeId, etc.)
+5. CallableShape doesn't have `return_type` field
+6. Several API incompatibilities with existing codebase
+
+### Status
+
+Implementation blocked by API integration issues.
+The Visitor pattern approach is sound but requires:
+1. Better understanding of TypeDatabase API
+2. Correct field names for CallableShape
+3. Proper helper method access
+
+**Current State**: Code added but fails to compile (~15 errors)
+**Stashed**: Yes - waiting for API investigation
+
+### Assessment
+
+The Visitor Pattern is the RIGHT approach (validated by Gemini),
+but requires more careful API integration than expected.
+
+This is a significant refactoring that needs:
+1. Deeper understanding of existing APIs
+2. More time for careful integration
+3. Possibly smaller incremental steps
+
+**Recommendation**: Document current progress, commit findings,
+mark session as needing more time for careful implementation.
+
