@@ -1932,18 +1932,18 @@ impl<'a> FlowAnalyzer<'a> {
                     }
                 }
                 // Handle discriminant narrowing (discriminated unions)
-                if let Some(prop_name) = self.discriminant_property(condition_idx, target) {
+                if let Some(property_path) = self.discriminant_property(condition_idx, target) {
                     let literal_true = self.interner.literal_boolean(true);
                     if is_true_branch {
                         return narrowing.narrow_by_discriminant(
                             type_id,
-                            &[prop_name],
+                            &property_path,
                             literal_true,
                         );
                     }
                     return narrowing.narrow_by_excluding_discriminant(
                         type_id,
-                        &[prop_name],
+                        &property_path,
                         literal_true,
                     );
                 }
@@ -2337,7 +2337,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if is_strict {
-            if let Some((prop_name, literal_type, is_optional, _base)) =
+            if let Some((property_path, literal_type, is_optional, _base)) =
                 self.discriminant_comparison(bin.left, bin.right, target)
             {
                 let mut base_type = type_id;
@@ -2347,7 +2347,7 @@ impl<'a> FlowAnalyzer<'a> {
                 }
                 return self.narrow_by_discriminant_for_type(
                     base_type,
-                    prop_name,
+                    &property_path,
                     literal_type,
                     effective_truth,
                     narrowing,
