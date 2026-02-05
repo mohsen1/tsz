@@ -15,7 +15,7 @@ use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::solver as solver_narrowing;
 use crate::solver::type_queries::{PromiseTypeKind, classify_promise_type, get_union_members};
-use crate::solver::{SymbolRef, TypeId};
+use crate::solver::TypeId;
 
 // =============================================================================
 // Promise and Async Type Checking Methods
@@ -48,13 +48,6 @@ impl<'a> CheckerState<'a> {
                     if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                         return self.is_promise_like_name(symbol.escaped_name.as_str());
                     }
-                }
-                false
-            }
-            #[allow(deprecated)]
-            PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
-                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
-                    return self.is_promise_like_name(symbol.escaped_name.as_str());
                 }
                 false
             }
@@ -97,13 +90,6 @@ impl<'a> CheckerState<'a> {
                         }
                         false
                     }
-                    #[allow(deprecated)]
-                    PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
-                        if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
-                            return self.is_promise_like_name(symbol.escaped_name.as_str());
-                        }
-                        false
-                    }
                     // Handle nested applications (e.g., Promise<SomeType<T>>)
                     PromiseTypeKind::Application {
                         base: inner_base, ..
@@ -118,14 +104,6 @@ impl<'a> CheckerState<'a> {
                     if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                         return self.is_promise_like_name(symbol.escaped_name.as_str());
                     }
-                }
-                false
-            }
-            #[allow(deprecated)]
-            PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
-                // Check for direct Promise or PromiseLike reference (this also handles type aliases)
-                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
-                    return self.is_promise_like_name(symbol.escaped_name.as_str());
                 }
                 false
             }
@@ -216,16 +194,6 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                #[allow(deprecated)]
-                PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
-                        if self.is_promise_like_name(symbol.escaped_name.as_str()) {
-                            if let Some(&first_arg) = args.first() {
-                                return Some(first_arg);
-                            }
-                        }
-                    }
-                }
                 _ => {}
             }
         }
@@ -253,11 +221,6 @@ impl<'a> CheckerState<'a> {
             PromiseTypeKind::Lazy(def_id) => {
                 // Use DefId -> SymbolId bridge
                 self.ctx.def_to_symbol_id(def_id)?
-            }
-            #[allow(deprecated)]
-            PromiseTypeKind::SymbolRef(sym_ref) => {
-                // Fallback for old SymbolRef (shouldn't happen anymore)
-                SymbolId(sym_ref.0)
             }
             _ => return None,
         };

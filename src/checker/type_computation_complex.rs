@@ -288,8 +288,7 @@ impl<'a> CheckerState<'a> {
             crate::solver::type_queries::NewExpressionTypeKind::Function(_) => {
                 Some(constructor_type)
             }
-            crate::solver::type_queries::NewExpressionTypeKind::SymbolRef(sym_ref)
-            | crate::solver::type_queries::NewExpressionTypeKind::TypeQuery(sym_ref) => {
+            crate::solver::type_queries::NewExpressionTypeKind::TypeQuery(sym_ref) => {
                 // Ref to a symbol or TypeQuery (typeof X) - resolve to the symbol's type
                 use crate::binder::SymbolId;
                 let symbol_id = SymbolId(sym_ref.0);
