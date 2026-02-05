@@ -266,34 +266,47 @@ Created 2026-02-05 following completion of Generic Type Inference Investigation 
 
 ## Next Steps
 
-### Immediate: Gemini Pro Review
-Before proceeding with lambda integration, ask Gemini Pro to review the current implementation:
+### ✅ COMPLETED: Gemini Pro Review
+Asked Gemini Pro for guidance on lambda integration (2026-02-05). Key findings:
 
-```bash
-./scripts/ask-gemini.mjs --pro --include=src/solver/operations.rs --include=src/solver/infer.rs "
-I implemented the Multi-Pass Inference infrastructure for tsz-5:
+**Root Cause**: The current approach has the Solver doing multi-pass inference **after** the Checker has already computed all argument types. This is too late - the Checker needs to do two-pass argument checking itself.
 
-1. is_contextually_sensitive() - detects lambdas, callables, etc.
-2. fix_current_variables() - resolves variables after Round 1
-3. get_current_substitution() - returns current best types
-4. Two-pass argument processing in resolve_generic_call_inner()
+**Correct Strategy** (from Gemini Pro):
 
-However, there's a critical gap: the lambda type checker doesn't use the contextual
-target types computed in Round 2, so lambda parameters still have unresolved
-TypeParameter types.
+The **Checker** must implement two-pass argument collection:
+1. **Pass 1**: Check non-contextual arguments (primitives, objects) to get concrete types
+2. **Partial Inference**: Ask Solver to infer type params based ONLY on Pass 1 args
+3. **Pass 2**: Use inferred types to construct contextual types for lambdas, then check them
 
-Questions:
-1) Is my two-pass infrastructure correct for TypeScript?
-2) How should the contextual target type be passed to the lambda type checker?
-3) What files/functions need to be modified to make lambdas use contextual types?
-4) Is there a simpler approach I'm missing?
+**Files to modify**:
+- `src/solver/operations.rs`: Add `infer_contextual_parameter_type()` method to `CallEvaluator`
+- `src/checker/call_checker.rs`: Modify call checking to do two-pass argument collection
+- `src/checker/state.rs`: Add `is_contextually_sensitive_node()` helper
 
-Please provide specific file paths and function names for the lambda integration.
-"
+**Key insight**: Lambda checking happens in `src/checker/function_type.rs::get_type_of_function`, which looks at `self.ctx.contextual_type`. By setting this to the inferred signature (e.g., `(x: number) => U`), the lambda will correctly infer `x: number`.
+
+### Priority 1: Implement Two-Pass Argument Checking in Checker
+
+**Step 1: Add Solver API** (`src/solver/operations.rs`)
+```rust
+pub fn infer_contextual_parameter_type(
+    &mut self,
+    func: &FunctionShape,
+    known_args: &[(usize, TypeId)], // (index, type) of arguments checked so far
+    target_param_index: usize,      // The parameter index we need context for
+) -> TypeId
 ```
 
-### Priority 1: Lambda Contextual Type Integration
-Research and implement how to pass contextual target types to the lambda type checker.
+**Step 2: Modify Call Checker** (`src/checker/call_checker.rs`)
+- Separate arguments into "easy" (non-lambda) and "hard" (lambda)
+- Check easy args first
+- Call `infer_contextual_parameter_type` for each deferred arg
+- Set `ctx.contextual_type` and check lambdas
+
+**Step 3: Add Helper** (`src/checker/state.rs`)
+```rust
+pub fn is_contextually_sensitive_node(&self, idx: NodeIndex) -> bool
+```
 
 ### Priority 2: Test and Validate
 - Create comprehensive tests for multi-pass inference
