@@ -83,44 +83,54 @@ Implement member resolution for generic types in three phases:
 
 2. Use existing `instantiate_type` or specialized `instantiate_signature`
 
-**Status**: ⚠️ BLOCKED (2026-02-05)
+**Status**: 🔄 REDIRECTED (2026-02-05)
 
 **Progress Made**:
 1. ✅ Modified `resolve_array_property` to create `Array<element_type>` Application
 2. ✅ Modified `resolve_application_property` to handle Callable bases
 3. ✅ Found the `map` property on the Array Callable
-4. ❌ Type substitution fails - Array methods have `Error` type instead of type parameter `T`
+4. ⚠️ Type substitution blocked - identified root cause and new approach
 
-**Blocker**: Array methods loaded from lib.d.ts have incorrect type parameter references:
-- Expected: `map(callback: (value: T, ...) => ...)` where `T` references Array's type parameter
-- Actual: `map(callback: (value: error, ...) => ...)`
+**Gemini Redefined Approach** (2026-02-05):
 
-**Root Cause Analysis**:
-1. The Array interface from lib.d.ts is loaded as a `Callable` with 38 properties (methods)
-2. These methods should reference the Array's type parameter `T`
-3. Instead, they reference `TypeId(1)` (Error)
-4. When `instantiate_type` tries to substitute type parameters in the Callable:
-   - It recursively instantiates all properties
-   - This creates cycles or exceeds the 50-level depth limit
-   - Returns `TypeId::ERROR`
+The blocker is an "Eager vs. Lazy" issue. `instantiate_type` on the entire Callable exceeds recursion depth. The solution is **Lazy Member Instantiation**.
 
-**Gemini Guidance** (2026-02-05):
-> The issue is that `instantiate_type` on Callables tries to recursively instantiate all properties. For `Array<T>`, this includes methods like `map`, `filter`, etc. Each method might reference `Array<T>` again, creating cycles or exceeding depth limits. The `TypeId(1)` (Error) you see is the result of `MAX_INSTANTIATION_DEPTH` being exceeded.
+### Redefined Strategy
 
-**Attempted Solutions**:
-1. ❌ Use `instantiate_type` on Callable → exceeds depth limit, returns Error
-2. ❌ Use `instantiate_generic` → doesn't work on Callables (they're not Lazy types)
-3. ❌ Return Callable as-is → still has Error types in signature
+#### Task 2.1: Fix Interface Lowering Scope
+**File**: `src/solver/lower.rs` or equivalent
+**Issue**: When `Array<T>` interface is lowered, methods might not have `T` in scope
+**Fix**: Ensure `TypeParamScope` is pushed before lowering interface members
+**Check**: `resolve_lib_type_with_params` in `src/checker/type_checking.rs`
 
-**Next Steps**:
-Need to investigate how lib.d.ts Array interface is loaded and why type parameter references are broken. Possible approaches:
-1. Check binder/solver type loading logic for interfaces
-2. Find where Array methods are created and ensure `T` is correctly referenced
-3. Alternative: Create a new CallableShape with substituted types (complex)
+#### Task 2.2: Implement Lazy Member Instantiation
+**File**: `src/solver/operations_property.rs`
+**Function**: `resolve_application_property`
+
+**New Logic**:
+1. Find property in CallableShape (e.g., `map`)
+2. Get TypeSubstitution from Application args → type params
+3. Call `instantiate_type` **ONLY on `prop.type_id`** (not the whole Callable)
+4. This avoids recursing into other 37 Array methods
+
+**Key Insight**: Don't instantiate the entire Callable. Instantiate just the property type we found.
+
+#### Task 2.3: Handle `this` Types
+**File**: `src/solver/operations_property.rs`
+**Issue**: Array methods return `this` or `this[]`
+**Fix**: Use `substitute_this_type` from `instantiate.rs` before returning result
+
+### Potential Pitfalls
+1. **Circular Refs**: `Array.map` returns `U[]` which is another Array Application. Ensure `PropertyAccessGuard` prevents cycles.
+2. **Cached Errors**: If methods were cached as Error, need to fix lowering or clear cache.
+3. **Callable vs Symbol Gap**: Callable doesn't know its TypeParameters. Need to get them from the Application's base.
+
+**Next Implementation Step**:
+Modify `resolve_application_property` to substitute only the found property's type, not the entire Callable.
 
 **Commits**:
 - `feat(solver): add Object fallback for unconstrained TypeParameters` (Phase 1)
-- (Phase 2 commits pending - blocked on type loading issue)
+- `feat(solver): Phase 2 progress - Array<T> member projection (blocked)`
 
 ### Phase 3: Union/Intersection Member Resolution
 
