@@ -384,6 +384,7 @@ pub mod diagnostic_codes {
     pub const UNEXPECTED_TOKEN_CLASS_MEMBER: u32 = 1068; // Unexpected token. A constructor, method, accessor, or property was expected.
     pub const DECLARATION_OR_STATEMENT_EXPECTED: u32 = 1128; // Declaration or statement expected.
     pub const VAR_DECLARATION_NOT_ALLOWED: u32 = 1440; // Variable declaration not allowed at this location.
+    pub const OBJECT_MEMBER_CANNOT_BE_OPTIONAL: u32 = 1162; // An object member cannot be declared optional.
     pub const YIELD_EXPRESSION_ONLY_IN_GENERATOR: u32 = 1163; // A 'yield' expression is only allowed in a generator body.
     pub const AWAIT_IN_STATIC_BLOCK: u32 = 18037; // 'await' expression cannot be used inside a class static block.
     pub const YIELD_IN_STATIC_BLOCK: u32 = 18041; // 'yield' expression cannot be used inside a class static block. (Note: TSC uses same code for return)

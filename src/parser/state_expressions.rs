@@ -2494,6 +2494,17 @@ impl ParserState {
             return self.parse_object_method_after_name(start_pos, name, false, false);
         }
 
+        // Check for optional property marker '?' - not allowed in object literals
+        // TSC emits TS1162: "An object member cannot be declared optional."
+        if self.is_token(SyntaxKind::QuestionToken) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "An object member cannot be declared optional.",
+                diagnostic_codes::OBJECT_MEMBER_CANNOT_BE_OPTIONAL,
+            );
+            self.next_token(); // Skip the '?' for error recovery
+        }
+
         let initializer = if self.parse_optional(SyntaxKind::ColonToken) {
             let expr = self.parse_assignment_expression();
             if expr.is_none() {
