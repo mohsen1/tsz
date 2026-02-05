@@ -16,8 +16,8 @@
 //!
 //! # Auto-Generated
 //!
-//! Generated from TypeScript npm version: 6.0.0-dev.20260116
-//! Generated at: 2026-02-02T00:52:26.425Z
+//! Generated from TypeScript npm version: 5.9.3
+//! Generated at: 2026-02-04T16:56:09.203Z
 //!
 //! DO NOT EDIT - regenerate with: node scripts/generate-lib-assets.mjs
 
@@ -57,7 +57,7 @@ pub const LIB_DOM: EmbeddedLib = EmbeddedLib {
     name: "dom",
     file_name: "lib.dom.d.ts",
     content: include_str!("lib-assets/dom.d.ts"),
-    references: &["es2015", "es2018.asynciterable"],
+    references: &[],
 };
 
 /// dom.asynciterable library
@@ -851,7 +851,6 @@ pub const LIB_ESNEXT: EmbeddedLib = EmbeddedLib {
         "esnext.float16",
         "esnext.error",
         "esnext.sharedmemory",
-        "esnext.typedarrays",
     ],
 };
 
@@ -950,14 +949,6 @@ pub const LIB_ESNEXT_SHAREDMEMORY: EmbeddedLib = EmbeddedLib {
     references: &[],
 };
 
-/// esnext.typedarrays library
-pub const LIB_ESNEXT_TYPEDARRAYS: EmbeddedLib = EmbeddedLib {
-    name: "esnext.typedarrays",
-    file_name: "lib.esnext.typedarrays.d.ts",
-    content: include_str!("lib-assets/esnext.typedarrays.d.ts"),
-    references: &[],
-};
-
 /// scripthost library
 pub const LIB_SCRIPTHOST: EmbeddedLib = EmbeddedLib {
     name: "scripthost",
@@ -987,7 +978,7 @@ pub const LIB_WEBWORKER: EmbeddedLib = EmbeddedLib {
     name: "webworker",
     file_name: "lib.webworker.d.ts",
     content: include_str!("lib-assets/webworker.d.ts"),
-    references: &["es2015", "es2018.asynciterable"],
+    references: &[],
 };
 
 /// webworker.asynciterable library
@@ -1111,7 +1102,6 @@ pub static ALL_LIBS: &[EmbeddedLib] = &[
     LIB_ESNEXT_ITERATOR,
     LIB_ESNEXT_PROMISE,
     LIB_ESNEXT_SHAREDMEMORY,
-    LIB_ESNEXT_TYPEDARRAYS,
     LIB_SCRIPTHOST,
     LIB_TSSERVERLIBRARY,
     LIB_TYPESCRIPT,
