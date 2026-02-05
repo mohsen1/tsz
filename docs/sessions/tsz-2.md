@@ -78,24 +78,34 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
 
 **🎯 Current Focus: Investigating enum_assignability_override removal (Priority 1)**
 
-**⚠️ Blocking Issue Found (2026-02-05):**
-Attempted to remove `enum_assignability_override` from Checker (per Gemini's Approach A recommendation), but this broke enum tests because:
+**✅ Completed (2026-02-05):**
+- Added `is_enum_type(TypeId, &dyn TypeDatabase) -> bool` to TypeResolver trait (src/solver/subtype.rs)
+- Implemented `is_enum_type` in CheckerContext (src/checker/context.rs):
+  - Distinguishes enum TYPE (E) from enum MEMBER (E.A) using symbol flags
+  - Handles Union-based enum types by comparing parent SymbolIds (not member DefIds)
+  - Bug fix: Was comparing member DefIds which are unique per member, causing false for enums with >1 member
+- Implemented `is_numeric_enum` in CheckerContext:
+  - Bug fix: Now handles enum members by looking up their parent enum symbol
+  - Traverses AST to check for string literal initializers
+- Enhanced CompatChecker.enum_assignability_override (src/solver/compat.rs):
+  - Added early check before match: number -> Union enum type (e.g., number -> E where E = E.A | E.B)
+  - Uses is_enum_type to distinguish enum types from members for Rule #7
+  - All 11 enum_nominality_tests pass
 
-1. **Problem**: Checker's enum logic distinguishes between "enum type E" vs "enum member E.A" using symbol flags (`symbol_flags::ENUM` vs `symbol_flags::ENUM_MEMBER`)
-2. **Why it matters**: `number` IS assignable to enum type `E` but NOT assignable to enum member `E.A`
-3. **Solver limitation**: `CompatChecker.enum_assignability_override` doesn't have access to symbol flags through TypeResolver
-4. **Test failure**: `test_number_to_numeric_enum_type` expects `let x: E = 1` to be valid, but removing Checker's override breaks this
+**⚠️ Blocking Issue:**
+Attempted to remove Checker's `enum_assignability_override` (return None from CheckerOverrideProvider), but this caused 4 test failures:
+- test_enum_member_to_whole_enum
+- test_number_literal_to_numeric_enum_type
+- test_number_to_numeric_enum_type
+- test_string_enum_not_to_string
 
-**Code Analysis:**
-- Checker's logic (lines 338-375): Uses `get_symbol_globally()` to check symbol flags
-- Solver's logic (compat.rs:1265-1280): Returns `None` for numeric enums, delegates to SubtypeChecker
-- SubtypeChecker doesn't distinguish enum type vs member without flag access
+**Root Cause:** Checker's enum_assignability_override has additional logic not yet migrated to Solver. Need to identify and migrate missing logic before removal.
 
-**Pending Question:**
-Should we:
-A) Add symbol flag access to Solver's TypeResolver?
-B) Refactor Checker's enum logic to use Solver API helpers (without removing it)?
-C) Enhance Solver to handle enum type vs member distinction differently?
+**Next Steps:**
+1. Compare Checker's enum_assignability_override with Solver's to find missing cases
+2. Add missing logic to CompatChecker.enum_assignability_override
+3. Re-test removal of Checker's override
+4. Remove check_structural_assignability and enum_assignability_override from state_type_environment.rs
 
 ### Step 2: Refactor Primitives (Low Risk)
 Target: Simple type identity checks
