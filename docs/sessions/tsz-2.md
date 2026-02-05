@@ -95,32 +95,28 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
 - Committed and pushed to origin (commit: 544313e07)
 - Tests now compile successfully
 
-**Next Steps (per Gemini consultation):**
+**✅ Added Solver Helpers (2026-02-05):**
+- Implemented `is_promise_like(db, resolver, type_id) -> bool` in type_queries.rs
+  * Uses PropertyAccessEvaluator to find 'then' property
+  * Checks if 'then' is callable (thenable detection)
+  * Handles Lazy/Ref/Intersection/Readonly via evaluator
+  * Returns true for TypeId::ANY (the 'any' trap)
+- Implemented `is_valid_for_in_target(db, type_id) -> bool` in type_queries.rs
+  * Checks if type is valid for for...in loops
+  * Returns true for Object, Array, TypeParameter, Any
+  * Simple TypeKey matching (no resolver needed)
+- Committed and pushed to origin (commit: 1efb7d837)
+- Awaiting Gemini Pro review (Question 2) - blocked by rate limit
 
-**Current Investigation (2026-02-05):**
-- Found that Solver already has `classify_iterable()` in Judge trait returning `IterableKind`
-- Checker correctly uses `judge_classify_iterable()` wrapper in judge_integration.rs
-- However, Checker still has TypeKey violations in specific cases:
-  - `iterators.rs` lines 666-682: Checking Promise return type via TypeKey inspection
-  - `iterators.rs` lines 704-708: Validating for-in targets via TypeKey matching
-  - `iterators.rs` lines 990-1116: Extracting iterator info from types
-  - `generators.rs` line 568+: Similar violations
+**🔄 Next Steps:**
+1. Get Gemini Pro review of is_promise_like and is_valid_for_in_target
+2. Refactor iterators.rs to use these helpers (replace lines 666-708)
+3. Implement get_iterator_info in operations.rs (more complex, needs CallEvaluator)
+4. Refactor generators.rs to use new helpers
 
-**Implementation Plan:**
-
-**Priority 1**: Add Solver helper functions to `src/solver/type_queries.rs`:
-- `is_promise_type(db, type_id) -> bool`: Check if type has 'then' method
-- `is_valid_for_in_target(db, type_id) -> bool`: Check if type works with for-in
-- `get_iterator_result_types(db, type_id) -> Option<(yield, return)>`: Extract from IteratorResult union
-
-**Priority 2**: Refactor Checker files to use helpers:
-- Replace TypeKey::Function/Object Promise check with `is_promise_type()`
-- Replace TypeKey matching in `is_valid_for_in_target` with helper
-- Replace iterator type extraction logic with `get_iterator_result_types()`
-
-**Priority 3**: Clean up dead code in state_type_environment.rs (~217 lines)
-
-**Priority 4**: Continue with other TypeKey removals
+**Remaining TypeKey Violations:**
+- iterators.rs:990-1116: Iterator info extraction (needs get_iterator_info)
+- generators.rs:568+: Similar violations
 
 ### Step 2: Refactor Primitives (Low Risk)
 Target: Simple type identity checks
