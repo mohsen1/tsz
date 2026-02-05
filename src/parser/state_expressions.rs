@@ -700,7 +700,14 @@ impl ParserState {
             | SyntaxKind::MinusMinusToken => {
                 let start_pos = self.token_pos();
                 let operator = self.token() as u16;
+                let is_update_operator = operator == SyntaxKind::PlusPlusToken as u16
+                    || operator == SyntaxKind::MinusMinusToken as u16;
                 self.next_token();
+                // TS1109: ++await and --await are invalid because await expressions
+                // are not valid left-hand-side expressions for increment/decrement
+                if is_update_operator && self.token() == SyntaxKind::AwaitKeyword {
+                    self.error_expression_expected();
+                }
                 let operand = self.parse_unary_expression();
                 if operand.is_none() {
                     // Emit TS1109 for incomplete unary expression: +[missing], ++[missing], etc.
