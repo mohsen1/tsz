@@ -175,6 +175,10 @@ pub struct BindResult {
     pub declared_modules: FxHashSet<String>,
     /// Node-to-symbol mapping
     pub node_symbols: FxHashMap<u32, SymbolId>,
+    /// Symbol-to-arena mapping for cross-file declaration lookup (including lib symbols)
+    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    /// Declaration-to-arena mapping for precise cross-file declaration lookup
+    pub declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
     /// Persistent scopes for stateless checking
     pub scopes: Vec<Scope>,
     /// Map from AST node to scope ID
@@ -217,14 +221,8 @@ pub struct BindResult {
 /// # Returns
 /// Vector of BindResult for each file
 pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> {
-    eprintln!("[PARSE-BIND] Processing {} file(s)", files.len());
-    for (name, _) in &files {
-        eprintln!("[PARSE-BIND]   - file: {}", name);
-    }
-
     maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
-            eprintln!("[PARSE-BIND] Binding file: {}", file_name);
             // Parse
             let mut parser = ParserState::new(file_name.clone(), source_text);
             let source_file = parser.parse_source_file();
@@ -235,20 +233,6 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
             let mut binder = BinderState::new();
             binder.bind_source_file(&arena, source_file);
 
-            eprintln!(
-                "[PARSE-BIND] Finished binding {}: {} augment(s), {} declared_modules",
-                file_name,
-                binder.module_augmentations.len(),
-                binder.declared_modules.len()
-            );
-            for (spec, augs) in &binder.module_augmentations {
-                eprintln!(
-                    "[PARSE-BIND]   - module '{}' has {} augment(s)",
-                    spec,
-                    augs.len()
-                );
-            }
-
             BindResult {
                 file_name,
                 source_file,
@@ -257,6 +241,8 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 file_locals: binder.file_locals,
                 declared_modules: binder.declared_modules,
                 node_symbols: binder.node_symbols,
+                symbol_arenas: binder.symbol_arenas,
+                declaration_arenas: binder.declaration_arenas,
                 scopes: binder.scopes,
                 node_scope_ids: binder.node_scope_ids,
                 parse_diagnostics,
@@ -293,6 +279,8 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         file_locals: binder.file_locals,
         declared_modules: binder.declared_modules,
         node_symbols: binder.node_symbols,
+        symbol_arenas: binder.symbol_arenas,
+        declaration_arenas: binder.declaration_arenas,
         scopes: binder.scopes,
         node_scope_ids: binder.node_scope_ids,
         parse_diagnostics,
@@ -464,6 +452,8 @@ pub fn parse_and_bind_parallel_with_libs(
                 file_locals: binder.file_locals,
                 declared_modules: binder.declared_modules,
                 node_symbols: binder.node_symbols,
+                symbol_arenas: binder.symbol_arenas,
+                declaration_arenas: binder.declaration_arenas,
                 scopes: binder.scopes,
                 node_scope_ids: binder.node_scope_ids,
                 parse_diagnostics,
@@ -642,7 +632,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // Create global symbol arena with pre-allocated capacity
     let mut global_symbols = SymbolArena::with_capacity(total_symbols);
     let mut symbol_arenas = FxHashMap::default();
-    let declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>> = FxHashMap::default();
+    let mut declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>> =
+        FxHashMap::default();
     let mut globals = SymbolTable::new();
     let mut files = Vec::with_capacity(results.len());
     let mut file_locals_list = Vec::with_capacity(results.len());
@@ -728,6 +719,22 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
                 // Store the remapping
                 lib_symbol_remap.insert((lib_binder_ptr, local_id), global_id);
+
+                // CRITICAL FIX: Copy arena mapping for lib symbols
+                // Without this, the checker's compute_type_of_symbol will fail to find
+                // the declaration arena for lib symbols like WeakSet, Symbol, Promise, etc.
+                // This was the root cause of "Any poisoning" where global types resolved to Error.
+                if let Some(lib_arena) = lib_binder.symbol_arenas.get(&local_id) {
+                    symbol_arenas.insert(global_id, Arc::clone(lib_arena));
+                }
+
+                // Also copy declaration_arenas for precise cross-file declaration lookup
+                // This is needed when a symbol has declarations across multiple lib files
+                for (&(old_sym_id, decl_idx), arena) in &lib_binder.declaration_arenas {
+                    if old_sym_id == local_id {
+                        declaration_arenas.insert((global_id, decl_idx), Arc::clone(arena));
+                    }
+                }
             }
         }
     }
@@ -825,6 +832,25 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     new_id
                 };
                 id_remap.insert(old_id, new_id);
+            }
+        }
+
+        // Copy symbol_arenas entries from user file, remapping IDs
+        // This propagates lib symbol arena mappings that were created during merge_lib_symbols
+        for (&old_sym_id, arena) in &result.symbol_arenas {
+            if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
+                symbol_arenas
+                    .entry(new_sym_id)
+                    .or_insert_with(|| Arc::clone(arena));
+            }
+        }
+
+        // Copy declaration_arenas entries from user file, remapping symbol IDs
+        for (&(old_sym_id, decl_idx), arena) in &result.declaration_arenas {
+            if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
+                declaration_arenas
+                    .entry((new_sym_id, decl_idx))
+                    .or_insert_with(|| Arc::clone(arena));
             }
         }
 
@@ -1053,20 +1079,6 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 .iter()
                 .map(|(spec, augs)| {
                     let arena = Arc::clone(&result.arena);
-                    eprintln!(
-                        "[MERGE-AUG] File {}: module={} has {} augmentation(s)",
-                        result.file_name,
-                        spec,
-                        augs.len()
-                    );
-                    for aug in augs {
-                        eprintln!(
-                            "[MERGE-AUG]   - name={}, node={:?}, has_arena_before={}",
-                            aug.name,
-                            aug.node,
-                            aug.arena.is_some()
-                        );
-                    }
                     (
                         spec.clone(),
                         augs.iter()
@@ -1471,25 +1483,8 @@ pub(crate) fn create_binder_from_bound_file(
         Vec<crate::binder::ModuleAugmentation>,
     > = rustc_hash::FxHashMap::default();
 
-    eprintln!(
-        "[BINDER-CREATE] Creating binder for file: {}",
-        file.file_name
-    );
     for other_file in &program.files {
         for (spec, augs) in &other_file.module_augmentations {
-            eprintln!(
-                "[BINDER-CREATE]   Merging from {}: module='{}' with {} augment(s)",
-                other_file.file_name,
-                spec,
-                augs.len()
-            );
-            for aug in augs {
-                eprintln!(
-                    "[BINDER-CREATE]     - name={}, has_arena={}",
-                    aug.name,
-                    aug.arena.is_some()
-                );
-            }
             merged_module_augmentations
                 .entry(spec.clone())
                 .or_default()

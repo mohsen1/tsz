@@ -1005,9 +1005,17 @@ impl<'a> CheckerState<'a> {
 
         // Handle cross-file symbol resolution: if this symbol's arena is different
         // from the current arena, delegate to a checker using the correct arena.
-        if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id)
+        let opt_symbol_arena = self.ctx.binder.symbol_arenas.get(&sym_id);
+        if let Some(symbol_arena) = opt_symbol_arena
             && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
         {
+            // CRITICAL FIX: Remove the "in-progress" ERROR marker from cache before
+            // delegating to child checker. The parent pre-caches ERROR as a cycle
+            // detection marker (line ~826), but since the child shares the cache,
+            // it would immediately return ERROR without computing the actual type.
+            // We'll re-insert the real result after delegation completes.
+            self.ctx.symbol_types.remove(&sym_id);
+
             let mut checker = CheckerState::with_parent_cache(
                 symbol_arena.as_ref(),
                 self.ctx.binder,

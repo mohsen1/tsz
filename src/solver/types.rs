@@ -339,7 +339,9 @@ impl InferencePriority {
     pub fn next_level(&self) -> Option<Self> {
         match self {
             InferencePriority::NakedTypeVariable => Some(InferencePriority::HomomorphicMappedType),
-            InferencePriority::HomomorphicMappedType => Some(InferencePriority::PartialHomomorphicMappedType),
+            InferencePriority::HomomorphicMappedType => {
+                Some(InferencePriority::PartialHomomorphicMappedType)
+            }
             InferencePriority::PartialHomomorphicMappedType => Some(InferencePriority::MappedType),
             InferencePriority::MappedType => Some(InferencePriority::ContravariantConditional),
             InferencePriority::ContravariantConditional => Some(InferencePriority::ReturnType),
@@ -356,15 +358,6 @@ impl InferencePriority {
 
     /// Lowest priority for fallback inference.
     pub const LOWEST: Self = InferencePriority::LowPriority;
-}
-        Self {
-            source,
-            target,
-            relation: Self::ASSIGNABLE,
-            flags,
-            any_mode,
-        }
-    }
 }
 
 /// Interned list of TypeId values (e.g., unions/intersections).
