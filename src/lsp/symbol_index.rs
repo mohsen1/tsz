@@ -11,6 +11,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::binder::{BinderState, symbol_flags};
 use crate::lsp::document_symbols::SymbolKind;
 use crate::lsp::position::Location;
+use crate::parser::NodeArena;
 
 /// Import kind for tracking how symbols are imported.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,10 +154,10 @@ impl SymbolIndex {
     /// Update the index for a single file.
     ///
     /// This removes old entries and re-indexes the file based on its
-    /// current binder state.
-    pub fn update_file(&mut self, file_name: &str, binder: &BinderState) {
+    /// current binder state and AST identifiers.
+    pub fn update_file(&mut self, file_name: &str, binder: &BinderState, arena: &NodeArena) {
         self.remove_file(file_name);
-        self.index_file(file_name, binder);
+        self.index_file(file_name, binder, arena);
     }
 
     /// Remove a file from the index.
@@ -242,13 +243,44 @@ impl SymbolIndex {
 
     /// Index a file during binding.
     ///
-    /// Extracts symbol information from the binder state and adds it
-    /// to the appropriate index structures. Currently indexes declarations
-    /// and exports. Full usage (reference) tracking requires AST walking
-    /// which will be added in a future iteration.
-    pub fn index_file(&mut self, file_name: &str, binder: &BinderState) {
+    /// Extracts symbol information from the binder state and AST, adding it
+    /// to the appropriate index structures. This includes:
+    /// - **All identifier mentions** from the AST (via pool scan of identifiers pool)
+    /// - Declarations from binder.file_locals
+    /// - Symbol kinds from binder flags
+    /// - Exports and re-exports
+    ///
+    /// The pool scan of the identifiers pool enables O(1) candidate filtering
+    /// for cross-file reference searches. Before searching for references to a
+    /// symbol, we can query `get_files_with_symbol()` to find only the files
+    /// that actually contain that identifier string, avoiding expensive Checker
+    /// runs on irrelevant files.
+    pub fn index_file(&mut self, file_name: &str, binder: &BinderState, arena: &NodeArena) {
         let file_name_owned = file_name.to_string();
         let mut file_symbol_names = FxHashSet::default();
+
+        // Pool Scan: Index all identifier mentions from the AST
+        // This enables O(1) candidate filtering when searching for cross-file references
+        for id_data in &arena.identifiers {
+            // Skip empty identifiers (error recovery)
+            if id_data.escaped_text.is_empty() {
+                continue;
+            }
+
+            let text = &id_data.escaped_text;
+
+            // Add to name_to_files index
+            self.name_to_files
+                .entry(text.clone())
+                .or_default()
+                .insert(file_name_owned.clone());
+
+            // Add to sorted names for prefix search
+            self.insert_sorted_name(text.clone());
+
+            // Track in reverse mapping for efficient cleanup
+            file_symbol_names.insert(text.clone());
+        }
 
         // Index all symbols in file_locals (top-level symbols/declarations)
         for (name, symbol_id) in binder.file_locals.iter() {

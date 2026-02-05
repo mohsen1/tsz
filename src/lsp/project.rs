@@ -1087,8 +1087,11 @@ impl Project {
     pub fn set_file(&mut self, file_name: String, source_text: String) {
         let file = ProjectFile::with_strict(file_name.clone(), source_text, self.strict);
 
-        // Update symbol index with the new file's binder data
-        self.symbol_index.index_file(&file_name, &file.binder);
+        // Update symbol index with the new file's binder data and AST identifiers
+        // We need to get the arena before moving the file into self.files
+        let arena = file.parser.get_arena();
+        self.symbol_index
+            .index_file(&file_name, &file.binder, arena);
 
         self.files.insert(file_name.clone(), file);
         // Update dependency graph with imports from this file
@@ -1116,8 +1119,10 @@ impl Project {
         let file = self.files.get_mut(file_name)?;
         file.update_source_with_edits(updated_source, edits);
 
-        // Re-index the file in the symbol index
-        self.symbol_index.update_file(file_name, &file.binder);
+        // Re-index the file in the symbol index with updated binder and arena
+        let arena = file.parser.get_arena();
+        self.symbol_index
+            .update_file(file_name, &file.binder, arena);
 
         Some(())
     }
