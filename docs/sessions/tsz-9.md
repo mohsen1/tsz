@@ -309,3 +309,76 @@ Is this correct? Which visitor methods should I override?"
 Session UNPAUSED with new strategy.
 Implementation stashed - ready to restart with Visitor Pattern.
 
+
+---
+
+## Gemini Guidance: Visitor Pattern Implementation ✅
+
+### Validation: APPROVED ✅
+
+"Using TypeVisitor to propagate polarity is idiomatic and avoids parameter explosion"
+
+### Implementation Strategy from Gemini
+
+**1. Create InferPatternMatcher struct**
+```rust
+pub struct InferPatternMatcher<'a, R: TypeResolver> {
+    db: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    checker: &'a mut SubtypeChecker<'a, R>,
+    current_source: TypeId,  // Parallel traversal
+    polarity: bool,            // true = covariant, false = contravariant
+    bindings: &'a mut FxHashMap<Atom, TypeId>,
+    visited: FxHashSet<(TypeId, TypeId)>,
+}
+
+impl<'a, R: TypeResolver> TypeVisitor for InferPatternMatcher<'a, R> {
+    type Output = bool;
+    
+    fn visit_infer(&mut self, info: &TypeParamInfo) -> bool {
+        // Bind with polarity awareness
+        self.bind_infer_with_polarity(info, self.current_source, self.polarity)
+    }
+    
+    fn visit_function(&mut self, shape_id: u32) -> bool {
+        // Return type: Covariant (no flip)
+        // Parameters: Contravariant (FLIP polarity)
+    }
+}
+```
+
+**2. Key Visitor Methods to Override**
+- `visit_function` / `visit_callable`: Flip polarity for params
+- `visit_object`: Readonly props = covariant, mutable = invariant
+- `visit_array`: Extract element, recurse
+- `visit_union`: Handle each member
+
+**3. Polarity Handling**
+- Covariant positions: Keep polarity (return types, readonly props)
+- Contravariant positions: Flip polarity (function params)
+- Invariant positions: Special handling (mutable props)
+
+**4. Parallel Traversal Pattern**
+- Track `current_source` while traversing `pattern`
+- Extract matching parts from source for each pattern node
+- Update source before recursing into children
+
+**5. Integration**
+- Keep existing `TypeEvaluator::match_infer_pattern` as entry point
+- Instantiate visitor and call `visitor.visit_type(pattern)`
+- Reduces diff size significantly
+
+### Next Steps
+
+1. ✅ Create InferPatternMatcher struct
+2. ✅ Implement TypeVisitor trait
+3. ⏳ Override visit_function with polarity flip
+4. ⏳ Override other visitor methods
+5. ⏳ Update entry point to use visitor
+6. ⏳ Test with examples
+
+### Status
+
+Ready to implement with clear guidance!
+Visitor pattern approach validated by Gemini.
+
