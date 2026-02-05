@@ -2671,3 +2671,8 @@ mod p1_error_recovery_tests;
 #[cfg(test)]
 #[path = "checker/tests/strict_null_manual.rs"]
 mod strict_null_manual;
+
+// Generic type inference manual tests
+#[cfg(test)]
+#[path = "checker/tests/generic_inference_manual.rs"]
+mod generic_inference_manual;
