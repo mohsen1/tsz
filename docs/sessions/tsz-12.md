@@ -1,14 +1,20 @@
-# Session TSZ-12: Advanced Narrowing & Type Predicates
+# Session TSZ-12: CFA Architectural Alignment
 
 **Started**: 2026-02-05
-**Status**: ✅ TASKS 1 & 2 COMPLETE - `in` Operator & Type Guards Working
+**Status**: 🔄 ACTIVE - Wiring Refined CFG into Checker
 
-## Goal
+## Updated Goal (Post-Gemini Redefinition)
+
+**Transition the Checker to the refined Control Flow Graph to enable exhaustiveness and advanced narrowing.**
+
+This is a foundational architectural alignment required by the North Star (Section 4.3 & 4.5): The Binder's CFG is for basic symbol binding, while the Checker's CFG (via `FlowGraphBuilder`) is designed for high-precision narrowing required to match `tsc`.
+
+## Original Context
 
 Complete CFA narrowing parity with TypeScript by implementing:
-1. The `in` operator narrowing
-2. User-Defined Type Guards (`is` predicates)
-3. Exhaustiveness checking (switch/if-else chains)
+1. ✅ The `in` operator narrowing (COMPLETE - already implemented)
+2. ✅ User-Defined Type Guards (`is` predicates) (COMPLETE - already implemented)
+3. ⏳ Exhaustiveness checking (IN PROGRESS - architectural fix needed)
 
 ## Context
 
@@ -325,5 +331,60 @@ The `FlowAnalyzer` defaults to the Binder's CFG, which doesn't contain our impli
 5. **Ask Gemini** to review the implementation (MANDATORY per AGENTS.md rule)
 
 This is a critical architectural fix that aligns with the North Star Architecture (Section 4.3, 4.5): Binder handles basic symbol flow, Checker/Solver handles refined flow analysis for narrowing.
+
+---
+
+## Redefined Session Focus (Gemini Consultation #3)
+
+**Session Goal**: "Transition the Checker to the refined Control Flow Graph to enable exhaustiveness and advanced narrowing."
+
+This is not just a bug fix for exhaustiveness; it's a **foundational architectural alignment** required by the North Star.
+
+### Task Priority Matrix (Updated)
+
+| Priority | Task | Description | File(s) | Complexity | Status |
+|:---|:---|:---|:---|:---|:---|
+| **1. CRITICAL** | **Injectable Flow Arena** | Modify `FlowAnalyzer` to accept optional `FlowNodeArena`. If provided, use it instead of `binder.flow_nodes`. | `src/checker/control_flow.rs` | Low | PENDING |
+| **2. CRITICAL** | **CFG Integration** | Hook `FlowGraphBuilder` into function/method checking pipeline. Build refined CFG before checking body. | `src/checker/state.rs` or `declarations.rs` | Medium/High | PENDING |
+| **3. HIGH** | **Verify Exhaustiveness** | Confirm implicit default logic narrows variable to `never` in exhaustive test case. | Test files | Low | PENDING |
+| **4. MEDIUM** | **Cleanup/Optimization** | Ensure Binder's CFG is no longer used for narrowing once refined one is active. | `src/checker/control_flow.rs` | Medium | PENDING |
+
+### Implementation Guidance
+
+**Task 1 - Injectable Flow Arena**:
+```rust
+// src/checker/control_flow.rs
+impl<'a> FlowAnalyzer<'a> {
+    pub fn with_flow_nodes(mut self, nodes: &'a FlowNodeArena) -> Self {
+        self.flow_graph = Some(FlowGraph::new(nodes));
+        self
+    }
+}
+```
+
+**Task 2 - CFG Integration** (Conceptual):
+```rust
+// src/checker/state.rs
+fn check_function_body(&mut self, body: NodeIndex) {
+    // 1. Build refined CFG for this scope
+    let mut builder = FlowGraphBuilder::new();
+    let refined_nodes = builder.build_function_body(body, &self.nodes);
+
+    // 2. Create FlowAnalyzer using refined nodes
+    let mut analyzer = FlowAnalyzer::new(..., &self.binder, ...)
+        .with_flow_nodes(&refined_nodes);
+
+    // 3. Proceed with type checking
+}
+```
+
+### 🚨 MANDATORY GEMINI CONSULTATION (AGENTS.md Rule)
+
+Since modifying `src/checker/control_flow.rs` and `src/checker/state.rs`:
+- ✅ **Question 1 COMPLETE**: Approach validation done (Gemini Consultation #2)
+- ⏳ **Question 2 PENDING**: MUST ask Gemini to review implementation using `--pro` flag before committing
+
+**Workflow**: Implement → Ask Gemini Pro for review → Fix if needed → Commit
+
 
 
