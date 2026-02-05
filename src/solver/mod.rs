@@ -55,6 +55,7 @@ pub mod type_queries_extended;
 pub mod types;
 pub mod unsoundness_audit;
 mod utils;
+pub mod variance;
 pub mod visitor;
 pub mod widening;
 pub use visitor::*;
@@ -93,6 +94,7 @@ pub use subtype::*;
 pub use types::Visibility;
 pub use types::*;
 pub use unsoundness_audit::*;
+pub use variance::*;
 pub use widening::*;
 
 // Test modules: Most are loaded by their source files via #[path = "tests/..."] declarations.
