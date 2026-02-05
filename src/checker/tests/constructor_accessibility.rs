@@ -11,10 +11,25 @@ use crate::solver::TypeInterner;
 use crate::test_fixtures::TestContext;
 use std::sync::Arc;
 
+/// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
+/// Mocks the global types to bypass missing lib.d.ts issue.
+const GLOBAL_TYPE_MOCKS: &str = r#"
+interface Array<T> {}
+interface String {}
+interface Boolean {}
+interface Number {}
+interface Object {}
+interface Function {}
+interface RegExp {}
+interface IArguments {}
+"#;
+
 fn test_constructor_accessibility(source: &str, expected_error_code: u32) {
+    let source = format!("{}\n{}", GLOBAL_TYPE_MOCKS, source);
+
     let ctx = TestContext::new(); // This loads lib files
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
@@ -61,9 +76,11 @@ fn test_constructor_accessibility(source: &str, expected_error_code: u32) {
 }
 
 fn test_no_errors(source: &str) {
+    let source = format!("{}\n{}", GLOBAL_TYPE_MOCKS, source);
+
     let ctx = TestContext::new(); // This loads lib files
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
@@ -140,6 +157,16 @@ fn test_private_constructor_inside_class() {
     // Should pass
     test_no_errors(
         r#"
+        // Workaround: Mock global types to avoid TS2318 errors
+        interface Array<T> {}
+        interface String {}
+        interface Boolean {}
+        interface Number {}
+        interface Object {}
+        interface Function {}
+        interface RegExp {}
+        interface IArguments {}
+
         class A {
             private constructor() {}
             static create() { return new A(); }
