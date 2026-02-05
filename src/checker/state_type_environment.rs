@@ -184,26 +184,45 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<bool> {
+        // TSZ-4: Debug logging to trace enum nominal typing
+        tracing::debug!(
+            "enum_assignability_override: source={:?} target={:?}",
+            self.format_type(source),
+            self.format_type(target)
+        );
+
         let source_key = self.ctx.types.lookup(source);
         let target_key = self.ctx.types.lookup(target);
+
+        tracing::debug!("source_key={:?}, target_key={:?}", source_key, target_key);
 
         // 1. Handle Nominal Identity (Enum vs Enum, Member vs Enum, Member vs Member)
         if let (Some(TypeKey::Enum(s_def, s_inner)), Some(TypeKey::Enum(t_def, t_inner))) =
             (source_key, target_key)
         {
+            tracing::debug!(
+                "Both are TypeKey::Enum. s_def={:?}, t_def={:?}",
+                s_def,
+                t_def
+            );
+
             if s_def == t_def {
                 // Exact same entity (same member or same enum type)
                 // Check structural assignability of inner types
+                tracing::debug!("Same DefId - checking structural assignability");
                 return Some(self.check_structural_assignability(s_inner, t_inner, env));
             }
 
             let s_identity = self.get_enum_identity(source);
             let t_identity = self.get_enum_identity(target);
 
+            tracing::debug!("Identities: s_id={:?}, t_id={:?}", s_identity, t_identity);
+
             if let (Some(s_id), Some(t_id)) = (s_identity, t_identity) {
                 if s_id == t_id {
                     // Same parent enum, different entities (e.g., Member -> Enum, Member -> Member)
                     // Check structural assignability of inner types (Literal -> Union, Literal -> Literal)
+                    tracing::debug!("Same parent enum - checking structural assignability");
                     return Some(self.check_structural_assignability(s_inner, t_inner, env));
                 } else {
                     // Different enums - Nominally incompatible!
@@ -211,9 +230,12 @@ impl<'a> CheckerState<'a> {
                     // they are never assignable, even if values match.
                     // This preserves numeric enum <-> number compatibility because
                     // that case doesn't match the (TypeKey::Enum, TypeKey::Enum) pattern.
+                    tracing::debug!("Different enums - returning false");
                     return Some(false);
                 }
             }
+        } else {
+            tracing::debug!("Not both TypeKey::Enum - skipping nominal check");
         }
 
         // 2. Handle Primitive Compatibility (Rule #7: Numeric Enums <-> number)
