@@ -134,6 +134,7 @@ impl ParserState {
 
         // Handle invalid access modifiers (private/protected/public) on type members.
         // But NOT if the keyword is being used as a property name (e.g., "public: Type")
+        // Also NOT if there's a line break after the keyword (ASI: "protected\n p" means two properties)
         if matches!(
             self.token(),
             SyntaxKind::PrivateKeyword
@@ -141,6 +142,7 @@ impl ParserState {
                 | SyntaxKind::PublicKeyword
                 | SyntaxKind::AccessorKeyword
         ) && !self.look_ahead_is_property_name_after_keyword()
+            && !self.look_ahead_has_line_break_after_keyword()
         {
             use crate::checker::types::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
@@ -179,7 +181,10 @@ impl ParserState {
         }
 
         // Handle construct signature: new (): returnType
-        if self.is_token(SyntaxKind::NewKeyword) {
+        // But not if 'new' is used as property name (new: T, new?: T, new;, etc.)
+        if self.is_token(SyntaxKind::NewKeyword)
+            && !self.look_ahead_is_property_name_after_keyword()
+        {
             return self.parse_construct_signature(start_pos);
         }
 
