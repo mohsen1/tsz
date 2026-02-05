@@ -410,35 +410,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None => return self.interner.application(app.base, app.args.clone()),
         };
 
-        // If the base is a Ref(Symbol), try to resolve and instantiate
-        if let TypeKey::Ref(symbol) = base_key {
-            #[allow(deprecated)]
-            let type_params = self.resolver.get_ref_type_params(*symbol);
-            #[allow(deprecated)]
-            let resolved = self.resolver.resolve_ref(*symbol, self.interner);
-
-            if let Some(type_params) = type_params {
-                if let Some(resolved) = resolved {
-                    let expanded_args = self.expand_type_args(&app.args);
-                    let instantiated =
-                        instantiate_generic(self.interner, resolved, &type_params, &expanded_args);
-                    return self.evaluate(instantiated);
-                }
-            } else if let Some(resolved) = resolved {
-                let extracted_params = self.extract_type_params_from_type(resolved);
-                if !extracted_params.is_empty() && extracted_params.len() == app.args.len() {
-                    let expanded_args = self.expand_type_args(&app.args);
-                    let instantiated = instantiate_generic(
-                        self.interner,
-                        resolved,
-                        &extracted_params,
-                        &expanded_args,
-                    );
-                    return self.evaluate(instantiated);
-                }
-            }
-        }
-
         // If the base is a Lazy(DefId), try to resolve and instantiate (Phase 4.3)
         if let TypeKey::Lazy(def_id) = base_key {
             // Try to get the type parameters for this DefId
