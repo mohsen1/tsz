@@ -2696,3 +2696,13 @@ mod constructor_accessibility;
 #[cfg(test)]
 #[path = "checker/tests/function_bivariance.rs"]
 mod function_bivariance;
+
+// Void return exception tests
+#[cfg(test)]
+#[path = "checker/tests/void_return_exception.rs"]
+mod void_return_exception;
+
+// Any-propagation tests
+#[cfg(test)]
+#[path = "checker/tests/any_propagation.rs"]
+mod any_propagation;

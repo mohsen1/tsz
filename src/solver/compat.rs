@@ -609,7 +609,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Any at the top-level is assignable to/from everything
+        // UNLESS strict any propagation is enabled (disables suppression)
         if source == TypeId::ANY || target == TypeId::ANY {
+            // If strict any propagation is on (allow_any_suppression is false),
+            // we must fall through to structural checking unless both are ANY
+            if !self.lawyer.allow_any_suppression && source != target {
+                return None;
+            }
             return Some(true);
         }
 
