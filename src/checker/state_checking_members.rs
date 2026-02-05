@@ -2447,7 +2447,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             };
 
             self.push_return_type(body_return_type);
+            // Save and reset control flow context (function body creates new context)
+            let saved_cf_context = (self.ctx.iteration_depth, self.ctx.switch_depth);
+            self.ctx.iteration_depth = 0;
+            self.ctx.switch_depth = 0;
             self.check_statement(func.body);
+            // Restore control flow context
+            self.ctx.iteration_depth = saved_cf_context.0;
+            self.ctx.switch_depth = saved_cf_context.1;
 
             // Check for error 2355: function with return type must return a value
             // Only check if there's an explicit return type annotation
@@ -2736,5 +2743,17 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn leave_switch_statement(&mut self) {
         self.ctx.switch_depth = self.ctx.switch_depth.saturating_sub(1);
+    }
+
+    fn save_and_reset_control_flow_context(&mut self) -> (u32, u32) {
+        let saved = (self.ctx.iteration_depth, self.ctx.switch_depth);
+        self.ctx.iteration_depth = 0;
+        self.ctx.switch_depth = 0;
+        saved
+    }
+
+    fn restore_control_flow_context(&mut self, saved: (u32, u32)) {
+        self.ctx.iteration_depth = saved.0;
+        self.ctx.switch_depth = saved.1;
     }
 }

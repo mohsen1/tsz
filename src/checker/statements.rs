@@ -133,6 +133,15 @@ pub trait StatementCheckCallbacks {
     /// Leave a switch statement.
     /// Decrements switch_depth.
     fn leave_switch_statement(&mut self);
+
+    /// Save current iteration/switch context and reset it.
+    /// Used when entering a function body (function creates new context).
+    /// Returns the saved (iteration_depth, switch_depth).
+    fn save_and_reset_control_flow_context(&mut self) -> (u32, u32);
+
+    /// Restore previously saved iteration/switch context.
+    /// Used when leaving a function body.
+    fn restore_control_flow_context(&mut self, saved: (u32, u32));
 }
 
 /// Statement type checker that dispatches to specialized handlers.

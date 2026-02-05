@@ -269,3 +269,39 @@ while (true) {
         checker.ctx.diagnostics
     );
 }
+
+#[test]
+fn test_break_in_function_inside_loop_emits_ts1105() {
+    // break inside a function inside a loop should emit TS1105
+    // because the function body resets the iteration context
+    let source = r#"
+while (true) {
+    function f() {
+        break;  // Error: not in loop context from function's perspective
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    assert!(
+        checker.ctx.diagnostics.iter().any(|d| d.code == 1105),
+        "Should emit TS1105 for break in function inside loop, got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
