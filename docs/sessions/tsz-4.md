@@ -7,8 +7,8 @@
 ## Goals
 
 1. [x] **Infrastructure**: Create `src/checker/tests/strict_null_manual.rs` for regression testing
-2. [ ] **Bugfix**: Fix TS18050/TS2531 error code selection for property access on `null`/`undefined`
-3. [ ] **Feature**: Implement "Weak Type" detection (TS2559) in Lawyer layer
+2. [x] **Bugfix**: Fix TS18050/TS2531 error code selection for property access on `null`/`undefined` (Verified current behavior matches tsc)
+3. [ ] **Feature**: Implement "Weak Type" detection (TS2559) in Lawyer layer ← **CURRENT TASK**
 4. [ ] **Audit**: Verify Object Literal Freshness (Excess Property Checking) logic
 
 ## Current Context (2026-02-05)
@@ -57,7 +57,44 @@
 - The tests validate CURRENT behavior (which matches tsc)
 - Original issue in session ("fix TS18050/TS2531 error code selection") was based on incorrect assumptions
 - tsc uses TS18047/TS18048, not TS2531/TS2532 for these cases
-- Priority 1 can be marked complete
+- Priority 1 is complete
+
+---
+
+## Priority 2: Weak Type Detection (TS2559) ← **CURRENT TASK**
+
+**Status**: 🔄 In Progress - Awaiting Gemini Approach Validation
+
+**Problem**: TypeScript's "Weak Type" rule prevents assigning object literals to types with only optional properties when they share no common properties.
+
+**Example:**
+```typescript
+interface Weak { a?: string }
+const obj = { b: 1 };  // Error: Type '{ b: number; }' has no properties in common with 'Weak'
+```
+
+**Planned Approach:**
+1. Add `is_weak_type()` query to detect types where all properties are optional
+2. Integrate into Lawyer layer assignability checks (`src/solver/lawyer.rs` or `compat.rs`)
+3. Emit TS2559 when source type has no overlapping properties with weak target type
+4. Handle union types, index signatures, and generic types correctly
+
+**Validation Steps:**
+```bash
+# Step 1: Ask Gemini for approach validation (MANDATORY per AGENTS.md)
+./scripts/ask-gemini.mjs --include=src/solver "I need to implement Weak Type detection (TS2559).
+Problem: In TypeScript, a type is 'weak' if it only contains optional properties. Assigning a type to a weak type is an error if they share no properties in common.
+Planned approach:
+1. Add a method to `TypeInterner` or `Solver` to identify if a `TypeId` represents a weak type.
+2. In `src/solver/lawyer.rs` (or `compat.rs`), during assignability checks, if the target is a weak type, verify the source has at least one matching property.
+3. If it fails, return a specific diagnostic error code (TS2559).
+
+Is this approach correct? Should this logic live in `Lawyer` or `CompatChecker`? How should I handle union types where one member is weak?"
+
+# Step 2: Implement based on Gemini guidance
+# Step 3: Write tests to verify TS2559 emission
+# Step 4: Ask Gemini Pro to review implementation
+```
 
 ## Priority 2: Implement "Weak Type" Detection (Lawyer Layer)
 
