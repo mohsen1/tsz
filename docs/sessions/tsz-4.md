@@ -13,24 +13,87 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 ## Current State (2025-02-05)
 
 **Test Results**: `./scripts/emit/run.sh --max=100`
-- JavaScript Emit: **40.0%** pass rate (2/5 tests passed, 3 failed, 15 skipped)
+- JavaScript Emit: **8.2%** pass rate (5/61 tests passed, 56 failed, 39 skipped)
 - Declaration Emit: **Working** (Separate `DeclarationEmitter` class, tested via `--dts-only`)
-- Overall: Major progress - namespace/class merging now working!
+- Overall: Function transformation in namespaces now working!
 
 **Recent Discovery:**
-- Declaration emit uses SEPARATE `DeclarationEmitter` class (src/declaration_emitter/mod.rs)
-- Regular `Printer` is for JavaScript emit only
-- My previous work adding declaration support to Printer was unnecessary
-- DeclarationEmitter is already working (passes tests that have DTS baselines)
+- Functions inside namespaces are now properly transformed to ES5 IR
+- Type annotations are stripped from function parameters and return types
+- Direct CLI tests confirm the fix works correctly
 
 **Recent Work:**
-- Expanded "use strict" emission (commit e9eb11dce)
-- Added declaration emit infrastructure to Printer (commit ceef2bfaa) - **UNUSED**
-- Discovery: Declaration emit already handled by separate class
+- Function transformation in namespaces (commit 43dd1dc8e) - **COMPLETED**
+- Classes in namespaces ES5 transformation (commit b82a09613) - **COMPLETED**
+- Indentation preservation in IR printer (commit 5d0319f1a) - **COMPLETED**
+
+**Known Issues:**
+- Namespace/class merging emits extra `var` declaration
+- Some formatting differences (single-line vs multi-line)
+- Various edge cases in complex namespace structures
 
 ## Progress Log
 
-### 2025-02-05 Session 11: Namespace ES5 Transformation - Classes Working! (IN PROGRESS)
+### 2025-02-05 Session 12: Function Transformation in Namespaces (COMPLETED)
+
+**Problem:**
+Functions inside namespaces were being emitted as `/* ASTRef */` placeholders instead of
+proper ES5 function declarations. This caused namespace/class merging tests to fail.
+
+**Root Cause:**
+The `NamespaceES5Transformer` was using `IRNode::ASTRef(func_idx)` for functions, which
+tried to emit the TypeScript source text directly (including type annotations like `<T>(x: T, y: T): T`).
+But JavaScript doesn't support type annotations, so this either failed or produced `/* ASTRef */`.
+
+**Fix Implemented (commit 43dd1dc8e):**
+```rust
+// Added helper functions to convert functions to IR:
+fn convert_function_parameters(arena: &NodeArena, params: &NodeList) -> Vec<IRParam>
+fn convert_function_body(arena: &NodeArena, body_idx: NodeIndex) -> Vec<IRNode>
+
+// Modified transform_function_in_namespace to create IRNode::FunctionDecl:
+let func_decl = IRNode::FunctionDecl {
+    name: func_name.clone(),
+    parameters: convert_function_parameters(self.arena, &func_data.parameters),
+    body: convert_function_body(self.arena, func_data.body),
+};
+```
+
+**Example Transformation:**
+Input:
+```typescript
+namespace clodule {
+    export function fn<T>(x: T, y: T): T {
+        return x;
+    }
+}
+```
+
+Output:
+```javascript
+var clodule;
+(function (clodule) {
+    function fn(x, y) {      // Type annotations stripped
+        return x;
+    }
+    clodule.fn = fn;
+})(clodule || (clodule = {}));
+```
+
+**Test Results:**
+- Direct CLI tests confirm the fix works
+- Functions are now emitted as proper ES5 declarations with type annotations stripped
+- Remaining issue: Extra `var` declaration in namespace/class merging (separate issue)
+
+**Files Modified:**
+- src/transforms/namespace_es5_ir.rs
+
+**Next Steps:**
+1. Fix namespace/class merging issue (extra `var` declaration)
+2. Investigate other emit failures
+3. Continue improving pass rate toward 100%
+
+### 2025-02-05 Session 11: Namespace ES5 Transformation - Classes Working! (COMPLETED)
 
 **Major Breakthrough:**
 Fixed namespace ES5 transformation to properly transform classes inside namespaces.
