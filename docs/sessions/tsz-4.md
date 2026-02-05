@@ -39,9 +39,36 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 **Root Cause**: Functions emitted via `emit_function_expression_es5_params` have their own `is_simple_body` check that may not be detecting simple returns correctly
 **Next**: Need to investigate why `is_simple_body` returns false for `function (val) { return val.isSunk; }`
 
-### 2025-02-05 Session 3: Gemini Redefinition (PIVOT)
+### 2025-02-05 Session 3: CRITICAL DISCOVERY - Root Cause Found!
 
-**Consulted Gemini Pro** on session redefinition.
+**Consulted Gemini Pro** - discovered the actual code path!
+
+**THE PROBLEM:**
+The callback `function (val) { return val.isSunk; }` is being emitted as an **ARROW FUNCTION** that's down-leveled to ES5!
+
+**Actual Code Path:**
+1. `mod.rs` → `emit_arrow_function` (line 12) checks `target_es5`
+2. `functions.rs` → calls `emit_arrow_function_es5` (line 19)
+3. **`es5_helpers.rs` → `emit_arrow_function_es5` (line 317)** ← THIS IS WHERE IT HAPPENS
+
+**Single-line logic IS ALREADY IN PLACE** (lines 359-362):
+```rust
+if !needs_param_prologue
+    && block.statements.nodes.len() == 1
+    && self.is_simple_return_statement(block.statements.nodes[0])
+{
+    self.emit_single_line_block(func.body);
+}
+```
+
+**So why isn't it working?**
+One of these conditions must be false:
+1. `needs_param_prologue` is true
+2. `block.statements.nodes.len() != 1`
+3. `is_simple_return_statement` returns false
+
+**Next Investigation:**
+Need to determine which condition is failing. The logic is correct - one of the inputs is wrong.
 
 **Key Insights from Gemini:**
 1. **Formatting fix issue**: Likely `param_transforms.has_transforms()` is true, or node kind mismatch
