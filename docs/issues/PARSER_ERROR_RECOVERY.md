@@ -11,14 +11,14 @@ tsz's parser error recovery produces different (usually more) errors than TSC wh
 
 ## Conformance Stats (Updated 2026-02-05)
 
-- Parser tests: 52.8% pass rate (448/848)
+- Parser tests: 53.1% pass rate (457/860)
 - Top error mismatches:
-  - TS2304: missing=35, extra=80 (cannot find name) - mostly lib loading bug
-  - TS1005: missing=25, extra=28 (token expected)
-  - TS1109: missing=11, extra=25 (expression expected)
-  - TS1128: missing=2, extra=25 (declaration expected)
-  - TS2552: missing=7, extra=19 (name typo suggestion)
-  - TS1100: missing=11, extra=0 (invalid use of eval/arguments)
+  - TS2304: missing=35, extra=87 (cannot find name) - mostly lib loading bug
+  - TS1005: missing=25, extra=29 (token expected)
+  - TS1109: missing=11, extra=23 (expression expected)
+  - TS1128: missing=2, extra=27 (declaration expected)
+  - TS2552: missing=7, extra=18 (name typo suggestion)
+  - TS1100: missing=11, extra=0 (invalid use of eval/arguments) - strict mode validation
 
 **Note**: Many TS2304 errors are caused by the default lib loading bug (see DEFAULT_LIB_LOADING_BUG.md).
 
@@ -128,6 +128,36 @@ Fixed `{ class }`, `{ "" }`, and `{ 0 }` to emit TS1005 "':' expected" because s
 Fixed `{ name? }` to emit TS1162 "An object member cannot be declared optional" instead of TS1005.
 
 **File**: `src/parser/state_expressions.rs` - `parse_property_assignment()`
+
+### TS1097 for empty extends list (commit bb510a5)
+
+Fixed `class C extends { }` to emit TS1097 "'extends' list cannot be empty."
+
+**File**: `src/parser/state_declarations.rs` - `parse_heritage_clauses()`
+
+### TS1172 for duplicate extends in interface (commit 5655b17)
+
+Fixed `interface I extends A extends B {}` to emit TS1172 "'extends' clause already seen."
+
+**File**: `src/parser/state_declarations.rs` - `parse_heritage_clauses()`
+
+### TS1123 for empty variable declaration list (commit a3b49d1)
+
+Fixed `var ;` to emit TS1123 "Variable declaration list cannot be empty."
+
+**File**: `src/parser/state_statements.rs` - `parse_variable_statement()`
+
+### TS1123 for empty var declarations in for-in/for-of (commit 328f3f5)
+
+Fixed `for (var in X)` and `for (var of X)` to emit TS1123 "Variable declaration list cannot be empty."
+
+**File**: `src/parser/state_declarations.rs` - `parse_for_variable_declaration_list()`
+
+### TS1091/TS1188 for multiple declarations in for-in/for-of (commit faf70c5)
+
+Fixed `for (var a, b in X)` to emit TS1091 and `for (var a, b of X)` to emit TS1188.
+
+**File**: `src/parser/state_declarations.rs` - `parse_for_in_statement_rest()`, `parse_for_of_statement_rest()`
 
 ## Recommended Approach
 
