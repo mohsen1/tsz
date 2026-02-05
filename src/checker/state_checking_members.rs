@@ -2135,6 +2135,68 @@ impl<'a> CheckerState<'a> {
     }
 
     // Note: is_derived_property_redeclaration, find_containing_class are in type_checking.rs
+
+    /// Check a break statement for validity.
+    /// TS1105: A 'break' statement can only be used within an enclosing iteration statement or switch statement.
+    pub(crate) fn check_break_statement(&mut self, stmt_idx: NodeIndex) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        // Break is valid if we're inside an iteration statement OR a switch statement
+        if self.ctx.iteration_depth == 0 && self.ctx.switch_depth == 0 {
+            // Check if there's a label - labeled breaks have different rules
+            if let Some(node) = self.ctx.arena.get(stmt_idx)
+                && let Some(jump_data) = self.ctx.arena.get_jump_data(node)
+                && !jump_data.label.is_none()
+            {
+                // For labeled breaks, we'd need to check if the label exists and is accessible
+                // This is more complex (TS1107: Jump target cannot cross function boundary)
+                // For now, just emit the basic error
+                self.error_at_node(
+                    stmt_idx,
+                    "A 'break' statement can only be used within an enclosing iteration statement.",
+                    diagnostic_codes::BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
+                );
+            } else {
+                // Unlabeled break outside of loop/switch
+                self.error_at_node(
+                    stmt_idx,
+                    "A 'break' statement can only be used within an enclosing iteration statement.",
+                    diagnostic_codes::BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
+                );
+            }
+        }
+    }
+
+    /// Check a continue statement for validity.
+    /// TS1104: A 'continue' statement can only be used within an enclosing iteration statement.
+    pub(crate) fn check_continue_statement(&mut self, stmt_idx: NodeIndex) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        // Continue is only valid inside an iteration statement (NOT in switch)
+        if self.ctx.iteration_depth == 0 {
+            // Check if there's a label - labeled continues have different rules
+            if let Some(node) = self.ctx.arena.get(stmt_idx)
+                && let Some(jump_data) = self.ctx.arena.get_jump_data(node)
+                && !jump_data.label.is_none()
+            {
+                // For labeled continues, we'd need to check if the label is on an iteration statement
+                // (TS1116: A 'continue' statement can only jump to a label of an enclosing iteration statement)
+                // For now, just emit the basic error
+                self.error_at_node(
+                    stmt_idx,
+                    "A 'continue' statement can only be used within an enclosing iteration statement.",
+                    diagnostic_codes::CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
+                );
+            } else {
+                // Unlabeled continue outside of loop
+                self.error_at_node(
+                    stmt_idx,
+                    "A 'continue' statement can only be used within an enclosing iteration statement.",
+                    diagnostic_codes::CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
+                );
+            }
+        }
+    }
 }
 
 /// Implementation of StatementCheckCallbacks for CheckerState.
@@ -2650,5 +2712,29 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         //
         // The FlowAnalyzer uses no_match_type to correctly narrow types within
         // subsequent code blocks, but the error emission happens elsewhere.
+    }
+
+    fn check_break_statement(&mut self, stmt_idx: NodeIndex) {
+        CheckerState::check_break_statement(self, stmt_idx)
+    }
+
+    fn check_continue_statement(&mut self, stmt_idx: NodeIndex) {
+        CheckerState::check_continue_statement(self, stmt_idx)
+    }
+
+    fn enter_iteration_statement(&mut self) {
+        self.ctx.iteration_depth += 1;
+    }
+
+    fn leave_iteration_statement(&mut self) {
+        self.ctx.iteration_depth = self.ctx.iteration_depth.saturating_sub(1);
+    }
+
+    fn enter_switch_statement(&mut self) {
+        self.ctx.switch_depth += 1;
+    }
+
+    fn leave_switch_statement(&mut self) {
+        self.ctx.switch_depth = self.ctx.switch_depth.saturating_sub(1);
     }
 }

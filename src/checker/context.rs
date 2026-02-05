@@ -574,6 +574,15 @@ pub struct CheckerContext<'a> {
     /// This prevents widening of literal types in object/array literals.
     pub in_const_assertion: bool,
 
+    // --- Control Flow Validation ---
+    /// Depth of nested iteration statements (for/while/do-while).
+    /// Used to validate break/continue statements.
+    pub iteration_depth: u32,
+
+    /// Depth of nested switch statements.
+    /// Used to validate break statements (break is valid in switch).
+    pub switch_depth: u32,
+
     /// Fuel counter for type resolution operations.
     /// Decremented on each type resolution to prevent timeout on pathological types.
     /// When exhausted, type resolution returns ERROR to prevent infinite loops.
@@ -678,6 +687,8 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            iteration_depth: 0,
+            switch_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -766,6 +777,8 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            iteration_depth: 0,
+            switch_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -857,6 +870,8 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            iteration_depth: 0,
+            switch_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -947,6 +962,8 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            iteration_depth: 0,
+            switch_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -1045,6 +1062,8 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            iteration_depth: 0,
+            switch_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),

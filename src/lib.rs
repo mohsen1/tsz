@@ -107,6 +107,11 @@ mod parser_state_tests;
 #[path = "tests/parser_ts1038_tests.rs"]
 mod parser_ts1038_tests;
 
+// Control flow validation tests (TS1104, TS1105)
+#[cfg(test)]
+#[path = "tests/control_flow_validation_tests.rs"]
+mod control_flow_validation_tests;
+
 // Regex flag error detection tests
 #[cfg(test)]
 #[path = "tests/regex_flag_tests.rs"]

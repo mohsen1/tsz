@@ -352,8 +352,12 @@ pub mod diagnostic_codes {
     pub const ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS: u32 = 1094;
     pub const SETTER_CANNOT_HAVE_RETURN_TYPE: u32 = 1095;
     pub const TYPE_PARAMETER_LIST_CANNOT_BE_EMPTY: u32 = 1098;
+    pub const CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION: u32 = 1104; // A 'continue' statement can only be used within an enclosing iteration statement.
+    pub const BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION: u32 = 1105; // A 'break' statement can only be used within an enclosing iteration statement.
+    pub const JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY: u32 = 1107; // Jump target cannot cross function boundary.
     pub const EXPRESSION_EXPECTED: u32 = 1109;
     pub const TYPE_EXPECTED: u32 = 1110;
+    pub const CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_LABEL_OF_ENCLOSING_ITERATION: u32 = 1116; // A 'continue' statement can only jump to a label of an enclosing iteration statement.
     pub const OBJECT_LITERAL_DUPLICATE_PROPERTY: u32 = 1117; // An object literal cannot have multiple properties with the same name.
     pub const INVALID_CHARACTER: u32 = 1127; // Invalid character.
     pub const DECLARATION_EXPECTED: u32 = 1146;
