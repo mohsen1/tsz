@@ -9,14 +9,16 @@
 
 tsz's parser error recovery produces different (usually more) errors than TSC when parsing malformed code. This causes many parser conformance tests to fail.
 
-## Conformance Stats
+## Conformance Stats (Updated 2026-02-05)
 
-- Parser tests: 50.3% pass rate (420/835)
+- Parser tests: 52.6% pass rate (440/836)
 - Top error mismatches:
-  - TS2304: missing=35, extra=84 (cannot find name)
-  - TS1005: missing=29, extra=32 (token expected)
-  - TS1109: missing=11, extra=28 (expression expected)
+  - TS2304: missing=36, extra=82 (cannot find name)
+  - TS1005: missing=29, extra=31 (token expected)
+  - TS1109: missing=12, extra=27 (expression expected)
   - TS1128: missing=2, extra=28 (declaration expected)
+  - TS2552: missing=7, extra=19 (name typo suggestion)
+  - TS1100: missing=11, extra=0 (invalid use of eval/arguments)
 
 **Note**: Many TS2304 errors are caused by the default lib loading bug (see DEFAULT_LIB_LOADING_BUG.md).
 
@@ -118,5 +120,9 @@ Fixed issue where `class C { public }` caused TS1068 errors because the parser w
 
 Run parser conformance tests:
 ```bash
-./scripts/conformance.sh run --filter parser
+cd conformance-rust && cargo run --release --bin tsz-conformance -- \
+  --filter parser --all \
+  --test-dir ../TypeScript/tests/cases \
+  --tsz-binary ../.target/release/tsz \
+  --cache-file ../tsc-cache-full.json
 ```
