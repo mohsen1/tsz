@@ -375,6 +375,7 @@ pub mod diagnostic_codes {
     pub const HEXADECIMAL_DIGIT_EXPECTED: u32 = 1125; // Hexadecimal digit expected.
     pub const BINARY_DIGIT_EXPECTED: u32 = 1177; // Binary digit expected.
     pub const OCTAL_DIGIT_EXPECTED: u32 = 1178; // Octal digit expected.
+    pub const DECIMALS_WITH_LEADING_ZEROS_NOT_ALLOWED: u32 = 1489; // Decimals with leading zeros are not allowed.
     pub const KEYWORDS_CANNOT_CONTAIN_ESCAPE_CHARACTERS: u32 = 1260; // Keywords cannot contain escape characters.
     pub const ONLY_SINGLE_VARIABLE_IN_FOR_OF: u32 = 1188; // Only a single variable declaration is allowed in a 'for...of' statement.
     pub const VARIABLE_DECLARATION_EXPECTED: u32 = 1134;
