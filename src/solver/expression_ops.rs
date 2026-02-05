@@ -6,24 +6,10 @@
 //! These functions operate purely on TypeIds and maintain no AST dependencies.
 
 use crate::solver::TypeDatabase;
+use crate::solver::TypeResolver;
+use crate::solver::is_subtype_of;
+use crate::solver::subtype::SubtypeChecker;
 use crate::solver::types::{IntrinsicKind, LiteralValue, TypeId, TypeKey};
-use crate::solver::{TypeResolver, is_subtype_of};
-
-/// Helper to check subtype with optional resolver
-fn check_subtype<R: TypeResolver>(
-    interner: &dyn TypeDatabase,
-    resolver: Option<&R>,
-    source: TypeId,
-    target: TypeId,
-) -> bool {
-    if let Some(res) = resolver {
-        // Create a SubtypeChecker with the resolver
-        let mut checker = crate::solver::subtype::SubtypeChecker::with_resolver(interner, res);
-        checker.is_subtype_of(source, target)
-    } else {
-        is_subtype_of(interner, source, target)
-    }
-}
 
 /// Computes the result type of a conditional expression: `condition ? true_branch : false_branch`.
 ///
@@ -179,15 +165,40 @@ pub fn compute_best_common_type<R: TypeResolver>(
     // TypeScript rule: The best common type must be one of the input types
     // For example: [Dog, Cat] -> Dog | Cat (NOT Animal, even if both extend Animal)
     //              [Dog, Animal] -> Animal (Animal is in the set and is a supertype)
-    for &candidate in &widened {
-        // Check if all types are subtypes of this candidate
-        // Use resolver when available for nominal inheritance checks (e.g., Dog <: Animal)
-        if widened
-            .iter()
-            .all(|&ty| check_subtype(interner, resolver, ty, candidate))
-        {
-            // Found a valid BCT - return it
-            return candidate;
+    //
+    // OPTIMIZATION: Create ONE SubtypeChecker and reuse it for all comparisons.
+    // Previously, check_subtype() created a new SubtypeChecker (with 3 FxHashSets) for
+    // every single comparison. With N candidates and N types, that's O(N²) allocations.
+    // For enumLiteralsSubtypeReduction.ts (512 return types), this was 262,144 allocations!
+    //
+    // We handle the two cases (with/without resolver) separately because SubtypeChecker<R>
+    // and SubtypeChecker<NoopResolver> are different types.
+    if let Some(res) = resolver {
+        let mut checker = SubtypeChecker::with_resolver(interner, res);
+        for &candidate in &widened {
+            let is_supertype = widened.iter().all(|&ty| {
+                // CRITICAL: Reset the recursion guard counters for each top-level check.
+                // Otherwise, total_checks accumulates across the loop and eventually
+                // causes spurious DepthExceeded failures (treated as false).
+                checker.total_checks = 0;
+                checker.depth = 0;
+                checker.is_subtype_of(ty, candidate)
+            });
+            if is_supertype {
+                return candidate;
+            }
+        }
+    } else {
+        let mut checker = SubtypeChecker::new(interner);
+        for &candidate in &widened {
+            let is_supertype = widened.iter().all(|&ty| {
+                checker.total_checks = 0;
+                checker.depth = 0;
+                checker.is_subtype_of(ty, candidate)
+            });
+            if is_supertype {
+                return candidate;
+            }
         }
     }
 

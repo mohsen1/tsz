@@ -123,6 +123,10 @@ harness = false
 name = "parallel_bench"
 harness = false
 
+[[bench]]
+name = "union_reduction_bench"
+harness = false
+
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
 
