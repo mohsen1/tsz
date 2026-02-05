@@ -251,28 +251,54 @@ Validate that function implementations are assignable to all their overload sign
 
 ---
 
-### Task 1: TS2564 Property Initialization
-**Priority**: Medium (Missing Diagnostic)
-**Estimated Impact**: +2-3% conformance
-**Effort**: Medium
+### ✅ TS2564 Property Initialization - Partially Complete 2026-02-05
 
-**Context**:
-From architectural review section 5.9: "Property has no initializer" is partially working but buggy.
+**Status**: Core functionality working, performance improved, critical bugs fixed.
 
-Currently uses `HashSet` instead of `FxHashSet` and misses getter/setter logic.
+**Implementation Completed** (`src/checker/declarations.rs`):
+1. ✅ **Performance fix**: `HashSet` → `FxHashSet` (rustc_hash)
+   - Replaced all `std::collections::HashSet` with `rustc_hash::FxHashSet`
+   - Fixed `FxHashSet::new()` → `FxHashSet::default()`
 
-**Goal**:
-Fix and complete TS2564 diagnostic for class properties without initializers.
+2. ✅ **Element access support**: `this["x"] = 1` now recognized
+   - Updated `extract_property_key` to handle `ELEMENT_ACCESS_EXPRESSION`
+   - Uses `get_access_expr` for both property and element access
+   - Extracts string literal property names via `get_literal`
 
-**Files to Modify**:
-- `src/checker/class_checker.rs` - Main checking logic
-- `src/checker/declarations.rs` - Integration point
+**Testing Results**:
+```typescript
+// Test 1: Element access initialization - WORKS ✅
+class Foo {
+    x: number;
+    constructor() {
+        this["x"] = 1;  // No TS2564 - CORRECT!
+    }
+}
 
-**Implementation Plan**:
-1. Refactor from `HashSet` to `FxHashSet` (performance)
-2. Walk constructor's control flow graph to verify property assignment
-3. Handle multiple constructors (must assign in all)
-4. Handle getter/setter properties
+// Test 2: Basic property initialization - WORKS ✅
+class Bar {
+    x: number;
+    constructor() {
+        this.x = 1;  // No TS2564 - CORRECT!
+    }
+}
+
+// Test 3: Missing initialization - WORKS ✅
+class Baz {
+    x: number;  // TS2564 - CORRECT!
+}
+```
+
+**Remaining Gaps** (lower priority, edge cases):
+- SwitchStatement handling in `analyze_statement`
+- Conditional expression (ternary) handling
+- Parameter property tracking (`constructor(public x: number)`)
+- Accessor exclusion (get/set pairs shouldn't require initialization)
+- Compound assignments (`this.x ??= 1`)
+
+**Note**: TS2564 was already working correctly for most cases. These fixes address performance and specific edge cases identified by Gemini consultation.
+
+**Conformance Impact**: Minor (eliminates false positives for element access initialization)
 
 ---
 
@@ -318,42 +344,43 @@ See detailed description at top of file.
 
 ## Next Steps
 
-### 1. TS2564 Property Initialization (PRIORITY TASK)
+### 1. Type Narrowing (CFA) - NEW PRIMARY FOCUS
 
-**Why**: This is the highest-impact task for TSZ-1. A **+2-3% conformance boost** is significant, and it perfectly aligns with the TSZ-1 mandate for **Flow Analysis**.
+**Why**: Massive conformance impact. Narrowing affects almost every TypeScript file, unlike TS2564 which only affects classes.
 
-**Approach**:
-1. **Refactor to `FxHashSet`** for performance (per NORTH_STAR.md Section 3.4)
-2. **Walk constructor FlowNode graph** to verify property assignment
-3. **Handle multiple constructors** (must assign in all)
-4. **Handle edge cases**:
-   - Properties with initializers
-   - Getter/setter properties
-   - Assignments after `super()` call
+**Focus Areas** (per Gemini consultation):
+1. **Truthiness narrowing**: `if (val)` for all primitive types
+2. **Typeof narrowing**: `typeof x === 'string'` with edge cases
+3. **Instanceof narrowing**: `obj instanceof Class` pattern
 
-**Mandatory Gemini Consultation** (per AGENTS.md workflow):
-```bash
-# Question 1: Approach Validation
-./scripts/ask-gemini.mjs --include=src/checker/class_checker.rs \
-  "I am implementing TS2564 (Property 'x' has no initializer and is not definitely assigned in the constructor).
-   I plan to walk the FlowNode graph of the constructor in src/checker/class_checker.rs.
-   How should I handle classes with multiple constructors, and how do I correctly identify if a property
-   assignment happened after a super() call?"
+**Impact**:
+- Affects nearly all logic-heavy conformance tests
+- Uses existing FlowNode infrastructure (already available in function bodies)
+- Core of Flow Analysis work
 
-# Question 2: Implementation Review
-./scripts/ask-gemini.mjs --pro --include=src/checker/class_checker.rs \
-  "I implemented TS2564 property initialization checking.
-   Changes: [PASTE CODE]
-   Please review: 1) Is this logic correct for TypeScript? 2) Did I miss any edge cases?"
-```
-
-**Existing Infrastructure**:
-- `src/checker/flow_analysis.rs` - `is_definitely_assigned_at` logic
-- Adapt for class member symbols rather than local variables
+**Quick Win First**: TS2564 Parameter Properties
+- Handle `constructor(public x: number)` pattern
+- Very common in modern TypeScript
+- Quick to implement (treat as "pre-assigned")
 
 ---
 
-### 2. Method/Constructor Overload Validation (DEFERRED)
+### 2. TS2564 Property Initialization - MOSTLY COMPLETE
+
+**Status**: Core working, remaining gaps are edge cases with diminishing returns.
+
+**Remaining Work** (lower priority):
+- Parameter properties: `constructor(public x: number)`
+- SwitchStatement handling
+- Conditional expression (ternary) handling
+- Accessor exclusion
+- Compound assignments
+
+**Recommendation**: Implement parameter properties (quick win), then pivot to narrowing.
+
+---
+
+### 3. Method/Constructor Overload Validation (DEFERRED)
 
 **Status**: Architectural complexity blocks progress.
 
@@ -364,19 +391,17 @@ See detailed description at top of file.
 - Implement Symbol-based signature resolution in Solver
 - Or architect different validation approach for class members
 
-**Recommendation**: Document as "Symbol-based Signature Resolution" requirement. Focus on TS2564 instead (higher impact, clearer path).
+**Recommendation**: Document as "Symbol-based Signature Resolution" requirement. Deferred in favor of narrowing work.
 
 ---
 
-### 3. TS2454 Module-Level Definite Assignment (DEFERRED)
+### 4. TS2454 Module-Level Definite Assignment (DEFERRED)
 
 **Status**: Low priority, architecture heavy.
 
-**Remaining Work**:
-- Extend binder to create flow nodes for module-level statements
-- Complete CFA integration for all variable scopes
+**Blocker**: Requires Binder changes to create flow nodes for module-level statements.
 
-**Recommendation**: Keep as low priority - requires significant binder architectural changes.
+**Recommendation**: Keep as low priority - significant binder architectural changes required.
 
 ---
 - Ask Gemini Question 1: CFG walking strategy for property initialization
