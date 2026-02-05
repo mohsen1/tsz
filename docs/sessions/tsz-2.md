@@ -76,5 +76,24 @@ if (typeof x === "string") {
 
 - **src/checker/flow_analysis.rs**: Contains CheckerState (definite assignment)
 - **src/checker/control_flow.rs**: Contains FlowAnalyzer (type narrowing)
-- These two components have SEPARATE assignment tracking logic
-- Modifying one doesn't affect the other
+- **src/checker/control_flow_narrowing.rs**: Contains assignment matching logic
+- **src/checker/flow_graph_builder.rs**: Creates ASSIGNMENT flow nodes
+
+## Investigation Status
+
+✅ Found that FlowAnalyzer DOES handle array destructuring:
+- `assignment_targets_reference_internal` (line 138-232 in control_flow_narrowing.rs)
+- `match_destructuring_rhs` (line 1261-1400 in control_flow.rs)
+- `handle_expression_for_assignments` (line 1341+ in flow_graph_builder.rs)
+
+❓ Tests still failing - code logic looks correct
+- Flow nodes ARE being created for assignments
+- Matching logic DOES iterate through array elements
+- Need to debug why narrowing isn't being cleared
+
+## Next Investigation Steps
+
+1. Add tracing to see if assignment_targets_reference_internal returns true
+2. Check if get_assigned_type returns the correct type
+3. Verify flow node has ASSIGNMENT flag set
+4. Check if the narrowing is being cleared but then reapplied
