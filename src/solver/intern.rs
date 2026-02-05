@@ -2165,49 +2165,67 @@ impl TypeInterner {
             }
         }
 
-        let mut i = 0;
-        while i < flat.len() {
-            let mut redundant = false;
-            for j in 0..flat.len() {
-                if i == j {
+        // Mark redundant elements, then compact in one pass.
+        // This avoids O(n) Vec::remove() per element (which shifts all subsequent items).
+        let len = flat.len();
+        let mut keep = vec![true; len];
+        for i in 0..len {
+            if !keep[i] {
+                continue;
+            }
+            for j in 0..len {
+                if i == j || !keep[j] {
                     continue;
                 }
                 // If i is a subtype of j, i is redundant in a union
                 if self.is_subtype_shallow(flat[i], flat[j]) {
-                    redundant = true;
+                    keep[i] = false;
                     break;
                 }
             }
-            if redundant {
-                flat.remove(i);
-            } else {
-                i += 1;
+        }
+        // Compact: retain only non-redundant elements
+        let mut write = 0;
+        for read in 0..len {
+            if keep[read] {
+                flat[write] = flat[read];
+                write += 1;
             }
         }
+        flat.truncate(write);
     }
 
     /// Remove redundant types from an intersection using shallow subtype checks.
     /// If A <: B, then A & B = A (B is redundant).
     fn reduce_intersection_subtypes(&self, flat: &mut TypeListBuffer) {
-        let mut i = 0;
-        while i < flat.len() {
-            let mut redundant = false;
-            for j in 0..flat.len() {
-                if i == j {
+        // Mark redundant elements, then compact in one pass.
+        // This avoids O(n) Vec::remove() per element (which shifts all subsequent items).
+        let len = flat.len();
+        let mut keep = vec![true; len];
+        for i in 0..len {
+            if !keep[i] {
+                continue;
+            }
+            for j in 0..len {
+                if i == j || !keep[j] {
                     continue;
                 }
                 // If j is a subtype of i, i is the supertype and redundant in an intersection
                 if self.is_subtype_shallow(flat[j], flat[i]) {
-                    redundant = true;
+                    keep[i] = false;
                     break;
                 }
             }
-            if redundant {
-                flat.remove(i);
-            } else {
-                i += 1;
+        }
+        // Compact: retain only non-redundant elements
+        let mut write = 0;
+        for read in 0..len {
+            if keep[read] {
+                flat[write] = flat[read];
+                write += 1;
             }
         }
+        flat.truncate(write);
     }
 
     /// Distribute an intersection over unions: A & (B | C) → (A & B) | (A & C)
