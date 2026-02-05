@@ -1,8 +1,8 @@
-# Session tsz-2: Enforce Solver-First Architecture (Anti-Pattern 8.1)
+# Session tsz-2: Phase 4.3 Migration & Anti-Pattern 8.1
 
 **Started**: 2026-02-05
-**Status**: Active - Anti-Pattern 8.1 Refactoring
-**Focus**: Remove direct TypeKey inspection from Checker, enforce Solver-First boundary
+**Status**: Active - Completing Phase 4.3, then Anti-Pattern 8.1
+**Focus:** Complete Ref → Lazy/DefId migration, then enforce Solver-First boundary
 
 **Previous Session**: Coinductive Subtyping (COMPLETE)
 **Next Session**: TBD
@@ -10,60 +10,47 @@
 ## Progress Summary
 
 **Completed (Phase 4.3 Migration):**
-- ✅ All 46 deprecation warnings eliminated (70 → 0)
-- ✅ Ref → Lazy/DefId migration complete
-- ✅ Changes pushed to main
+- ✅ All 46 deprecation warnings eliminated (70 → 0) in earlier session
+- ⚠️ **LOST**: Most Phase 4.3 changes were lost during merge conflict resolution
+- ⚠️ **CURRENT**: 12 deprecated function warnings remain
 
-**Current Focus: Anti-Pattern 8.1 - Remove Direct TypeKey Matching**
-- Checker is violating NORTH_STAR.md Rule 3: "Checker NEVER inspects type internals"
-- This blocks Solver from evolving its internal representation
-- Must decouple Checker from TypeKey to achieve Solver-First Architecture
+**Issue:**
+During merge conflict with tsz-4 (commit 1b467adb0), I reset to origin/main and lost
+the Phase 4.3 fixes. Only assignment_checker.rs fix survived (commit 7d338791a).
 
-## Current Plan
+**Remaining Work (Phase 4.3):**
+- src/checker/enum_checker.rs (3 × get_ref_symbol)
+- src/checker/state_type_analysis.rs (1 × get_symbol_ref)
+- src/checker/state_type_environment.rs (import + 1 × get_symbol_ref)
+- src/checker/type_computation_complex.rs (1 × get_ref_if_symbol)
+- src/checker/context.rs (fallback code using get_symbol_ref)
+- src/solver/type_queries.rs (remove deprecated functions)
 
-### Task 1: Audit & Categorize (IN PROGRESS)
-Search `src/checker/` for TypeKey usages and categorize by purpose:
+**Next Session Plan:**
+1. Complete Phase 4.3 migration (12 warnings remaining)
+2. Then proceed with Anti-Pattern 8.1 refactoring
 
-```bash
-# Find all TypeKey pattern matches in Checker
-grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
-```
+## Anti-Pattern 8.1 Planning (Post Phase 4.3)
 
-**Categorization:**
-- Type checking (is this a string/object/function?)
-- Property access (does this object have property 'x'?)
-- Type traversal (ensure refs resolved, collect dependencies)
-- Structural inspection (get members, get params, etc.)
+**Completed Audit:**
+- 109 TypeKey usages across 18 checker files
+- assignability_checker.rs: 15 usages (TYPE TRAVERSAL)
+- generators.rs: 10 usages
+- iterators.rs: 9 usages
+- state_type_environment.rs: 19 usages
+- state_type_analysis.rs: 18 usages
 
-### Task 2: Extend Solver API
-For each identified need, create semantic queries in `src/solver/`:
+**Refactoring Strategy (validated by Gemini):**
+1. Add `walk_type_children()` helper to src/solver/visitor.rs
+2. Create `RefResolverVisitor` in assignability_checker.rs
+3. Replace 200-line match statement with visitor pattern
+4. Extend to other files iteratively
 
-**Examples:**
-- Instead of: `matches!(key, TypeKey::Intrinsic(String))`
-- Use: `solver.is_string_type(type_id)`
-- Instead of: `TypeKey::Object(shape_id) => { check props }`
-- Use: `solver.get_property_type(type_id, property_name)`
-
-**Constraint:** New API methods MUST handle:
-- Lazy types (resolve via DefId)
-- Union types (check all members)
-- Intersection types (check all members)
-- Readonly wrappers (unwrap first)
-
-### Task 3: Refactor Checker
-Replace pattern matching with Solver API calls:
-
-**Goal:** Checker should NOT import `TypeKey` at all
-- Remove all `match type_key { TypeKey::... }` patterns
-- Replace with `solver.is_...()` or `solver.get_...()` calls
-- Checker reads like high-level logic, not structural manipulation
-
-## Success Criteria
-
-- [ ] Zero direct matches on `TypeKey` variants in `src/checker/`
-- [ ] Checker does not import `TypeKey` (except possibly in type definitions)
-- [ ] All tests pass (conformance and unit tests)
-- [ ] Solver API extended with necessary semantic queries
+**Gemini Guidance:**
+- Traversal logic → Solver layer (walk_type_children)
+- Resolution logic → Checker layer (visitor implementation)
+- Must handle edge cases: cycles, TypeQuery, Application types
+- Watch for double-borrow panics with type_env
 
 ## Two-Question Rule (MANDATORY)
 
@@ -71,37 +58,25 @@ For ANY changes to `src/solver/` or `src/checker/`:
 
 **Question 1 (Before):**
 ```bash
-./scripts/ask-gemini.mjs --include=src/solver "I found TypeKey pattern matching in checker/file.rs.
-Pattern: [PASTE CODE]
-Purpose: [DESCRIBE WHY]
-Plan: Replace with solver.is_xyz().
+./scripts/ask-gemini.mjs --include=src/solver "I'm doing X in Y file.
+Plan: [YOUR PLAN]
 
-Is this correct? What edge cases might I miss?"
+Is this correct? What edge cases?"
 ```
 
 **Question 2 (After):**
 ```bash
-./scripts/ask-gemini.mjs --pro --include=src/solver "I implemented solver.is_xyz().
+./scripts/ask-gemini.mjs --pro --include=src/solver "I implemented X.
 Code: [PASTE CODE]
 
-Does this handle Unions/Intersections/Lazy correctly? Any bugs?"
+Does this handle all edge cases correctly?"
 ```
 
-## Notes
+## Session History
 
-**Why This Priority:**
-1. **Architecture**: Anti-Pattern 8.1 is biggest blocker to Solver-First Architecture
-2. **Evolution**: Solver cannot optimize internal representation if Checker depends on TypeKey
-3. **Correctness**: Pattern matching often misses edge cases (Unions, Intersections, Lazy)
-
-**Key Risk:**
-- Simple pattern `matches!(key, TypeKey::String)` misses:
-  - `TypeKey::Union(String, Number)` - should match String
-  - `TypeKey::Lazy(def_id)` - might resolve to String
-  - `TypeKey::Intersection(String, ...)` - should match String
-
-**Files of Interest:**
-- src/checker/assignability_checker.rs (15+ TypeKey matches)
-- src/checker/call_checker.rs (TypeKey::Lazy match)
-- src/solver/visitor.rs (existing visitor pattern)
-- src/solver/type_queries.rs (add new semantic queries here)
+- 2026-02-05: Started Phase 4.3 migration
+- 2026-02-05: Completed Phase 4.3 (46 warnings fixed)
+- 2026-02-05: Lost changes during merge conflict
+- 2026-02-05: Redefined session to Anti-Pattern 8.1
+- 2026-02-05: Discovered Phase 4.3 incomplete (12 warnings remain)
+- **NEXT**: Complete Phase 4.3, then Anti-Pattern 8.1
