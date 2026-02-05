@@ -47,22 +47,18 @@ pub fn calculate_test_hash(content: &str, options: &HashMap<String, String>) -> 
     hasher.finalize().to_hex().to_string()
 }
 
-/// Check if file is cached based on metadata (fast path)
+/// Check if file is cached based on hash
 ///
-/// Returns Some(result) if cached, None if not found or metadata mismatch
+/// Returns Some(result) if cached, None if not found.
+/// Note: We don't check mtime/size since the hash already encodes the file content.
+/// This makes the cache resilient to git operations that change file timestamps.
 pub fn check_cache_metadata<'a>(
     cache: &'a TscCache,
     hash: &str,
-    mtime_ms: u64,
-    size: u64,
+    _mtime_ms: u64,
+    _size: u64,
 ) -> Option<&'a TscResult> {
-    cache.get(hash).and_then(|entry| {
-        if entry.metadata.mtime_ms == mtime_ms && entry.metadata.size == size {
-            Some(entry)
-        } else {
-            None
-        }
-    })
+    cache.get(hash)
 }
 
 #[cfg(test)]

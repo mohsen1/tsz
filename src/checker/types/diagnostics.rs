@@ -172,6 +172,9 @@ pub mod diagnostic_messages {
         "Property '{0}' is {1} and only accessible within class '{2}'.";
     pub const PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT: &str =
         "Private identifiers are not allowed in ambient contexts.";
+    /// TS18028: Private identifiers are only available when targeting ECMAScript 2015 and higher.
+    pub const PRIVATE_IDENTIFIER_ES2015_REQUIRED: &str =
+        "Private identifiers are only available when targeting ECMAScript 2015 and higher.";
     pub const INITIALIZERS_NOT_ALLOWED_IN_AMBIENT_CONTEXTS: &str =
         "Initializers are not allowed in ambient contexts.";
     pub const THIS_IMPLICITLY_HAS_TYPE_ANY: &str =
@@ -630,6 +633,7 @@ pub mod diagnostic_codes {
     pub const AWAIT_IDENTIFIER_ILLEGAL: u32 = 1359; // Alias for backwards compatibility
 
     // Target version errors (18xxx)
+    pub const PRIVATE_IDENTIFIER_ES2015_REQUIRED: u32 = 18028; // Private identifiers are only available when targeting ECMAScript 2015 and higher.
     pub const ACCESSOR_MODIFIER_ONLY_ES2015_PLUS: u32 = 18045; // Properties with the 'accessor' modifier are only available when targeting ECMAScript 2015 and higher.
     pub const VALUE_CANNOT_BE_USED_HERE: u32 = 18050; // The value '{0}' cannot be used here.
 
