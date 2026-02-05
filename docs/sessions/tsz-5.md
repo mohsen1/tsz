@@ -315,3 +315,102 @@ pub fn is_contextually_sensitive_node(&self, idx: NodeIndex) -> bool
 
 ### Priority 3: Method Resolution on Generic Types
 The `arr.map(f)` case requires additional work to handle method calls on generic types before type parameters are resolved. This is a separate issue from lambda contextual typing.
+
+---
+
+## Implementation TODOs (Redefined by Gemini Flash 2026-02-05)
+
+### Phase 1: Checker Orchestration (The "Split")
+
+#### TODO 1.1: Implement Contextual Sensitivity Detection
+**File**: `src/checker/expr.rs`
+**Function**: `is_contextually_sensitive(node: NodeIndex) -> bool`
+**Description**: Identifies expressions whose type depends on target type (lambdas, object literals)
+**Status**: ⏳ Pending
+
+#### TODO 1.2: Refactor Call Expression Checking
+**File**: `src/checker/expr.rs`
+**Function**: `check_call_expression`
+**Description**: Two-pass argument check:
+- Pass 1: Check non-contextual arguments
+- Intermediate: Call Solver for partial inference
+- Pass 2: Check contextual arguments with inferred signature
+**Status**: ⏳ Pending
+**Dependencies**: TODO 1.1, TODO 2.1
+
+### Phase 2: Solver API Enhancement (The "Engine")
+
+#### TODO 2.1: Expose Partial Inference API
+**File**: `src/solver/mod.rs`
+**Function**: `trait Solver { fn infer_type_parameters(...) }`
+**Description**: API for partial inference based on subset of arguments
+**Status**: ⏳ Pending
+
+#### TODO 2.2: Support Partial Type Variable Fixing
+**File**: `src/solver/infer.rs`
+**Function**: `InferenceContext::infer_from_argument_types`
+**Description**: Infer type variables from arguments while preserving state
+**Status**: ⏳ Pending
+
+### Phase 3: Contextual Type Propagation
+
+#### TODO 3.1: Verify Expression Checker Accepts Contextual Type
+**File**: `src/checker/expr.rs`
+**Function**: `check_expression`
+**Description**: Verify optional `contextual_type` parameter exists
+**Status**: ⏳ Pending
+
+#### TODO 3.2: Extract Lambda Parameter Types
+**File**: `src/checker/expr.rs`
+**Function**: `check_arrow_function`
+**Description**: Extract parameter types from partially inferred signature
+**Status**: ⏳ Pending
+**Dependencies**: TODO 1.2, TODO 2.2
+
+### Test Success Criteria
+
+#### Test 1: Basic Array Map (North Star)
+```typescript
+declare function map<T, U>(arr: T[], callback: (arg: T) => U): U[];
+const result = map([1, 2, 3], x => x.toString());
+// Expected: T=number, U=string, result: string[]
+```
+
+#### Test 2: Nested Generics
+```typescript
+declare function pipe<A, B, C>(val: A, f1: (a: A) => B, f2: (b: B) => C): C;
+const res = pipe(42, x => x.toString(), s => s.length);
+// Expected: A=number, B=string, C=number
+```
+
+#### Test 3: Object Literal Context
+```typescript
+declare function handle<T>(config: { data: T, process: (t: T) => void }): void;
+handle({ data: "hello", process: t => t.toUpperCase() });
+// Expected: T=string
+```
+
+## Dependencies
+
+1. **TODO 1.1** → **TODO 1.2**
+2. **TODO 2.1** → **TODO 1.2**
+3. **TODO 1.2** + **TODO 2.2** → **TODO 3.2**
+
+## MANDATORY Gemini Workflow (Per AGENTS.md)
+
+**Question 1 (Approach)** - Before implementing TODO 1.2:
+```bash
+./scripts/ask-gemini.mjs --include=src/checker/expr.rs --include=src/solver/infer.rs "
+I am about to split check_call_expression into two passes in src/checker/expr.rs.
+How should I handle object literals containing both values and lambdas?
+Should the whole object be deferred to Pass 2?
+"
+```
+
+**Question 2 (Review)** - After implementing TODO 2.2:
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/infer.rs "
+I implemented InferenceContext::infer_from_argument_types for two-pass inference.
+Please review: Does it correctly preserve state between two calls from the Checker?
+"
+```
