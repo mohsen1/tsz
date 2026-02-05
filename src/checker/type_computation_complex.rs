@@ -44,6 +44,16 @@ fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) -> bool {
             }
         }
 
+        // Conditional Expressions: Sensitive if either branch is sensitive
+        k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+            if let Some(cond) = state.ctx.arena.get_conditional_expr(node) {
+                is_contextually_sensitive(state, cond.when_true)
+                    || is_contextually_sensitive(state, cond.when_false)
+            } else {
+                false
+            }
+        }
+
         // Object Literals: Sensitive if any property is sensitive
         k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
             if let Some(obj) = state.ctx.arena.get_literal_expr(node) {
@@ -59,20 +69,10 @@ fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) -> bool {
                                     }
                                 }
                             }
-                            // Shorthand: check for assignment initializer
+                            // Shorthand property: { x } refers to a variable, never sensitive
                             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                                if let Some(shorthand) =
-                                    state.ctx.arena.get_shorthand_property(element)
-                                {
-                                    // object_assignment_initializer is a NodeIndex (not optional)
-                                    // It represents the expression in destructuring patterns like `{ x = 1 }`
-                                    if is_contextually_sensitive(
-                                        state,
-                                        shorthand.object_assignment_initializer,
-                                    ) {
-                                        return true;
-                                    }
-                                }
+                                // Variable references are not contextually sensitive
+                                // (their type is already known from their declaration)
                             }
                             // Spread: check the expression being spread
                             k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
