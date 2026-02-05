@@ -2478,6 +2478,15 @@ impl ParserState {
             );
         }
 
+        // Check if the property name requires `:` syntax (can't be a shorthand property).
+        // Shorthand properties only work with identifiers, not:
+        // - Reserved words (class, function, etc.)
+        // - String literals ("key")
+        // - Numeric literals (0, 1, etc.)
+        let requires_colon = self.is_reserved_word()
+            || self.is_token(SyntaxKind::StringLiteral)
+            || self.is_token(SyntaxKind::NumericLiteral);
+
         let name = self.parse_property_name();
 
         // Handle method: foo() { } or foo<T>() { }
@@ -2495,7 +2504,14 @@ impl ParserState {
                 expr
             }
         } else {
-            // Shorthand property
+            // Shorthand property - but certain property names require `:` syntax
+            if requires_colon {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "':' expected.",
+                    diagnostic_codes::TOKEN_EXPECTED,
+                );
+            }
             name
         };
 
