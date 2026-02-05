@@ -1829,6 +1829,21 @@ impl ParserState {
             }
         }
 
+        // Check for missing hex digits (e.g., 0x, 0X) - TS1125
+        if (token_flags & TokenFlags::HexSpecifier as u32) != 0 {
+            // Hex literal should be at least 3 chars (0x followed by at least one digit)
+            // If it's just "0x" or "0X", no hex digits were provided
+            if text.len() == 2 {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    "Hexadecimal digit expected.",
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            }
+        }
+
         // Check if this numeric literal has an invalid separator (for TS1351 check)
         let has_invalid_separator =
             (token_flags & TokenFlags::ContainsInvalidSeparator as u32) != 0;
