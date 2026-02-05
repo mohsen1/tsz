@@ -481,6 +481,64 @@ interfaces, and generics.
 
 **Next Step**: Task 1 implementation (typeof & truthiness narrowing) can now proceed with correct type resolution foundation
 
+### 2026-02-05: Truthiness Narrowing Refactored to TypeGuard Abstraction
+
+**Context**: Following Solver-First architecture guidance from Gemini to refactor truthiness narrowing.
+
+**Implementation**:
+
+1. **Fixed `narrow_by_truthiness` to handle `unknown`** (src/solver/narrowing.rs):
+   - Changed: `unknown` now narrows to exclude null/undefined in truthy branch
+   - TypeScript behavior: `if (x: unknown) { x }` -> `x` is not `null | undefined`
+
+2. **Refactored control_flow.rs** to use `TypeGuard::Truthy`:
+   - Changed from manual null/undefined exclusion to abstraction
+   - Centralizes truthiness logic in Solver layer
+
+**Code Changes**:
+```rust
+// src/solver/narrowing.rs
+fn narrow_by_truthiness(&self, source_type: TypeId) -> TypeId {
+    if source_type == TypeId::ANY {
+        return source_type;
+    }
+
+    // CRITICAL FIX: unknown narrows to exclude null/undefined
+    if source_type == TypeId::UNKNOWN {
+        let narrowed = self.narrow_excluding_type(source_type, TypeId::NULL);
+        return self.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+    }
+    // ... rest of function
+}
+
+// src/checker/control_flow.rs
+// Before: manual null/undefined exclusion
+if is_true_branch {
+    let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
+    return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+}
+
+// After: use TypeGuard abstraction
+return narrowing.narrow_type(type_id, &TypeGuard::Truthy, is_true_branch);
+```
+
+**Why This Matters**:
+The TypeGuard abstraction provides clear separation:
+- **Checker**: Extract TypeGuard from AST (WHERE + WHAT)
+- **Solver**: Apply TypeGuard to types (HOW)
+
+**Test Status**:
+- Pre-existing: 10 control flow tests failing (unrelated to this change)
+- Pre-existing: 5 type inference tests failing
+- No new failures introduced
+
+**Commit**: `feat(tsz-10): refactor truthiness narrowing to use TypeGuard abstraction`
+
+**Next Steps**:
+1. Implement typeof narrowing extraction in Checker
+2. Verify `extract_type_guard` handles typeof patterns correctly
+3. Write tests for typeof and truthiness narrowing
+
 ### 2026-02-05: typeof Exclusion Narrowing Bug Fixed
 
 **Bug Discovery**: Created test_narrowing3.ts to verify typeof narrowing behavior.
