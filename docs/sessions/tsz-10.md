@@ -1064,3 +1064,50 @@ function test(shape: Shape) {
 - `src/checker/state_checking.rs` - Updated PropertyAccessEvaluator::new call
 - `src/solver/operations.rs` - Updated get_iterator_info signature
 - `src/solver/type_queries.rs` - Updated is_promise_like signature
+
+## 2026-02-05 Update (PropertyAccessEvaluator Refactor Complete)
+
+**Status**: ✅ TASK 5 COMPLETE!
+
+Successfully completed the PropertyAccessEvaluator refactor following Gemini's "Object-Safe Delegation" pattern:
+
+### Implementation (commit 198d0c802):
+
+1. **Removed Generic Parameter**: Changed from `PropertyAccessEvaluator<'a, R: TypeResolver>` to `PropertyAccessEvaluator<'a>`
+2. **Uses QueryDatabase**: Now holds `db: &'a dyn QueryDatabase` (trait object)
+3. **No Default Implementation**: Each QueryDatabase implementer provides their own `resolve_property_access`:
+   - **TypeInterner**: Creates evaluator with `self` (has noop TypeResolver)
+   - **QueryCache**: Delegates to `self.interner.resolve_property_access()`
+   - **BinderTypeDatabase**: Delegates to `self.query_cache` which uses TypeEnvironment
+
+### Why This Works:
+
+Per Gemini's review:
+- **Object Safety**: By removing the generic, the trait method is object-safe and can be called on `&dyn QueryDatabase`
+- **Trait Coercion**: `&Self` automatically coerces to `&dyn QueryDatabase` because `Self: QueryDatabase`
+- **Dynamic Dispatch**: Negligible overhead compared to property access logic
+
+### Union Resolution Bug Fix:
+
+**Before**: Type aliases showed "union with 1 members" because NoopResolver failed to resolve Lazy types
+**After**: Properly resolves type aliases through BinderTypeDatabase → TypeEnvironment
+
+**Test**: `test_simple_discriminant.ts` now passes without errors
+
+### Gemini Pro Review:
+
+✅ Implementation is correct for Rust best practices  
+✅ Enables proper Lazy type resolution in discriminant narrowing  
+✅ Identified "unit test trap" - Lazy resolution only works with Binder, not TypeInterner alone  
+✅ Confirmed fallback logic in resolve_application_property is robust  
+
+### Files Modified:
+- `src/solver/operations_property.rs` - Removed generic, uses `db: &dyn QueryDatabase`
+- `src/solver/db.rs` - No default impl, each type provides their own
+- `test_simple_discriminant.ts` - Added test case
+
+### Next Steps:
+
+Task 5 is complete! Discriminant narrowing now works correctly for type aliases.
+Should proceed to remaining tasks in TSZ-10 or ask Gemini for next session priorities.
+
