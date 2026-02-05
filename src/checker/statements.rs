@@ -136,12 +136,12 @@ pub trait StatementCheckCallbacks {
 
     /// Save current iteration/switch context and reset it.
     /// Used when entering a function body (function creates new context).
-    /// Returns the saved (iteration_depth, switch_depth).
-    fn save_and_reset_control_flow_context(&mut self) -> (u32, u32);
+    /// Returns the saved (iteration_depth, switch_depth, had_outer_loop).
+    fn save_and_reset_control_flow_context(&mut self) -> (u32, u32, bool);
 
     /// Restore previously saved iteration/switch context.
     /// Used when leaving a function body.
-    fn restore_control_flow_context(&mut self, saved: (u32, u32));
+    fn restore_control_flow_context(&mut self, saved: (u32, u32, bool));
 
     /// Enter a labeled statement.
     /// Pushes a label onto the label stack for break/continue validation.
@@ -522,20 +522,10 @@ impl StatementChecker {
                     let label_name = state.get_node_text(label_idx).unwrap_or_default();
 
                     // Determine if the labeled statement wraps an iteration statement
+                    // This checks recursively through nested labels (e.g., target1: target2: while(...))
                     let is_iteration = {
                         let arena = state.arena();
-                        if let Some(stmt_node) = arena.get(statement_idx) {
-                            matches!(
-                                stmt_node.kind,
-                                syntax_kind_ext::FOR_STATEMENT
-                                    | syntax_kind_ext::FOR_IN_STATEMENT
-                                    | syntax_kind_ext::FOR_OF_STATEMENT
-                                    | syntax_kind_ext::WHILE_STATEMENT
-                                    | syntax_kind_ext::DO_STATEMENT
-                            )
-                        } else {
-                            false
-                        }
+                        Self::is_iteration_or_nested_iteration(arena, statement_idx)
                     };
 
                     // Push label onto stack
@@ -553,6 +543,39 @@ impl StatementChecker {
                 state.get_type_of_node(stmt_idx);
             }
         }
+    }
+
+    /// Check if a statement is an iteration statement, either directly or through nested labels.
+    /// This handles cases like `target1: target2: while(true)` where both target1 and target2
+    /// should be considered as wrapping an iteration statement.
+    fn is_iteration_or_nested_iteration(
+        arena: &crate::parser::node::NodeArena,
+        stmt_idx: crate::parser::NodeIndex,
+    ) -> bool {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            return false;
+        };
+
+        // Check if it's directly an iteration statement
+        if matches!(
+            stmt_node.kind,
+            syntax_kind_ext::FOR_STATEMENT
+                | syntax_kind_ext::FOR_IN_STATEMENT
+                | syntax_kind_ext::FOR_OF_STATEMENT
+                | syntax_kind_ext::WHILE_STATEMENT
+                | syntax_kind_ext::DO_STATEMENT
+        ) {
+            return true;
+        }
+
+        // Check if it's a labeled statement wrapping an iteration (recursively)
+        if stmt_node.kind == syntax_kind_ext::LABELED_STATEMENT {
+            if let Some(labeled) = arena.get_labeled_statement(stmt_node) {
+                return Self::is_iteration_or_nested_iteration(arena, labeled.statement);
+            }
+        }
+
+        false
     }
 }
 

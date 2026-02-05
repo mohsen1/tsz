@@ -605,6 +605,13 @@ pub struct CheckerContext<'a> {
     /// Used for labeled break/continue validation.
     pub label_stack: Vec<LabelInfo>,
 
+    /// Whether there was a loop/switch in an outer function scope.
+    /// Used to determine TS1107 vs TS1105 for unlabeled break statements.
+    /// When true, an unlabeled break inside a function should emit TS1107,
+    /// because the break is "trying" to exit the outer loop but can't cross
+    /// the function boundary.
+    pub had_outer_loop: bool,
+
     /// Fuel counter for type resolution operations.
     /// Decremented on each type resolution to prevent timeout on pathological types.
     /// When exhausted, type resolution returns ERROR to prevent infinite loops.
@@ -713,6 +720,7 @@ impl<'a> CheckerContext<'a> {
             switch_depth: 0,
             function_depth: 0,
             label_stack: Vec::new(),
+            had_outer_loop: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -805,6 +813,7 @@ impl<'a> CheckerContext<'a> {
             switch_depth: 0,
             function_depth: 0,
             label_stack: Vec::new(),
+            had_outer_loop: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -900,6 +909,7 @@ impl<'a> CheckerContext<'a> {
             switch_depth: 0,
             function_depth: 0,
             label_stack: Vec::new(),
+            had_outer_loop: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -994,6 +1004,7 @@ impl<'a> CheckerContext<'a> {
             switch_depth: 0,
             function_depth: 0,
             label_stack: Vec::new(),
+            had_outer_loop: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -1096,6 +1107,7 @@ impl<'a> CheckerContext<'a> {
             switch_depth: 0,
             function_depth: 0,
             label_stack: Vec::new(),
+            had_outer_loop: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),

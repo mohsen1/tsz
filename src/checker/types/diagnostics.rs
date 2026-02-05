@@ -357,7 +357,9 @@ pub mod diagnostic_codes {
     pub const JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY: u32 = 1107; // Jump target cannot cross function boundary.
     pub const EXPRESSION_EXPECTED: u32 = 1109;
     pub const TYPE_EXPECTED: u32 = 1110;
-    pub const CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_LABEL_OF_ENCLOSING_ITERATION: u32 = 1116; // A 'continue' statement can only jump to a label of an enclosing iteration statement.
+    pub const CONTINUE_CAN_ONLY_TARGET_LABEL_OF_ENCLOSING_ITERATION: u32 = 1115; // A 'continue' statement can only target a label of an enclosing iteration statement.
+    pub const CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_LABEL_OF_ENCLOSING_ITERATION: u32 = 1116; // A 'continue' statement can only jump to a label of an enclosing iteration statement. (label not found)
+    pub const BREAK_STATEMENT_CAN_ONLY_JUMP_TO_LABEL_OF_ENCLOSING_STATEMENT: u32 = 1116; // A 'break' statement can only jump to a label of an enclosing statement.
     pub const OBJECT_LITERAL_DUPLICATE_PROPERTY: u32 = 1117; // An object literal cannot have multiple properties with the same name.
     pub const INVALID_CHARACTER: u32 = 1127; // Invalid character.
     pub const DECLARATION_EXPECTED: u32 = 1146;
