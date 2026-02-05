@@ -497,3 +497,134 @@ fn test_template_literal_list_interning_deduplication() {
     assert!(Arc::ptr_eq(&spans_a, &spans_b));
     assert_eq!(spans_a.len(), 3);
 }
+
+#[test]
+fn test_intersection_visibility_merging() {
+    let interner = TypeInterner::new();
+
+    // Create object { x: number } with private visibility
+    let obj_private = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Private,
+        parent_id: None,
+    }]);
+
+    // Create object { x: string } with public visibility
+    let obj_public = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    // Intersection should merge visibility (Private > Public = Private)
+    let intersection = interner.intersection2(obj_private, obj_public);
+
+    if let Some(TypeKey::Object(shape_id)) = interner.lookup(intersection) {
+        let shape = interner.object_shape(shape_id);
+        assert_eq!(shape.properties.len(), 1);
+        assert_eq!(shape.properties[0].visibility, Visibility::Private);
+    } else {
+        panic!("Expected object type");
+    }
+}
+
+#[test]
+fn test_intersection_disjoint_literals() {
+    let interner = TypeInterner::new();
+
+    // Test: 1 & 2 should be NEVER (disjoint number literals)
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let intersection = interner.intersection2(lit1, lit2);
+
+    assert_eq!(intersection, TypeId::NEVER);
+}
+
+#[test]
+fn test_intersection_object_merging() {
+    let interner = TypeInterner::new();
+
+    // Test: { a: 1 } & { b: 2 } should merge to { a: 1, b: 2 }
+    let obj1 = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("a"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    let obj2 = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("b"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    let intersection = interner.intersection2(obj1, obj2);
+
+    if let Some(TypeKey::Object(shape_id)) = interner.lookup(intersection) {
+        let shape = interner.object_shape(shape_id);
+        assert_eq!(shape.properties.len(), 2);
+        let prop_names: Vec<_> = shape.properties.iter().map(|p| p.name.0).collect();
+        let atom_a = interner.intern_string("a").0;
+        let atom_b = interner.intern_string("b").0;
+        assert!(prop_names.contains(&atom_a));
+        assert!(prop_names.contains(&atom_b));
+    } else {
+        panic!("Expected object type");
+    }
+}
+
+#[test]
+fn test_intersection_disjoint_property_types() {
+    let interner = TypeInterner::new();
+
+    // Test: { a: 1 } & { a: 2 } should reduce to NEVER (disjoint property types)
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+
+    let obj1 = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("a"),
+        type_id: lit1,
+        write_type: lit1,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    let obj2 = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("a"),
+        type_id: lit2,
+        write_type: lit2,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    let intersection = interner.intersection2(obj1, obj2);
+
+    // Objects with disjoint property types should reduce to NEVER
+    // This is detected in intersection_has_disjoint_primitives
+    assert_eq!(intersection, TypeId::NEVER);
+}

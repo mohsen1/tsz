@@ -1331,6 +1331,15 @@ impl TypeInterner {
                     // For readonly: readonly if ANY is readonly (readonly is cumulative)
                     // { readonly a: number } & { a: number } = { readonly a: number }
                     existing.readonly = existing.readonly || prop.readonly;
+                    // For visibility: most restrictive wins (Private > Protected > Public)
+                    // { private a: number } & { public a: number } = { private a: number }
+                    existing.visibility = match (existing.visibility, prop.visibility) {
+                        (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
+                        (Visibility::Protected, _) | (_, Visibility::Protected) => {
+                            Visibility::Protected
+                        }
+                        (Visibility::Public, Visibility::Public) => Visibility::Public,
+                    };
                 } else {
                     merged_props.push(prop.clone());
                 }

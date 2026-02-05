@@ -215,14 +215,47 @@ if (1 === 2) { }       // both number, overlap possible
 
 ---
 
-### Priority 2: Task #18 - Structural Intersection Normalization (NEW)
-**Status**: 📝 Planned
-**Why**: High-impact. Prevents confusing errors on types that should have been simplified to `never`.
+### Priority 2: Task #18 - Structural Intersection Normalization
+**Status**: 🚧 In Progress (2025-02-05)
+**Why**: High-impact. Fixes foundational issues that affect TS2367 overlap detection.
 
-**Description**: Ensure the Solver simplifies impossible intersections to `never`.
-- Simplify `string & number` to `never`
-- Simplify `{ a: string } & { a: number }` to `{ a: never }`
-- Core "Judge" responsibility to clean up structural types
+**Gemini Recommendation**: Proceed with Task #18 instead of fixing Task #17 gaps directly.
+- Foundational Fix: `are_types_overlapping` relies on proper intersection normalization
+- Fixes the Interning Bug discovered in Task #16.0
+- Completes the "What" (Solver defines what `A & B` is)
+
+**Implementation Plan** (Per Gemini Flash 2025-02-05):
+
+**File**: `src/solver/intern.rs`
+
+1. **Fix Visibility Merging in `try_merge_objects_in_intersection`**:
+   - Inside property merging loop (around line 853)
+   - Add visibility merging: `Private > Protected > Public` (most restrictive wins)
+   - Use helpers from `solver/types.rs` or manipulate bitflags directly
+
+2. **Verify Disjoint Literals**:
+   - `intersection_has_disjoint_primitives` already correctly handles 1 & 2
+   - Due to type interning, different `LiteralValue` get unique `TypeId`
+   - Direct equality check correctly identifies disjoint literals
+
+3. **Verify Disjoint Objects**:
+   - `intersection_has_disjoint_object_literals` should detect `{ kind: "A" } & { kind: "B" }` -> NEVER
+
+4. **Add Solver Unit Tests** (`src/solver/tests/intern_tests.rs`):
+   - Test: `1 & 2` should be `NEVER`
+   - Test: `{ a: 1 } & { b: 2 }` should be `{ a: 1, b: 2 }` (merged)
+   - Test: `{ a: 1 } & { a: 2 }` should be `NEVER` (disjoint property types)
+
+**Edge Cases** (Per Gemini Pro 2025-02-05):
+1. **Branded Type Exception**: `string & { __brand: "UserId" }` should NOT be reduced to `never`
+2. **Optional vs Required**: `existing.optional && prop.optional` is correct (required wins)
+3. **Readonly Accumulation**: `existing.readonly || prop.readonly` is correct
+4. **Index Signature Compatibility**: Specific properties must be assignable to index signature
+5. **Infinite Recursion**: Use `intersect_types_raw2` inside merger, NOT `self.intersection()`
+
+**Must Follow Two-Question Rule**:
+- Question 1: Ask Gemini Flash for approach validation ✅ COMPLETE
+- Question 2: Ask Gemini Pro for implementation review (PENDING - after code is written)
 
 ---
 
