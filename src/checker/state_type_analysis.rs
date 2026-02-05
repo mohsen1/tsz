@@ -694,21 +694,19 @@ impl<'a> CheckerState<'a> {
         param_type_id: TypeId,
         param_name: &str,
     ) -> bool {
-        use crate::solver::TypeKey;
-
         // Direct match
         if constraint_type == param_type_id {
             return true;
         }
 
         // Check if constraint is a TypeParameter with the same name
-        if let Some(type_key) = self.ctx.types.lookup(constraint_type) {
-            if let TypeKey::TypeParameter(info) = type_key {
-                // Check if the type parameter name matches
-                let name_str = self.ctx.types.resolve_atom(info.name);
-                if name_str == param_name {
-                    return true;
-                }
+        if let Some(info) =
+            crate::solver::type_queries::get_type_parameter_info(self.ctx.types, constraint_type)
+        {
+            // Check if the type parameter name matches
+            let name_str = self.ctx.types.resolve_atom(info.name);
+            if name_str == param_name {
+                return true;
             }
         }
 
@@ -1715,7 +1713,8 @@ impl<'a> CheckerState<'a> {
 
         // Resolve Lazy(DefId) types before classification. Type aliases like
         // `type Direction = "north" | "south"` are Lazy until resolved.
-        if let Some(crate::solver::TypeKey::Lazy(def_id)) = self.ctx.types.lookup(ctx_type) {
+        if let Some(def_id) = crate::solver::type_queries::get_lazy_def_id(self.ctx.types, ctx_type)
+        {
             // Try type_env first
             let resolved = {
                 let env = self.ctx.type_env.borrow();
@@ -1742,8 +1741,8 @@ impl<'a> CheckerState<'a> {
 
         // Evaluate KeyOf and IndexAccess types to their concrete form before
         // classification. E.g., keyof Person → "name" | "age".
-        if let Some(crate::solver::TypeKey::KeyOf(_))
-        | Some(crate::solver::TypeKey::IndexAccess(..)) = self.ctx.types.lookup(ctx_type)
+        if crate::solver::type_queries::is_keyof_type(self.ctx.types, ctx_type)
+            || crate::solver::type_queries::is_index_access_type(self.ctx.types, ctx_type)
         {
             let evaluated = self.evaluate_type_with_env(ctx_type);
             if evaluated != ctx_type && evaluated != TypeId::ERROR {
