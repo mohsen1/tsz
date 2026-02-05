@@ -55,6 +55,7 @@ use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
+use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::ir::*;
 
 // =============================================================================
@@ -394,9 +395,13 @@ impl<'a> NamespaceES5Transformer<'a> {
         let class_name = get_identifier_text(self.arena, class_data.name)?;
         let is_exported = has_export_modifier(self.arena, &class_data.modifiers);
 
+        // Transform the class to ES5 using the class transformer
+        let mut class_transformer = ES5ClassTransformer::new(self.arena);
+        let class_ir = class_transformer.transform_class_to_ir(class_idx)?;
+
         if is_exported {
             Some(IRNode::Sequence(vec![
-                IRNode::ASTRef(class_idx),
+                class_ir,
                 IRNode::NamespaceExport {
                     namespace: ns_name.to_string(),
                     name: class_name.clone(),
@@ -404,7 +409,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                 },
             ]))
         } else {
-            Some(IRNode::ASTRef(class_idx))
+            Some(class_ir)
         }
     }
 
@@ -414,8 +419,13 @@ impl<'a> NamespaceES5Transformer<'a> {
         let class_data = self.arena.get_class(class_node)?;
 
         let class_name = get_identifier_text(self.arena, class_data.name)?;
+
+        // Transform the class to ES5 using the class transformer
+        let mut class_transformer = ES5ClassTransformer::new(self.arena);
+        let class_ir = class_transformer.transform_class_to_ir(class_idx)?;
+
         Some(IRNode::Sequence(vec![
-            IRNode::ASTRef(class_idx),
+            class_ir,
             IRNode::NamespaceExport {
                 namespace: ns_name.to_string(),
                 name: class_name.clone(),
@@ -853,9 +863,13 @@ impl<'a> NamespaceTransformContext<'a> {
         let class_name = get_identifier_text(self.arena, class_data.name)?;
         let is_exported = has_export_modifier(self.arena, &class_data.modifiers);
 
+        // Transform the class to ES5 using the class transformer
+        let mut class_transformer = ES5ClassTransformer::new(self.arena);
+        let class_ir = class_transformer.transform_class_to_ir(class_idx)?;
+
         if is_exported {
             Some(IRNode::Sequence(vec![
-                IRNode::ASTRef(class_idx),
+                class_ir,
                 IRNode::NamespaceExport {
                     namespace: ns_name.to_string(),
                     name: class_name.clone(),
@@ -863,7 +877,7 @@ impl<'a> NamespaceTransformContext<'a> {
                 },
             ]))
         } else {
-            Some(IRNode::ASTRef(class_idx))
+            Some(class_ir)
         }
     }
 
@@ -877,8 +891,13 @@ impl<'a> NamespaceTransformContext<'a> {
         let class_data = self.arena.get_class(class_node)?;
 
         let class_name = get_identifier_text(self.arena, class_data.name)?;
+
+        // Transform the class to ES5 using the class transformer
+        let mut class_transformer = ES5ClassTransformer::new(self.arena);
+        let class_ir = class_transformer.transform_class_to_ir(class_idx)?;
+
         Some(IRNode::Sequence(vec![
-            IRNode::ASTRef(class_idx),
+            class_ir,
             IRNode::NamespaceExport {
                 namespace: ns_name.to_string(),
                 name: class_name.clone(),
