@@ -556,8 +556,30 @@ impl ParserState {
     pub(crate) fn parse_tuple_element_type(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
-        // Handle rest element: ...T[]
-        if self.parse_optional(SyntaxKind::DotDotDotToken) {
+        // Handle rest element: ...T[] or labeled rest: ...name: T
+        if self.is_token(SyntaxKind::DotDotDotToken) {
+            // Look ahead: if ...identifier: or ...identifier?: then it's a labeled rest element
+            let snapshot = self.scanner.save_state();
+            let saved_token = self.current_token;
+            self.next_token(); // consume ...
+
+            if self.is_token(SyntaxKind::Identifier) {
+                self.next_token(); // consume identifier
+                let has_question = self.parse_optional(SyntaxKind::QuestionToken);
+                let has_colon = self.is_token(SyntaxKind::ColonToken);
+                if has_colon || has_question {
+                    // Labeled rest element: ...name: T - delegate to named tuple member
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
+                    return self.parse_named_tuple_member();
+                }
+            }
+
+            // Not a labeled rest - restore and parse as regular rest type
+            self.scanner.restore_state(snapshot);
+            self.current_token = saved_token;
+
+            self.next_token(); // consume ...
             let element_type = self.parse_type();
             let end_pos = self.token_end();
             return self.arena.add_wrapped_type(
