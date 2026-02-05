@@ -105,18 +105,77 @@
 - Added comprehensive test suite: 12 tests covering all overlap scenarios
 - Commit: 15d8c93d9
 
-**Subtask 17.2 (Checker)**: 📋 Pending (Next Step)
-- Update `src/checker/expr.rs`
-- Check equality comparisons (`===`, `!==`, `==`, `!=`)
-- Report TS2367 if types have no overlap
+**Subtask 17.2 (Checker)**: 📋 Planned (Next Step)
 
-**Constraint**: Follow Two-Question Rule for solver logic
-**Must NOT inspect TypeKey in Checker** (tsz-2's rule)
+**Gemini Guidance (Flash 2025-02-05)**:
+Gemini provided complete implementation plan for integrating TS2367 into checker:
+
+**Changes Required**:
+
+1. **`src/checker/assignability_checker.rs`** - Add wrapper method:
+```rust
+pub fn are_types_overlapping(&mut self, source: TypeId, target: TypeId) -> bool {
+    // Fast path: identity
+    if source == target { return true; }
+
+    // Ensure Refs are resolved (Critical for correct overlap check)
+    self.ensure_refs_resolved(source);
+    self.ensure_refs_resolved(target);
+
+    let env = self.ctx.type_env.borrow();
+    let mut checker = crate::solver::SubtypeChecker::with_resolver(self.ctx.types, &*env)
+        .with_strict_null_checks(self.ctx.strict_null_checks());
+
+    checker.are_types_overlapping(source, target)
+}
+```
+
+2. **`src/checker/error_reporter.rs`** - Add diagnostic method:
+```rust
+pub fn error_comparison_no_overlap(&mut self, left: TypeId, right: TypeId, idx: NodeIndex) {
+    // Suppress if either side is error/any/unknown to avoid noise
+    if left.is_intrinsic_any_or_error() || right.is_intrinsic_any_or_error() { return; }
+
+    let left_str = self.format_type(left);
+    let right_str = self.format_type(right);
+
+    let message = format_message(
+        diagnostic_messages::TYPES_HAVE_NO_OVERLAP,
+        &[&left_str, &right_str],
+    );
+
+    self.error_at_node(idx, &message, diagnostic_codes::TYPES_HAVE_NO_OVERLAP);
+}
+```
+
+3. **`src/checker/type_computation.rs`** - Add check in `get_type_of_binary_expression`:
+```rust
+let is_equality = matches!(op_kind,
+    k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 ||
+         k == SyntaxKind::ExclamationEqualsEqualsToken as u16 ||
+         k == SyntaxKind::EqualsEqualsToken as u16 ||
+         k == SyntaxKind::ExclamationEqualsToken as u16
+);
+
+if is_equality && !self.are_types_overlapping(left_type, right_type) {
+    self.error_comparison_no_overlap(left_type, right_type, node_idx);
+}
+```
+
+**Edge Cases to Handle**:
+- `any` / `unknown`: Should suppress error (handled by solver)
+- Enums: Numeric enums overlap with `number`
+- Null/Undefined: Respect `strict_null_checks` setting
+
+**Must Follow**:
+- Two-Question Rule for checker integration
+- Must NOT inspect TypeKey in Checker (tsz-2 constraint)
 
 **Example**:
 ```typescript
 // Should emit TS2367
 if (1 === "one") { }  // number & string have no overlap
+```
 if (true === 1) { }   // boolean & number have no overlap
 
 // Should NOT emit TS2367
