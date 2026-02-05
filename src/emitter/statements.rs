@@ -31,8 +31,15 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Single-line blocks: if source was single-line and block has one statement, keep it single-line
-        if self.is_single_line(node) && block.statements.nodes.len() == 1 {
+        // Single-line blocks:
+        // 1. If source was single-line and block has one statement, keep it single-line
+        // 2. OR if block has a single simple return statement (TypeScript behavior)
+        let is_single_statement = block.statements.nodes.len() == 1;
+        let should_emit_single_line = is_single_statement
+            && (self.is_single_line(node)
+                || self.is_simple_return_statement(block.statements.nodes[0]));
+
+        if should_emit_single_line {
             self.write("{ ");
             self.emit(block.statements.nodes[0]);
             self.write(" }");
