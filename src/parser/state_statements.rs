@@ -968,8 +968,17 @@ impl ParserState {
         }
 
         // Parse name - keywords like 'abstract' can be used as function names
-        // Check for illegal binding identifiers (e.g., 'await' in static blocks, async/generator contexts)
-        self.check_illegal_binding_identifier();
+        // Note: function names are NOT subject to async/generator context restrictions
+        // because the name is a declaration in the outer scope, not a binding in the
+        // function body. `async function * await() {}` and `function * yield() {}` are valid.
+        // Only check for static block context (where await is always illegal as an identifier)
+        if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+            );
+        }
 
         let name = if self.is_identifier_or_keyword() {
             self.parse_identifier_name()
@@ -1145,8 +1154,17 @@ impl ParserState {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
 
-        // Check for illegal binding identifiers (e.g., 'await' in async contexts, 'yield' in generator contexts)
-        self.check_illegal_binding_identifier();
+        // Note: function names are NOT subject to async/generator context restrictions
+        // because the name is a declaration in the outer scope, not a binding in the
+        // function body. `async function * await() {}` and `function * yield() {}` are valid.
+        // Only check for static block context (where await is always illegal as an identifier)
+        if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+            );
+        }
 
         // Parse optional name (function expressions can be anonymous)
         let name = if self.is_identifier_or_keyword() {
