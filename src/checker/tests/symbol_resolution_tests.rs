@@ -5,7 +5,6 @@ use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::solver::TypeInterner;
-use std::sync::Arc;
 
 use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
 

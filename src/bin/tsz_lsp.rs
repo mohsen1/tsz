@@ -13,6 +13,8 @@
 //! - textDocument/completion
 //! - textDocument/definition
 //! - textDocument/references
+
+#![allow(clippy::print_stderr)]
 //! - textDocument/documentSymbol
 //! - textDocument/formatting
 //! - textDocument/rename

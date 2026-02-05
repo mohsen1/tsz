@@ -5,6 +5,8 @@
 //!
 //! Enable debug logging by setting `debug_enabled: true` in `ModuleResolutionDebugger`.
 
+#![allow(clippy::print_stderr)]
+
 use crate::binder::{SymbolId, symbol_flags};
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicBool, Ordering};

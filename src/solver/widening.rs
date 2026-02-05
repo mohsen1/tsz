@@ -131,7 +131,6 @@ pub fn apply_const_assertion(db: &dyn crate::solver::TypeDatabase, type_id: Type
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interner::Atom;
     use crate::solver::TypeInterner;
     use crate::solver::types::{
         LiteralValue, OrderedFloat, PropertyInfo, SymbolRef, TypeKey, TypeParamInfo, Visibility,

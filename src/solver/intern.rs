@@ -1465,7 +1465,6 @@ impl TypeInterner {
 
     fn intersection_has_disjoint_primitives(&self, members: &[TypeId]) -> bool {
         let mut class: Option<PrimitiveClass> = None;
-        let mut has_primitive = false;
         let mut has_non_primitive = false;
         let mut literals: smallvec::SmallVec<[TypeId; 4]> = SmallVec::new();
 
@@ -1496,7 +1495,6 @@ impl TypeInterner {
                 has_non_primitive = has_non_primitive || mark_non_primitive;
                 continue;
             };
-            has_primitive = true;
             if let Some(existing) = class {
                 if existing != member_class {
                     return true;
@@ -1795,6 +1793,7 @@ impl TypeInterner {
     /// Only objects with IDENTICAL property sets (names and TypeIds) can be subtypes.
     /// This prevents incorrect reductions while handling the common case of
     /// duplicate object types in unions/intersections.
+    #[allow(dead_code)]
     fn is_object_shape_subtype_shallow(&self, s_id: ObjectShapeId, t_id: ObjectShapeId) -> bool {
         let s = self.object_shape(s_id);
         let t = self.object_shape(t_id);

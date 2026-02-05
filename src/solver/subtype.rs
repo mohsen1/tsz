@@ -1025,6 +1025,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// This is a simplified check - Phase 2 will use PropertyCollector
     /// for full intersection-type-aware checking.
+    #[allow(dead_code)]
     fn do_object_properties_overlap(&self, a_shape: ObjectShapeId, b_shape: ObjectShapeId) -> bool {
         let a_props = self.interner.object_shape(a_shape);
         let b_props = self.interner.object_shape(b_shape);

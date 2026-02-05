@@ -12142,7 +12142,7 @@ fn test_keyof_object_keyword() {
 
 #[test]
 fn test_object_trifecta_keyof_object_interface() {
-    use crate::solver::{SymbolRef, TypeEnvironment};
+    use crate::solver::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();

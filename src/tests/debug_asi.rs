@@ -1,6 +1,7 @@
 //! Debug ASI parsing
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::print_stderr)]
     use crate::parser::ParserState;
 
     #[test]

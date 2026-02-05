@@ -1,6 +1,8 @@
 // Copyright 2025 tsz authors. All rights reserved.
 // MIT License.
 
+#![allow(clippy::print_stderr)]
+
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};

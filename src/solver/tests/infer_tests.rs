@@ -15519,8 +15519,6 @@ fn test_best_common_type_union_fallback() {
     assert_eq!(result, expected);
 }
 
-#[test]
-
 /// Test BCT with intersection types
 ///
 /// Verifies that BCT can handle intersection types without crashing.

@@ -182,8 +182,6 @@ impl<'a> FileRenameProvider<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // TODO: Add tests once we have test infrastructure setup
     // Test cases to cover:
     // 1. Single import: import { x } from "./utils"

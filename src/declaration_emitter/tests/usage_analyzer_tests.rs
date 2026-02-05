@@ -2,7 +2,6 @@
 //!
 //! Tests the import/export elision usage tracking logic.
 
-use crate::declaration_emitter::usage_analyzer::UsageAnalyzer;
 use crate::parser::ParserState;
 
 #[test]
@@ -16,7 +15,7 @@ fn test_usage_analyzer_basic_function() {
     "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let _root = parser.parse_source_file();
 
     // Create a minimal checker context for testing
     // Note: This test structure will need to be adapted based on how
@@ -49,7 +48,7 @@ fn test_usage_analyzer_private_members() {
     "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let _root = parser.parse_source_file();
 
     // TODO: Initialize CheckerContext and run analyzer
     // Assert: ExternalType should be in used_symbols (even though it's only in private member)
@@ -68,7 +67,7 @@ fn test_usage_analyzer_inferred_types() {
     "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let _root = parser.parse_source_file();
 
     // TODO: Initialize CheckerContext with type cache
     // Assert: Factory should be in used_symbols (via inferred type analysis)
@@ -84,7 +83,7 @@ fn test_usage_analyzer_type_query() {
     "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let _root = parser.parse_source_file();
 
     // TODO: Initialize CheckerContext
     // Assert: InternalSymbol should be in used_symbols (typeof marks as value usage)
@@ -102,7 +101,7 @@ fn test_usage_analyzer_module_namespace() {
     "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let _root = parser.parse_source_file();
 
     // TODO: Initialize CheckerContext
     // Assert: The namespace import should be marked as used
@@ -120,7 +119,7 @@ fn test_usage_analyzer_computed_properties() {
     "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let _root = parser.parse_source_file();
 
     // TODO: Initialize CheckerContext
     // Assert: SymbolIterator should be in used_symbols
@@ -139,7 +138,7 @@ fn test_usage_analyzer_type_only_imports() {
     "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let _root = parser.parse_source_file();
 
     // TODO: Initialize CheckerContext
     // Assert: TypeOnly should be in used_symbols
@@ -156,7 +155,7 @@ fn test_usage_analyzer_reexports() {
     "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let _root = parser.parse_source_file();
 
     // TODO: This test verifies the analyzer doesn't crash on export declarations
     // The actual re-export handling will be in DeclarationEmitter integration
@@ -176,7 +175,7 @@ fn test_usage_analyzer_complex_types() {
     "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let _root = parser.parse_source_file();
 
     // TODO: Initialize CheckerContext
     // Assert: A, B, C should all be in used_symbols
@@ -192,7 +191,7 @@ fn test_usage_analyzer_generic_types() {
     "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let _root = parser.parse_source_file();
 
     // TODO: Initialize CheckerContext
     // Assert: Generic should be in used_symbols
@@ -210,7 +209,7 @@ fn test_usage_analyzer_heritage_clauses() {
     "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let _root = parser.parse_source_file();
 
     // TODO: Initialize CheckerContext
     // Assert: BaseClass and BaseInterface should be in used_symbols

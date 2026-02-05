@@ -13,15 +13,17 @@
 //! internal state (`in_progress` sets, recursion depth, `&mut self`) which
 //! is incompatible with Salsa's pure-function query model.
 
+use crate::binder::SymbolId;
 use crate::checker::context::CheckerOptions;
 use crate::interner::Atom;
+use crate::solver::compat::CompatChecker;
 use crate::solver::intern::TypeInterner;
 use crate::solver::subtype::TypeEnvironment;
 use crate::solver::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
-    FunctionShapeId, MappedType, MappedTypeId, ObjectShape, ObjectShapeId, PropertyInfo,
-    PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
-    TypeApplication, TypeApplicationId, TypeId, TypeKey, TypeListId,
+    FunctionShapeId, MappedType, MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId,
+    PropertyInfo, PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement,
+    TupleListId, TypeApplication, TypeApplicationId, TypeId, TypeKey, TypeListId,
 };
 use std::sync::Arc;
 
@@ -355,6 +357,24 @@ impl crate::solver::db::TypeDatabase for SalsaDatabase {
     fn readonly_type(&self, inner: TypeId) -> TypeId {
         self.interner_ref().readonly_type(inner)
     }
+
+    fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.interner_ref().intersect_types_raw2(left, right)
+    }
+
+    fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId {
+        self.interner_ref().object_with_flags(properties, flags)
+    }
+
+    fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
+        // SalsaDatabase doesn't have access to the Binder, so it can't resolve base classes.
+        // The Checker will override this to provide the actual implementation.
+        None
+    }
+
+    fn is_unit_type(&self, type_id: TypeId) -> bool {
+        self.interner_ref().is_unit_type(type_id)
+    }
 }
 
 /// Implement QueryDatabase trait for SalsaDatabase.
@@ -382,12 +402,17 @@ impl crate::solver::db::QueryDatabase for SalsaDatabase {
     fn remove_nullish(&self, type_id: TypeId) -> TypeId {
         crate::solver::narrowing::remove_nullish(self.interner_ref().as_ref(), type_id)
     }
+
+    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        // Use CompatChecker with all compatibility rules
+        let mut checker = CompatChecker::new(self);
+        checker.is_assignable(source, target)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solver::Visibility;
     use crate::solver::db::{QueryDatabase, TypeDatabase};
     use crate::solver::types::IntrinsicKind;
 

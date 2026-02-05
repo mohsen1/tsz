@@ -1,3 +1,5 @@
+#![allow(clippy::print_stderr)]
+
 use anyhow::{Context, Result, bail};
 use notify::{Config, Event, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{BTreeSet, HashSet};

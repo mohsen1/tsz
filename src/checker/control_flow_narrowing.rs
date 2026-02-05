@@ -1141,6 +1141,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn narrow_to_falsy(&self, type_id: TypeId) -> TypeId {
         if type_id == TypeId::ANY {
             return type_id;
@@ -1164,6 +1165,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn falsy_component(&self, type_id: TypeId) -> Option<TypeId> {
         if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
             return Some(type_id);
@@ -1207,6 +1209,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn literal_is_falsy(&self, literal: &LiteralValue) -> bool {
         match literal {
             LiteralValue::Boolean(false) => true,

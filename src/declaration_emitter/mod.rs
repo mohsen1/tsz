@@ -24,6 +24,8 @@
 //! }
 //! ```
 
+#![allow(clippy::print_stderr)]
+
 pub mod usage_analyzer;
 
 #[cfg(test)]
@@ -77,6 +79,7 @@ pub struct DeclarationEmitter<'a> {
     /// Maps (ModulePath, ExportName) -> AliasName for string-based imports
     import_string_aliases: FxHashMap<(String, String), String>,
     /// Maps SymbolId -> AliasName for SymbolId-based imports
+    #[allow(dead_code)]
     symbol_aliases: FxHashMap<SymbolId, String>,
     /// Map of imported SymbolId -> ModuleSpecifier for elision
     /// Tracks which module each imported symbol claims to come from
@@ -2456,6 +2459,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
+    #[allow(dead_code)]
     fn emit_named_imports(&mut self, imports_idx: NodeIndex, allow_type_prefix: bool) {
         let Some(imports_node) = self.arena.get(imports_idx) else {
             return;
@@ -3604,6 +3608,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Resolve name for SymbolId imports, generating alias if needed.
+    #[allow(dead_code)]
     fn resolve_import_name_for_symbol(&mut self, _module: &str, name: &str, _sym_id: SymbolId) {
         if self.reserved_names.contains(name) {
             let alias = self.generate_unique_name(name);
@@ -3723,6 +3728,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// - It is used (in used_symbols)
     /// - It is not already imported (symbol.import_module is None)
     /// - It is not declared in the current file (we can't check this easily without file_idx)
+    #[allow(dead_code)]
     fn symbol_needs_import(&self, sym_id: SymbolId) -> bool {
         // Must have binder and used_symbols
         let (Some(binder), Some(used)) = (&self.binder, &self.used_symbols) else {

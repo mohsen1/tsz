@@ -135,7 +135,7 @@ fn test_try_get_keyof_keys_resolves_reference() {
 
     let mut env = TypeEnvironment::new();
     env.insert_def(def_id, resolved);
-    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+    let checker = SubtypeChecker::with_resolver(&interner, &env);
 
     let ref_type = interner.lazy(def_id);
     let keys = checker

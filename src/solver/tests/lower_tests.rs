@@ -1,3 +1,5 @@
+#![allow(clippy::print_stderr)]
+
 use super::*;
 use crate::parser::NodeArena;
 use crate::parser::NodeIndex;

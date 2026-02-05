@@ -1,5 +1,7 @@
 //! Tests for spread and rest operator type checking
 
+#![allow(clippy::print_stderr)]
+
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::checker::types::Diagnostic;

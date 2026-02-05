@@ -3,6 +3,8 @@
 //! This module handles type reification: converting the Solver's internal TypeId
 //! representation into printable TypeScript syntax for declaration emit (.d.ts files).
 
+#![allow(clippy::print_stderr)]
+
 use crate::binder::{SymbolArena, SymbolId, symbol_flags};
 use crate::checker::TypeCache;
 use crate::interner::Atom;
