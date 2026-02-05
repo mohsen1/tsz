@@ -177,51 +177,85 @@ pub enum InferencePriority {
 }
 ```
 
-#### Task 7.1.2: Refactor constrain_types Signatures (HIGH) ⏸️ BLOCKED - Requires Migration Strategy
+#### Task 7.1.2: Refactor constrain_types Signatures (HIGH) 🔄 IN PROGRESS
 **File**: `src/solver/operations.rs`, `src/solver/infer.rs`
 
-**Status**: ⏸️ AWAITING MIGRATION STRATEGY
+**Status**: 🟢 MIGRATION STRATEGY DEFINED - Proceeding with "Bridge and Burn"
 
-**Discovery**: There is ALREADY an `InferencePriority` enum in `src/solver/infer.rs` with different values:
+**Discovery**: Conflicting `InferencePriority` enums:
+- **Old** (infer.rs): `ReturnType`, `Contextual`, `Circular`, `Argument`, `Literal`
+  - Describes WHERE type came from (source-based)
+- **New** (types.rs): `NakedTypeVariable`, `HomomorphicMappedType`, etc.
+  - Describes HOW PRIORITIZED the constraint is (structure-based)
+
+**Gemini Recommendation**: Option 1 - Proceed with breaking migration
+- **Rationale**: Old enum mixes "source" with "priority" - causes unknown leakage
+- **Approach**: "Bridge and Burn" strategy (staged migration)
+- **Decision**: Stay in tsz-3, finish the "Final Boss"
+
+**Migration Strategy: "Bridge and Burn"**
+
+**Stage 1: The Mapping (Bridge)**
+Map old "sources" to new "priorities":
 ```rust
-pub enum InferencePriority {
-    ReturnType,      // Inferred from return type
-    Contextual,      // Contextual typing hint
-    Circular,        // Circular dependency
-    Argument,        // From function argument
-    Literal,         // From literal type
-}
+InferencePriority::Argument   → InferencePriority::NakedTypeVariable (usually)
+InferencePriority::ReturnType → InferencePriority::ReturnType (direct match)
+InferencePriority::Contextual → InferencePriority::LowPriority (usually)
+InferencePriority::Circular   → InferencePriority::Circular (direct match)
 ```
 
-**My New Enum** (in `src/solver/types.rs`) has TypeScript-style values:
+**Stage 2: Signature Refactoring** (CURRENT TASK)
+- Update `constrain_types` and recursive helpers to accept new bitset
+- Update all call sites to use mapped priorities
+- Keep logic identical to old system initially
+- Mechanical change, high blast radius
+
+**Stage 3: The Burn** (Phase 7b)
+- Delete old enum from infer.rs
+- Refine call sites to use correct tsc priorities based on type structure
+- Implement multi-pass priority-gated inference
+
+**Gemini Pro Question 1 ANSWERED** (2026-02-05)
+
+**Critical Mapping Corrections**:
 ```rust
-pub enum InferencePriority {
-    NakedTypeVariable,       // T in <T>(x: T)
-    HomomorphicMappedType,   // Partial<T[]> preserves array
-    // ... etc (matches TypeScript's internal priorities)
-}
+// OLD (incorrect mapping)
+Contextual → LowPriority
+ReturnType → LowPriority
+
+// NEW (correct mapping per Gemini Pro)
+Contextual → ReturnType       // Downward inference into return type
+Literal → NakedTypeVariable   // High priority, handled by is_const
+Argument → NakedTypeVariable  // Direct inference (highest)
+Circular → Circular           // Direct match
+ReturnType → LowPriority      // Fallback priority (lowest)
 ```
 
-**Gemini Guidance**:
-- **REPLACE** old enum with new TypeScript-style one
-- Old enum is simplified version that doesn't match tsc behavior
-- Must map old semantics to new TypeScript-standard priorities
-- Delete enum from infer.rs, consolidate in types.rs
-- Use bitmask approach (not simple enum) to allow combining flags
+**CRITICAL BUG FIX**: Must invert sorting logic in `infer.rs`:
+- **Old**: Used `.max()` to find best candidate (Literal > Argument > ReturnType)
+- **New**: Use `.min()` because lower values = higher priority (NakedTypeVariable (1) < ReturnType (32))
 
-**Migration Complexity**: HIGH
-- Affects existing inference behavior
-- Old `Argument`, `Literal`, `Contextual` are "sources" not "priorities"
-- Need to map: sources → priority levels
-- Risk: Breaking existing generic inference
+**Implementation Plan** (from Gemini Pro):
 
-**Recommendation**:
-- This is a BREAKING CHANGE to core inference logic
-- Should be done as a separate focused task
-- Requires comprehensive testing to ensure no regressions
-- **SUGGESTION**: Defer to Phase 8 or create dedicated session for priority migration
+**Step 1**: Modify `src/solver/infer.rs`
+- Remove local `InferencePriority` enum
+- Import from `crate::solver::types::InferencePriority`
+- Update `InferenceCandidate` struct
+- **CRITICAL**: Change `filter_candidates_by_priority` from `.max()` to `.min()`
+- Update `add_candidate()` signature
+- Update `add_lower_bound()` to use `NakedTypeVariable`
 
-**Alternative**: Keep old enum for now, implement new priority logic in parallel, migrate gradually?
+**Step 2**: Modify `src/solver/operations.rs`
+- Update `resolve_generic_call_inner`:
+  - Contextual step: Use `ReturnType` (was `Contextual`)
+  - Argument step: Use `NakedTypeVariable` (was `Argument`)
+- Update `constrain_types` signatures to accept new enum
+- Pass priority through unchanged (no recursive downgrading yet)
+
+**Step 3**: Update `strengthen_constraints` in `infer.rs`
+- Use `Circular` priority for propagated bounds
+
+**DO NOT IMPLEMENT YET**: Recursive downgrading when entering mapped types (requires structural analyzer)
 
 ---
 
