@@ -5,7 +5,7 @@ use crate::solver::db::QueryDatabase;
 use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::solver::types::{IntrinsicKind, LiteralValue, PropertyInfo, TypeId, TypeKey};
-use crate::solver::visitor::{TypeVisitor, enum_components, is_empty_object_type_db};
+use crate::solver::visitor::{TypeVisitor, is_empty_object_type_db};
 use crate::solver::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
 
@@ -1219,9 +1219,35 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// 2. Numeric enums are bidirectionally assignable to number (Rule #7 - Open Numeric Enums)
     /// 3. String enums are strictly nominal (string literals NOT assignable to string enums)
     /// 4. Same enum members with different values are NOT assignable (EnumA.X != EnumA.Y)
+    /// 5. Unions containing enums: Source union assigned to target enum checks all members
     pub fn enum_assignability_override(&self, source: TypeId, target: TypeId) -> Option<bool> {
-        let source_enum = enum_components(self.interner, source);
-        let target_enum = enum_components(self.interner, target);
+        use crate::solver::type_queries;
+        use crate::solver::visitor;
+
+        // Special case: Source union -> Target enum
+        // When assigning a union to an enum, ALL enum members in the union must match the target enum.
+        // This handles cases like: (EnumA | EnumB) assigned to EnumC
+        if let Some((t_def, _)) = visitor::enum_components(self.interner, target) {
+            if type_queries::is_union_type(self.interner, source) {
+                let union_members = type_queries::get_union_members(self.interner, source)?;
+
+                // Check if any union member is an enum with a different DefId
+                for &member in union_members.iter() {
+                    if let Some((member_def, _)) = visitor::enum_components(self.interner, member) {
+                        if member_def != t_def {
+                            // Found an enum in the source union with a different DefId than target
+                            // This makes the union NOT assignable to the target enum
+                            return Some(false);
+                        }
+                    }
+                }
+                // All enums in the union match the target enum DefId.
+                // Fall through to structural check to verify non-enum union members.
+            }
+        }
+
+        let source_enum = visitor::enum_components(self.interner, source);
+        let target_enum = visitor::enum_components(self.interner, target);
 
         match (source_enum, target_enum) {
             // Case 1: Both are enums (or enum members)
