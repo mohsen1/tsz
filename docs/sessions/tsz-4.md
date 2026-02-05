@@ -1093,3 +1093,66 @@ The `is_method` flag in `PropertyInfo` exists but is not being used correctly du
 4. Re-run tests to verify fix
 
 **Status**: Priority 4 - Bug identified, needs investigation 🔍
+
+### Gemini Flash Guidance (2026-02-05): Function Bivariance Fix
+
+**Recommended Approach**: Use contextual flag in SubtypeChecker
+
+**Why**: Adding arguments to check_subtype would require updating hundreds of call sites. A specialized function only solves the entry point.
+
+**Implementation Plan**:
+
+#### 1. File: `src/solver/subtype.rs`
+Add `pub(crate) method_context: bool` to SubtypeChecker struct.
+
+Create wrapper function:
+```rust
+pub(crate) fn check_subtype_with_method_variance(
+    &mut self,
+    source: TypeId,
+    target: TypeId,
+    is_method: bool
+) -> SubtypeResult {
+    let old = self.method_context;
+    self.method_context = is_method;
+    let res = self.check_subtype(source, target);
+    self.method_context = old;
+    res
+}
+```
+
+#### 2. File: `src/solver/subtype_rules/functions.rs`
+Modify check_function_subtype and related functions:
+
+```rust
+// Capture effective is_method state
+let is_method = source.is_method || target.is_method || self.method_context;
+
+// Reset context for recursive calls (return types, parameters)
+let old_context = self.method_context;
+self.method_context = false;
+
+// ... check return types ...
+
+// Use captured local is_method for parameters
+if !self.are_parameters_compatible_impl(s_param, t_param, is_method) {
+    self.method_context = old_context;
+    return SubtypeResult::False;
+}
+
+self.method_context = old_context; // Restore
+```
+
+**Critical**: Reset immediately to prevent bivariance leaking into nested function types.
+
+#### 3. File: `src/solver/subtype_rules/objects.rs`
+Verify check_property_compatibility calls check_subtype_with_method_variance.
+
+**Status**: Implementation plan ready 🟢
+
+**Next Steps**:
+1. Implement method_context flag in SubtypeChecker
+2. Create check_subtype_with_method_variance wrapper
+3. Update functions.rs to use captured is_method
+4. Update objects.rs to use new wrapper
+5. Re-run tests to verify fix
