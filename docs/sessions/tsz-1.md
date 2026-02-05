@@ -6,27 +6,47 @@
 
 ## Active Tasks
 
-### Task #13: Type Narrowing (Truthiness & typeof)
+### Task #15: Mapped Types Property Collection
 **Status**: Pending
-**Priority**: High (foundational for Control Flow Analysis)
-**Estimated Impact**: +3-5% conformance
+**Priority**: Medium
+**Estimated Impact**: +0.5-1% conformance
 
 **Description**:
-Implement type narrowing in `src/solver/narrowing.rs`:
-- Truthiness narrowing: `if (x) { ... }` removes `null`/`undefined` from types
-- `typeof` narrowing: `if (typeof x === 'string')` narrows to string type
-- Build on CFG/FlowNode infrastructure from reachability analysis
+Extend `collect_target_properties` in `src/solver/compat.rs` to handle mapped types like `Partial<T>`.
+Currently, basic excess property checking works for interfaces, but mapped types need special handling.
 
 **Gemini Guidance**:
-> "Reachability tells you *if* a node is reached; Narrowing tells you *what* the types are when it is reached."
->
-> "Before implementing, ask for approach validation on how to link FlowNode data to the Solver's narrowing queries."
+> "Mapped types are handled by the evaluate_rules module. You need to either:
+> 1. Resolve mapped types to their base types before checking
+> 2. Or teach collect_target_properties to walk the mapped type structure"
 
 **Prerequisites**:
+- Understand how evaluate_rules module handles mapped types
 - Follow Two-Question Rule (ask Gemini BEFORE implementing)
-- Understand FlowNode → Solver integration pattern
 
 ## Completed Tasks
+
+### Task #14: Excess Property Checking (TS2353)
+**Status**: ✅ Completed
+**Date**: 2025-02-05
+**Implementation**:
+- Added `ExcessProperty` variant to `SubtypeFailureReason` in `src/solver/diagnostics.rs`
+- Added `find_excess_property` function in `src/solver/compat.rs` to detect excess properties
+- Updated `explain_failure` in `src/solver/compat.rs` to check for excess properties
+- Added case in `render_failure_reason` in `src/checker/error_reporter.rs` to emit TS2353
+- Handles Lazy type resolution, intersections, and unions
+
+**Result**: TS2353 now works for basic cases:
+```typescript
+interface User { name: string; age: number; }
+const bad: User = { name: "test", age: 25, extra: true }; // TS2353
+```
+
+**Known Limitations**:
+- Does not yet handle mapped types (e.g., `Partial<User>`)
+- Checker's existing `check_object_literal_excess_properties` has duplicate logic
+
+
 
 ### Task #11: Method/Constructor Overload Validation
 **Status**: ✅ Completed

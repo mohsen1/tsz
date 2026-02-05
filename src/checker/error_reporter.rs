@@ -369,6 +369,25 @@ impl<'a> CheckerState<'a> {
                 )
             }
 
+            SubtypeFailureReason::ExcessProperty {
+                property_name,
+                target_type,
+            } => {
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                let target_str = self.format_type(*target_type);
+                let message = format_message(
+                    diagnostic_messages::EXCESS_PROPERTY,
+                    &[&prop_name, &target_str],
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::EXCESS_PROPERTY_CHECK,
+                )
+            }
+
             SubtypeFailureReason::ReturnTypeMismatch {
                 source_return,
                 target_return,
