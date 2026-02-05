@@ -184,6 +184,18 @@ Fixed `0x`, `0X` to emit TS1125 "Hexadecimal digit expected."
 
 **File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
 
+### TS1177 for binary literals without digits (commit 1082341)
+
+Fixed `0b`, `0B` to emit TS1177 "Binary digit expected."
+
+**File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
+
+### TS1178 for octal literals without digits (commit 1082341)
+
+Fixed `0o`, `0O` to emit TS1178 "Octal digit expected."
+
+**File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
+
 ## Recommended Approach
 
 1. **Short-term**: Focus on other conformance improvements
