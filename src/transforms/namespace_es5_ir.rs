@@ -1241,10 +1241,12 @@ fn convert_variable_declarations(arena: &NodeArena, declarations: &NodeList) -> 
                     && let Some(decl) = arena.get_variable_declaration(decl_node)
                     && let Some(name) = get_identifier_text(arena, decl.name)
                 {
-                    // Use ASTRef for the initializer if present - it will be emitted without type annotations
-                    // by the AST emission logic in the printer
-                    let initializer = if decl.initializer.is_some() {
-                        Some(Box::new(IRNode::ASTRef(decl.initializer)))
+                    // Use AstToIr for eager lowering of initializers
+                    // This converts expressions to proper IR (NumericLiteral, CallExpr, etc.)
+                    let initializer = if !decl.initializer.is_none() {
+                        Some(Box::new(
+                            AstToIr::new(arena).convert_expression(decl.initializer),
+                        ))
                     } else {
                         None
                     };
