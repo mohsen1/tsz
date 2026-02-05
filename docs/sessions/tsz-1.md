@@ -864,6 +864,40 @@ Recommendation: Defer and move to higher-ROI tasks (Weak Type Detection TS2559).
 
 **Commit**: a3533d7db
 
+**Commit**: a3533d7db
+
+---
+
+### Task #27: Weak Type Detection (TS2559) ✅ ALREADY IMPLEMENTED (2025-02-05)
+**Status**: ✅ Feature Already Complete (2025-02-05)
+**Why**: High-ROI "Lawyer" rule for TypeScript assignability
+
+**Investigation Findings**:
+Weak type detection is ALREADY FULLY IMPLEMENTED in `src/solver/compat.rs`.
+
+**Existing Implementation** (Lines 769-967):
+- `violates_weak_type(source, target)`: Main entry point
+- `violates_weak_union(source, target)`: Handles union targets
+- `violates_weak_type_with_target_props`: Checks for common properties
+- `has_common_property`: Property name overlap check (lines 940-962)
+- `source_lacks_union_common_property`: Recursive union handling
+
+**Coverage**:
+✅ Index signatures preventing weakness
+✅ Optional property checking
+✅ Common property name checking
+✅ Type parameter constraint resolution
+✅ Union handling in source and target
+✅ Empty object source handling
+✅ ObjectWithIndex handling
+
+**Test Status**: All 13 weak type tests PASS
+
+**Additional Fix**:
+Fixed compilation error in `src/solver/db.rs` where `PropertyAccessEvaluator::new_no_resolver` was called but the method is `::new`. This was from commit `5188f4d01` (another session).
+
+**Commit**: 68f4c1fbb (db.rs fix)
+
 ---
 
 **Next Session**:
