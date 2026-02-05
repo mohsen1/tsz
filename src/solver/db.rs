@@ -1663,7 +1663,9 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
     }
 
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
-        self.query_cache.get_type_param_variance(def_id)
+        // Use fully qualified syntax to disambiguate between
+        // QueryDatabase and TypeResolver traits (both have this method)
+        <QueryCache<'_> as QueryDatabase>::get_type_param_variance(self.query_cache, def_id)
     }
 }
 

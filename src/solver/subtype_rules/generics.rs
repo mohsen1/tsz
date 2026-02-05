@@ -346,10 +346,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if a generic type application is a subtype of another application.
     ///
-    /// Generic type applications (e.g., `Map<string, number>`, `Array<string>`)
-    /// are first checked with covariant args (fast path for the common case).
-    /// If that fails, we try expanding both applications to their structural forms
-    /// and comparing those, which handles contravariant/invariant positions correctly.
+    /// Task #41 Phase 2: Variance-aware generic assignability checking.
+    ///
+    /// This function implements O(1) generic type assignability by using variance
+    /// annotations to avoid expensive structural expansion. When both applications
+    /// have the same base type, we use the variance mask to check each type argument:
+    /// - Covariant: check s_arg <: t_arg
+    /// - Contravariant: check t_arg <: s_arg (reversed)
+    /// - Invariant: check both directions (mutual subtyping)
+    /// - Independent: skip (no constraint needed)
+    ///
+    /// If variance is unavailable or bases differ, fall back to structural expansion.
     pub(crate) fn check_application_to_application_subtype(
         &mut self,
         s_app_id: TypeApplicationId,
@@ -358,25 +365,92 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
 
-        // Fast path: same base, same args count, covariant args check
-        if s_app.args.len() == t_app.args.len()
-            && self.check_subtype(s_app.base, t_app.base).is_true()
-        {
-            let mut all_covariant = true;
-            for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
-                if !self.check_subtype(*s_arg, *t_arg).is_true() {
-                    all_covariant = false;
-                    break;
+        // =======================================================================
+        // VARIANCE-AWARE FAST PATH: Same base type with variance checking
+        // =======================================================================
+        // When both applications have the same base (e.g., Array<T>), we can use
+        // variance annotations to check type arguments without expanding the
+        // entire structure. This is critical for O(1) performance.
+        // =======================================================================
+        if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+            // Try to resolve DefId from the base to query variance
+            let def_id = if let Some(id) = lazy_def_id(self.interner, s_app.base) {
+                // Base is Lazy(DefId) - use DefId directly
+                Some(id)
+            } else if let Some(sym) = ref_symbol(self.interner, s_app.base) {
+                // Base is Ref(SymbolRef) - convert to DefId
+                self.resolver.symbol_to_def_id(sym)
+            } else {
+                // Base is neither Lazy nor Ref - can't get variance
+                None
+            };
+
+            if let Some(def_id) = def_id {
+                // Try to get variance from query_db (if available)
+                // This enables O(1) variance-based generic assignability checking
+                // Use fully qualified syntax to disambiguate QueryDatabase vs TypeResolver
+                use crate::solver::db::QueryDatabase;
+                let variances = self
+                    .query_db
+                    .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id));
+
+                if let Some(variances) = variances {
+                    // Ensure variance count matches arg count (may differ with defaults)
+                    if variances.len() == s_app.args.len() {
+                        let mut all_ok = true;
+                        for (i, variance) in variances.iter().enumerate() {
+                            let s_arg = s_app.args[i];
+                            let t_arg = t_app.args[i];
+
+                            // Apply variance rules for each type argument
+                            if variance.is_invariant() {
+                                // Invariant: Must be mutually assignable (effectively equal)
+                                // Both directions must hold for soundness
+                                if !self.check_subtype(s_arg, t_arg).is_true()
+                                    || !self.check_subtype(t_arg, s_arg).is_true()
+                                {
+                                    all_ok = false;
+                                    break;
+                                }
+                            } else if variance.is_covariant() {
+                                // Covariant: source <: target (normal direction)
+                                if !self.check_subtype(s_arg, t_arg).is_true() {
+                                    all_ok = false;
+                                    break;
+                                }
+                            } else if variance.is_contravariant() {
+                                // Contravariant: target <: source (reversed direction)
+                                // Function parameters are the classic example
+                                if !self.check_subtype(t_arg, s_arg).is_true() {
+                                    all_ok = false;
+                                    break;
+                                }
+                            }
+                            // Independent: No check needed (type parameter not used)
+                        }
+
+                        if all_ok {
+                            return SubtypeResult::True;
+                        }
+
+                        // If variance check failed, return False immediately
+                        // because for the SAME base, structural expansion won't help
+                        // (the variance check is semantically equivalent to expansion)
+                        return SubtypeResult::False;
+                    }
                 }
-            }
-            if all_covariant {
-                return SubtypeResult::True;
             }
         }
 
-        // Slow path: try expanding both applications to structural form and
-        // comparing. This handles cases with contravariant or invariant type
-        // parameters, where the covariant fast path incorrectly rejects.
+        // =======================================================================
+        // SLOW PATH: Structural expansion for mismatched bases or unknown variance
+        // =======================================================================
+        // When bases differ or variance is unavailable, we expand both applications
+        // to their structural forms and compare. This handles cases like:
+        // - interface Child<T> extends Parent<T>
+        // - Generic types without variance annotations
+        // - Type aliases with complex transformations
+        // =======================================================================
         let s_expanded = self.try_expand_application(s_app_id);
         let t_expanded = self.try_expand_application(t_app_id);
         match (s_expanded, t_expanded) {

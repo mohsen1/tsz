@@ -268,6 +268,37 @@ pub trait TypeResolver {
     fn get_base_type(&self, _type_id: TypeId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         None
     }
+
+    /// Get the variance mask for type parameters of a generic type (Task #41).
+    ///
+    /// This is used by `check_application_to_application_subtype` to optimize generic
+    /// assignability checks. Instead of expanding the entire type structure, we use
+    /// variance annotations to check type arguments in O(1) time.
+    ///
+    /// # Parameters
+    ///
+    /// * `def_id` - The DefId of the generic type (e.g., Array, Promise, Map)
+    ///
+    /// # Returns
+    ///
+    /// - `Some(variances)` - A slice of Variance bitflags, one per type parameter
+    /// - `None` - Variance unavailable (fall back to structural expansion)
+    ///
+    /// # Example
+    ///
+    /// For `type ReadonlyArray<T> = { readonly [index: number]: T }`:
+    /// - Returns `Some([Variance::COVARIANT])` because T is only used in read position
+    ///
+    /// For `type Box<T> = { get(): T; set(x: T): void }`:
+    /// - Returns `Some([Variance::INVARIANT])` because T is used in both read and write
+    ///
+    /// Returns None by default; implementations should override to support variance queries.
+    fn get_type_param_variance(
+        &self,
+        _def_id: DefId,
+    ) -> Option<std::sync::Arc<[crate::solver::types::Variance]>> {
+        None
+    }
 }
 
 /// A no-op resolver that doesn't resolve any references.
