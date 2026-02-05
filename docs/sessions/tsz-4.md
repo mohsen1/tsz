@@ -1,16 +1,16 @@
 # Session TSZ-4: Nominality & Accessibility (Lawyer Layer)
 
 **Started**: 2026-02-05
-**Status**: 🔄 Active - Priority 4 (Literal Type Widening)
+**Status**: 🔄 Active - Priority 5 (Void Return Exception)
 **Focus**: Implement TypeScript's nominal "escape hatches" and type system quirks in the Lawyer layer (CompatChecker)
 
 **Session Scope**:
 - ✅ Priority 1: Enum Nominality (COMPLETE - 21 tests)
 - ✅ Priority 2: Private Brand Checking (COMPLETE - 31 tests)
 - ✅ Priority 3: Constructor Accessibility (COMPLETE - 13 tests)
-- 🔄 Priority 4: Function Bivariance Verification (ACTIVE - tests needed)
-- 📝 Priority 5: Void Return Exception (NEW)
-- 📝 Priority 6: Any-Propagation Hardening (NEW)
+- ✅ Priority 4: Function Bivariance (COMPLETE - 8 tests)
+- 🔄 Priority 5: Void Return Exception (ACTIVE)
+- 📝 Priority 6: Any-Propagation Hardening (PENDING)
 
 **Key Insight**: Per Gemini Flash (2026-02-05), "infrastructure exists" doesn't mean it works correctly. Need to verify with tests and tsz-tracing to ensure bivariance logic matches tsc exactly.
 
@@ -18,9 +18,10 @@
 - Enum Nominality with TypeKey::Enum wrapper
 - Private Brand Checking with recursive Union/Intersection handling
 - Constructor Accessibility for both new expressions and class inheritance
+- Function Bivariance (methods bivariant, properties contravariant in strict mode)
 
 **In Progress**:
-- Function Bivariance verification (write tests, use tsz-tracing)
+- Void Return Exception (Priority 5)
 
 ## Previous Session (COMPLETE)
 
@@ -118,29 +119,30 @@ Fixing these will resolve hundreds of conformance failures.
 - `src/solver/compat.rs` - Replace string matching with SymbolId comparison
 - `src/checker/symbol_resolver.rs` - Extract symbol flags to check for `private`/`protected`
 
-#### Priority 4: Function Bivariance Verification & Hardening 🔄 ACTIVE
-**Goal**: Verify existing bivariance infrastructure matches tsc exactly
-- "Infrastructure exists" doesn't mean it works correctly
-- Need to write comprehensive tests
-- Use tsz-tracing to verify logic is working for the right reasons
+#### Priority 4: Function Bivariance Verification & Hardening ✅ COMPLETE
+**Status**: Verified and tested function bivariance implementation
+**Files Modified**:
+- `src/checker/tests/function_bivariance.rs` - Created comprehensive test suite (8 tests)
 
-**Key Test Cases** (from Gemini Flash):
-1. **Arrow Function Properties**: Should be contravariant even in strict mode (properties, not methods)
-2. **Method Shorthand**: `method(): void` should be bivariant
-3. **Strict Mode Toggle**: Ensure `strictFunctionTypes: true` enforces contravariance for non-methods
+**Bug Found and Fixed**:
+The `// @strictFunctionTypes: true` comment was not being parsed in tests because:
+1. Tests prepend `GLOBAL_TYPE_MOCKS` (non-comment interface declarations)
+2. `parse_test_option_bool` breaks at first non-comment line
+3. Comment parser never reaches `@strictFunctionTypes` comment
 
-**Action Items**:
-- Create `src/checker/tests/function_bivariance.rs`
-- Test both strict mode on/off
-- Verify `lower.rs` distinguishes MethodSignature from PropertySignature
-- Use tsz-tracing to confirm `are_parameters_compatible_impl` receives correct flags
+**Fix**: Updated `test_function_variance` and `test_no_errors` to prepend `@strictFunctionTypes: true` BEFORE `GLOBAL_TYPE_MOCKS`
 
-**Files**:
-- `src/solver/subtype_rules/functions.rs` - Verify bivariance toggle logic
-- `src/solver/lower.rs` - Verify is_method flag is set correctly
-- `src/solver/subtype.rs` - Verify check_subtype_with_method_variance is called
+**Test Results**: 8/8 tests passing ✅
+- Methods are bivariant even in strict mode ✓
+- Function properties are contravariant in strict mode ✓
 
-#### Priority 5: Void Return Exception 📝 NEW
+**Implementation Verified**:
+1. `lower.rs` correctly sets `is_method = true` only for MethodSignature (line 1262)
+2. `functions.rs:539` computes `is_method = source.is_method || target.is_method`
+3. `functions.rs:110-111` toggles bivariance based on `is_method` + `strict_function_types`
+4. `compat.rs:752` propagates `strict_function_types` to SubtypeChecker
+
+#### Priority 5: Void Return Exception 🔄 ACTIVE
 **Goal**: Implement/verify Lawyer rule where function returning void can be assigned function returning any type T
 - In strict set theory, `() => number` is NOT subtype of `() => void`
 - TypeScript allows this for callback ergonomics
