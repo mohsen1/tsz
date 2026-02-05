@@ -235,6 +235,26 @@ Added cross-file Go to Definition support for import statements.
 
 **Value**: Users can now Cmd+Click on import specifiers to jump to their definitions in other files, matching the standard IDE Go to Definition experience.
 
+### Shorthand Property Rename Fix (2026-02-05)
+**Status**: ✅ COMPLETE
+
+Fixed the shorthand property rename feature that was incorrectly checking for `SHORTHAND_PROPERTY_ASSIGNMENT` (kind 304) nodes.
+
+**Root Cause**:
+The parser creates `PROPERTY_ASSIGNMENT` (kind 303) nodes for **both** regular properties (`{ x: 1 }`) and shorthand properties (`{ x }`). It does **not** create `SHORTHAND_PROPERTY_ASSIGNMENT` (kind 304) nodes. Shorthand properties are detected by checking if `name == initializer` in the `PropertyAssignmentData` structure.
+
+**Implementation** (`src/lsp/rename.rs`):
+- Changed parent node kind check from `SHORTHAND_PROPERTY_ASSIGNMENT` to `PROPERTY_ASSIGNMENT`
+- Added detection logic: `if prop.name == prop.initializer` to identify shorthand properties
+- When renaming `x` to `y` in `{ x }`, produces `{ x: y }` (preserves key as old name, changes value to new name)
+
+**Testing**:
+- ✅ Removed `#[ignore]` from `test_rename_shorthand_property_produces_prefix`
+- ✅ All 28 rename tests passing
+- ✅ Test verifies `prefix_text` is `"x: "` when renaming shorthand property
+
+**Value**: Shorthand property rename now works correctly, matching TypeScript's behavior where `{ x }` becomes `{ x: y }` when renaming `x` to `y`.
+
 ## Session Status
 
 **Status**: 🔄 ACTIVE - Working on Cross-File Member Support
@@ -256,12 +276,14 @@ Added cross-file Go to Definition support for import statements.
 **Completed Tasks**:
 1. ✅ **Enhance SymbolIndex for identifier mentions** - Implemented "Pool Scan" optimization to track all identifier strings in the AST for O(1) candidate filtering
 
-**Remaining Tasks**:
-2. **Type-aware reference filtering** - Use Checker to validate property access receivers resolve to owning class/interface
-3. **Cross-File Go to Implementation** - Upgrade from file-local to project-wide using heritage clauses
-4. **Fix shorthand property rename** - Handle `{ x }` expansion to `{ x: newName }` correctly
+**Task Status Updates**:
+- ❌ **Task #26 (Type-aware reference filtering)** - ABANDONED per Gemini guidance as too complex for LSP session (requires Checker integration). Will revisit later with Symbol-ID Matching approach (Phase 1).
+- ✅ **Task #28 (Shorthand property rename)** - FIXED. The parser creates `PROPERTY_ASSIGNMENT` (303) nodes for both regular and shorthand properties, not `SHORTHAND_PROPERTY_ASSIGNMENT` (304). Fixed by detecting shorthand via `name == initializer` check.
 
-**Edge Cases to Investigate**:
+**Remaining Tasks**:
+3. **Cross-File Go to Implementation** - Upgrade from file-local to project-wide using heritage clauses
+
+**Edge Cases to Investigate** (when returning to type-aware filtering):
 - Inheritance chains (Base.method should find Derived.method references)
 - Structural typing (anonymous types assigned to interfaces)
 - Declaration merging (Namespace + Class)
@@ -282,7 +304,7 @@ Added "Pool Scan" optimization to track all identifier mentions in the AST for O
 Before: `find_references` must check every file in the project (O(N) where N = files)
 After: `find_references` can query `get_files_with_symbol()` to filter to only files that actually contain the identifier string (O(1) lookup + O(M) where M = matching files)
 
-This is the foundation for Task #26 (type-aware reference filtering) which will use the Checker to validate property access receivers resolve to the owning class/interface.
+**Future Work**: This is the foundation for Phase 1 of cross-file reference filtering (Symbol-ID Matching without type checking).
 
 **Previous Blocked Work** (CFA):
 - Assertion functions narrowing - COMPLETE (safe to keep)
