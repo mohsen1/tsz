@@ -2139,6 +2139,7 @@ impl<'a> CheckerState<'a> {
     /// Check a break statement for validity.
     /// TS1105: A 'break' statement can only be used within an enclosing iteration statement or switch statement.
     /// TS1107: Jump target cannot cross function boundary.
+    /// TS1116: A 'break' statement can only jump to a label of an enclosing statement.
     pub(crate) fn check_break_statement(&mut self, stmt_idx: NodeIndex) {
         use crate::checker::types::diagnostics::diagnostic_codes;
 
@@ -2168,17 +2169,32 @@ impl<'a> CheckerState<'a> {
                     );
                 }
                 // Otherwise, labeled break is valid (can target any label, not just iteration)
+            } else {
+                // Label not found - emit TS1116
+                self.error_at_node(
+                    stmt_idx,
+                    "A 'break' statement can only jump to a label of an enclosing statement.",
+                    diagnostic_codes::BREAK_STATEMENT_CAN_ONLY_JUMP_TO_LABEL_OF_ENCLOSING_STATEMENT,
+                );
             }
-            // Note: If label not found, TSC produces TS2304 "Cannot find name" for the label
-            // which is a semantic error, not a grammar error. The label lookup is done by the binder.
         } else {
             // Unlabeled break - must be inside iteration or switch
             if self.ctx.iteration_depth == 0 && self.ctx.switch_depth == 0 {
-                self.error_at_node(
-                    stmt_idx,
-                    "A 'break' statement can only be used within an enclosing iteration statement.",
-                    diagnostic_codes::BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
-                );
+                // Check if we're inside a function that's inside a loop
+                // If so, emit TS1107 (crossing function boundary) instead of TS1105
+                if self.ctx.function_depth > 0 && self.ctx.had_outer_loop {
+                    self.error_at_node(
+                        stmt_idx,
+                        "Jump target cannot cross function boundary.",
+                        diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
+                    );
+                } else {
+                    self.error_at_node(
+                        stmt_idx,
+                        "A 'break' statement can only be used within an enclosing iteration or switch statement.",
+                        diagnostic_codes::BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
+                    );
+                }
             }
         }
     }
@@ -2215,24 +2231,40 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
                     );
                 } else if !label_info.is_iteration {
-                    // Continue can only jump to iteration labels
+                    // Continue can only target iteration labels (label found but not on loop) - TS1115
                     self.error_at_node(
                         stmt_idx,
-                        "A 'continue' statement can only jump to a label of an enclosing iteration statement.",
-                        diagnostic_codes::CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_LABEL_OF_ENCLOSING_ITERATION,
+                        "A 'continue' statement can only target a label of an enclosing iteration statement.",
+                        diagnostic_codes::CONTINUE_CAN_ONLY_TARGET_LABEL_OF_ENCLOSING_ITERATION,
                     );
                 }
                 // Otherwise, labeled continue to iteration label is valid
+            } else {
+                // Label not found - emit TS1115 (same as when label exists but not on iteration)
+                self.error_at_node(
+                    stmt_idx,
+                    "A 'continue' statement can only target a label of an enclosing iteration statement.",
+                    diagnostic_codes::CONTINUE_CAN_ONLY_TARGET_LABEL_OF_ENCLOSING_ITERATION,
+                );
             }
-            // Note: If label not found, TSC produces TS2304 "Cannot find name"
         } else {
             // Unlabeled continue - must be inside iteration
             if self.ctx.iteration_depth == 0 {
-                self.error_at_node(
-                    stmt_idx,
-                    "A 'continue' statement can only be used within an enclosing iteration statement.",
-                    diagnostic_codes::CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
-                );
+                // Check if we're inside a function that's inside a loop
+                // If so, emit TS1107 (crossing function boundary) instead of TS1104
+                if self.ctx.function_depth > 0 && self.ctx.had_outer_loop {
+                    self.error_at_node(
+                        stmt_idx,
+                        "Jump target cannot cross function boundary.",
+                        diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
+                    );
+                } else {
+                    self.error_at_node(
+                        stmt_idx,
+                        "A 'continue' statement can only be used within an enclosing iteration statement.",
+                        diagnostic_codes::CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
+                    );
+                }
             }
         }
     }
@@ -2500,7 +2532,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 self.ctx.iteration_depth,
                 self.ctx.switch_depth,
                 self.ctx.label_stack.len(),
+                self.ctx.had_outer_loop,
             );
+            // If we were in a loop/switch, or already had an outer loop, mark it
+            if self.ctx.iteration_depth > 0 || self.ctx.switch_depth > 0 || self.ctx.had_outer_loop
+            {
+                self.ctx.had_outer_loop = true;
+            }
             self.ctx.iteration_depth = 0;
             self.ctx.switch_depth = 0;
             self.ctx.function_depth += 1;
@@ -2512,6 +2550,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.ctx.switch_depth = saved_cf_context.1;
             self.ctx.function_depth -= 1;
             self.ctx.label_stack.truncate(saved_cf_context.2);
+            self.ctx.had_outer_loop = saved_cf_context.3;
 
             // Check for error 2355: function with return type must return a value
             // Only check if there's an explicit return type annotation
@@ -2802,16 +2841,25 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         self.ctx.switch_depth = self.ctx.switch_depth.saturating_sub(1);
     }
 
-    fn save_and_reset_control_flow_context(&mut self) -> (u32, u32) {
-        let saved = (self.ctx.iteration_depth, self.ctx.switch_depth);
+    fn save_and_reset_control_flow_context(&mut self) -> (u32, u32, bool) {
+        let saved = (
+            self.ctx.iteration_depth,
+            self.ctx.switch_depth,
+            self.ctx.had_outer_loop,
+        );
+        // If we were in a loop/switch, or already had an outer loop, mark it
+        if self.ctx.iteration_depth > 0 || self.ctx.switch_depth > 0 || self.ctx.had_outer_loop {
+            self.ctx.had_outer_loop = true;
+        }
         self.ctx.iteration_depth = 0;
         self.ctx.switch_depth = 0;
         saved
     }
 
-    fn restore_control_flow_context(&mut self, saved: (u32, u32)) {
+    fn restore_control_flow_context(&mut self, saved: (u32, u32, bool)) {
         self.ctx.iteration_depth = saved.0;
         self.ctx.switch_depth = saved.1;
+        self.ctx.had_outer_loop = saved.2;
     }
 
     fn enter_labeled_statement(&mut self, label: String, is_iteration: bool) {
@@ -2829,6 +2877,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn get_node_text(&self, idx: NodeIndex) -> Option<String> {
-        CheckerState::get_node_text(self, idx)
+        // For identifiers (like label names), get the identifier data and resolve the text
+        let node = self.ctx.arena.get(idx)?;
+        let ident = self.ctx.arena.get_identifier(node)?;
+        // Use the resolved text from the identifier data
+        Some(self.ctx.arena.resolve_identifier_text(ident).to_string())
     }
 }

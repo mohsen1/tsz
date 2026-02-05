@@ -518,7 +518,15 @@ impl<'a> CheckerState<'a> {
                     self.ctx.iteration_depth,
                     self.ctx.switch_depth,
                     self.ctx.label_stack.len(),
+                    self.ctx.had_outer_loop,
                 );
+                // If we were in a loop/switch, or already had an outer loop, mark it
+                if self.ctx.iteration_depth > 0
+                    || self.ctx.switch_depth > 0
+                    || self.ctx.had_outer_loop
+                {
+                    self.ctx.had_outer_loop = true;
+                }
                 self.ctx.iteration_depth = 0;
                 self.ctx.switch_depth = 0;
                 self.ctx.function_depth += 1;
@@ -528,6 +536,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.switch_depth = saved_cf_context.1;
                 self.ctx.function_depth -= 1;
                 self.ctx.label_stack.truncate(saved_cf_context.2);
+                self.ctx.had_outer_loop = saved_cf_context.3;
             }
             self.pop_return_type();
 
