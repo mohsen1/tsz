@@ -20,6 +20,7 @@ use crate::lsp::code_actions::{
 };
 use crate::lsp::completions::{CompletionItem, Completions};
 use crate::lsp::definition::GoToDefinition;
+use crate::lsp::dependency_graph::DependencyGraph;
 use crate::lsp::diagnostics::{LspDiagnostic, convert_diagnostic};
 use crate::lsp::hover::{HoverInfo, HoverProvider};
 use crate::lsp::position::{LineMap, Location, Position, Range};
@@ -1007,6 +1008,7 @@ fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> Opt
 /// Multi-file container for LSP operations.
 pub struct Project {
     pub(crate) files: FxHashMap<String, ProjectFile>,
+    pub(crate) dependency_graph: DependencyGraph,
     pub(crate) performance: ProjectPerformance,
     pub(crate) strict: bool,
 }
@@ -1016,6 +1018,7 @@ impl Project {
     pub fn new() -> Self {
         Self {
             files: FxHashMap::default(),
+            dependency_graph: DependencyGraph::new(),
             performance: ProjectPerformance::default(),
             strict: false,
         }

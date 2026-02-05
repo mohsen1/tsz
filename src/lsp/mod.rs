@@ -29,6 +29,7 @@ pub mod code_actions;
 pub mod code_lens;
 pub mod completions;
 pub mod definition;
+pub mod dependency_graph;
 pub mod diagnostics;
 pub mod document_links;
 pub mod document_symbols;
