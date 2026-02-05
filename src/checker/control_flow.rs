@@ -539,21 +539,43 @@ impl<'a> FlowAnalyzer<'a> {
                     self.assignment_targets_reference_node(flow.node, reference);
 
                 if targets_reference {
-                    // Check if this is a destructuring assignment (widens literals to primitives)
-                    let is_destructuring = self.is_destructuring_assignment(flow.node);
+                    // CRITICAL FIX: Skip "killing definition" narrowing for ANY and ERROR types only
+                    // These types should preserve their identity across assignments to match tsc behavior
+                    //
+                    // IMPORTANT: unknown is NOT included here because it SHOULD be narrowed by assignments
+                    // Example: let x: unknown; x = 123; should narrow x to number
+                    //
+                    // any absorbs assignments (stays any)
+                    // error persists to prevent cascading errors
+                    if initial_type != TypeId::ANY && initial_type != TypeId::ERROR {
+                        // Check if this is a destructuring assignment (widens literals to primitives)
+                        let is_destructuring = self.is_destructuring_assignment(flow.node);
 
-                    // CRITICAL FIX: Try to get assigned type for ALL assignments, including destructuring
-                    // Previously: Only direct assignments (x = ...) worked
-                    // Now: Destructuring ([x] = ...) also works because get_assigned_type handles it
-                    if let Some(assigned_type) =
-                        self.get_assigned_type(flow.node, reference, is_destructuring)
-                    {
-                        // Killing definition: replace type with RHS type and stop traversal
-                        assigned_type
+                        // CRITICAL FIX: Try to get assigned type for ALL assignments, including destructuring
+                        // Previously: Only direct assignments (x = ...) worked
+                        // Now: Destructuring ([x] = ...) also works because get_assigned_type handles it
+                        if let Some(assigned_type) =
+                            self.get_assigned_type(flow.node, reference, is_destructuring)
+                        {
+                            // Killing definition: replace type with RHS type and stop traversal
+                            assigned_type
+                        } else {
+                            // If we can't resolve the RHS type, conservatively return declared type
+                            // The value HAS changed, so we can't continue to antecedent
+                            current_type
+                        }
                     } else {
-                        // If we can't resolve the RHS type, conservatively return declared type
-                        // The value HAS changed, so we can't continue to antecedent
-                        current_type
+                        // For any/error types: Don't apply narrowing - continue to antecedent
+                        // This allows condition narrowing (typeof guards) to still work
+                        if let Some(&ant) = flow.antecedent.first() {
+                            if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                                worklist.push_back((ant, current_type));
+                                in_worklist.insert(ant);
+                            }
+                            *results.get(&ant).unwrap_or(&current_type)
+                        } else {
+                            current_type
+                        }
                     }
                 } else if self.assignment_affects_reference_node(flow.node, reference) {
                     // CRITICAL FIX: Mutations (x.prop = ...) should NOT reset narrowing
