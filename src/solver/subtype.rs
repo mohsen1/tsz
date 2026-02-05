@@ -1297,25 +1297,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             {
                 // Use PropertyCollector to merge all properties from intersection members
                 // This handles Lazy/Ref resolution and avoids infinite recursion
-                use crate::solver::objects::collect_properties;
+                use crate::solver::objects::{PropertyCollectionResult, collect_properties};
 
-                let (properties, string_index, number_index) =
-                    collect_properties(source, self.interner, self.resolver);
-
-                if !properties.is_empty() || string_index.is_some() || number_index.is_some() {
-                    let merged_type = if string_index.is_some() || number_index.is_some() {
-                        self.interner.object_with_index(ObjectShape {
-                            flags: ObjectFlags::empty(),
-                            properties,
-                            string_index,
-                            number_index,
-                            symbol: None,
-                        })
-                    } else {
-                        self.interner.object(properties)
-                    };
-                    if self.check_subtype(merged_type, target).is_true() {
-                        return SubtypeResult::True;
+                match collect_properties(source, self.interner, self.resolver) {
+                    PropertyCollectionResult::Any => {
+                        // any & T = any, so check if any is subtype of target
+                        return self.check_subtype(TypeId::ANY, target);
+                    }
+                    PropertyCollectionResult::NonObject => {
+                        // No object properties to check, fall through to other checks
+                    }
+                    PropertyCollectionResult::Properties {
+                        properties,
+                        string_index,
+                        number_index,
+                    } => {
+                        if !properties.is_empty()
+                            || string_index.is_some()
+                            || number_index.is_some()
+                        {
+                            let merged_type = if string_index.is_some() || number_index.is_some() {
+                                self.interner.object_with_index(ObjectShape {
+                                    flags: ObjectFlags::empty(),
+                                    properties,
+                                    string_index,
+                                    number_index,
+                                    symbol: None,
+                                })
+                            } else {
+                                self.interner.object(properties)
+                            };
+                            if self.check_subtype(merged_type, target).is_true() {
+                                return SubtypeResult::True;
+                            }
+                        }
                     }
                 }
             }
