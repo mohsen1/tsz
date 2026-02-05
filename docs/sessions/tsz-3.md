@@ -131,9 +131,9 @@ const x: number = await expr; // expr should get number | PromiseLike<number>
 
 ---
 
-## Phase 7: Priority-Based Contextual Inference (READY - The "Final Boss")
+## Phase 7: Priority-Based Contextual Inference (ACTIVE - The "Final Boss")
 
-**Status**: 🟡 READY TO START (Complex multi-file refactoring)
+**Status**: 🟢 STARTING (Split into two sub-phases per Gemini guidance)
 **Started**: 2026-02-05
 
 **Problem Statement**:
@@ -141,40 +141,100 @@ Inference needs to happen in "waves." Some constraints are "High Priority" (expl
 
 **Impact**: Critical for complex generic functions like `Array.prototype.map` or `Promise.then`.
 
-**Note**: This was the deferred Task 4 from "Generic Inference & Nominal Hierarchy Integration" phase.
+**Why This Matters**: Without Phase 7, common patterns like `[1, 2].map(x => x.toString())` will leak `any`/`unknown` because the solver tries to solve everything in one greedy pass.
 
-### Task 1: Define InferencePriority Enum (HIGH)
+**Architecture Note**: This was the deferred Task 4 from "Generic Inference & Nominal Hierarchy Integration" phase.
+
+---
+
+### Phase 7a: Infrastructure & Signature Refactoring (MECHANICAL)
+
+**Goal**: Update type signatures to support priority-based constraints.
+
+#### Task 7.1.1: Define InferencePriority Enum (HIGH)
 **File**: `src/solver/types.rs`
 
-**Goal**: Define standard priority levels used by tsc.
+**Goal**: Define standard priority levels matching TypeScript's internal implementation.
 
-**Priority Levels** (from Gemini):
-- `NakedTypeVariable` - Highest priority
-- `HomomorphicMappedType`
-- `MappedType`
-- `ContravariantConditional`
-- (Other levels as defined by tsc)
-
-### Task 2: Refactor constrain_types (HIGH)
-**File**: `src/solver/operations.rs`
-
-**Goal**: Update `constrain_types` signature to accept `InferencePriority` parameter.
-
-**Impact**: Requires updating 6+ helper functions.
-
-### Task 3: Multi-Pass Inference in resolve_generic_call (HIGH)
-**File**: `src/solver/operations.rs`
-
-**Goal**: Implement multi-pass inference using priority levels to prevent `any` leakage.
-
-**Ask Gemini First** (Two-Question Rule - MANDATORY):
-```bash
-./scripts/ask-gemini.mjs --pro --include=src/solver/operations.rs \
-  "I am ready to implement Priority-Based Contextual Inference.
-  I need to add InferencePriority to constrain_types.
-  What are the standard priority levels used by tsc?
-  How does resolve_generic_call use these priorities to prevent 'any' leakage when the return type provides the context?"
+**Priority Levels** (from tsc):
+```rust
+pub enum InferencePriority {
+    NakedTypeVariable = 1 << 0,       // Highest
+    HomomorphicMappedType = 1 << 1,
+    PartialHomomorphicMappedType = 1 << 2,
+    MappedType = 1 << 3,
+    ContravariantConditional = 1 << 4,
+    ReturnType = 1 << 5,
+    LowPriority = 1 << 6,
+    Circular = 1 << 7,                // Prevents infinite loops
+}
 ```
+
+#### Task 7.1.2: Refactor constrain_types Signatures (HIGH)
+**File**: `src/solver/operations.rs`
+
+**Goal**: Update `constrain_types` and all recursive helpers to accept `InferencePriority`.
+
+**Functions to Update** (6+ helpers):
+- `constrain_types`
+- `constrain_types_impl`
+- `constrain_properties`
+- `constrain_function_to_call_signature`
+- `constrain_call_signature_to_function`
+- `constrain_callable_signatures`
+- `constrain_properties_against_index_signatures`
+
+**Approach**: Add `priority: InferencePriority` parameter to each function, propagate through call chain.
+
+**Expected Outcome**: Code compiles with `Priority::Normal` passed everywhere.
+
+---
+
+### Phase 7b: Multi-Pass Resolution Logic (LOGICAL)
+
+**Goal**: Implement priority-gated constraint collection in generic call resolution.
+
+#### Task 7.2.1: Multi-Pass Loop in resolve_generic_call (CRITICAL)
+**File**: `src/solver/operations.rs`
+
+**Goal**: Update `resolve_generic_call_inner` to perform multiple iterations with increasing priority levels.
+
+**Algorithm**:
+1. Start with highest priority constraints (explicit types)
+2. Collect constraints at current priority level
+3. Solve and propagate
+4. Move to next priority level
+5. Repeat until all levels processed or circular dependency detected
+
+**Ask Gemini BEFORE Implementing** (Two-Question Rule - MANDATORY):
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/operations.rs --include=src/solver/infer.ts \
+"I am starting Phase 7b: Multi-Pass Resolution Logic for Priority-Based Inference.
+
+I need to implement priority-gated constraint collection in resolve_generic_call_inner.
+
+My questions:
+1. What is the exact order of priority levels tsc uses during generic resolution?
+2. How does tsc handle the 'Circular' priority to prevent infinite inference loops?
+3. In resolve_generic_call, do we reset the InferenceContext between priority passes, or accumulate?
+4. Are there specific functions in src/solver/operations.rs I should be careful not to break?
+5. How does the solver backtrack when a higher-priority constraint conflicts with a lower-priority one?
+
+Please provide the exact algorithm and any edge cases I need to handle."
+```
+
+---
+
+### Coordination Notes
+
+**tsz-1 (Intersection Reduction)**:
+- Working in `src/solver/intern.rs` (we're in `operations.rs` and `infer.rs`)
+- Low risk of code conflict, HIGH risk of semantic conflict
+- **Action**: Rebase from `main` before starting Phase 7
+
+**tsz-2 (Checker-Solver Bridge)**:
+- We're now the primary consumer of their bridge
+- **Action**: Ensure Phase 5 changes are pushed so they see how `contextual_type` is used
 
 ---
 
