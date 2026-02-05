@@ -257,6 +257,116 @@ impl RelationCacheKey {
     }
 }
 
+/// Priority levels for generic type inference constraints.
+///
+/// TypeScript uses a multi-pass inference algorithm where constraints are processed
+/// in priority order. Higher priority constraints (like explicit type annotations) are
+/// processed first, then lower priority constraints (like contextual types from return
+/// position) are processed in subsequent passes.
+///
+/// This prevents circular dependencies and `any` leakage in complex generic scenarios
+/// like `Array.prototype.map` or `Promise.then`.
+///
+/// ## Priority Order (Highest to Lowest)
+///
+/// 1. **NakedTypeVariable** - Direct type parameter with no constraints (highest)
+/// 2. **HomomorphicMappedType** - Mapped types that preserve structure
+/// 3. **PartialHomomorphicMappedType** - Partially homomorphic mapped types
+/// 4. **MappedType** - Generic mapped types
+/// 5. **ContravariantConditional** - Conditional types in contravariant position
+/// 6. **ReturnType** - Contextual type from return position (low priority)
+/// 7. **LowPriority** - Fallback inference (lowest)
+/// 8. **Circular** - Detected circular dependency (prevents infinite loops)
+///
+/// ## Example
+///
+/// ```typescript
+/// function map<U>(arr: T[], fn: (x: T) => U): U[];
+/// // When calling map(x => x.toString()):
+/// // 1. T is inferred from array element type (NakedTypeVariable)
+/// // 2. U is inferred from return type contextual type (ReturnType)
+/// // Processing T first prevents circular T <-> U dependency
+/// ```
+///
+/// ## Phase 7 Implementation (tsz-3)
+///
+/// This enum is part of the Priority-Based Contextual Inference implementation.
+/// See docs/sessions/tsz-3.md for Phase 7 details.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum InferencePriority {
+    /// Naked type variable with no constraints (highest priority).
+    /// Example: `<T>` where T appears directly in parameter types.
+    NakedTypeVariable = 1 << 0,
+
+    /// Mapped type that preserves array/tuple structure.
+    /// Example: `Partial<T[]>` preserves array structure.
+    HomomorphicMappedType = 1 << 1,
+
+    /// Partially homomorphic mapped type.
+    /// Example: Mapped types with some mixed properties.
+    PartialHomomorphicMappedType = 1 << 2,
+
+    /// Generic mapped type.
+    /// Example: `{ [K in keyof T]: U }`
+    MappedType = 1 << 3,
+
+    /// Conditional type in contravariant position.
+    /// Example: Inference from function parameter types in conditional types.
+    ContravariantConditional = 1 << 4,
+
+    /// Contextual type from return position.
+    /// Example: `const x: number = fn()` where fn is generic.
+    ReturnType = 1 << 5,
+
+    /// Low priority fallback inference.
+    LowPriority = 1 << 6,
+
+    /// Detected circular dependency (prevents infinite loops).
+    /// Set when a type parameter depends on itself through constraints.
+    Circular = 1 << 7,
+}
+
+impl InferencePriority {
+    /// Check if this priority level should be processed in a given pass.
+    ///
+    /// Multi-pass inference processes constraints in increasing priority order.
+    /// Returns true if this priority matches or is lower than the current pass level.
+    pub fn should_process_in_pass(&self, current_pass: Self) -> bool {
+        *self >= current_pass && *self != InferencePriority::Circular
+    }
+
+    /// Get the next priority level for multi-pass inference.
+    pub fn next_level(&self) -> Option<Self> {
+        match self {
+            InferencePriority::NakedTypeVariable => Some(InferencePriority::HomomorphicMappedType),
+            InferencePriority::HomomorphicMappedType => Some(InferencePriority::PartialHomomorphicMappedType),
+            InferencePriority::PartialHomomorphicMappedType => Some(InferencePriority::MappedType),
+            InferencePriority::MappedType => Some(InferencePriority::ContravariantConditional),
+            InferencePriority::ContravariantConditional => Some(InferencePriority::ReturnType),
+            InferencePriority::ReturnType => Some(InferencePriority::LowPriority),
+            InferencePriority::LowPriority | InferencePriority::Circular => None,
+        }
+    }
+
+    /// Default priority for normal constraint collection.
+    pub const NORMAL: Self = InferencePriority::ReturnType;
+
+    /// Highest priority for explicit type annotations.
+    pub const HIGHEST: Self = InferencePriority::NakedTypeVariable;
+
+    /// Lowest priority for fallback inference.
+    pub const LOWEST: Self = InferencePriority::LowPriority;
+}
+        Self {
+            source,
+            target,
+            relation: Self::ASSIGNABLE,
+            flags,
+            any_mode,
+        }
+    }
+}
+
 /// Interned list of TypeId values (e.g., unions/intersections).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TypeListId(pub u32);
