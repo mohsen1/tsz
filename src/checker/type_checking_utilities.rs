@@ -1846,6 +1846,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns Some(MemberAccessLevel::Private) or Some(MemberAccessLevel::Protected) if restricted.
     /// Returns None if public (the default) or if the symbol is not a class.
+    ///
+    /// Note: If a class has no explicit constructor, it inherits the access level
+    /// from its base class's constructor.
     pub(crate) fn class_constructor_access_level(
         &self,
         sym_id: SymbolId,
@@ -1862,6 +1865,7 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(decl_idx)?;
         let class = self.ctx.arena.get_class(node)?;
 
+        // First, check if this class has an explicit constructor
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -1879,11 +1883,56 @@ impl<'a> CheckerState<'a> {
             if self.has_protected_modifier(&ctor.modifiers) {
                 return Some(MemberAccessLevel::Protected);
             }
-            // Constructor is public (default)
+            // Explicit public constructor - public default
             return None;
         }
 
-        // No explicit constructor - public default
+        // No explicit constructor found - check base class if extends clause exists
+        let Some(ref heritage_clauses) = class.heritage_clauses else {
+            // No extends clause - public default
+            return None;
+        };
+
+        // Find the extends clause and get the base class
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+
+            // Only check extends clauses (not implements)
+            if heritage.token != crate::scanner::SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            // Get the first type in the extends clause
+            let Some(&first_type_idx) = heritage.types.nodes.first() else {
+                continue;
+            };
+
+            // Get the expression from ExpressionWithTypeArguments
+            let expr_idx = if let Some(type_node) = self.ctx.arena.get(first_type_idx)
+                && let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
+            {
+                expr_type_args.expression
+            } else {
+                first_type_idx
+            };
+
+            // Resolve the base class symbol
+            let Some(base_sym) = self.resolve_heritage_symbol(expr_idx) else {
+                continue;
+            };
+
+            // Recursively check the base class's constructor access level
+            // This handles inherited private/protected constructors
+            return self.class_constructor_access_level(base_sym);
+        }
+
+        // No extends clause or couldn't resolve base class - public default
         None
     }
 

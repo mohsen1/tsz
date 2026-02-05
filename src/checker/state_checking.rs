@@ -1521,6 +1521,47 @@ impl<'a> CheckerState<'a> {
 
                         let symbol_type = self.get_type_of_symbol(sym_to_check);
 
+                        // TS2675: Check if base class has a private constructor (only for class declarations)
+                        if is_class_declaration {
+                            use crate::checker::state::MemberAccessLevel;
+                            if let Some(MemberAccessLevel::Private) =
+                                self.class_constructor_access_level(sym_to_check)
+                            {
+                                // Check if we are inside the class that defines the private constructor
+                                // Nested classes can extend a class with private constructor
+                                let is_accessible =
+                                    if let Some(ref enclosing) = self.ctx.enclosing_class {
+                                        // Get the symbol of the enclosing class
+                                        self.ctx
+                                            .binder
+                                            .get_node_symbol(enclosing.class_idx)
+                                            .map(|enclosing_sym| enclosing_sym == sym_to_check)
+                                            .unwrap_or(false)
+                                    } else {
+                                        false
+                                    };
+
+                                if !is_accessible {
+                                    if let Some(name) = self.heritage_name_text(expr_idx) {
+                                        use crate::checker::types::diagnostics::{
+                                            diagnostic_codes, diagnostic_messages, format_message,
+                                        };
+                                        let message = format_message(
+                                            diagnostic_messages::CANNOT_EXTEND_CLASS_WITH_PRIVATE_CONSTRUCTOR,
+                                            &[&name],
+                                        );
+                                        self.error_at_node(
+                                            expr_idx,
+                                            &message,
+                                            diagnostic_codes::CANNOT_EXTEND_CLASS_WITH_PRIVATE_CONSTRUCTOR,
+                                        );
+                                    }
+                                    // Continue to next type - no need to check further for this symbol
+                                    continue;
+                                }
+                            }
+                        }
+
                         // Check if this is ONLY an interface (not also a class or variable
                         // from declaration merging) - emit TS2689 instead of TS2507
                         // BUT only for class declarations, not interface declarations

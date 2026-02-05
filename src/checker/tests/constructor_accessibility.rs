@@ -192,7 +192,7 @@ fn test_protected_constructor_in_subclass() {
 /// Test that private constructors fail in subclasses (subclass can't call super).
 #[test]
 fn test_private_constructor_in_subclass() {
-    // TS2673: Cannot extend a class with a private constructor
+    // TS2675: Cannot extend a class with a private constructor
     test_constructor_accessibility(
         r#"
         class A { private constructor() {} }
@@ -200,7 +200,7 @@ fn test_private_constructor_in_subclass() {
             constructor() { super(); }
         }
         "#,
-        2673,
+        2675,
     );
 }
 
@@ -280,5 +280,36 @@ fn test_abstract_class_subclass_instantiation() {
         class B extends A {}
         let b = new B();
         "#,
+    );
+}
+
+/// Test that nested classes CAN extend class with private constructor.
+/// This is allowed because the nested class is within the scope of the base class.
+#[test]
+fn test_nested_class_private_constructor() {
+    // Should pass - nested class can extend private constructor
+    test_no_errors(
+        r#"
+        class A {
+            private constructor() {}
+            static Inner = class extends A {};
+        }
+        "#,
+    );
+}
+
+/// Test that inherited private constructor blocks extension.
+/// If a class extends a class with private constructor, it inherits the restriction.
+#[test]
+fn test_inherited_private_constructor() {
+    // TS2675: Cannot extend a class with inherited private constructor
+    // Class B inherits the private constructor from A
+    test_constructor_accessibility(
+        r#"
+        class A { private constructor() {} }
+        class B extends A {}
+        class C extends B {}
+        "#,
+        2675,
     );
 }
