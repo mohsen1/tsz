@@ -1140,3 +1140,80 @@ Implemented shallow object reduction in TypeInterner to enable O(1) type equalit
 
 **North Star Impact**:
 This implementation enables the interner to reduce object unions/intersections to canonical forms, moving toward O(1) type equality without triggering the full SubtypeChecker recursion.
+
+---
+
+## Redefined Priorities (2025-02-05 Post-Task #31)
+
+**Strategic Focus**: Solidifying Canonical Forms for the North Star
+
+| Task | Title | Status | Priority |
+|:---|:---|:---|:---|
+| **#33** | **Commutative Normalization** | 📋 **NEXT** | **CRITICAL** (North Star) |
+| **#30** | **Template Literals** | 📝 Planned | High (Conformance) |
+| **#32** | **Graph Isomorphism** | 📝 Planned | High (Structural Soundness) |
+
+**Note on Task #33**: Must distinguish between Object Intersections (commutative) and Function Intersections/Overloads (ordered).
+
+---
+
+### Task #33: Intersection and Union Order Normalization 🚧 IN PROGRESS
+**Status**: 📋 Next Task - Critical for North Star
+**Estimated Impact**: Immediate improvement in type identity and cache hit rates
+
+**Description**:
+Ensure commutative types (Unions and Intersections) are always interned in a sorted, deduplicated state to achieve O(1) type equality.
+
+**The Problem**:
+Currently, `Union` and `Intersection` types use `TypeListId`. If members are in different orders:
+- `string | number` vs `number | string` → creates distinct TypeIds
+- This violates North Star goal of O(1) equality
+
+**Goal**:
+1. Sort TypeIds before interning the TypeListId
+2. Deduplicate members (A | A | B → A | B)
+3. Distinguish Object Intersections (commutative) from Function Intersections (ordered - overloads matter)
+
+**Implementation Plan** (Two-Question Rule):
+1. ✅ Ask Gemini Question 1: How to implement sorting for commutative types while preserving function overload order?
+2. ⏭️ Implement in `src/solver/intern.rs`
+3. ⏭️ Ask Gemini Question 2: Review the implementation
+4. ⏭️ Test and verify canonical forms
+
+**Edge Cases**:
+- Callable/Function Intersections are NOT commutative (overload order matters)
+- Object Intersections ARE commutative
+- Must preserve required/optional property semantics
+
+---
+
+### Task #30: Template Literal Type Subtyping
+**Status**: 📝 Planned
+**Priority**: High (Conformance Gap)
+
+**Description**:
+Implement structural matching rules for `TypeKey::TemplateLiteral`:
+- Matching: `` `a${string}` `` should be supertype of `"abc"`
+- Disjointness: `` `a${number}` `` and `` `b${number}` `` have no overlap
+- Intrinsic interaction: `Uppercase<T>`, `Lowercase<T>`, etc.
+
+**Why Important**:
+- Modern TypeScript relies heavily on template literals
+- CSS-in-JS and typed-routing patterns
+- High ROI for conformance
+
+---
+
+### Task #32: Graph Isomorphism Interning
+**Status**: 📝 Planned
+**Priority**: High (Structural Soundness)
+**Description**:
+Move from nominal interning (based on SymbolId/DefId) to structural interning for recursive shapes.
+
+**The Goal**:
+Ensure `interface A { next: A }` and `interface B { next: B }` are recognized as the same type structurally (same shape, different names).
+
+**Why This is the "Final Boss"**:
+- Essential for true structural soundness across file boundaries
+- Requires detecting isomorphic graphs in recursive types
+- Most challenging North Star requirement
