@@ -47,17 +47,82 @@ Integrate `FlowAnalyzer` into the main expression checking path so that identifi
    - Ensure `FlowAnalyzer::get_flow_type_of_node` is exposed and performant
    - Handle cache invalidation correctly
 
-### Implementation Approach (Per Gemini Pro)
+### Implementation Approach (Per Gemini Pro - APPROVED)
 
-#### Phase 1: Flow-Sensitive Symbol Resolution
-1. Modify `check_identifier` in `src/checker/expr.rs` to query `FlowAnalyzer`
-2. Implement flow-sensitive cache for symbol types
-3. Ensure logical sub-expressions (`&&`, `||`) update the flow context
+### Step 1: Intercept Identifiers in compute_type_of_node_complex
+**File**: `src/checker/state.rs` (lines 661-666)
+**Function**: `compute_type_of_node_complex`
 
-#### Phase 2: Performance Optimization
-1. Profile the performance impact of flow-sensitive lookups
-2. Implement efficient cache keyed by `(SymbolId, FlowNodeId)`
-3. Consider lazy evaluation for expensive narrowing operations
+```rust
+fn compute_type_of_node_complex(&mut self, idx: NodeIndex) -> TypeId {
+    // 1. Intercept Identifiers BEFORE creating ExpressionDispatcher
+    if let Some(node) = self.ctx.arena.get(idx) {
+        if node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
+            return self.get_type_of_identifier_with_flow(idx);
+        }
+    }
+
+    // 2. Fallback for other complex nodes
+    use crate::checker::dispatch::ExpressionDispatcher;
+    let mut dispatcher = ExpressionDispatcher::new(self);
+    dispatcher.dispatch_type_computation(idx)
+}
+```
+
+### Step 2: Implement get_type_of_identifier_with_flow
+**File**: `src/checker/state.rs` (new function)
+**Location**: Add near `get_type_of_identifier` or as method on `CheckerState`
+
+```rust
+fn get_type_of_identifier_with_flow(&mut self, idx: NodeIndex) -> TypeId {
+    // 1. Resolve the symbol
+    let sym_id = match self.get_symbol_at_node(idx) {
+        Some(sym) => sym,
+        None => return TypeId::UNKNOWN,
+    };
+
+    // 2. Get the declared type (flow-insensitive baseline)
+    let initial_type = self.get_type_of_symbol(sym_id);
+
+    // 3. Check if flow analysis applies
+    let flow_node = match self.ctx.check_flow_usage(idx) {
+        Some(node) => node,
+        None => return initial_type, // No flow info, use declared type
+    };
+
+    // 4. Instantiate FlowAnalyzer with PERSISTENT cache
+    use crate::checker::control_flow::FlowAnalyzer;
+    let analyzer = FlowAnalyzer::new(
+        self.ctx.binder.flow_graph.clone(),
+        &self.ctx.binder.flow_node_types,
+        &self.ctx.binder.flow_assignments,
+        &self.ctx.binder.node_flow,
+        self.ctx,
+    )
+    .with_flow_cache(&self.ctx.flow_analysis_cache); // CRITICAL: Reuse cache!
+
+    // 5. Query for narrowed type
+    analyzer.get_flow_type(idx, initial_type, flow_node)
+}
+```
+
+### Step 3: Verify Cache Persistence
+**File**: `src/checker/context.rs`
+**Check**: Ensure `flow_analysis_cache` exists and is accessible
+
+```rust
+// Should already exist in CheckerContext:
+flow_analysis_cache: RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>
+```
+
+**Critical**: Do NOT create a new cache for each identifier lookup. Reuse the existing cache!
+
+### Performance Considerations
+
+1. ✅ **Cache Persistence**: Use existing `flow_analysis_cache` in `CheckerContext`
+2. ✅ **RefCell Borrowing**: `FlowAnalyzer` drops borrow before recursive calls (safe)
+3. ✅ **Type Parameters**: `FlowAnalyzer` has `initial_has_type_params` check (don't bypass)
+4. ⚠️ **Cache Invalidation**: Currently no explicit invalidation - relies on correct flow node keys
 
 ### Key Challenges
 
@@ -138,32 +203,55 @@ Per Gemini Pro (2026-02-05):
 
 ## Mandatory Gemini Workflow
 
-### Question 1: Approach Validation (REQUIRED BEFORE IMPLEMENTATION)
+### ✅ Question 1: Approach Validation (COMPLETED 2026-02-05)
 
-```bash
-./scripts/ask-gemini.mjs --pro --include=src/checker --include=src/solver \
-  "I need to integrate FlowAnalyzer into the main Checker loop so that identifiers return narrowed types.
+**Initial Plan (REJECTED - Had Architectural Flaw)**:
+- Modify `check_identifier` in `src/checker/expr.rs`
+- Problem: `ExpressionChecker` holds mutable ref to `CheckerContext`
+- `CheckerState` owns `CheckerContext` and has `get_type_of_symbol`
+- **Cannot call back into `CheckerState` from `ExpressionChecker` due to borrowing rules**
 
-Problem: get_type_of_symbol is flow-insensitive.
-Plan:
-1) Modify check_identifier in src/checker/expr.rs to query FlowAnalyzer.
-2) Implement a flow-sensitive cache for symbol types.
-3) Ensure logical sub-expressions (&&, ||) update the flow context.
+**Corrected Approach (APPROVED by Gemini Pro)**:
+1. ✅ Handle `SyntaxKind::Identifier` in `CheckerState::compute_type_of_node_complex`
+2. ✅ Use existing `flow_analysis_cache` in `CheckerContext` (no new cache needed!)
+3. ✅ Instantiate `FlowAnalyzer` with persistent cache and query `get_flow_type`
 
-Is this the right approach? Which specific functions in state_type_analysis.rs should I modify?
-Are there performance pitfalls with flow-sensitive caching?"
+**Key Findings from Gemini Pro**:
+- **Location**: `compute_type_of_node_complex` at state.rs:661-666
+- **DELEGATE Pattern**: `compute_type_of_node` (state.rs:638-653) checks for `DELEGATE`, falls back to `compute_type_of_node_complex`
+- **Cache**: `flow_analysis_cache` already exists in `CheckerContext` as `RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>`
+- **Circular Dependencies**: Minimal risk if `RefCell` borrow is dropped before recursive calls
+
+**Implementation Signature**:
+```rust
+fn compute_type_of_node_complex(&mut self, idx: NodeIndex) -> TypeId {
+    // 1. Intercept Identifiers here
+    if let Some(node) = self.ctx.arena.get(idx) {
+        if node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
+            return self.get_type_of_identifier_with_flow(idx);
+        }
+    }
+
+    // 2. Fallback for other complex nodes
+    use crate::checker::dispatch::ExpressionDispatcher;
+    let mut dispatcher = ExpressionDispatcher::new(self);
+    dispatcher.dispatch_type_computation(idx)
+}
 ```
 
-### Question 2: Implementation Review (REQUIRED AFTER IMPLEMENTATION)
+### ⏳ Question 2: Implementation Review (PENDING)
 
+After implementing, ask:
 ```bash
-./scripts/ask-gemini.mjs --pro --include=src/checker/expr.rs --include=src/checker/state_type_analysis.rs \
-  "I implemented FlowAnalyzer integration in the Checker.
+./scripts/ask-gemini.mjs --pro --include=src/checker/state.rs --include=src/checker/control_flow.rs \
+  "I integrated FlowAnalyzer into CheckerState.
 
 Changes: [PASTE CODE OR DIFF]
 
-Please review: 1) Is this correct for TypeScript? 2) Did I handle compound conditions correctly?
-3) Are there performance issues? Be specific if it's wrong."
+Please review:
+1. Did I handle the flow cache correctly (persistence vs invalidation)?
+2. Is the fallback to initial_type correct if no flow node exists?
+3. Does this correctly handle the DELEGATE pattern from ExpressionChecker?"
 ```
 
 ## Next Steps
