@@ -46,6 +46,50 @@ pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
+/// Check if a type is invokable (has call signatures, not just construct signatures).
+///
+/// This is more specific than is_callable_type - it ensures the type can be called
+/// as a function (not just constructed with `new`).
+///
+/// # Arguments
+///
+/// * `db` - The type database/interner
+/// * `type_id` - The type to check
+///
+/// # Returns
+///
+/// * `true` - If the type has call signatures
+/// * `false` - Otherwise
+///
+/// # Examples
+///
+/// ```ignore
+/// // Functions are invokable
+/// assert!(is_invokable_type(&db, function_type));
+///
+/// // Callables with call signatures are invokable
+/// assert!(is_invokable_type(&db, callable_with_call_sigs));
+///
+/// // Callables with ONLY construct signatures are NOT invokable
+/// assert!(!is_invokable_type(&db, class_constructor_only));
+/// ```
+pub fn is_invokable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeKey::Function(_)) => true,
+        Some(TypeKey::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            // Must have at least one call signature (not just construct signatures)
+            !shape.call_signatures.is_empty()
+        }
+        // Intersections might contain a callable
+        Some(TypeKey::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().any(|&m| is_invokable_type(db, m))
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is a tuple type.
 ///
 /// Returns true for TypeKey::Tuple.
@@ -2343,8 +2387,9 @@ pub fn is_promise_like<R: TypeResolver>(
         PropertyAccessResult::Success {
             type_id: then_type, ..
         } => {
-            // 'then' must be callable to be "thenable"
-            is_callable_type(db, then_type)
+            // 'then' must be invokable (have call signatures) to be "thenable"
+            // A class with only construct signatures is not thenable
+            is_invokable_type(db, then_type)
         }
         _ => false,
     }
@@ -2386,6 +2431,12 @@ pub fn is_valid_for_in_target(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         return true;
     }
 
+    // Primitives are valid (they box to objects in JS for...in)
+    if type_id == TypeId::STRING || type_id == TypeId::NUMBER || type_id == TypeId::BOOLEAN {
+        return true;
+    }
+
+    use crate::solver::types::IntrinsicKind;
     match db.lookup(type_id) {
         // Object types are valid (for...in iterates properties)
         Some(TypeKey::Object(_) | TypeKey::ObjectWithIndex(_)) => true,
@@ -2393,6 +2444,28 @@ pub fn is_valid_for_in_target(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         Some(TypeKey::Array(_)) => true,
         // Type parameters are valid (we don't know the constraint)
         Some(TypeKey::TypeParameter(_)) => true,
+        // Tuples are valid (they're objects)
+        Some(TypeKey::Tuple(_)) => true,
+        // Unions are valid if all members are valid
+        Some(TypeKey::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().all(|&m| is_valid_for_in_target(db, m))
+        }
+        // Intersections are valid if any member is valid
+        Some(TypeKey::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().any(|&m| is_valid_for_in_target(db, m))
+        }
+        // Literals are valid (they box to objects)
+        Some(TypeKey::Literal(_)) => true,
+        // Intrinsic primitives
+        Some(TypeKey::Intrinsic(kind)) => matches!(
+            kind,
+            IntrinsicKind::String
+                | IntrinsicKind::Number
+                | IntrinsicKind::Boolean
+                | IntrinsicKind::Symbol
+        ),
         // Everything else is not valid for for...in
         _ => false,
     }

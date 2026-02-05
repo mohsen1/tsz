@@ -3031,12 +3031,12 @@ pub fn get_iterator_info<R: TypeResolver>(
     };
 
     // Step 2: Get the iterator type by "calling" the method
-    // Note: For [Symbol.iterator], this returns the iterator itself (not wrapped in a function)
+    // The [Symbol.iterator] property is a method that returns the iterator
+    use crate::solver::type_queries::get_return_type;
     let iterator_type = if is_callable_type(db, iterator_method_type) {
-        // The symbol is a method - we'd need to call it
-        // For now, assume it returns the iterator type directly
-        // In full implementation, we'd use CallEvaluator here
-        iterator_method_type
+        // The symbol is a method - extract its return type
+        // For [Symbol.iterator], the return type is Iterator<T>
+        get_return_type(db, iterator_method_type).unwrap_or(TypeId::ANY)
     } else {
         // The symbol property IS the iterator type (non-callable)
         iterator_method_type
