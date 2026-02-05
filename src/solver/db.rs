@@ -310,9 +310,10 @@ pub trait QueryDatabase: TypeDatabase {
         &self,
         object_type: TypeId,
         prop_name: &str,
-    ) -> crate::solver::PropertyAccessResult {
-        let evaluator =
-            crate::solver::operations::PropertyAccessEvaluator::new(self.as_type_database());
+    ) -> crate::solver::operations_property::PropertyAccessResult {
+        let evaluator = crate::solver::operations_property::PropertyAccessEvaluator::new(
+            self.as_type_database(),
+        );
         evaluator.resolve_property_access(object_type, prop_name)
     }
 
@@ -320,7 +321,7 @@ pub trait QueryDatabase: TypeDatabase {
         &self,
         object_type: TypeId,
         prop_name: &str,
-    ) -> crate::solver::PropertyAccessResult {
+    ) -> crate::solver::operations_property::PropertyAccessResult {
         self.resolve_property_access(object_type, prop_name)
     }
 
@@ -1238,7 +1239,7 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         &self,
         object_type: TypeId,
         prop_name: &str,
-    ) -> crate::solver::PropertyAccessResult {
+    ) -> crate::solver::operations_property::PropertyAccessResult {
         self.query_cache
             .resolve_property_access(object_type, prop_name)
     }
@@ -1247,7 +1248,7 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         &self,
         object_type: TypeId,
         prop_name: &str,
-    ) -> crate::solver::PropertyAccessResult {
+    ) -> crate::solver::operations_property::PropertyAccessResult {
         self.query_cache
             .property_access_type(object_type, prop_name)
     }

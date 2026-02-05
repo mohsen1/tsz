@@ -1079,8 +1079,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
         prop_name: &str,
-    ) -> crate::solver::PropertyAccessResult {
-        use crate::solver::operations::PropertyAccessEvaluator;
+    ) -> crate::solver::operations_property::PropertyAccessResult {
+        use crate::solver::operations_property::PropertyAccessEvaluator;
 
         // Ensure symbols are resolved in the environment
         self.ensure_application_symbols_resolved(object_type);
@@ -1184,13 +1184,9 @@ impl<'a> CheckerState<'a> {
         // If the property doesn't exist, skip the readonly check - TS2339 will be
         // reported elsewhere. This matches tsc behavior which checks existence before
         // readonly status.
-        use crate::solver::PropertyAccessResult;
+        use crate::solver::operations_property::PropertyAccessResult;
         let property_result = self.resolve_property_access_with_env(obj_type, &prop_name);
-        let property_exists = matches!(
-            property_result,
-            PropertyAccessResult::Success { .. }
-                | PropertyAccessResult::PossiblyNullOrUndefined { .. }
-        );
+        let property_exists = matches!(property_result, PropertyAccessResult::Success { .. });
 
         if !property_exists {
             // Property doesn't exist on this type - skip readonly check

@@ -2926,6 +2926,273 @@ pub fn solve_generic_instantiation<C: AssignabilityChecker>(
     GenericInstantiationResult::Success
 }
 
+// =============================================================================
+// Iterator Information Extraction (Phase 5 - Anti-Pattern 8.1 Removal)
+// =============================================================================
+
+use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+use crate::solver::subtype::TypeResolver;
+
+/// Information about an iterator type extracted from a type.
+///
+/// This struct captures the key types needed for iterator/generator type checking:
+/// - The iterator object type itself
+/// - The type yielded by next().value (T in Iterator<T>)
+/// - The type returned when done (TReturn in IteratorResult<T, TReturn>)
+/// - The type accepted by next() (TNext in Iterator<T, TReturn, TNext>)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IteratorInfo {
+    /// The iterator object type (has next() method)
+    pub iterator_type: TypeId,
+    /// The type yielded by the iterator (from IteratorResult<T, TReturn>)
+    pub yield_type: TypeId,
+    /// The return type when iteration completes
+    pub return_type: TypeId,
+    /// The type accepted by next(val) (contravariant)
+    pub next_type: TypeId,
+}
+
+/// Extract iterator information from a type.
+///
+/// This function handles both sync and async iterators by finding the
+/// appropriate symbol property and extracting the relevant types.
+///
+/// # Arguments
+///
+/// * `db` - The type database/interner
+/// * `resolver` - Type resolver for handling Lazy/Ref types
+/// * `type_id` - The type to extract iterator info from
+/// * `is_async` - If true, look for [Symbol.asyncIterator], otherwise [Symbol.iterator]
+///
+/// # Returns
+///
+/// * `Some(IteratorInfo)` - If the type is iterable
+/// * `None` - If the type is not iterable or doesn't have a valid next() method
+///
+/// # Examples
+///
+/// ```ignore
+/// // Array<number> yields numbers
+/// let info = get_iterator_info(&db, &resolver, array_num_type, false)?;
+/// assert_eq!(info.yield_type, TypeId::NUMBER);
+///
+/// // AsyncIterable<string> yields strings wrapped in Promise
+/// let info = get_iterator_info(&db, &resolver, async_iterable_type, true)?;
+/// assert_eq!(info.yield_type, promised_string_type);
+/// ```
+pub fn get_iterator_info<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+    is_async: bool,
+) -> Option<IteratorInfo> {
+    use crate::solver::type_queries::is_callable_type;
+
+    // Fast path: Handle intrinsics that are always iterable
+    // The 'any' black hole: any iterates to any
+    if type_id == TypeId::ANY {
+        return Some(IteratorInfo {
+            iterator_type: TypeId::ANY,
+            yield_type: TypeId::ANY,
+            return_type: TypeId::ANY,
+            next_type: TypeId::ANY,
+        });
+    }
+
+    // Fast path: Handle Array and Tuple types
+    if let Some(key) = db.lookup(type_id) {
+        match key {
+            TypeKey::Array(elem_type) => {
+                // Arrays use the standard array iterator protocol
+                return get_array_iterator_info(db, type_id, elem_type);
+            }
+            TypeKey::Tuple(_) => {
+                // Tuples iterate over their elements
+                return get_tuple_iterator_info(db, type_id);
+            }
+            _ => {
+                // Fall through to symbol lookup
+            }
+        }
+    }
+
+    // Step 1: Find the iterator-producing method
+    let symbol_name = if is_async {
+        "[Symbol.asyncIterator]"
+    } else {
+        "[Symbol.iterator]"
+    };
+
+    let evaluator = PropertyAccessEvaluator::with_resolver(db, resolver);
+    let iterator_method_type = match evaluator.resolve_property_access(type_id, symbol_name) {
+        PropertyAccessResult::Success { type_id, .. } => type_id,
+        PropertyAccessResult::PropertyNotFound { .. } => return None,
+        _ => return None, // Other cases (PossiblyNullOrUndefined, IsUnknown) = not iterable
+    };
+
+    // Step 2: Get the iterator type by "calling" the method
+    // Note: For [Symbol.iterator], this returns the iterator itself (not wrapped in a function)
+    let iterator_type = if is_callable_type(db, iterator_method_type) {
+        // The symbol is a method - we'd need to call it
+        // For now, assume it returns the iterator type directly
+        // In full implementation, we'd use CallEvaluator here
+        iterator_method_type
+    } else {
+        // The symbol property IS the iterator type (non-callable)
+        iterator_method_type
+    };
+
+    // Step 3: Find the next() method on the iterator
+    let next_method_type = match evaluator.resolve_property_access(iterator_type, "next") {
+        PropertyAccessResult::Success { type_id, .. } => type_id,
+        _ => return None, // No next() method = not a valid iterator
+    };
+
+    // Step 4: Extract types from the IteratorResult
+    extract_iterator_result_types(db, resolver, iterator_type, next_method_type, is_async)
+}
+
+/// Get iterator info for Array types.
+fn get_array_iterator_info(
+    _db: &dyn TypeDatabase,
+    array_type: TypeId,
+    elem_type: TypeId,
+) -> Option<IteratorInfo> {
+    // Arrays yield their element type
+    // The iterator type for Array<T> has:
+    // - yield: T
+    // - return: undefined
+    // - next: accepts undefined (TNext = undefined)
+    Some(IteratorInfo {
+        iterator_type: array_type,
+        yield_type: elem_type,
+        return_type: TypeId::UNDEFINED,
+        next_type: TypeId::UNDEFINED,
+    })
+}
+
+/// Get iterator info for Tuple types.
+fn get_tuple_iterator_info(db: &dyn TypeDatabase, tuple_type: TypeId) -> Option<IteratorInfo> {
+    // Tuples yield the union of their element types
+    match db.lookup(tuple_type) {
+        Some(TypeKey::Tuple(list_id)) => {
+            let elements = db.tuple_list(list_id);
+            let elem_types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
+
+            // Union of all element types (or Never if empty)
+            let yield_type = if elem_types.is_empty() {
+                TypeId::NEVER
+            } else {
+                // Union of all elements
+                elem_types
+                    .into_iter()
+                    .reduce(|acc, elem| db.union2(acc, elem))
+                    .unwrap_or(TypeId::NEVER)
+            };
+
+            Some(IteratorInfo {
+                iterator_type: tuple_type,
+                yield_type,
+                return_type: TypeId::UNDEFINED,
+                next_type: TypeId::UNDEFINED,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Extract yield/return/next types from the next() method's return type.
+///
+/// For sync iterators: next() returns IteratorResult<T, TReturn>
+/// For async iterators: next() returns Promise<IteratorResult<T, TReturn>>
+fn extract_iterator_result_types<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    iterator_type: TypeId,
+    next_method_type: TypeId,
+    is_async: bool,
+) -> Option<IteratorInfo> {
+    use crate::solver::type_queries::is_promise_like;
+
+    // Get the return type of next()
+    let next_return_type = match db.lookup(next_method_type) {
+        Some(TypeKey::Function(shape_id)) => db.function_shape(shape_id).return_type,
+        Some(TypeKey::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            shape.call_signatures.first()?.return_type
+        }
+        _ => return None,
+    };
+
+    // For async iterators, unwrap the Promise
+    let iterator_result_type = if is_async {
+        if is_promise_like(db, resolver, next_return_type) {
+            // TODO: Extract T from Promise<T>
+            // For now, just return the Promise type as yield_type
+            next_return_type
+        } else {
+            // Not promise-like - invalid async iterator
+            return None;
+        }
+    } else {
+        next_return_type
+    };
+
+    // Extract value type from IteratorResult<T, TReturn>
+    // The result type is usually: { value: T, done: false } | { value: TReturn, done: true }
+    let yield_type = match db.lookup(iterator_result_type) {
+        Some(TypeKey::Union(list_id)) => {
+            // Union of both branches - get value from both
+            let members = db.type_list(list_id);
+            let value_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&member_id| {
+                    if let Some(TypeKey::Object(shape_id)) = db.lookup(member_id) {
+                        let shape = db.object_shape(shape_id);
+                        shape
+                            .properties
+                            .iter()
+                            .find(|p| p.name == db.intern_string("value"))
+                            .map(|p| p.type_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            // Union of all value types found
+            if value_types.is_empty() {
+                TypeId::ANY
+            } else {
+                value_types
+                    .into_iter()
+                    .reduce(|acc, t| db.union2(acc, t))
+                    .unwrap_or(TypeId::ANY)
+            }
+        }
+        Some(TypeKey::Object(shape_id)) => {
+            // Single object type - get value property
+            let shape = db.object_shape(shape_id);
+            shape
+                .properties
+                .iter()
+                .find(|p| p.name == db.intern_string("value"))
+                .map(|p| p.type_id)
+                .unwrap_or(TypeId::ANY)
+        }
+        _ => TypeId::ANY,
+    };
+
+    // TODO: Extract return_type (from done: true branch) and next_type (from params)
+    // For now, use sensible defaults
+    Some(IteratorInfo {
+        iterator_type,
+        yield_type,
+        return_type: TypeId::ANY,
+        next_type: TypeId::UNDEFINED,
+    })
+}
+
 // Re-export property access types from extracted module
 pub use crate::solver::operations_property::*;
 
