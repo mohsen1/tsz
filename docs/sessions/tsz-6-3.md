@@ -73,7 +73,30 @@ Implement property access resolution for Union and Intersection types using Visi
 - **Completed**: 2026-02-05
 - **Notes**: Refactored to implement TypeVisitor for &PropertyAccessEvaluator, added helper methods
 
-### Milestone 3: Composite Types (HIGH Complexity) - NEXT
+### Milestone 3: Composite Types (HIGH Complexity) - IN PROGRESS
+
+**Status**: Implementation plan ready, code location identified
+**Estimated**: 4-6 hours
+**Next Implementation**: visit_union and visit_intersection
+
+**Implementation Location**:
+- Union logic: src/solver/operations_property.rs lines 1010-1164 (TypeKey::Union match arm)
+- Intersection logic: src/solver/operations_property.rs lines 1166-1265 (TypeKey::Intersection match arm)
+
+**Implementation Strategy**:
+1. Create helper methods (visit_union_impl, visit_intersection_impl) similar to Object/Array pattern
+2. Implement TypeVisitor methods (visit_union, visit_intersection) that delegate to helpers
+3. Update bridge pattern to dispatch to these visitors
+4. Test with union/intersection property access cases
+
+**Key Edge Cases** (from Gemini):
+- Union short-circuits: `any` or `error` → immediate success
+- Unknown filtering: Only return IsUnknown if ALL members are unknown
+- All Must Have: PropertyNotFound if ANY member lacks the property
+- Nullable partitioning: Separate valid results from nullable causes
+- Index signature contagion: Propagate `from_index_signature` flag
+- Union fallback: Check union-level index signatures if all members fail
+- Intersection aggregation: Collect results from ALL members that have the property
 - Implement `visit_object`
 - Implement `visit_array`
 - Move Object/Array logic from match to visitor
