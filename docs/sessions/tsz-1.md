@@ -74,20 +74,39 @@
 ---
 
 ### Priority 1: Task #17 - TS2367 Comparison Overlap Detection
-**Status**: 📋 Planned (After Task #16.0 Verification)
+**Status**: 🚧 In Progress (Subtask 17.1 Complete, 17.2 Pending)
 **Why**: Pure set-theory/structural logic - "Can these two sets ever have a non-empty intersection?"
 
 **Gemini Redefinition** (Flash 2025-02-05):
 > "This is the perfect next step. It is a pure 'Judge' operation:
 > 'Can these two sets ever have a non-empty intersection?'"
 
-**Subtask 17.1 (Solver)**: Implement `are_types_overlapping(a, b)` in `src/solver/subtype.rs`
-- If `is_subtype_of(a, b)` or `is_subtype_of(b, a)` → Overlap
-- If both are Objects: Use `PropertyCollector` to find common properties
-- If one is Literal and other is different Literal of same base type → No overlap
-- If one is `string` and other is `number` → No overlap
+**Completed Subtask 17.1 (Solver)**: ✅ Implemented `are_types_overlapping(a, b)` in `src/solver/subtype.rs`
+- MVP approach: Catches OBVIOUS non-overlaps
+  - Different primitives (string vs number)
+  - Different literals of same primitive ("a" vs "b")
+  - Object property type mismatches ({ a: string } vs { a: number })
+- Handles special cases:
+  - strictNullChecks configuration
+  - void/undefined always overlap
+  - object keyword vs primitives
+- Conservative default: Returns true for complex types not yet handled
+- Helper functions:
+  - `are_types_in_subtype_relation()` - literal-to-primitive checks
+  - `are_literals_overlapping()` - literal value comparison
+  - `do_object_properties_overlap()` - property intersection checking
+- Followed Two-Question Rule:
+  - Question 1: Asked Gemini Flash for implementation approach
+  - Question 2: Asked Gemini Pro to review implementation
+  - Fixed 3 critical bugs identified by Gemini Pro:
+    1. Missing strictNullChecks handling (null/undefined overlap in non-strict mode)
+    2. Missing void/undefined overlap (they always overlap)
+    3. Incorrect primitive type matching (needed object keyword case)
+- Added comprehensive test suite: 12 tests covering all overlap scenarios
+- Commit: 15d8c93d9
 
-**Subtask 17.2 (Checker)**: Update `src/checker/expr.rs`
+**Subtask 17.2 (Checker)**: 📋 Pending (Next Step)
+- Update `src/checker/expr.rs`
 - Check equality comparisons (`===`, `!==`, `==`, `!=`)
 - Report TS2367 if types have no overlap
 
