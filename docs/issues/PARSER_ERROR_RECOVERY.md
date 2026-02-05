@@ -11,12 +11,12 @@ tsz's parser error recovery produces different (usually more) errors than TSC wh
 
 ## Conformance Stats (Updated 2026-02-05)
 
-- Parser tests: 52.9% pass rate (459/867)
+- Parser tests: 53.0% pass rate (460/868)
 - Scanner tests: 50.0% pass rate (21/42)
 - Decorator tests: 10.8% pass rate (12/111)
 - Top error mismatches:
-  - TS2304: missing=36, extra=88 (cannot find name) - mostly lib loading bug
-  - TS1005: missing=25, extra=29 (token expected)
+  - TS2304: missing=35, extra=88 (cannot find name) - mostly lib loading bug
+  - TS1005: missing=24, extra=29 (token expected)
   - TS1109: missing=11, extra=24 (expression expected)
   - TS1128: missing=2, extra=26 (declaration expected)
   - TS2552: missing=7, extra=19 (name typo suggestion)
@@ -237,6 +237,13 @@ Fixed `@dec constructor() {}` in class bodies to emit TS1206 "Decorators are not
 valid here" at the decorator position.
 
 **File**: `src/parser/state_statements.rs` - `parse_class_member()`
+
+### TS1005 for for-await-in (commit f2c8718)
+
+Fixed `for await (const x in y) {}` to emit TS1005 "'of' expected" at the `in`
+keyword position. `for await` only works with `of`, not `in`.
+
+**File**: `src/parser/state_declarations.rs` - `parse_for_statement()`
 
 ## Recommended Approach
 
