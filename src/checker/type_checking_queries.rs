@@ -84,6 +84,63 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a node is inside an ambient context (declare namespace/module or .d.ts file).
+    /// Used for TS1038: 'declare' modifier cannot be used in an already ambient context.
+    pub(crate) fn is_in_ambient_context(&self, node_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
+
+        // Check if we're in a .d.ts file
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return true;
+        }
+
+        // Walk up parent chain looking for a declared namespace/module
+        let mut current = node_idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            // Check if parent is a module/namespace with declare modifier
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                if let Some(module) = self.ctx.arena.get_module(parent_node) {
+                    if self.has_declare_modifier(&module.modifiers) {
+                        return true;
+                    }
+                }
+            }
+            // Stop at source file
+            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                return false;
+            }
+            current = parent;
+        }
+    }
+
+    /// Find the `declare` modifier NodeIndex in a modifier list, if present.
+    /// Used to point error messages at the specific modifier.
+    pub(crate) fn get_declare_modifier(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> Option<NodeIndex> {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
+                {
+                    return Some(mod_idx);
+                }
+            }
+        }
+        None
+    }
+
     /// Check if a node has the `async` modifier.
     pub(crate) fn has_async_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
         if let Some(mods) = modifiers {
