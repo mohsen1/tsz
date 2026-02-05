@@ -264,10 +264,51 @@ impl TypeDatabase for TypeInterner {
     }
 }
 
+/// Implement TypeResolver for TypeInterner with default noop implementations.
+///
+/// TypeInterner doesn't have access to the Binder or type environment,
+/// so it cannot resolve symbol references or DefIds. This implementation
+/// returns None for all resolution operations, which is the correct behavior
+/// for contexts that don't have access to type binding information.
+impl TypeResolver for TypeInterner {
+    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+
+    fn resolve_lazy(&self, _def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+
+    fn get_type_params(&self, _symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
+        None
+    }
+
+    fn get_lazy_type_params(&self, _def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        None
+    }
+
+    fn def_to_symbol_id(&self, _def_id: DefId) -> Option<SymbolId> {
+        None
+    }
+
+    fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
+        None
+    }
+
+    fn get_boxed_type(&self, _kind: IntrinsicKind) -> Option<TypeId> {
+        None
+    }
+
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        None
+    }
+}
+
 /// Query layer for higher-level solver operations.
 ///
 /// This is the incremental boundary where caching and (future) salsa hooks live.
-pub trait QueryDatabase: TypeDatabase {
+/// Inherits from TypeResolver to enable Lazy/Ref type resolution through evaluate_type().
+pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Expose the underlying TypeDatabase view for legacy entry points.
     fn as_type_database(&self) -> &dyn TypeDatabase;
 
@@ -321,9 +362,12 @@ pub trait QueryDatabase: TypeDatabase {
         object_type: TypeId,
         prop_name: &str,
     ) -> crate::solver::operations_property::PropertyAccessResult {
-        let evaluator = crate::solver::operations_property::PropertyAccessEvaluator::new(
-            self.as_type_database(),
-        );
+        // Default implementation using the non-resolving version
+        // Implementers that have TypeResolver capability should override this
+        let evaluator =
+            crate::solver::operations_property::PropertyAccessEvaluator::new_no_resolver(
+                self.as_type_database(),
+            );
         evaluator.resolve_property_access(object_type, prop_name)
     }
 
@@ -812,6 +856,48 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn is_unit_type(&self, type_id: TypeId) -> bool {
         self.interner.is_unit_type(type_id)
+    }
+}
+
+/// Implement TypeResolver for QueryCache with default noop implementations.
+///
+/// QueryCache doesn't have access to the Binder or type environment,
+/// so it cannot resolve symbol references or DefIds. This implementation
+/// returns None for all resolution operations.
+///
+/// Note: BinderTypeDatabase provides the actual TypeResolver implementation
+/// with full type binding capabilities.
+impl TypeResolver for QueryCache<'_> {
+    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+
+    fn resolve_lazy(&self, _def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+
+    fn get_type_params(&self, _symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
+        None
+    }
+
+    fn get_lazy_type_params(&self, _def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        None
+    }
+
+    fn def_to_symbol_id(&self, _def_id: DefId) -> Option<SymbolId> {
+        None
+    }
+
+    fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
+        None
+    }
+
+    fn get_boxed_type(&self, _kind: IntrinsicKind) -> Option<TypeId> {
+        None
+    }
+
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        None
     }
 }
 

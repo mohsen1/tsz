@@ -1091,9 +1091,8 @@ impl<'a> CheckerState<'a> {
         // Ensure symbols are resolved in the environment
         self.ensure_application_symbols_resolved(object_type);
 
-        // Borrow the environment and create evaluator with resolver
-        let env = self.ctx.type_env.borrow();
-        let evaluator = PropertyAccessEvaluator::with_resolver(self.ctx.types, &*env);
+        // Create evaluator with QueryDatabase (which includes TypeResolver)
+        let evaluator = PropertyAccessEvaluator::new(self.ctx.types);
 
         evaluator.resolve_property_access(object_type, prop_name)
     }

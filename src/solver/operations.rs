@@ -2980,9 +2980,8 @@ pub struct IteratorInfo {
 /// let info = get_iterator_info(&db, &resolver, async_iterable_type, true)?;
 /// assert_eq!(info.yield_type, promised_string_type);
 /// ```
-pub fn get_iterator_info<R: TypeResolver>(
-    db: &dyn TypeDatabase,
-    resolver: &R,
+pub fn get_iterator_info(
+    db: &dyn crate::solver::db::QueryDatabase,
     type_id: TypeId,
     is_async: bool,
 ) -> Option<IteratorInfo> {
@@ -3023,7 +3022,7 @@ pub fn get_iterator_info<R: TypeResolver>(
         "[Symbol.iterator]"
     };
 
-    let evaluator = PropertyAccessEvaluator::with_resolver(db, resolver);
+    let evaluator = PropertyAccessEvaluator::new(db);
     let iterator_method_type = match evaluator.resolve_property_access(type_id, symbol_name) {
         PropertyAccessResult::Success { type_id, .. } => type_id,
         PropertyAccessResult::PropertyNotFound { .. } => return None,
@@ -3049,7 +3048,7 @@ pub fn get_iterator_info<R: TypeResolver>(
     };
 
     // Step 4: Extract types from the IteratorResult
-    extract_iterator_result_types(db, resolver, iterator_type, next_method_type, is_async)
+    extract_iterator_result_types(db, iterator_type, next_method_type, is_async)
 }
 
 /// Get iterator info for Array types.
@@ -3105,9 +3104,8 @@ fn get_tuple_iterator_info(db: &dyn TypeDatabase, tuple_type: TypeId) -> Option<
 ///
 /// For sync iterators: next() returns IteratorResult<T, TReturn>
 /// For async iterators: next() returns Promise<IteratorResult<T, TReturn>>
-fn extract_iterator_result_types<R: TypeResolver>(
-    db: &dyn TypeDatabase,
-    resolver: &R,
+fn extract_iterator_result_types(
+    db: &dyn crate::solver::db::QueryDatabase,
     iterator_type: TypeId,
     next_method_type: TypeId,
     is_async: bool,
@@ -3126,7 +3124,7 @@ fn extract_iterator_result_types<R: TypeResolver>(
 
     // For async iterators, unwrap the Promise
     let iterator_result_type = if is_async {
-        if is_promise_like(db, resolver, next_return_type) {
+        if is_promise_like(db, next_return_type) {
             // TODO: Extract T from Promise<T>
             // For now, just return the Promise type as yield_type
             next_return_type
@@ -3220,13 +3218,12 @@ fn extract_iterator_result_types<R: TypeResolver>(
 /// let elem = get_async_iterable_element_type(&db, &resolver, array_num);
 /// assert_eq!(elem, TypeId::NUMBER);
 /// ```
-pub fn get_async_iterable_element_type<R: TypeResolver>(
-    db: &dyn TypeDatabase,
-    resolver: &R,
+pub fn get_async_iterable_element_type(
+    db: &dyn crate::solver::db::QueryDatabase,
     type_id: TypeId,
 ) -> TypeId {
     // Delegate to get_iterator_info with is_async=true
-    match get_iterator_info(db, resolver, type_id, true) {
+    match get_iterator_info(db, type_id, true) {
         Some(info) => info.yield_type,
         None => TypeId::ANY,
     }

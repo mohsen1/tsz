@@ -2554,11 +2554,7 @@ use crate::solver::subtype::TypeResolver;
 /// // Objects with 'then' method are promise-like
 /// // { then: (fn: (value: T) => void) => void }
 /// ```
-pub fn is_promise_like<R: TypeResolver>(
-    db: &dyn TypeDatabase,
-    resolver: &R,
-    type_id: TypeId,
-) -> bool {
+pub fn is_promise_like(db: &dyn crate::solver::db::QueryDatabase, type_id: TypeId) -> bool {
     // The 'any' trap: any is always promise-like
     if type_id == TypeId::ANY {
         return true;
@@ -2566,7 +2562,7 @@ pub fn is_promise_like<R: TypeResolver>(
 
     // Use PropertyAccessEvaluator to find 'then' property
     // This handles Lazy/Ref/Intersection/Readonly correctly
-    let evaluator = PropertyAccessEvaluator::with_resolver(db, resolver);
+    let evaluator = PropertyAccessEvaluator::new(db);
     match evaluator.resolve_property_access(type_id, "then") {
         PropertyAccessResult::Success {
             type_id: then_type, ..
