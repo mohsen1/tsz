@@ -237,7 +237,7 @@ Added cross-file Go to Definition support for import statements.
 
 ## Session Status
 
-**Status**: 🔄 ACTIVE - Ready for next feature
+**Status**: 🔄 ACTIVE - Working on Cross-File Member Support
 
 **Completed LSP Features** (all working with SymbolIndex optimization):
 - ✅ File Rename (with directory support, dynamic imports, and require calls)
@@ -249,9 +249,21 @@ Added cross-file Go to Definition support for import statements.
 - ✅ Transitive Re-exports (auto-import via `export * from './mod'`)
 - ✅ Prefix Matching (partial identifier completion, e.g., "use" → "useEffect")
 
-**Next Options** (per Gemini consultation):
-1. **Deep Indexing** - Enhance SymbolIndex to track nested symbols (class members, interface members)
-2. **Move to different session** - Solver/Checker work, coordination work, or other LSP features
+**Current Work: Cross-File Member Support** (2026-02-05)
+
+**Per Gemini consultation**, the highest priority next step is **Cross-File Member Support** for References, Rename, and Implementation. While top-level symbols work well, the LSP currently struggles with class/interface members across file boundaries.
+
+**Planned Tasks**:
+1. **Enhance SymbolIndex for identifier mentions** - Record every unique identifier string in a file for O(1) candidate filtering
+2. **Type-aware reference filtering** - Use Checker to validate property access receivers resolve to owning class/interface
+3. **Cross-File Go to Implementation** - Upgrade from file-local to project-wide using heritage clauses
+4. **Fix shorthand property rename** - Handle `{ x }` expansion to `{ x: newName }` correctly
+
+**Edge Cases to Investigate**:
+- Inheritance chains (Base.method should find Derived.method references)
+- Structural typing (anonymous types assigned to interfaces)
+- Declaration merging (Namespace + Class)
+- `this` references as receivers
 
 **Previous Blocked Work** (CFA):
 - Assertion functions narrowing - COMPLETE (safe to keep)
