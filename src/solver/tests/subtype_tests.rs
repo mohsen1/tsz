@@ -20231,8 +20231,6 @@ fn test_variance_method_bivariant_params() {
         call_signatures: vec![],
         construct_signatures: vec![],
         properties: vec![PropertyInfo {
-            visibility: Visibility::Public,
-            parent_id: None,
             name: interner.intern_string("handle"),
             type_id: interner.function(FunctionShape {
                 type_params: vec![],
@@ -20265,8 +20263,6 @@ fn test_variance_method_bivariant_params() {
         call_signatures: vec![],
         construct_signatures: vec![],
         properties: vec![PropertyInfo {
-            visibility: Visibility::Public,
-            parent_id: None,
             name: interner.intern_string("handle"),
             type_id: interner.function(FunctionShape {
                 type_params: vec![],
@@ -20308,8 +20304,6 @@ fn test_variance_function_property_contravariant() {
 
     // Object with function property taking narrow param
     let narrow_fn_obj = interner.object(vec![PropertyInfo {
-        visibility: Visibility::Public,
-        parent_id: None,
         name: interner.intern_string("handle"),
         type_id: interner.function(FunctionShape {
             type_params: vec![],
@@ -20335,8 +20329,6 @@ fn test_variance_function_property_contravariant() {
 
     // Object with function property taking wide param
     let wide_fn_obj = interner.object(vec![PropertyInfo {
-        visibility: Visibility::Public,
-        parent_id: None,
         name: interner.intern_string("handle"),
         type_id: interner.function(FunctionShape {
             type_params: vec![],
@@ -24905,8 +24897,6 @@ fn test_constructor_with_static_properties() {
             is_method: false,
         }],
         properties: vec![PropertyInfo {
-            visibility: Visibility::Public,
-            parent_id: None,
             name: interner.intern_string("create"),
             type_id: interner.function(FunctionShape {
                 type_params: vec![],
@@ -24916,13 +24906,13 @@ fn test_constructor_with_static_properties() {
                 type_predicate: None,
                 is_constructor: false,
                 is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
             }),
             write_type: TypeId::NEVER,
             optional: false,
             readonly: true,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -28869,13 +28859,13 @@ fn test_overload_constructor_overloads() {
                 type_predicate: None,
                 is_constructor: false,
                 is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
             }),
             write_type: TypeId::NEVER,
             optional: false,
             readonly: true,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("toISOString"),
@@ -28887,13 +28877,13 @@ fn test_overload_constructor_overloads() {
                 type_predicate: None,
                 is_constructor: false,
                 is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
             }),
             write_type: TypeId::NEVER,
             optional: false,
             readonly: true,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
