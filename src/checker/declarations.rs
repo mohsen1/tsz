@@ -8,7 +8,7 @@ use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 /// Declaration type checker that operates on the shared context.
 ///
@@ -46,8 +46,8 @@ enum ComputedKey {
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 struct FlowResult {
-    normal: Option<HashSet<PropertyKey>>,
-    exits: Option<HashSet<PropertyKey>>,
+    normal: Option<FxHashSet<PropertyKey>>,
+    exits: Option<FxHashSet<PropertyKey>>,
 }
 
 #[allow(dead_code)]
@@ -171,7 +171,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         // Collect properties that need to be checked and create a set of tracked properties
-        let mut tracked: HashSet<PropertyKey> = HashSet::new();
+        let mut tracked: FxHashSet<PropertyKey> = FxHashSet::default();
         let mut properties: Vec<(PropertyKey, String, NodeIndex)> = Vec::new();
 
         for &member_idx in &class_decl.members.nodes {
@@ -307,14 +307,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn is_property_initialized_in_constructor(
         &self,
         class_idx: NodeIndex,
-        tracked: &HashSet<PropertyKey>,
-    ) -> HashSet<PropertyKey> {
+        tracked: &FxHashSet<PropertyKey>,
+    ) -> FxHashSet<PropertyKey> {
         let Some(node) = self.ctx.arena.get(class_idx) else {
-            return HashSet::new();
+            return FxHashSet::default();
         };
 
         let Some(class_decl) = self.ctx.arena.get_class(node) else {
-            return HashSet::new();
+            return FxHashSet::default();
         };
 
         // Find the constructor body
@@ -323,7 +323,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         if let Some(body_idx) = constructor_body {
             self.analyze_constructor_assignments(body_idx, tracked)
         } else {
-            HashSet::new()
+            FxHashSet::default()
         }
     }
 
@@ -350,14 +350,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn analyze_constructor_assignments(
         &self,
         body_idx: NodeIndex,
-        tracked: &HashSet<PropertyKey>,
-    ) -> HashSet<PropertyKey> {
-        let result = self.analyze_statement(body_idx, &HashSet::default(), tracked);
+        tracked: &FxHashSet<PropertyKey>,
+    ) -> FxHashSet<PropertyKey> {
+        let result = self.analyze_statement(body_idx, &FxHashSet::default(), tracked);
         self.flow_result_to_assigned(result)
     }
 
     /// Convert flow result to a set of definitely assigned properties.
-    fn flow_result_to_assigned(&self, result: FlowResult) -> HashSet<PropertyKey> {
+    fn flow_result_to_assigned(&self, result: FlowResult) -> FxHashSet<PropertyKey> {
         let mut assigned = None;
         if let Some(normal) = result.normal {
             assigned = Some(normal);
@@ -375,9 +375,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Intersect two sets of property keys.
     fn intersect_sets(
         &self,
-        set1: &HashSet<PropertyKey>,
-        set2: &HashSet<PropertyKey>,
-    ) -> HashSet<PropertyKey> {
+        set1: &FxHashSet<PropertyKey>,
+        set2: &FxHashSet<PropertyKey>,
+    ) -> FxHashSet<PropertyKey> {
         set1.intersection(set2).cloned().collect()
     }
 
@@ -385,8 +385,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn analyze_statement(
         &self,
         stmt_idx: NodeIndex,
-        assigned_in: &HashSet<PropertyKey>,
-        tracked: &HashSet<PropertyKey>,
+        assigned_in: &FxHashSet<PropertyKey>,
+        tracked: &FxHashSet<PropertyKey>,
     ) -> FlowResult {
         if stmt_idx.is_none() {
             return FlowResult {
@@ -436,8 +436,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn analyze_block(
         &self,
         block_idx: NodeIndex,
-        assigned_in: &HashSet<PropertyKey>,
-        tracked: &HashSet<PropertyKey>,
+        assigned_in: &FxHashSet<PropertyKey>,
+        tracked: &FxHashSet<PropertyKey>,
     ) -> FlowResult {
         let Some(node) = self.ctx.arena.get(block_idx) else {
             return FlowResult {
@@ -460,7 +460,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         let statements = &block.statements;
 
         let mut current = assigned_in.clone();
-        let mut exits: Option<HashSet<PropertyKey>> = None;
+        let mut exits: Option<FxHashSet<PropertyKey>> = None;
 
         for &stmt_idx in &statements.nodes {
             let result = self.analyze_statement(stmt_idx, &current, tracked);
@@ -496,8 +496,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn analyze_expression_statement(
         &self,
         stmt_idx: NodeIndex,
-        assigned_in: &HashSet<PropertyKey>,
-        tracked: &HashSet<PropertyKey>,
+        assigned_in: &FxHashSet<PropertyKey>,
+        tracked: &FxHashSet<PropertyKey>,
     ) -> FlowResult {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return FlowResult {
@@ -526,9 +526,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn analyze_expression_for_assignment(
         &self,
         expr_idx: NodeIndex,
-        assigned_in: &HashSet<PropertyKey>,
-        tracked: &HashSet<PropertyKey>,
-    ) -> HashSet<PropertyKey> {
+        assigned_in: &FxHashSet<PropertyKey>,
+        tracked: &FxHashSet<PropertyKey>,
+    ) -> FxHashSet<PropertyKey> {
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return assigned_in.clone();
         };
@@ -582,30 +582,51 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return None;
         };
 
-        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return None;
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let Some(prop_access) = self.ctx.arena.get_access_expr(node) else {
+                    return None;
+                };
+
+                let Some(name_node) = self.ctx.arena.get(prop_access.name_or_argument) else {
+                    return None;
+                };
+
+                self.ctx
+                    .arena
+                    .get_identifier(name_node)
+                    .map(|ident| PropertyKey::Ident(ident.escaped_text.clone()))
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                // Handle this["x"] = 1 pattern
+                let Some(elem_access) = self.ctx.arena.get_access_expr(node) else {
+                    return None;
+                };
+
+                // Extract the property name if it's a string literal
+                let Some(arg_node) = self.ctx.arena.get(elem_access.name_or_argument) else {
+                    return None;
+                };
+
+                if arg_node.kind == (SyntaxKind::StringLiteral as u16) {
+                    self.ctx
+                        .arena
+                        .get_literal(arg_node)
+                        .map(|lit| PropertyKey::Ident(lit.text.clone()))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
-
-        let Some(prop_access) = self.ctx.arena.get_access_expr(node) else {
-            return None;
-        };
-
-        let Some(name_node) = self.ctx.arena.get(prop_access.name_or_argument) else {
-            return None;
-        };
-
-        self.ctx
-            .arena
-            .get_identifier(name_node)
-            .map(|ident| PropertyKey::Ident(ident.escaped_text.clone()))
     }
 
     /// Analyze an if statement.
     fn analyze_if_statement(
         &self,
         stmt_idx: NodeIndex,
-        assigned_in: &HashSet<PropertyKey>,
-        tracked: &HashSet<PropertyKey>,
+        assigned_in: &FxHashSet<PropertyKey>,
+        tracked: &FxHashSet<PropertyKey>,
     ) -> FlowResult {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return FlowResult {
@@ -645,7 +666,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         };
 
         // Handle exits from both branches
-        let mut exits: Option<HashSet<PropertyKey>> = None;
+        let mut exits: Option<FxHashSet<PropertyKey>> = None;
         if let Some(then_exits) = then_result.exits {
             exits = Some(match &else_result {
                 Some(else_res) => {
@@ -666,8 +687,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn analyze_try_statement(
         &self,
         stmt_idx: NodeIndex,
-        assigned_in: &HashSet<PropertyKey>,
-        tracked: &HashSet<PropertyKey>,
+        assigned_in: &FxHashSet<PropertyKey>,
+        tracked: &FxHashSet<PropertyKey>,
     ) -> FlowResult {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return FlowResult {
@@ -723,7 +744,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Analyze a return statement.
-    fn analyze_return_statement(&self, assigned_in: &HashSet<PropertyKey>) -> FlowResult {
+    fn analyze_return_statement(&self, assigned_in: &FxHashSet<PropertyKey>) -> FlowResult {
         FlowResult {
             normal: None,
             exits: Some(assigned_in.clone()),
@@ -731,7 +752,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Analyze a throw statement.
-    fn analyze_throw_statement(&self, assigned_in: &HashSet<PropertyKey>) -> FlowResult {
+    fn analyze_throw_statement(&self, assigned_in: &FxHashSet<PropertyKey>) -> FlowResult {
         FlowResult {
             normal: None,
             exits: Some(assigned_in.clone()),
