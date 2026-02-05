@@ -1181,3 +1181,51 @@ Successfully implemented `narrow_by_instanceof` following Gemini's algorithm (co
 
 Will implement extraction and handling of `TypePredicate` from function signatures for custom type guards like `arg is Type`.
 
+
+## 2026-02-05 Update (Task 3 Discovery - Already Implemented!)
+
+**Status**: ✅ TASK 3 COMPLETE - User-Defined Type Guards (Already Implemented)
+
+Discovered that Task 3 was already fully implemented:
+- `extract_call_type_guard` in control_flow_narrowing.rs (lines 1965-2005)
+- `TypeGuard::Predicate` handling in narrowing.rs (lines 2111-2137)
+- Full support for `x is T` and `asserts x is T` type guards
+
+The implementation correctly:
+1. Extracts TypePredicate from CallSignature
+2. Maps predicate target to argument expression  
+3. Handles both Identifier and This type predicates
+4. Supports assertion functions with proper narrowing behavior
+
+### TSZ-10 Status Summary
+
+**Completed Tasks:**
+- Task 1: typeof & truthiness narrowing ✅
+- Task 2: equality & instanceof narrowing ✅
+- Task 3: user-defined type guards ✅ (already existed!)
+- Task 4: discriminant narrowing ✅  
+- Task 5: union resolution bug ✅
+
+**Remaining Tasks:**
+- Task 6: exhaustiveness checking
+- Task 7: unreachable code detection
+
+### Gemini Recommendation: Complete TSZ-10
+
+Gemini recommends completing Tasks 6 & 7 to finish the session:
+1. **Momentum**: Infrastructure is in place, these are low incremental cost
+2. **Conformance Impact**: High-visibility features (exhaustiveness, unreachable code)
+3. **Logical Next Step**: Both rely on the narrowing infrastructure just completed
+
+### Next Steps (Mandatory Gemini Workflow):
+
+Before implementing Task 6:
+1. **Question 1**: Approach validation for exhaustiveness checking
+2. **Implementation**: Write the code
+3. **Question 2**: Code review
+
+Key questions for Gemini:
+- Correct architectural placement (statements.rs vs expr.rs)
+- How tsc handles exhaustiveness for non-union types
+- Should use is_subtype_of vs direct NEVER comparison
+
