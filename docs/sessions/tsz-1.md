@@ -1327,38 +1327,45 @@ Enables better union/intersection reduction by detecting disjoint template liter
 
 ## Redefined Priorities (2025-02-05 Post-Task #30)
 
-### Priority 1: Task #34 (Intersection Reduction) 📝 NEXT
-**Why**: Completes the simplification suite (Union + Object + Intersection) for North Star canonical forms.
+### Task #34: Intersection Reduction ✅ COMPLETE (2025-02-05)
+**Status**: ✅ Complete
 
-**Implementation Roadmap**:
-1. **Deep Subtype Reduction**: Use full SubtypeChecker (not shallow) in TypeEvaluator
-   - Rule: If B <: A, then A & B = B
-   - Must use `bypass_evaluation` flag to avoid infinite recursion
+**Implementation Summary**:
+1. ✅ **Deep Subtype Reduction**: Already in `simplify_intersection_members` (Task #26)
+2. ✅ **Discriminant-Based Reduction**: Already in `object_literals_disjoint`
+3. ✅ **Distributivity**: Implemented in `distribute_intersection_over_unions`
 
-2. **Distributivity**: A & (B | C) → (A & B) | (A & C)
-   - Best handled in `src/solver/evaluate.rs`
-   - Critical for simplifying complex generic intersections
+**Implementation**:
+- Added `distribute_intersection_over_unions()` in `src/solver/intern.rs`
+- Detects union members in intersections
+- Applies distributive law: A & (B | C) → (A & B) | (A & C)
+- Cardinality guard (≤25 combinations) prevents explosion
+- Integrated after disjoint checks, before object merging
 
-3. **Discriminant-Based Reduction**: { kind: "A" } & { kind: "B" } → never
-   - Enhance `object_literals_disjoint` in intern.rs
-   - Handle more than just literal values
+**Test Results**:
+- 4/4 tests pass
+- `string & (string | number)` → `string` ✓
+- `(string | boolean) & number` → `never` ✓
+- Cardinality guard working ✓
+- Works with object types ✓
 
-**Files**:
-- `src/solver/intern.rs`: Deep reduction logic
-- `src/solver/evaluate.rs`: Distributivity
-- `src/solver/subtype_rules/unions.rs`: Enhanced disjointness
+**Commit**: `f3ef5c417`
 
----
-
-### Priority 2: Task #32 (Graph Isomorphism) 📝 Planned
-**Why**: "Final Boss" of North Star - structural identity for recursive types.
-
-**Why After Task #34**:
-- Simplified graphs make isomorphism algorithm easier
-- Intersection reduction is prerequisite for correct canonical forms
+**North Star Impact**:
+Completes algebraic normalization suite (Union + Object + Intersection), enabling better canonical forms.
 
 ---
 
-### Priority 3: Task #28 (Circular Extends) 📝 Deferred
+### Priority 1: Task #32 (Graph Isomorphism) 📝 NEXT
+**Why**: "Final Boss" of North Star - structural identity for recursive types
+
+**Why Now**:
+- Simplified graphs (from Task #34) make isomorphism easier
+- All reduction infrastructure is in place
+- Ready to tackle the final North Star requirement
+
+---
+
+### Priority 2: Task #28 (Circular Extends) 📝 Deferred
 **Why**: Stack overflow in Checker/Resolver layer, outside tsz-1 scope
 
