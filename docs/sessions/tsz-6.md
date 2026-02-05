@@ -83,6 +83,45 @@ Implement member resolution for generic types in three phases:
 
 2. Use existing `instantiate_type` or specialized `instantiate_signature`
 
+**Status**: ⚠️ BLOCKED (2026-02-05)
+
+**Progress Made**:
+1. ✅ Modified `resolve_array_property` to create `Array<element_type>` Application
+2. ✅ Modified `resolve_application_property` to handle Callable bases
+3. ✅ Found the `map` property on the Array Callable
+4. ❌ Type substitution fails - Array methods have `Error` type instead of type parameter `T`
+
+**Blocker**: Array methods loaded from lib.d.ts have incorrect type parameter references:
+- Expected: `map(callback: (value: T, ...) => ...)` where `T` references Array's type parameter
+- Actual: `map(callback: (value: error, ...) => ...)`
+
+**Root Cause Analysis**:
+1. The Array interface from lib.d.ts is loaded as a `Callable` with 38 properties (methods)
+2. These methods should reference the Array's type parameter `T`
+3. Instead, they reference `TypeId(1)` (Error)
+4. When `instantiate_type` tries to substitute type parameters in the Callable:
+   - It recursively instantiates all properties
+   - This creates cycles or exceeds the 50-level depth limit
+   - Returns `TypeId::ERROR`
+
+**Gemini Guidance** (2026-02-05):
+> The issue is that `instantiate_type` on Callables tries to recursively instantiate all properties. For `Array<T>`, this includes methods like `map`, `filter`, etc. Each method might reference `Array<T>` again, creating cycles or exceeding depth limits. The `TypeId(1)` (Error) you see is the result of `MAX_INSTANTIATION_DEPTH` being exceeded.
+
+**Attempted Solutions**:
+1. ❌ Use `instantiate_type` on Callable → exceeds depth limit, returns Error
+2. ❌ Use `instantiate_generic` → doesn't work on Callables (they're not Lazy types)
+3. ❌ Return Callable as-is → still has Error types in signature
+
+**Next Steps**:
+Need to investigate how lib.d.ts Array interface is loaded and why type parameter references are broken. Possible approaches:
+1. Check binder/solver type loading logic for interfaces
+2. Find where Array methods are created and ensure `T` is correctly referenced
+3. Alternative: Create a new CallableShape with substituted types (complex)
+
+**Commits**:
+- `feat(solver): add Object fallback for unconstrained TypeParameters` (Phase 1)
+- (Phase 2 commits pending - blocked on type loading issue)
+
 ### Phase 3: Union/Intersection Member Resolution
 
 **File**: `src/solver/operations.rs`

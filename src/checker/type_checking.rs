@@ -2609,6 +2609,12 @@ impl<'a> CheckerState<'a> {
         // signatures has the same TypeId as the T registered in TypeEnvironment.
         let (array_type, array_type_params) = self.resolve_lib_type_with_params("Array");
 
+        // The Array type from lib.d.ts is a Callable with instance methods as properties
+        // We register this type directly so that resolve_array_property can use it
+        // No need to extract instance type from construct signatures - the methods
+        // are already on the Callable itself
+        let array_instance_type = array_type;
+
         // 2. Populate the environment
         // We use try_borrow_mut to be safe, though at this stage it should be free
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
@@ -2634,7 +2640,8 @@ impl<'a> CheckerState<'a> {
                 env.set_boxed_type(IntrinsicKind::Function, ty);
             }
             // Register the Array<T> interface for array property resolution
-            if let Some(ty) = array_type {
+            // Use the instance type (Array<T> interface), not the constructor (Callable)
+            if let Some(ty) = array_instance_type {
                 env.set_array_base_type(ty, array_type_params);
             }
         }
