@@ -37,8 +37,25 @@ Fix the 3 failing control flow tests to ensure `instanceof` narrowing works corr
 ## Current Status
 
 ✅ Fixed compilation errors in operations_tests.rs (replaced deprecated `with_resolver` API)
-⏸️ 5 failing circular extends tests identified (solver::infer)
-🔍 Need to find the actual "3 failing control flow tests" mentioned in session docs
+✅ FIXED: test_truthiness_false_branch_narrows_to_falsy (boolean narrowing bug)
+   - Bug: narrow_to_falsy grouped boolean with string/number/bigint
+   - Fix: Separate handling - boolean → BOOLEAN_FALSE, others stay as-is
+⏳ IN PROGRESS: 2 remaining array destructuring tests
+   - test_array_destructuring_default_initializer_clears_narrowing
+   - test_array_destructuring_assignment_clears_narrowing
+⏸️ 5 failing circular extends tests identified (solver::infer) - NOT STARTED
+
+## Session Progress Summary
+
+### Completed Work:
+1. Fixed deprecated `with_resolver` API usage in operations_tests.rs
+2. Identified and fixed boolean narrowing bug in narrow_to_falsy
+3. Updated test expectations to match TypeScript behavior
+
+### Remaining Work:
+1. Fix array destructuring assignment clearing (2 tests)
+2. Fix 5 circular extends tests in solver::infer
+3. Find and fix the "3 failing control flow tests" if different from above
 
 ## Next Steps (per Gemini guidance)
 
