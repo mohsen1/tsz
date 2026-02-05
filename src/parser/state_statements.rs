@@ -1416,11 +1416,11 @@ impl ParserState {
             }
 
             // Default parameter values are evaluated in the parent scope, not in the function body.
-            // Set parameter default context flag to detect 'await' usage (TS1109).
+            // Set parameter default context flag to detect 'await' usage.
+            // IMPORTANT: Keep async context set - TSC emits TS1109 "Expression expected" when
+            // 'await' appears in a parameter default without an operand (e.g., `async (a = await)`)
             let saved_flags = self.context_flags;
             self.context_flags |= CONTEXT_FLAG_PARAMETER_DEFAULT;
-            // Also temporarily disable async context so 'await' is not treated as an await expression
-            self.context_flags &= !CONTEXT_FLAG_ASYNC;
             let initializer = self.parse_assignment_expression();
             if initializer.is_none() {
                 // Emit TS1109 for missing parameter default value: param = [missing]

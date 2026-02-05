@@ -286,6 +286,15 @@ impl ParserState {
     ) -> NodeIndex {
         let start_pos = self.token_pos();
 
+        // Set async context BEFORE parsing parameters
+        // This is important for correctly handling 'await' in parameter defaults:
+        // - `async (a = await) => {}` should emit TS1109 (Expression expected)
+        // - TSC sets async context for the entire async function scope including parameters
+        let saved_flags = self.context_flags;
+        if is_async {
+            self.context_flags |= CONTEXT_FLAG_ASYNC;
+        }
+
         // Parse optional type parameters: <T, U extends Foo>
         let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
             Some(self.parse_type_parameters())
@@ -342,11 +351,8 @@ impl ParserState {
             self.parse_expected(SyntaxKind::EqualsGreaterThanToken);
         }
 
-        // Set async context for body parsing
-        let saved_flags = self.context_flags;
-        if is_async {
-            self.context_flags |= CONTEXT_FLAG_ASYNC;
-        }
+        // Async context was already set at the start of this function for parameter parsing
+        // and remains set for body parsing
 
         // Parse body (block or expression)
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
@@ -787,18 +793,19 @@ impl ParserState {
                     // Fall through to parse as await expression
                 } else if self.in_parameter_default_context() && has_following_expression {
                     // TS2524: 'await' expressions cannot be used in a parameter initializer
+                    // This only applies when there IS a following expression (e.g., `async (a = await foo)`)
+                    // When there's no following expression (e.g., `async (a = await)`), we fall through
+                    // to emit TS1109 from the await expression parsing at line 859-865
                     use crate::checker::types::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'await' expressions cannot be used in a parameter initializer.",
                         diagnostic_codes::AWAIT_IN_PARAMETER_DEFAULT,
                     );
                     // Fall through to parse as await expression for error recovery
-                } else if !self.in_async_context() || self.in_parameter_default_context() {
-                    // In parameter default context of non-async functions, 'await' should be treated as identifier
-                    if self.in_parameter_default_context()
-                        && !self.in_async_context()
-                        && !has_following_expression
-                    {
+                } else if !self.in_async_context() {
+                    // NOT in async context - 'await' should be treated as identifier
+                    // In parameter default context of non-async functions, 'await' is a valid identifier
+                    if self.in_parameter_default_context() && !has_following_expression {
                         // Parse 'await' as regular identifier in parameter defaults of non-async functions
                         let start_pos = self.token_pos();
                         let end_pos = self.token_end(); // capture end before consuming
