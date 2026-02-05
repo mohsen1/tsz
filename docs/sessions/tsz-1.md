@@ -7,83 +7,78 @@
 ## Active Tasks
 
 ### Task #16: Robust Optional Property Subtyping & Narrowing
-**Status**: 🔄 In Progress (Root Cause Analysis Complete)
+**Status**: 🔄 In Progress (Implementation Phase)
 **Priority**: High
 **Estimated Impact**: +2-3% conformance
+**Gemini Pro Question 2**: COMPLETED - Received implementation guidance
 
-**Investigation Complete**:
-1. `narrow_by_discriminant` (line 491): ✅ CORRECT - `is_subtype_of(literal, prop_type)`
-2. `narrow_by_excluding_discriminant` (line 642): ✅ CORRECT - `is_subtype_of(prop_type, excluded_value)`
-3. `resolve_type`: Handles Lazy and Application types correctly
-4. `optional_property_type` (objects.rs:662): ✅ CORRECT - Checks `exact_optional_property_types` flag
-5. `lookup_property` (objects.rs:21-34): ✅ CORRECT - Simple name lookup
+**Investigation Complete** ✅:
+1. `narrow_by_discriminant` (line 491): ✅ CORRECT
+2. `narrow_by_excluding_discriminant` (line 642): ✅ CORRECT
+3. `resolve_type`: ✅ Handles Lazy and Application types
+4. `optional_property_type` (objects.rs:662): ✅ CORRECT
+5. `lookup_property` (objects.rs:21-34): ✅ CORRECT
 
-**🚨 CRITICAL BUG FOUND (Gemini Pro Review)**:
+**🚨 CRITICAL BUG**: Intersection property merging overwrites instead of intersects
 **Location**: `src/solver/subtype.rs` lines 1064-1071
-**Issue**: Intersection property merging **overwrites** instead of **intersecting** types
+**Root Cause**: Calling `interner.intersection2()` creates infinite recursion
+**Solution**: Use low-level `intersect_types_raw()` that bypasses normalization
 
-**Root Cause Analysis** (from Gemini Flash):
-- `intern.rs`'s `try_merge_objects_in_intersection` only works for fully collapsible intersections (all concrete objects)
-- For intersections with TypeParameters, Unions, or Lazy types, the `SubtypeChecker` must manually merge
-- Calling `interner.intersection2()` during subtype checking creates infinite recursion:
-  - SubtypeChecker → interner.intersection2 → normalize_intersection → is_subtype_of → **LOOP**
+---
 
-**Architectural Issue**: "Judge vs. Lawyer" conflict
-- SubtypeChecker (Judge) is trying to perform type construction (Solver's job) during a relationship check
-- North Star Rule 1: Solver handles WHAT, Judge handles RELATIONS
+## IMPLEMENTATION PLAN (Gemini Flash Redefined Session)
 
-**Implementation Plan** (from Gemini Flash):
+### Task 16.1: Low-level Intersection Infrastructure ⚡ CRITICAL
+**File**: `src/solver/intern.rs`
+**Estimate**: 30 minutes
+**Action**: Implement `intersect_types_raw()` and `intersect_types_raw2()`
+**Guidance**: `/tmp/intersect_types_raw_implementation.md` (complete code from Gemini Pro)
+**Risk**: Low - straightforward implementation with exact specification
 
-**Step 1**: Create `PropertyCollector` visitor in `src/solver/objects.rs`
-- Walk TypeIds recursively
-- If Object: collect properties
-- If Intersection: recursively collect and merge collisions
-- Call `resolve_type` before inspecting any TypeKey (fixes Lazy/Ref resolution bug)
+### Task 16.2: Property Collection Visitor
+**File**: `src/solver/objects.rs`
+**Estimate**: 1 hour
+**Action**: Create `PropertyCollector` struct/visitor
+**Logic**:
+- Use `resolve_type` before inspecting TypeKey (fixes Lazy/Ref bug)
+- Recursively walk Intersection members
+- Collisions: `interner.intersect_types_raw2(type_a, type_b)`
+- Flags: Required if ANY member required, Readonly if ANY member readonly
+**Risk**: Medium - must handle recursive types carefully using cycle_stack
 
-**Step 2**: Implement "Safe" merging in PropertyCollector
-- **Type**: Do NOT call `interner.intersection2()`. Use new low-level `intersect_types_raw()` that creates TypeKey::Intersection WITHOUT normalization
-- **Flags**: Required wins (AND logic), Readonly accumulates (OR logic)
-- **Write Type**: Intersect contravariantly
+### Task 16.3: Judge (Subtype) Integration
+**File**: `src/solver/subtype.rs`
+**Estimate**: 1 hour
+**Action**: Replace manual property loop (line 1064) with PropertyCollector call
+**North Star Rule**: Judge asks Lawyer for effective property set
+**Risk**: Low - direct replacement
 
-**Step 3**: Update `src/solver/subtype.rs` to use PropertyCollector
-- Judge asks "What are the effective properties?" and gets pre-merged map
-- No direct calls to interner.intersection during checking
+### Task 16.4: Verification
+**Files**: `tests/conformance/intersections/`
+**Estimate**: 30 minutes
+**Test Cases**:
+1. Basic intersection merging → `never` type
+2. Optionality merging → required wins
+3. Discriminant narrowing with intersections
+4. Deep intersection (stack overflow guard)
+**Risk**: Low - tests already defined
 
-**Step 4**: MANDATORY - Ask Gemini BEFORE implementing:
-> "I am implementing `intersect_types_raw` in `src/solver/intern.rs` to avoid stack overflows during subtyping. It should create a `TypeKey::Intersection` without calling `normalize_intersection` which triggers `is_subtype_of`. Is this the correct way to break the cycle, or should I use the `cycle_stack` from the `SubtypeChecker`?"
+---
 
-**Test Cases** (from Gemini):
-```typescript
-// 1. Basic Intersection Merging (The "Never" Case)
-type A = { a: string };
-type B = { a: number };
-type C = A & B;
-let c: C = { a: "any" as any };
-// @ts-expect-error: Type 'string' is not assignable to type 'never'
-c.a = "hello";
+## DEPENDENCIES
+- Task 16.2 DEPENDS ON 16.1 (must have `intersect_types_raw` first)
+- Task 16.3 DEPENDS ON 16.2 (must have PropertyCollector first)
+- Follow Two-Question Rule: Ask Gemini Question 2 after Tasks 16.1 and 16.2
 
-// 2. Optionality Merging (Required wins)
-type O = { x?: string };
-type R = { x: string };
-type M = O & R;
-let m: M = { x: "hi" };
-// @ts-expect-error: Type 'undefined' is not assignable to type 'string'
-m.x = undefined;
+---
 
-// 3. Discriminant Narrowing with Intersections
-type Union = ({ kind: "a", val: string } & { extra: number }) | { kind: "b", val: number };
-function check(v: Union) {
-    if (v.kind === "a") {
-        v.val.toUpperCase(); // Should work
-        v.extra.toFixed();   // Should work
-    }
-}
-
-// 4. Deep Intersection (Stack Overflow Guard)
-type Deep<T> = { prop: T & { x: string } };
-type Rec = Deep<Deep<string>>;
-// Ensures getting properties doesn't crash
-```
+## NEXT IMMEDIATE ACTIONS
+1. ✅ Update session file (this file)
+2. ⏭️ Execute Task 16.1: Implement `intersect_types_raw()` in intern.rs
+3. ⏭️ Ask Gemini Question 2: Review the implementation
+4. ⏭️ Execute Task 16.2: Create PropertyCollector
+5. ⏭️ Ask Gemini Question 2: Review PropertyCollector
+6. ⏭️ Complete Tasks 16.3 and 16.4
 **Status**: Pending
 **Priority**: High
 **Estimated Impact**: +2-3% conformance
