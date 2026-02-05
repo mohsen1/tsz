@@ -187,13 +187,51 @@ Modify `resolve_application_property` to substitute only the found property's ty
 
 ### Phase 3: Union/Intersection Member Resolution
 
-**File**: `src/solver/operations.rs`
+**Status**: 🔄 IN PROGRESS (2026-02-05)
+
+**File**: `src/solver/operations_property.rs`
+**Function**: `resolve_property_access_inner` (around line 641)
 
 **Task**: Handle property access on unions and intersections
 
-**Logic**:
-- **Unions**: `(T | U).prop` - property must exist in all constituents, result is union of types
-- **Intersections**: `(T & U).prop` - property can exist in any constituent, result is union of found types
+**Implementation Plan** (from Gemini 2026-02-05):
+
+#### For Unions (`A | B`)
+1. Iterate through every constituent of the union
+2. Call `resolve_property_access_inner` recursively for each constituent
+3. **Validation**: Property must exist in **all** constituents
+4. **Result**: Union of all resolved property types
+5. **Edge Cases**:
+   - If any constituent is `any`, result includes `any`
+   - If any constituent is `never`, ignore it
+   - Optional properties: Mark as optional if optional in any constituent
+
+#### For Intersections (`A & B`)
+1. Iterate through constituents
+2. Collect property type from **any** constituent that has it
+3. **Result**: Intersection of property types that exist in multiple constituents
+4. **Special Handling**: Function signatures merged into overloaded signatures
+
+#### Helper Functions to Implement
+- `resolve_union_property` - handle union member resolution
+- `resolve_intersection_property` - handle intersection member resolution
+
+#### Edge Cases to Handle
+1. **Optional Properties**: Union should include `undefined` if strictNullChecks
+2. **Discriminant Properties**: Resolve common type before narrowing
+3. **Recursive Types**: Use `PropertyAccessGuard` to prevent infinite loops
+4. **Empty Unions/Intersections**: `Union([])` = `never`, `Intersection([])` = `unknown`
+
+#### Potential Pitfalls
+1. **Performance**: Large unions (50+ constituents) can be slow - cache results
+2. **`any` Propagation**: `(T | any).prop` should result in `any`
+3. **Private Members**: Check Resolver trait for access context
+
+#### Next Steps
+1. Add failing test for union property access
+2. Add match arms for `TypeKey::Union` and `TypeKey::Intersection`
+3. Implement helper functions
+4. Test and commit
 
 ## Implementation Guidance (from Gemini Flash 2026-02-05)
 
