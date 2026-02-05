@@ -7,7 +7,7 @@
 ## Active Tasks
 
 ### Task #16: Robust Optional Property Subtyping & Narrowing
-**Status**: 🔄 In Progress (Investigation Phase)
+**Status**: 🔄 In Progress (Critical Bug Found)
 **Priority**: High
 **Estimated Impact**: +2-3% conformance
 
@@ -18,23 +18,56 @@ Fix critical bugs in optional property subtyping and narrowing logic identified 
 1. `narrow_by_discriminant` (line 491): ✅ CORRECT - `is_subtype_of(literal, prop_type)`
 2. `narrow_by_excluding_discriminant` (line 642): ✅ CORRECT - `is_subtype_of(prop_type, excluded_value)`
 3. `resolve_type`: Handles Lazy and Application types correctly
-4. Ref types: Deprecated and removed, not needed
-5. Discriminant tests: All passing (test_switch_discriminant_narrowing)
+4. `optional_property_type` (objects.rs:662): ✅ CORRECT - Checks `exact_optional_property_types` flag
+5. `lookup_property` (objects.rs:21-34): ✅ CORRECT - Simple name lookup
 
-**Still Pending** (need investigation in subtype.rs):
-- Intersection type handling in lookup_property
-- Optional property subtyping with exactOptionalPropertyTypes
-- Property access through Intersection types
+**🚨 CRITICAL BUG FOUND (Gemini Pro Review)**:
+**Location**: `src/solver/subtype.rs` lines 1064-1071
+**Issue**: Intersection property merging **overwrites** instead of **intersecting** types
 
-**Gemini Guidance Received**:
-- Validated approach for resolve_type, discriminant functions
-- Provided specific file paths and function names to check
-- Identified edge cases with undefined in optional properties
+```rust
+// WRONG - Current code:
+if let Some(existing) = merged_properties.iter_mut().find(|p| p.name == prop.name) {
+    *existing = prop.clone(); // 🚨 Overwrites!
+}
+```
+
+**Example of Bug**:
+```typescript
+type A = { a: string };
+type B = { a: number };
+type C = A & B;
+// Current: a has type number (WRONG - overwrites)
+// Correct: a should have type string & number (which is never)
+```
+
+**Required Fix**:
+When same property appears in multiple intersection members:
+1. Intersect the types: `merged_type = interner.intersection(existing.type, new.type)`
+2. Merge flags: required wins over optional
+3. Handle write_type intersection contravariantly
+
+**Test Cases** (from Gemini):
+```typescript
+// 1. Intersection Merging
+type A = { a: string };
+type B = { a: number };
+type C = A & B;
+declare let c: C;
+c.a = 1; // Should error: Type 'number' is not assignable to type 'never'
+
+// 2. Intersection Optionality
+type O = { x?: string };
+type R = { x: string };
+type M = O & R;
+declare let m: M;
+m.x = undefined; // Should error: required wins
+```
 
 **Next Steps**:
-- Investigate subtype.rs for Intersection handling
-- Check lookup_property function
-- Verify exactOptionalPropertyTypes implementation
+1. Fix intersection merging in `subtype.rs:1064-1071`
+2. Run test cases to verify fix
+3. Follow Two-Question Rule: Ask Gemini Pro to review the fix
 **Status**: Pending
 **Priority**: High
 **Estimated Impact**: +2-3% conformance
