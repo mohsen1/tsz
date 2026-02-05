@@ -102,12 +102,48 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<bool> {
+        // Fix: Use TypeKey::Enum to distinguish between whole enum types and enum member types
+        // TypeKey::Enum contains (DefId, InnerType) where:
+        // - DefId: Nominal identity of the enum
+        // - InnerType: For whole enum = Union of all members, for member = Literal value
+        let source_key = self.ctx.types.lookup(source);
+        let target_key = self.ctx.types.lookup(target);
+
+        match (source_key, target_key) {
+            (
+                Some(TypeKey::Enum(source_def, source_inner)),
+                Some(TypeKey::Enum(target_def, target_inner)),
+            ) => {
+                if source_def == target_def {
+                    // Same enum - check structural assignability of inner types
+                    // This correctly handles:
+                    // - Member -> Same Member: Literal(0) -> Literal(0) = true
+                    // - Member -> Diff Member: Literal(0) -> Literal(1) = false
+                    // - Member -> Whole Enum: Literal(0) -> Union(0|1) = true
+                    // - Whole Enum -> Member: Union(0|1) -> Literal(0) = false
+                    let result = if let Some(env) = env {
+                        let mut checker =
+                            crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
+                        self.ctx.configure_compat_checker(&mut checker);
+                        checker.is_assignable(source_inner, target_inner)
+                    } else {
+                        let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
+                        self.ctx.configure_compat_checker(&mut checker);
+                        checker.is_assignable(source_inner, target_inner)
+                    };
+                    return Some(result);
+                }
+                // Different enums - not nominally compatible
+                // Continue to numeric/string enum handling below
+            }
+            _ => {
+                // One or both types are not enums - continue to numeric/string enum handling
+            }
+        }
+
+        // Get enum symbols for numeric/string enum handling below
         let source_enum = self.enum_symbol_from_type(source);
         let target_enum = self.enum_symbol_from_type(target);
-
-        if let (Some(source_enum), Some(target_enum)) = (source_enum, target_enum) {
-            return Some(source_enum == target_enum);
-        }
 
         if let Some(source_enum) = source_enum
             && self.enum_kind(source_enum) == Some(EnumKind::Numeric)

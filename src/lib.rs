@@ -2676,3 +2676,8 @@ mod strict_null_manual;
 #[cfg(test)]
 #[path = "checker/tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
+
+// Enum nominality tests
+#[cfg(test)]
+#[path = "checker/tests/enum_nominality_tests.rs"]
+mod enum_nominality_tests;
