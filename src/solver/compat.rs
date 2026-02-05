@@ -63,8 +63,7 @@ impl<'a> TypeVisitor for StringLikeVisitor<'a> {
     }
 
     fn visit_type_parameter(&mut self, info: &crate::solver::types::TypeParamInfo) -> Self::Output {
-        info.constraint
-            .is_some_and(|c| self.visit_type(self.db, c))
+        info.constraint.is_some_and(|c| self.visit_type(self.db, c))
     }
 
     fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
