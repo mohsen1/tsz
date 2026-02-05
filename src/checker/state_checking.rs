@@ -882,10 +882,21 @@ impl<'a> CheckerState<'a> {
                     // For nested object literals, recursively check for excess properties
                     // Example: { x: { y: 1, z: 2 } } where target is { x: { y: number } }
                     // should error on 'z' in the nested object literal
+                    //
+                    // CRITICAL FIX: For union targets, we must union all property types
+                    // from all members. Using only the first member causes false positives.
+                    // Example: type T = { x: { a: number } } | { x: { b: number } }
+                    // Assigning { x: { b: 1 } } should NOT error on 'b'.
                     // =============================================================
+                    let nested_target = if target_prop_types.len() == 1 {
+                        target_prop_types[0]
+                    } else {
+                        self.ctx.types.union(target_prop_types.clone())
+                    };
+
                     self.check_nested_object_literal_excess_properties(
                         source_prop.name,
-                        target_prop_types.first().copied(),
+                        Some(nested_target),
                         idx,
                     );
                 }
@@ -953,26 +964,34 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Iterate through the properties in the AST to find the one matching prop_name
-        for &elem_idx in obj_lit.elements.iter() {
+        // =============================================================
+        // CRITICAL FIX: Iterate in reverse to handle duplicate properties
+        // =============================================================
+        // JavaScript/TypeScript behavior is "last property wins".
+        // Example: const o = { x: { a: 1 }, x: { b: 1 } }
+        // The runtime value of o.x is { b: 1 }, so we must check the last assignment.
+        // =============================================================
+        for &elem_idx in obj_lit.elements.nodes.iter().rev() {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
             };
 
             // Get the property name from this element
             let elem_prop_name = match elem_node.kind {
-                SyntaxKind::PROPERTY_ASSIGNMENT => self
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => self
                     .ctx
                     .arena
                     .get_property_assignment(elem_node)
                     .and_then(|prop| self.get_property_name(prop.name))
                     .map(|name| self.ctx.types.intern_string(&name)),
-                SyntaxKind::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
                     .ctx
                     .arena
                     .get_shorthand_property(elem_node)
-                    .and_then(|prop| self.get_property_name(prop.name))
-                    .map(|name| self.ctx.types.intern_string(&name)),
+                    .and_then(|prop| {
+                        self.get_property_name(prop.name)
+                            .map(|name| self.ctx.types.intern_string(&name))
+                    }),
                 _ => None,
             };
 
@@ -983,17 +1002,17 @@ impl<'a> CheckerState<'a> {
 
             // Get the value expression for this property
             let value_idx = match elem_node.kind {
-                SyntaxKind::PROPERTY_ASSIGNMENT => self
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => self
                     .ctx
                     .arena
                     .get_property_assignment(elem_node)
-                    .map(|prop| prop.expression),
-                SyntaxKind::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    .map(|prop| prop.initializer),
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                     // For shorthand properties, the value expression is the same as the property name expression
                     self.ctx
                         .arena
                         .get_shorthand_property(elem_node)
-                        .and_then(|prop| prop.name)
+                        .map(|prop| prop.name)
                 }
                 _ => None,
             };
@@ -1002,14 +1021,21 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Check if the value expression is an object literal
-            let Some(value_node) = self.ctx.arena.get(value_idx) else {
+            // =============================================================
+            // CRITICAL FIX: Handle parenthesized expressions
+            // =============================================================
+            // TypeScript treats parenthesized object literals as fresh.
+            // Example: x: ({ a: 1 }) should be checked for excess properties.
+            // We need to unwrap parentheses before checking the kind.
+            // =============================================================
+            let effective_value_idx = self.skip_parentheses(value_idx);
+            let Some(value_node) = self.ctx.arena.get(effective_value_idx) else {
                 continue;
             };
 
-            if value_node.kind == SyntaxKind::OBJECT_LITERAL_EXPRESSION {
+            if value_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                 // Get the type of the nested object literal
-                let nested_source_type = self.get_type_of_node(value_idx);
+                let nested_source_type = self.get_type_of_node(effective_value_idx);
 
                 // Check if we have a target type for this property
                 if let Some(nested_target_type) = target_prop_type {
@@ -1017,13 +1043,30 @@ impl<'a> CheckerState<'a> {
                     self.check_object_literal_excess_properties(
                         nested_source_type,
                         nested_target_type,
-                        value_idx,
+                        effective_value_idx,
                     );
                 }
 
-                return;
+                return; // Found the property, stop searching
             }
         }
+    }
+
+    /// Skip parentheses to get the effective expression node.
+    ///
+    /// This unwraps parenthesized expressions to get the underlying expression.
+    /// Example: `({ a: 1 })` -> `{ a: 1 }` (OBJECT_LITERAL_EXPRESSION)
+    fn skip_parentheses(&self, mut node_idx: NodeIndex) -> NodeIndex {
+        while let Some(node) = self.ctx.arena.get(node_idx) {
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    node_idx = paren.expression;
+                    continue;
+                }
+            }
+            break;
+        }
+        node_idx
     }
 
     /// Resolve property access using TypeEnvironment (includes lib.d.ts types).
