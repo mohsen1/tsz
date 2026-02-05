@@ -865,27 +865,81 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<bool> {
-        let source_brand = self.get_private_brand(source);
-        let target_brand = self.get_private_brand(target);
+        use crate::solver::types::Visibility;
 
-        match (source_brand, target_brand) {
-            (Some(brand1), Some(brand2)) => {
-                // Both types have private brands - they must match exactly
-                // Different private brands = different class declarations = not assignable
-                Some(brand1 == brand2)
+        // TSZ-4 Priority 2: Implement true nominal checking for private/protected members
+        // using parent_id comparison instead of string prefix matching.
+        //
+        // Rule: Two types are compatible only if their private/protected members
+        // originate from the EXACT SAME declaration symbol (same parent_id).
+
+        // 1. Extract shapes using the existing helper
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+
+        // Get source shape
+        let source_shape_id = extractor.extract(source)?;
+        let source_shape = self
+            .interner
+            .object_shape(crate::solver::types::ObjectShapeId(source_shape_id));
+
+        // Get target shape
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+        let target_shape_id = extractor.extract(target)?;
+        let target_shape = self
+            .interner
+            .object_shape(crate::solver::types::ObjectShapeId(target_shape_id));
+
+        // 2. Check Target requirements (Nominality)
+        // If Target has a private/protected property, Source MUST match its origin exactly.
+        for target_prop in &target_shape.properties {
+            if target_prop.visibility == Visibility::Private
+                || target_prop.visibility == Visibility::Protected
+            {
+                // Find corresponding property in source
+                let source_prop = source_shape
+                    .properties
+                    .iter()
+                    .find(|p| p.name == target_prop.name);
+
+                match source_prop {
+                    Some(sp) => {
+                        // CRITICAL: The parent_id must match exactly.
+                        // This handles the "separate declarations" rule.
+                        if sp.parent_id != target_prop.parent_id {
+                            return Some(false);
+                        }
+                    }
+                    None => {
+                        // Target has private prop, Source missing it.
+                        return Some(false);
+                    }
+                }
             }
-            (None, Some(_)) => {
-                // Target has a private brand but source doesn't
-                // Source cannot satisfy target's private requirements
-                Some(false)
-            }
-            (Some(_), None) => {
-                // Source has a private brand but target doesn't (e.g., interface)
-                // Fall through to structural check - a class can implement an interface
-                None
-            }
-            (None, None) => None, // Neither has private brand, fall through to normal check
         }
+
+        // 3. Check Source restrictions (Visibility leakage)
+        // If Source has a private/protected property, it cannot be assigned to a Target
+        // that expects it to be Public (or doesn't have the same brand).
+        for source_prop in &source_shape.properties {
+            if source_prop.visibility == Visibility::Private
+                || source_prop.visibility == Visibility::Protected
+            {
+                if let Some(target_prop) = target_shape
+                    .properties
+                    .iter()
+                    .find(|p| p.name == source_prop.name)
+                {
+                    // If Target has the property but it is Public, and Source is Private/Protected
+                    if target_prop.visibility == Visibility::Public {
+                        return Some(false);
+                    }
+                    // If Target has it as Private/Protected, we already checked identity in step 2.
+                }
+            }
+        }
+
+        // If we passed all nominal checks, return None to let structural checking proceed
+        None
     }
 
     /// Enum member assignability override.
@@ -949,37 +1003,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Use visitor to check for string literals, template literals, etc.
         let mut visitor = StringLikeVisitor { db: self.interner };
         visitor.visit_type(self.interner, type_id)
-    }
-
-    /// Extract the private brand property name from a type if it has one.
-    /// Returns `Some(brand_name)` if the type has a private brand, `None` otherwise.
-    fn get_private_brand(&self, type_id: TypeId) -> Option<String> {
-        // Handle Callable explicitly
-        if let Some(TypeKey::Callable(callable_id)) = self.interner.lookup(type_id) {
-            let callable = self.interner.callable_shape(callable_id);
-            for prop in callable.properties.iter() {
-                let name = self.interner.resolve_atom(prop.name);
-                if name.starts_with("__private_brand_") {
-                    return Some(name);
-                }
-            }
-            return None;
-        }
-
-        // Use visitor for Object types
-        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
-        let shape_id = extractor.extract(type_id)?;
-        let shape = self
-            .interner
-            .object_shape(crate::solver::types::ObjectShapeId(shape_id));
-
-        for prop in shape.properties.iter() {
-            let name = self.interner.resolve_atom(prop.name);
-            if name.starts_with("__private_brand_") {
-                return Some(name);
-            }
-        }
-        None
     }
 }
 
