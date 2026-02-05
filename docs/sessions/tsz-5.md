@@ -116,15 +116,35 @@ for (i, &arg) in args.iter().enumerate() {
 }
 ```
 
-#### TODO 1.2b: Modify call expression checker for two-pass checking
+#### TODO 1.2b: ✅ COMPLETE - Modify call expression checker for two-pass checking (2026-02-05)
 
-**Next Step**: Modify `src/checker/type_computation_complex.rs` to:
-1. Check non-contextual arguments first (arrays, primitives)
-2. Call `compute_contextual_types()` to get substitution
-3. Use substitution to construct contextual types for lambdas
-4. Check lambdas with contextual types
+**Location**: `src/checker/type_computation_complex.rs:1288-1360`
 
-**File to modify**: `src/checker/type_computation_complex.rs::get_type_of_call_expression_inner`
+**Implementation**:
+Modified `get_type_of_call_expression_inner` to orchestrate two-pass argument checking:
+
+1. **Extract FunctionShape** (line 1293):
+   - Uses `CallEvaluator::<CompatChecker>::get_contextual_signature()`
+   - Checks if callee has type parameters and no explicit type arguments
+
+2. **Round 1: Non-contextual arguments** (lines 1309-1323):
+   - Pre-computes contextually sensitive arguments to avoid borrow issues
+   - Collects types for arrays, primitives (skips lambdas)
+   - Returns `Vec<TypeId>` with concrete argument types
+
+3. **Round 1 Inference** (lines 1325-1338):
+   - Creates `CallEvaluator` with `CompatChecker`
+   - Calls `compute_contextual_types(&shape, &round1_arg_types)`
+   - Gets `TypeSubstitution` with fixed type variables
+
+4. **Round 2: All arguments with contextual types** (lines 1340-1351):
+   - Instantiates parameter types with Round 1 substitution
+   - Lambdas receive contextual types (e.g., `(x: number) => U`)
+   - Collects final argument types
+
+5. **Fallback**: Non-generic calls use standard single-pass flow
+
+**Test Result**: Compiles successfully with no errors on test cases.
 
 #### TODO 1.2c: Handle nested generics (method resolution on generic types)
    - The `arr.map(f)` case requires method resolution on generic types
