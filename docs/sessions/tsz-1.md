@@ -36,7 +36,7 @@
 | **1** | **#36** | **Judge Integration: Structural Identity Fast-Path** | ✅ **COMPLETE** |
 | **2** | **#35** | **Callable & Intersection Canonicalization** | ✅ **COMPLETE** |
 | **3** | **#32** | **Graph Isomorphism (Canonicalizer Core)** | ✅ **COMPLETE** |
-| **4** | **#37** | **Deep Structural Simplification** | 📝 Planned |
+| **4** | **#37** | **Deep Structural Simplification** | ✅ **COMPLETE** |
 | **5** | **#11** | **Refined Narrowing for Discriminated Unions** | 📝 Planned |
 
 **Task #32 Status**: ✅ Core Complete (see `docs/sessions/tsz-1-task32-wip.md`)
@@ -1448,6 +1448,40 @@ Should I canonicalize TypeParameter names for alpha-equivalence?"
 
 **North Star Impact**:
 Completes algebraic normalization suite (Union + Object + Intersection), enabling better canonical forms.
+
+---
+
+### Task #37: Deep Structural Simplification ✅ COMPLETE (2025-02-05)
+**Status**: ✅ Complete
+
+**Implementation Summary**:
+Implemented deep structural simplification in `TypeEvaluator` by leveraging the Canonicalizer (Task #32) and SubtypeChecker fast-path (Task #36).
+
+**Changes Made** (`src/solver/evaluate.rs`):
+1. **Modified `is_complex_type()`** to remove `Lazy` and `Application` from complex type list
+   - Removed: `TypeKey::Lazy(_)` and `TypeKey::Application(_)`
+   - Kept: `TypeParameter`, `Infer`, `Conditional`, `Mapped`, `IndexAccess`, `KeyOf`, `TypeQuery`, `TemplateLiteral`, `ReadonlyType`, `StringIntrinsic`, `ThisType`
+
+2. **Updated `simplify_union_members()`** to use `MAX_SUBTYPE_DEPTH` (100) instead of `max_depth = 5`
+
+3. **Updated `simplify_intersection_members()`** to use `MAX_SUBTYPE_DEPTH` (100) instead of `max_depth = 5`
+
+**Example Reduction**:
+```typescript
+type A = { x: A | string };
+type B = { x: B };
+type Union = A | B; // Simplifies to A (B is structural subtype)
+```
+
+**Gemini Pro Review**: ✅ "The code is correct and safe to merge."
+
+**Commit**: `8bec6d59a`
+
+**North Star Impact**:
+Completes the structural identity milestone (Tasks #32, #35, #36, #37), enabling:
+- O(1) type equality through canonical forms
+- Deep structural simplification of recursive types
+- Proper reduction of unions and intersections with type aliases and generics
 
 ---
 
