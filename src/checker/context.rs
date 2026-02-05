@@ -2209,7 +2209,7 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
         // Convert parent SymbolId back to DefId
         // The parent should have a DefId from when it was bound
         if let Some(parent_def_id) =
-            self.symbol_to_def_id(crate::solver::types::SymbolRef(parent_sym_id.0))
+            self.symbol_to_def_id(crate::solver::SymbolRef(parent_sym_id.0))
         {
             return Some(parent_def_id);
         }
