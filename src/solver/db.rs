@@ -54,6 +54,8 @@ pub trait TypeDatabase {
     fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId;
     fn intersection(&self, members: Vec<TypeId>) -> TypeId;
     fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId;
+    /// Raw intersection without normalization (used to avoid infinite recursion)
+    fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId;
     fn array(&self, element: TypeId) -> TypeId;
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId;
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId;
@@ -179,6 +181,10 @@ impl TypeDatabase for TypeInterner {
 
     fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
         TypeInterner::intersection2(self, left, right)
+    }
+
+    fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId {
+        TypeInterner::intersect_types_raw2(self, left, right)
     }
 
     fn array(&self, element: TypeId) -> TypeId {
@@ -724,6 +730,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.intersection2(left, right)
     }
 
+    fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.interner.intersect_types_raw2(left, right)
+    }
+
     fn array(&self, element: TypeId) -> TypeId {
         self.interner.array(element)
     }
@@ -1028,6 +1038,10 @@ impl TypeDatabase for BinderTypeDatabase<'_> {
 
     fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
         self.query_cache.intersection2(left, right)
+    }
+
+    fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.query_cache.intersect_types_raw2(left, right)
     }
 
     fn array(&self, element: TypeId) -> TypeId {
