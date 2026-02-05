@@ -10,6 +10,32 @@ use rustc_hash::FxHashSet;
 // Import TypeDatabase trait
 use crate::solver::db::TypeDatabase;
 
+/// Merge two visibility levels, returning the more restrictive one.
+///
+/// Ordering: Private > Protected > Public
+fn merge_visibility(a: Visibility, b: Visibility) -> Visibility {
+    match (a, b) {
+        (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
+        (Visibility::Protected, _) | (_, Visibility::Protected) => Visibility::Protected,
+        (Visibility::Public, Visibility::Public) => Visibility::Public,
+    }
+}
+
+/// Result of collecting properties from an intersection type.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PropertyCollectionResult {
+    /// The intersection contains `any`, making the entire type `any`
+    Any,
+    /// The intersection contains only non-object types (never, unknown, primitives, etc.)
+    NonObject,
+    /// The intersection contains object properties
+    Properties {
+        properties: Vec<PropertyInfo>,
+        string_index: Option<IndexSignature>,
+        number_index: Option<IndexSignature>,
+    },
+}
+
 /// Collect properties from an intersection type, recursively merging all members.
 ///
 /// This function handles:
@@ -26,17 +52,18 @@ use crate::solver::db::TypeDatabase;
 /// * `resolver` - Type resolver for handling Lazy/Ref types
 ///
 /// # Returns
-/// A tuple of (properties, string_index, number_index) representing the merged
-/// properties from all intersection members.
+/// A `PropertyCollectionResult` indicating whether the result is `Any`, non-object,
+/// or contains actual properties.
+///
+/// # Important
+/// - Call signatures are NOT collected (this is for properties only)
+/// - Mapped types are NOT handled (input should be pre-lowered/evaluated)
+/// - `any & T` always returns `Any` (commutative)
 pub fn collect_properties<R>(
     type_id: TypeId,
     interner: &dyn TypeDatabase,
     resolver: &R,
-) -> (
-    Vec<PropertyInfo>,
-    Option<IndexSignature>,
-    Option<IndexSignature>,
-)
+) -> PropertyCollectionResult
 where
     R: TypeResolver,
 {
@@ -47,17 +74,31 @@ where
         string_index: None,
         number_index: None,
         seen: FxHashSet::default(),
+        found_any: false,
     };
     collector.collect(type_id);
+
+    // If we encountered Any at any point, the result is Any (commutative)
+    if collector.found_any {
+        return PropertyCollectionResult::Any;
+    }
+
+    // If no properties were collected, return NonObject
+    if collector.properties.is_empty()
+        && collector.string_index.is_none()
+        && collector.number_index.is_none()
+    {
+        return PropertyCollectionResult::NonObject;
+    }
 
     // Sort properties by name to maintain interner invariants
     collector.properties.sort_by_key(|p| p.name.0);
 
-    (
-        collector.properties,
-        collector.string_index,
-        collector.number_index,
-    )
+    PropertyCollectionResult::Properties {
+        properties: collector.properties,
+        string_index: collector.string_index,
+        number_index: collector.number_index,
+    }
 }
 
 /// Helper function to resolve Lazy and Ref types
@@ -97,6 +138,8 @@ struct PropertyCollector<'a, R> {
     number_index: Option<IndexSignature>,
     /// Prevent infinite recursion for circular intersections like: type T = { a: number } & T
     seen: FxHashSet<TypeId>,
+    /// Track if we encountered Any (makes the whole result Any, commutative)
+    found_any: bool,
 }
 
 impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
@@ -121,18 +164,14 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 let shape = self.interner.object_shape(shape_id);
                 self.merge_shape(&shape);
             }
-            // Any type in intersection makes everything Any
+            // Any type in intersection makes everything Any (commutative)
             Some(TypeKey::Intrinsic(IntrinsicKind::Any)) => {
-                // Mark that we have an Any in the intersection
-                // Properties from Any will override everything else
-                self.properties.clear();
-                self.string_index = None;
-                self.number_index = None;
+                self.found_any = true;
             }
             // Never in intersection makes the whole thing Never
             // This is handled by the caller, not here
             _ => {
-                // Not an object or intersection - ignore
+                // Not an object or intersection - ignore (call signatures, primitives, etc.)
             }
         }
     }
@@ -152,6 +191,10 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 existing.optional = existing.optional && prop.optional;
                 // TS Rule: Readonly if ANY is readonly (readonly is cumulative)
                 existing.readonly = existing.readonly || prop.readonly;
+                // Merge visibility: use the more restrictive one (private > protected > public)
+                existing.visibility = merge_visibility(existing.visibility, prop.visibility);
+                // is_method: if one is a method, treat as property (more general)
+                existing.is_method = existing.is_method && prop.is_method;
             } else {
                 self.properties.push(prop.clone());
             }
@@ -190,14 +233,43 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interner::Atom;
+    use crate::solver::def::DefId;
     use crate::solver::intern::TypeInterner;
 
     // Mock resolver for testing
     struct MockResolver;
 
     impl TypeResolver for MockResolver {
-        fn resolve_ref_type(&self, type_id: TypeId) -> TypeId {
-            type_id // No resolution in mock
+        fn resolve_lazy(&self, _def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            None
+        }
+
+        fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
+            None
+        }
+
+        #[allow(deprecated)]
+        fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            None
+        }
+
+        fn get_type_params(
+            &self,
+            _symbol: SymbolRef,
+        ) -> Option<Vec<crate::solver::types::TypeParamInfo>> {
+            None
+        }
+
+        fn get_lazy_type_params(
+            &self,
+            _def_id: DefId,
+        ) -> Option<Vec<crate::solver::types::TypeParamInfo>> {
+            None
+        }
+
+        fn def_to_symbol_id(&self, _def_id: DefId) -> Option<crate::binder::SymbolId> {
+            None
         }
     }
 
@@ -219,10 +291,16 @@ mod tests {
 
         let obj_type = interner.object(props);
 
-        let (collected, _, _) = collect_properties(obj_type, &interner, &resolver);
+        let result = collect_properties(obj_type, &interner, &resolver);
 
-        assert_eq!(collected.len(), 1);
-        assert_eq!(collected[0].name, Atom::from("x"));
+        assert!(matches!(
+            result,
+            PropertyCollectionResult::Properties { .. }
+        ));
+        if let PropertyCollectionResult::Properties { properties, .. } = result {
+            assert_eq!(properties.len(), 1);
+            assert_eq!(properties[0].name, Atom::from("x"));
+        }
     }
 
     #[test]
@@ -255,10 +333,43 @@ mod tests {
         // Create intersection obj1 & obj2
         let intersection = interner.intersection2(obj1, obj2);
 
-        let (collected, _, _) = collect_properties(intersection, &interner, &resolver);
+        let result = collect_properties(intersection, &interner, &resolver);
 
-        assert_eq!(collected.len(), 2);
-        assert!(collected.iter().any(|p| p.name == Atom::from("x")));
-        assert!(collected.iter().any(|p| p.name == Atom::from("y")));
+        assert!(matches!(
+            result,
+            PropertyCollectionResult::Properties { .. }
+        ));
+        if let PropertyCollectionResult::Properties { properties, .. } = result {
+            assert_eq!(properties.len(), 2);
+            assert!(properties.iter().any(|p| p.name == Atom::from("x")));
+            assert!(properties.iter().any(|p| p.name == Atom::from("y")));
+        }
+    }
+
+    #[test]
+    fn test_collect_properties_any_commutative() {
+        let interner = TypeInterner::new();
+        let resolver = MockResolver;
+
+        // Create object { x: number }
+        let obj = interner.object(vec![PropertyInfo {
+            name: Atom::from("x"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+        }]);
+
+        // Test: obj & any
+        let intersection1 = interner.intersection2(obj, TypeId::ANY);
+        let result1 = collect_properties(intersection1, &interner, &resolver);
+        assert_eq!(result1, PropertyCollectionResult::Any);
+
+        // Test: any & obj (reverse order)
+        let intersection2 = interner.intersection2(TypeId::ANY, obj);
+        let result2 = collect_properties(intersection2, &interner, &resolver);
+        assert_eq!(result2, PropertyCollectionResult::Any);
     }
 }

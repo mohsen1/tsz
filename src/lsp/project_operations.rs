@@ -1,6 +1,7 @@
 //! Project operations: references, rename, imports, and module resolution.
 
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
@@ -9,6 +10,7 @@ use rustc_hash::FxHashSet;
 use crate::lsp::code_actions::{ImportCandidate, ImportCandidateKind};
 use crate::lsp::completions::{CompletionItem, CompletionItemKind};
 use crate::lsp::diagnostics::LspDiagnostic;
+use crate::lsp::implementation::{GoToImplementationProvider, TargetKind};
 use crate::lsp::position::{Location, Position, Range};
 use crate::lsp::references::FindReferences;
 use crate::lsp::rename::{RenameProvider, TextEdit, WorkspaceEdit};
@@ -852,6 +854,128 @@ impl Project {
 
         self.performance
             .record(ProjectRequestKind::References, start.elapsed(), scope_stats);
+
+        result
+    }
+
+    /// Find all implementations of an interface or class across the project.
+    ///
+    /// This performs a transitive search: if `class B extends A` and `class C extends B`,
+    /// searching for implementations of `A` will return both `B` and `C`.
+    ///
+    /// # Arguments
+    /// * `file_name` - The file containing the cursor position
+    /// * `position` - The cursor position where the user invoked "Go to Implementation"
+    ///
+    /// # Returns
+    /// A vector of locations where the target is implemented, or None if:
+    /// - No symbol is found at the position
+    /// - The symbol is not an interface or class
+    /// - No implementations are found
+    pub fn get_implementations(
+        &mut self,
+        file_name: &str,
+        position: Position,
+    ) -> Option<Vec<Location>> {
+        let start = Instant::now();
+
+        let result: Option<Vec<Location>> = (|| {
+            // Step 1: Resolve the initial target at the cursor position
+            let (initial_name, initial_kind): (String, TargetKind) = {
+                let file = self.files.get(file_name)?;
+                let offset = file
+                    .line_map
+                    .position_to_offset(position, file.parser.get_source_text())?;
+
+                let provider = GoToImplementationProvider::new(
+                    file.parser.get_arena(),
+                    &file.binder,
+                    &file.line_map,
+                    file.file_name.clone(),
+                    file.parser.get_source_text(),
+                );
+
+                // Resolve the target kind for the symbol at the position
+                let node_idx = find_node_at_offset(file.parser.get_arena(), offset);
+                if node_idx.is_none() {
+                    return None;
+                }
+
+                // First, try to resolve the symbol at the node
+                let symbol_id = provider.resolve_symbol_at_node(node_idx)?;
+                let symbol = file.binder.symbols.get(symbol_id)?;
+                let target_kind = provider.determine_target_kind(symbol)?;
+
+                (symbol.escaped_name.clone(), target_kind)
+            };
+
+            // Step 2: Iterative worklist for transitive search
+            let mut results: Vec<Location> = Vec::new();
+            let mut queue: VecDeque<(String, String, TargetKind)> = VecDeque::new();
+            let mut processed: FxHashSet<(String, String)> = FxHashSet::default();
+
+            // Start with the initial target
+            queue.push_back((file_name.to_string(), initial_name.clone(), initial_kind));
+
+            while let Some((curr_file, curr_name, curr_kind)) = queue.pop_front() {
+                // Skip if we've already processed this (file, name) pair
+                if !processed.insert((curr_file.clone(), curr_name.clone())) {
+                    continue;
+                }
+
+                // Use SymbolIndex to get candidate files that might implement this
+                let candidates = self.symbol_index.get_files_with_heritage(&curr_name);
+
+                for candidate_path in candidates {
+                    // Skip if candidate file is not loaded
+                    let Some(candidate_file) = self.files.get(&candidate_path) else {
+                        continue;
+                    };
+
+                    // Search this candidate file for implementations
+                    let provider = GoToImplementationProvider::new(
+                        candidate_file.parser.get_arena(),
+                        &candidate_file.binder,
+                        &candidate_file.line_map,
+                        candidate_file.file_name.clone(),
+                        candidate_file.parser.get_source_text(),
+                    );
+
+                    let found = provider.find_implementations_for_name(&curr_name, curr_kind);
+
+                    for impl_result in found {
+                        // Add the implementation location to results (avoid duplicates)
+                        if !results.iter().any(|loc| {
+                            loc.file_path == impl_result.location.file_path
+                                && loc.range.start.line == impl_result.location.range.start.line
+                        }) {
+                            results.push(impl_result.location.clone());
+                        }
+
+                        // Add to queue for transitive search (find classes that extend this implementation)
+                        // Only ConcreteClass and AbstractClass can be extended (not interfaces)
+                        let next_kind = TargetKind::ConcreteClass;
+                        queue.push_back((
+                            candidate_path.clone(),
+                            impl_result.name.clone(),
+                            next_kind,
+                        ));
+                    }
+                }
+            }
+
+            if results.is_empty() {
+                None
+            } else {
+                Some(results)
+            }
+        })();
+
+        self.performance.record(
+            ProjectRequestKind::Implementations,
+            start.elapsed(),
+            ScopeCacheStats::default(),
+        );
 
         result
     }
