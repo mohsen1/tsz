@@ -157,22 +157,53 @@ Added `Project::get_workspace_symbols()` method to enable the `workspace/symbol`
 
 **Value**: Users can now instantly search across all symbols in their project (functions, classes, interfaces, constants, etc.) using the SymbolIndex that was already integrated.
 
+### Transitive Re-exports (2026-02-05)
+**Status**: ✅ COMPLETE - Commit 130294af3
+
+Added support for auto-import completions via transitive wildcard re-exports (`export * from './mod'`).
+
+**Problem**: When a symbol is re-exported through wildcard re-exports, the auto-import functionality was only suggesting the original source file, not the re-exporting module. For example:
+- `a.ts` exports `MyUtil`
+- `b.ts` has `export * from './a'`
+- `c.ts` typing `MyUtil` should suggest importing from `./b` (the re-export)
+
+**Root Cause**: The SymbolIndex optimization was only checking files that directly define symbols, missing files that re-export them via wildcard.
+
+**Implementation** (`src/lsp/project_operations.rs`):
+- Updated `collect_import_candidates_for_name()` to check ALL files for wildcard re-exports
+- Previously used `get_files_with_symbol()` which only returned files that directly define the symbol
+- Now checks all files to find wildcard re-export chains
+- The recursive `matching_exports_in_file()` function already handles following `export *` chains
+
+**Bug Fix** (`src/checker/type_checking_queries.rs`):
+- Fixed `SymbolRef` → `Lazy` enum migration (from commit f9058e153)
+- Updated two functions to use `def_to_symbol_id()` instead of deprecated `SymbolRef` variant
+- `resolve_namespace_value_member()` - namespace member resolution
+- `namespace_has_type_only_member()` - type-only member checking
+- Removed duplicate match arms that were causing unreachable code
+
+**Testing**:
+- ✅ Added `test_auto_import_via_reexport` to verify the functionality
+- ✅ All project tests passing
+
+**Value**: Auto-import completions now correctly suggest importing from re-exporting modules, matching TypeScript's behavior where re-export paths are preferred over direct import paths.
+
 ## Session Status
 
 **Status**: 🔄 ACTIVE - Ready for next feature
 
 **Completed LSP Features** (all working with SymbolIndex optimization):
 - ✅ File Rename (with directory support, dynamic imports, and require calls)
-- ✅ Auto-Import Completions (with additionalTextEdits and O(1) lookup for named exports)
+- ✅ Auto-Import Completions (with additionalTextEdits, O(1) lookup for named exports, and transitive re-export support)
 - ✅ JSX Linked Editing
 - ✅ SymbolIndex integration (O(1) auto-import candidate lookup)
 - ✅ Workspace Symbols (project-wide symbol search via Cmd+T / Ctrl+T)
+- ✅ Transitive Re-exports (auto-import via `export * from './mod'`)
 
 **Next Options** (per Gemini consultation):
 1. **Add Prefix Matching** - Suggest completions for partial matches (e.g., `Lis` → `List`)
-2. **Index Transitive Re-exports** - Enhance SymbolIndex to track wildcard reexports (`export * from './mod'`)
-3. **Deep Indexing** - Enhance SymbolIndex to track nested symbols (class members, interface members)
-4. **Move to different session** - Solver/Checker work, coordination work, or other LSP features
+2. **Deep Indexing** - Enhance SymbolIndex to track nested symbols (class members, interface members)
+3. **Move to different session** - Solver/Checker work, coordination work, or other LSP features
 
 **Previous Blocked Work** (CFA):
 - Assertion functions narrowing - COMPLETE (safe to keep)
