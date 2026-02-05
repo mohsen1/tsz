@@ -1136,6 +1136,7 @@ impl TypeDatabase for BinderTypeDatabase<'_> {
 }
 
 impl TypeResolver for BinderTypeDatabase<'_> {
+    #[allow(deprecated)]
     fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
         self.type_env.borrow().resolve_ref(symbol, interner)
     }
