@@ -124,6 +124,9 @@ mod intersection_union_tests;
 // operations_tests: loaded from operations.rs
 // subtype_tests: loaded from subtype.rs
 #[cfg(test)]
+#[path = "tests/intersection_distributivity_tests.rs"]
+mod intersection_distributivity_tests;
+#[cfg(test)]
 #[path = "tests/template_expansion_tests.rs"]
 mod template_expansion_tests;
 #[cfg(test)]
