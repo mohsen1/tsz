@@ -114,8 +114,33 @@ Previous tsz-3 sessions:
 
 ## Progress
 
-### 2026-02-05: Session Created
+### 2026-02-05: Initial Investigation
 - Consulted Gemini for session definition
 - Received clear recommendation to fix narrowing regressions
 - Created session file
-- Ready to start Phase A1
+- Started Phase A investigation
+
+### 2026-02-05: Deep Investigation - Test Expectations Questionable
+- Investigated the 3 failing "destructuring" tests
+- Verified with TypeScript that after `[x] = [1]`, the type is `number` (primitive), NOT the union `string | number`
+- **Key Finding**: The original test expectations (`union`) appear to be WRONG
+- Implemented literal-to-primitive widening in `get_assigned_type`
+- **Problem**: Widening breaks ~20 other tests that expect literal types to be preserved
+
+**Root Cause Identified**:
+The code preserves literal types (e.g., literal `1` instead of primitive `number`) in flow analysis. This is actually CORRECT for many TypeScript features (freshness, precise narrowing). But it causes issues when:
+1. Tests expect the declared type (union) after assignments
+2. Context requires widened primitives
+
+**Complex Dependencies**:
+- Object literal freshness checks require literal types
+- Some flow analysis preserves literals for precision
+- Assignment narrowing should widen to match TypeScript
+
+**Recommendation**: This requires deeper architectural investigation. The issue is not a simple bug but a design question about when to widen literals vs. when to preserve them.
+
+**Next Steps for Next Investigator**:
+1. Consult Gemini Pro about the correct TypeScript behavior
+2. Research TypeScript's source code for when widening occurs
+3. Consider whether widening should be context-dependent
+4. May need to distinguish between "killing definitions" (widen) vs. "refining definitions" (preserve literal)
