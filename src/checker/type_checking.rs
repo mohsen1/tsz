@@ -1873,14 +1873,17 @@ impl<'a> CheckerState<'a> {
                 // Also check if base is directly a Callable with construct signatures
                 crate::solver::type_queries::has_construct_signatures(self.ctx.types, base)
             }
-            // Ref to a symbol - check if it's a class symbol or resolve to the actual type
+            // Lazy reference (DefId) - check if it's a class or interface
             // This handles cases like:
             // 1. `class C extends MyClass` where MyClass is a class
             // 2. `function f<T>(ctor: T)` then `class B extends ctor` where ctor has a constructor type
             // 3. `class C extends Object` where Object is declared as ObjectConstructor interface
-            ConstructorCheckKind::SymbolRef(symbol_ref) => {
-                use crate::binder::SymbolId;
-                let symbol_id = SymbolId(symbol_ref.0);
+            ConstructorCheckKind::Lazy(def_id) => {
+                
+                let symbol_id = match self.ctx.def_to_symbol_id(def_id) {
+                    Some(id) => id,
+                    None => return false,
+                };
                 if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
                     // Check if this is a class symbol - classes are always constructors
                     if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {

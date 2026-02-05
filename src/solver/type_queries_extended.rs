@@ -338,9 +338,6 @@ pub enum PromiseTypeKind {
     },
     /// Lazy reference (DefId) - needs resolution to check if it's Promise
     Lazy(crate::solver::def::DefId),
-    /// Symbol reference (like Promise or PromiseLike)
-    #[deprecated(note = "Lazy types don't use SymbolRef")]
-    SymbolRef(crate::solver::types::SymbolRef),
     /// Object type (might be Promise interface from lib)
     Object(crate::solver::types::ObjectShapeId),
     /// Union type - check each member
@@ -388,9 +385,6 @@ pub enum NewExpressionTypeKind {
     Callable(crate::solver::types::CallableShapeId),
     /// Function type - always constructable
     Function(crate::solver::types::FunctionShapeId),
-    /// Symbol reference - resolve the symbol
-    #[deprecated(note = "Lazy types don't use SymbolRef")]
-    SymbolRef(crate::solver::types::SymbolRef),
     /// TypeQuery (typeof X) - needs symbol resolution
     TypeQuery(crate::solver::types::SymbolRef),
     /// Intersection type - check all members for construct signatures
@@ -896,9 +890,8 @@ pub enum ConstructorCheckKind {
     Union(Vec<TypeId>),
     /// Application type - extract base and check
     Application { base: TypeId },
-    /// Symbol reference - check symbol flags for CLASS (deprecated)
-    #[deprecated(note = "Lazy types don't use SymbolRef")]
-    SymbolRef(crate::solver::types::SymbolRef),
+    /// Lazy reference (DefId) - resolve to check if it's a class/interface
+    Lazy(crate::solver::def::DefId),
     /// TypeQuery (typeof) - check referenced symbol
     TypeQuery(crate::solver::types::SymbolRef),
     /// Not a constructor type or needs special handling
@@ -932,6 +925,7 @@ pub fn classify_for_constructor_check(
             let app = db.type_application(app_id);
             ConstructorCheckKind::Application { base: app.base }
         }
+        TypeKey::Lazy(def_id) => ConstructorCheckKind::Lazy(def_id),
         TypeKey::TypeQuery(sym_ref) => ConstructorCheckKind::TypeQuery(sym_ref),
         _ => ConstructorCheckKind::Other,
     }
