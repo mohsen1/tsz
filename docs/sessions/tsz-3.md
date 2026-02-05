@@ -1,4 +1,4 @@
-# Session tsz-3: LSP Implementation - JSX Linked Editing
+# Session tsz-3: LSP Implementation - Directory Renames
 
 **Started**: 2026-02-05
 **Status**: 🔄 ACTIVE
@@ -7,6 +7,22 @@
 ## Goal
 
 Implement LSP features that improve developer experience without requiring deep Solver/Checker architecture expertise.
+
+## Current Work: File Rename - Phase 4 (Directory Renames)
+
+Extending `workspace/willRenameFiles` to handle directory renames.
+
+**Challenge**: When a directory is renamed, must recursively update all imports
+that reference files within that directory. Files inside the renamed directory
+also need their relative imports updated.
+
+**Implementation Plan**:
+1. Detect if old_uri/new_uri are directories
+2. Recursively find all files within the directory
+3. For each file, find its dependents and update their imports
+4. Handle relative imports inside the renamed directory
+
+**Status**: Planning phase
 
 ## Completed Work
 
@@ -32,6 +48,16 @@ Implemented full `workspace/willRenameFiles` support:
 
 Implemented `textDocument/linkedEditingRange` for JSX/TSX files.
 When editing an opening JSX tag (e.g., `<div>`), the closing tag (`</div>`) automatically syncs.
+
+### File Rename Handling (2026-02-05)
+**Status**: ✅ COMPLETE - Commits c0e1bec5a, 9041b49b5, 460b19435
+
+Implemented full `workspace/willRenameFiles` support:
+- Phase 1: Path utilities (c0e1bec5a)
+- Phase 2: FileRenameProvider (9041b49b5)
+- Phase 3: Project orchestration (460b19435)
+
+**Next**: Phase 4 - Directory Renames
 
 ### Assertion Function Fix (2026-02-05)
 **Status**: ✅ COMPLETE - Commit 137b82c62
