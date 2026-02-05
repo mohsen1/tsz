@@ -32,6 +32,7 @@ pub mod definition;
 pub mod diagnostics;
 pub mod document_links;
 pub mod document_symbols;
+pub mod file_rename;
 pub mod folding;
 pub mod formatting;
 pub mod highlighting;
@@ -123,3 +124,6 @@ pub use type_hierarchy::{TypeHierarchyItem, TypeHierarchyProvider};
 
 // Linked Editing
 pub use linked_editing::{LinkedEditingProvider, LinkedEditingRanges};
+
+// File Rename
+pub use file_rename::{FileRenameProvider, ImportLocation};
