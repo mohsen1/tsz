@@ -314,8 +314,12 @@ Implemented project-wide Go to Implementation with transitive search support.
 7. ✅ **Upward Search Investigation** - Documented limitations (Task #35)
 8. ✅ **Heritage-Aware Rename** - Full inheritance hierarchy rename (Task #36)
 9. ✅ **Transitive Cache Invalidation** - Dependency-based cache clearing (Task #37)
+10. ✅ **Multi-File Diagnostic Propagation** - Reactive diagnostics across affected files (Task #38)
 
-**Remaining Tasks**: None! Per Gemini consultation, session tsz-3 LSP implementation is complete.
+**Next Priority** (per Gemini consultation):
+- Reference Count Code Lenses (Priority B)
+- Global Library Integration - lib.d.ts (Priority C)
+- Auto-Import for Type-Only Imports (Priority D)
 
 ### Pool Scan Unification (2026-02-05)
 **Status**: ✅ COMPLETE
@@ -661,3 +665,39 @@ Implemented transitive cache invalidation to ensure type information correctness
 - **Multiple import paths**: `FxHashSet` ensures each file is only invalidated once
 
 **Value**: Type information is now always correct after file edits, preventing stale type errors and ensuring accurate LSP responses across the entire project.
+
+### Multi-File Diagnostic Propagation (2026-02-05)
+**Status**: ✅ COMPLETE - Task #38
+
+Implemented reactive multi-file diagnostics that automatically update when dependencies change.
+
+**Problem**: Previously, diagnostics were only computed for the currently open file. If a user changed a function signature in `utils.ts`, errors in `main.ts` (which imports from `utils.ts`) wouldn't appear until `main.ts` was opened or re-saved.
+
+**Implementation**:
+- Added `diagnostics_dirty` flag to `ProjectFile` to track stale diagnostics
+- Set flag in `invalidate_caches()` when a file's dependencies change
+- Clear flag in `get_diagnostics()` after diagnostics are computed
+- Added `Project::get_stale_diagnostics()` method:
+  - Scans all files for the dirty flag
+  - Runs diagnostics for each dirty file
+  - Returns `HashMap<String, Vec<LspDiagnostic>>` with results
+
+**Example Workflow**:
+```typescript
+// User edits utils.ts:
+export function foo(x: number): string { return x; }  // Error: should return string
+
+// main.ts (which imports utils.ts) gets marked dirty:
+import { foo } from './utils';
+const result = foo(42);  // Should show error: number not assignable to string
+
+// LSP server calls get_stale_diagnostics()
+// Returns diagnostics for BOTH utils.ts AND main.ts
+```
+
+**Performance Considerations**:
+- Only rechecks files that were actually affected (via transitive dependency tracking)
+- Utilizes TypeCache to avoid redundant type checking
+- Lazy evaluation: diagnostics only computed when requested
+
+**Value**: Users now see errors across the entire project immediately after making changes, matching the "live" error checking experience of modern IDEs like VS Code with tsserver.
