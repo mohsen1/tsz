@@ -1,7 +1,7 @@
 # Session TSZ-6: Member Resolution on Generic and Placeholder Types
 
 **Started**: 2026-02-05
-**Status**: 🔄 Phase 1 Complete - Moving to Phase 2
+**Status**: 🔄 Phase 2 COMPLETE - Phase 3 Pending
 **Focus**: Implement member resolution for Type Parameters, Type Applications, and Union/Intersection types
 
 ## Summary
@@ -69,19 +69,36 @@ Implement member resolution for generic types in three phases:
 
 ### Phase 2: Generic Member Projection
 
-**Files**: `src/solver/instantiate.rs`, `src/solver/operations.rs`
+**Files**: `src/solver/instantiate.rs`, `src/solver/operations_property.rs`
 
 **Task**: Implement member projection for TypeApplications
 
-**Logic**:
-1. When looking up `map` on `T[]`:
-   - Recognize this as `Array<T>`
-   - Find the global `Array<U>` interface
-   - Find the `map` signature: `map<V>(callback: (val: U) => V): V[]`
-   - Substitute `U` with `T` from the application
-   - Result: `map<V>(callback: (val: T) => V): V[]`
+**Status**: ✅ COMPLETE (2026-02-05)
 
-2. Use existing `instantiate_type` or specialized `instantiate_signature`
+**Implementation Summary**:
+
+**Task 2.1**: Fix Interface Lowering Scope
+- Fixed `type_param_scopes.clone()` bug in `src/solver/lower.rs`
+- Changed to `Rc<RefCell<...>>` for true sharing across arena contexts
+- Result: Array<T> methods now correctly reference type parameter T
+
+**Task 2.2**: Lazy Member Instantiation
+- Instantiate only the property type, not the entire Callable
+- Avoids recursion into other 37+ Array methods
+- Uses `instantiate_type_with_infer` for proper infer var handling
+
+**Task 2.3**: Handle `this` Types
+- Added `substitute_this_type` for methods returning `this` or `this[]`
+- Substitutes `ThisType` with actual Application type
+
+**Test Results**:
+- `map<T, U>(arr: T[], f: (x: T) => U): U[]` ✅ Works
+- `arr.map(f)`, `arr.filter(f)`, `arr.push()`, etc. ✅ All Array methods found
+- Type parameter substitution ✅ Working correctly
+
+**Commits**:
+1. `fix(solver): share type_param_scopes across arena contexts via Rc`
+2. `feat(solver): implement lazy member instantiation for Array<T>`
 
 **Status**: 🔄 REDIRECTED (2026-02-05)
 
