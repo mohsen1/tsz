@@ -1718,15 +1718,18 @@ pub(crate) fn emit_outputs(
                 None
             };
 
+            // Always set source text for formatting decisions (single-line vs multi-line)
+            // This is needed even when source maps are disabled
+            if let Some(source_text) = file
+                .arena
+                .get(file.source_file)
+                .and_then(|node| file.arena.get_source_file(node))
+                .map(|source| source.text.as_ref())
+            {
+                printer.set_source_map_text(source_text);
+            }
+
             if let Some((_, _, output_name)) = map_info.as_ref() {
-                if let Some(source_text) = file
-                    .arena
-                    .get(file.source_file)
-                    .and_then(|node| file.arena.get_source_file(node))
-                    .map(|source| source.text.as_ref())
-                {
-                    printer.set_source_map_text(source_text);
-                }
                 printer.enable_source_map(output_name, &file.file_name);
             }
 
