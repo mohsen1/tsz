@@ -368,6 +368,7 @@ pub mod diagnostic_codes {
     pub const EXTENDS_CLAUSE_MUST_PRECEDE_IMPLEMENTS_CLAUSE: u32 = 1173;
     pub const CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS: u32 = 1174;
     pub const IMPLEMENTS_CLAUSE_ALREADY_SEEN: u32 = 1175;
+    pub const VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY: u32 = 1123; // Variable declaration list cannot be empty.
     pub const VARIABLE_DECLARATION_EXPECTED: u32 = 1134;
     pub const PROPERTY_OR_SIGNATURE_EXPECTED: u32 = 1131;
     pub const ENUM_MEMBER_EXPECTED: u32 = 1132;
