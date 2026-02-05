@@ -85,16 +85,43 @@ const result = process(42, x => x.toString());
 
 **Required**: Integrate contextual target types with lambda type checking
 
-1. **Modify lambda type checker** (`src/checker/expr.rs` or similar):
-   - Accept contextual target type parameter
-   - Use contextual type to infer lambda parameter types
-   - Ensure lambda body checking uses inferred parameter types
+#### TODO 1.2a: ✅ COMPLETE - Added `compute_contextual_types()` API (2026-02-05)
 
-2. **Pass contextual type from Solver to Checker**:
-   - Modify `resolve_generic_call_inner` to return contextual types
-   - Or add a separate mechanism to provide contextual types to Checker
+**Location**: `src/solver/operations.rs:934-1059`
 
-3. **Handle nested generics**:
+Added public method `compute_contextual_types()` to `CallEvaluator`:
+- Takes `&FunctionShape` and `&[TypeId]` (all argument types)
+- Performs Round 1 inference on non-contextual arguments only
+- Returns `TypeSubstitution` with fixed type variables
+- Enables Checker to orchestrate two-pass argument collection
+
+**Usage Pattern**:
+```rust
+let mut evaluator = CallEvaluator::new(types, &mut checker);
+evaluator.set_contextual_type(contextual_type);
+
+// Get contextual types for lambda parameters
+let substitution = evaluator.compute_contextual_types(&func, &arg_types);
+for (i, &arg) in args.iter().enumerate() {
+    if is_contextually_sensitive(arg) {
+        let param_type = func.params[i].type_id;
+        let contextual_type = instantiate_type(types, param_type, &substitution);
+        // Check lambda with contextual_type
+    }
+}
+```
+
+#### TODO 1.2b: Modify call expression checker for two-pass checking
+
+**Next Step**: Modify `src/checker/type_computation_complex.rs` to:
+1. Check non-contextual arguments first (arrays, primitives)
+2. Call `compute_contextual_types()` to get substitution
+3. Use substitution to construct contextual types for lambdas
+4. Check lambdas with contextual types
+
+**File to modify**: `src/checker/type_computation_complex.rs::get_type_of_call_expression_inner`
+
+#### TODO 1.2c: Handle nested generics (method resolution on generic types)
    - The `arr.map(f)` case requires method resolution on generic types
    - This is a separate issue from lambda contextual typing
    - May require additional work in property access resolution
