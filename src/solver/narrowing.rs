@@ -1788,8 +1788,12 @@ impl<'a> NarrowingContext<'a> {
                         if sense {
                             // True branch: narrow to the target type
                             self.narrow_to_type(source_type, *target_type)
+                        } else if *asserts {
+                            // CRITICAL: For assertion functions, the false branch is unreachable
+                            // (the function throws if the assertion fails), so we don't narrow
+                            source_type
                         } else {
-                            // False branch: exclude the target type
+                            // False branch for regular type guards: exclude the target type
                             self.narrow_excluding_type(source_type, *target_type)
                         }
                     }
