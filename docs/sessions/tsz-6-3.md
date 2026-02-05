@@ -1,7 +1,7 @@
 # Session TSZ-6-3: Property Access Visitor Refactoring
 
 **Started**: 2026-02-05
-**Status**: 🟡 ACTIVE - Incremental Migration Strategy
+**Status**: 🟡 ACTIVE - Milestones 1-2 Complete, Milestone 3 Ready for Implementation
 **Previous Session**: TSZ-4-3 (Enum Polish - COMPLETE)
 
 ## Context
@@ -226,11 +226,52 @@ console.log(i.x); // ✅ OK, type is string & number
 
 ## Next Steps (Immediate)
 
-1. **Start Milestone 1**: Implement TypeVisitor trait for Intrinsic types
-2. Create bridge pattern in resolve_property_access_inner
-3. Test and verify
-4. Continue to Milestone 2 (Object, Array)
-5. Ask Gemini Question 2 (Pro Review) after Milestone 2
+**For Next Session - Continue with Milestone 3 Implementation**:
+
+1. **Implement visit_union_impl** (extract from lines 1010-1164):
+   - Handle any/error short-circuits
+   - Filter unknown members (only return IsUnknown if ALL are unknown)
+   - Iterate members, collect valid_results and nullable_causes
+   - Return PropertyNotFound if ANY member lacks property
+   - Handle union-level index signatures as fallback
+   - Return Union of all valid_results
+
+2. **Implement visit_intersection_impl** (extract from lines 1166-1265):
+   - Iterate members, collect ALL Success results
+   - Track nullable_causes and saw_unknown
+   - Handle intersection-level index signatures if no results
+   - Return Intersection of all found types
+
+3. **Add to TypeVisitor**:
+   - Implement `visit_union(&mut self, list_id: u32) -> Self::Output`
+   - Implement `visit_intersection(&mut self, list_id: u32) -> Self::Output`
+   - Delegate to helper methods
+
+4. **Update Bridge Pattern**:
+   - Add Union and Intersection to the match dispatch
+   - Remove old match arms once visitors are working
+
+5. **Test and Verify**:
+   - Test union property access (all members have property)
+   - Test union property access (some members lack property)
+   - Test intersection property access
+   - Test edge cases: any, error, unknown, never
+
+6. **Mandatory Gemini Question 2** (Pro Review):
+   ```bash
+   ./scripts/ask-gemini.mjs --pro --include=src/solver/operations_property.rs "I implemented visit_union and visit_intersection for PropertyAccessEvaluator.
+   [PASTE CODE HERE]
+   Please review: 1) Does this correctly handle property distribution in unions? 2) Does it correctly intersect property types in intersections? 3) Are there edge cases with optional properties or 'any' I missed?"
+   ```
+
+**Estimated Time**: 4-6 hours for implementation + Pro review
+
+**Session Handoff Notes**:
+- Foundation is solid (Milestones 1-2 complete)
+- Gemini Question 1 validation complete
+- All edge cases documented
+- Code locations clearly identified
+- Ready for immediate implementation
 
 ## Notes
 
