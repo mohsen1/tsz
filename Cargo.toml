@@ -127,6 +127,10 @@ harness = false
 name = "union_reduction_bench"
 harness = false
 
+[[bench]]
+name = "object_subtype_bench"
+harness = false
+
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
 

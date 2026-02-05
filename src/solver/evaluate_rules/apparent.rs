@@ -111,6 +111,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }),
             }
         }
+        properties.sort_by(|a, b| a.name.cmp(&b.name));
 
         let number_index = if kind == IntrinsicKind::String {
             Some(IndexSignature {

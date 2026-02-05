@@ -73,6 +73,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_object_subtype(
         &mut self,
         source: &ObjectShape,
+        source_shape_id: Option<ObjectShapeId>,
         target: &ObjectShape,
     ) -> SubtypeResult {
         // Fast path: Nominal inheritance check for class instances
@@ -96,9 +97,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
+        let source_len = source.properties.len();
+        let target_len = target.properties.len();
+        let use_merge_scan =
+            source_shape_id.is_none() || source_len <= target_len.saturating_mul(4);
+
+        if use_merge_scan {
+            return self.check_object_subtype_merge_scan(source, target);
+        }
+
         // For each property in target, source must have a compatible property
         for t_prop in &target.properties {
-            let s_prop = source.properties.iter().find(|p| p.name == t_prop.name);
+            let s_prop = self.lookup_property(&source.properties, source_shape_id, t_prop.name);
 
             let result = match s_prop {
                 Some(sp) => self.check_property_compatibility(sp, t_prop),
@@ -119,6 +129,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             if !result.is_true() {
                 return result;
+            }
+        }
+
+        SubtypeResult::True
+    }
+
+    fn check_object_subtype_merge_scan(
+        &mut self,
+        source: &ObjectShape,
+        target: &ObjectShape,
+    ) -> SubtypeResult {
+        let s_props = &source.properties;
+        let t_props = &target.properties;
+
+        let mut s_idx = 0;
+        for t_prop in t_props {
+            while s_idx < s_props.len() && s_props[s_idx].name < t_prop.name {
+                s_idx += 1;
+            }
+
+            if s_idx < s_props.len() && s_props[s_idx].name == t_prop.name {
+                let result = self.check_property_compatibility(&s_props[s_idx], t_prop);
+                if !result.is_true() {
+                    return result;
+                }
+                s_idx += 1;
+                continue;
+            }
+
+            // Property missing - only OK if target property is optional and public
+            if t_prop.visibility != Visibility::Public {
+                return SubtypeResult::False;
+            }
+            if !t_prop.optional {
+                return SubtypeResult::False;
             }
         }
 
@@ -237,9 +282,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Rule #26: Split Accessors - Covariant reads
         // Source read type must be subtype of target read type
-        if !self
-            .check_subtype_with_method_variance(source_read, target_read, allow_bivariant)
-            .is_true()
+        if source_read != target_read
+            && !self
+                .check_subtype_with_method_variance(source_read, target_read, allow_bivariant)
+                .is_true()
         {
             return SubtypeResult::False;
         }
@@ -265,9 +311,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Contravariant writes: target.write must be subtype of source.write
             // This ensures that anything we can write to target is also safe to write to source
-            if !self
-                .check_subtype_with_method_variance(target_write, source_write, allow_bivariant)
-                .is_true()
+            if target_write != source_write
+                && !self
+                    .check_subtype_with_method_variance(target_write, source_write, allow_bivariant)
+                    .is_true()
             {
                 return SubtypeResult::False;
             }
@@ -383,12 +430,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_object_with_index_subtype(
         &mut self,
         source: &ObjectShape,
-        _source_shape_id: Option<ObjectShapeId>,
+        source_shape_id: Option<ObjectShapeId>,
         target: &ObjectShape,
     ) -> SubtypeResult {
         // First check named properties (nominal + structural)
         // Note: We pass the full shapes to enable nominal inheritance check
-        if !self.check_object_subtype(source, target).is_true() {
+        if !self
+            .check_object_subtype(source, source_shape_id, target)
+            .is_true()
+        {
             return SubtypeResult::False;
         }
 
@@ -635,7 +685,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_object_to_indexed(
         &mut self,
         source: &[PropertyInfo],
-        _source_shape_id: Option<ObjectShapeId>,
+        source_shape_id: Option<ObjectShapeId>,
         target: &ObjectShape,
     ) -> SubtypeResult {
         // First check named properties match
@@ -647,7 +697,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             number_index: None,
             symbol: None, // Source doesn't have a symbol (just properties)
         };
-        if !self.check_object_subtype(&source_shape, target).is_true() {
+        if !self
+            .check_object_subtype(&source_shape, source_shape_id, target)
+            .is_true()
+        {
             return SubtypeResult::False;
         }
 

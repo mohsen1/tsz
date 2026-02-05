@@ -468,7 +468,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             symbol: target.symbol,
         };
         if !self
-            .check_object_subtype(&source_shape, &target_shape)
+            .check_object_subtype(&source_shape, None, &target_shape)
             .is_true()
         {
             return SubtypeResult::False;
