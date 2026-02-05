@@ -722,8 +722,6 @@ impl Project {
                 namespace_targets.extend(reexport_namespaces);
             }
 
-            let file_names: Vec<String> = self.files.keys().cloned().collect();
-
             for (def_file, export_name) in expanded_targets {
                 let export_nodes = {
                     let target_file = self.files.get(&def_file);
@@ -744,7 +742,11 @@ impl Project {
                     }
                 }
 
-                for other_name in &file_names {
+                // Pool Scan Optimization: Use SymbolIndex for O(M) candidate filtering
+                // Instead of O(N) where N = all files, we get O(M) where M = files containing the symbol
+                let candidate_files = self.get_candidate_files_for_symbol(&export_name);
+
+                for other_name in &candidate_files {
                     if other_name == &def_file {
                         continue;
                     }
@@ -800,7 +802,10 @@ impl Project {
                     continue;
                 }
 
-                for other_name in &file_names {
+                // Pool Scan Optimization: Use SymbolIndex for O(M) candidate filtering
+                let candidate_files = self.get_candidate_files_for_symbol(&target.member);
+
+                for other_name in &candidate_files {
                     if other_name == &target.file {
                         continue;
                     }
@@ -1111,7 +1116,6 @@ impl Project {
                 return Ok(workspace_edit);
             }
 
-            let file_names: Vec<String> = self.files.keys().cloned().collect();
             let mut pending = cross_targets;
             let mut seen_targets: FxHashSet<(String, String)> = FxHashSet::default();
             let mut namespace_targets = Vec::new();
@@ -1160,7 +1164,11 @@ impl Project {
 
                 namespace_targets.extend(reexport_namespaces);
 
-                for other_name in &file_names {
+                // Pool Scan Optimization: Use SymbolIndex for O(M) candidate filtering
+                // Instead of O(N) where N = all files, we get O(M) where M = files containing the symbol
+                let candidate_files = self.get_candidate_files_for_symbol(&export_name);
+
+                for other_name in &candidate_files {
                     if other_name == &def_file {
                         continue;
                     }
@@ -1241,7 +1249,10 @@ impl Project {
                     continue;
                 }
 
-                for other_name in &file_names {
+                // Pool Scan Optimization: Use SymbolIndex for O(M) candidate filtering
+                let candidate_files = self.get_candidate_files_for_symbol(&target.member);
+
+                for other_name in &candidate_files {
                     if other_name == &target.file {
                         continue;
                     }
