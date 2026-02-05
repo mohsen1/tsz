@@ -108,15 +108,27 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
 - Committed and pushed to origin (commit: 1efb7d837)
 - Awaiting Gemini Pro review (Question 2) - blocked by rate limit
 
-**🔄 Next Steps:**
+**🔄 Redefined Session (2026-02-05):**
+
+**Priority 1: Validation (BLOCKED by rate limit)**
 1. Get Gemini Pro review of is_promise_like and is_valid_for_in_target
-2. Refactor iterators.rs to use these helpers (replace lines 666-708)
-3. Implement get_iterator_info in operations.rs (more complex, needs CallEvaluator)
-4. Refactor generators.rs to use new helpers
+2. Propose get_iterator_info design for approach validation
+
+**Priority 2: Refactoring (Post-Validation)**
+1. Refactor iterators.rs:666-708 to use validated helpers
+2. Implement get_iterator_info in operations.rs (once approved)
+3. Refactor generators.rs to use get_iterator_info
+
+**Priority 3: Productive "Wait" Tasks (Do Now)**
+While waiting for rate limit reset:
+1. ✏️ Write unit tests for get_iterator_info (test-first development)
+2. 🧹 Remove orphaned imports/dead code from Checker
+3. 📝 Update documentation with implementation deviations
 
 **Remaining TypeKey Violations:**
-- iterators.rs:990-1116: Iterator info extraction (needs get_iterator_info)
-- generators.rs:568+: Similar violations
+- iterators.rs:666-708 (awaiting validation, then refactor)
+- iterators.rs:990-1116 (needs get_iterator_info)
+- generators.rs:568+ (needs get_iterator_info)
 
 ### Step 2: Refactor Primitives (Low Risk)
 Target: Simple type identity checks
