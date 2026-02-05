@@ -143,10 +143,12 @@ impl<'a> FlowAnalyzer<'a> {
         let left = self.skip_parenthesized(left);
         let target = self.skip_parenthesized(target);
         if self.is_matching_reference(left, target) {
+            eprintln!("DEBUG: Direct match! left={:?}, target={:?}", left, target);
             return true;
         }
 
         let Some(node) = self.arena.get(left) else {
+            eprintln!("DEBUG: Node not found for left={:?}", left);
             return false;
         };
 
@@ -175,14 +177,21 @@ impl<'a> FlowAnalyzer<'a> {
             || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
             && let Some(lit) = self.arena.get_literal_expr(node)
         {
-            for &elem in &lit.elements.nodes {
+            eprintln!(
+                "DEBUG: Array literal with {} elements",
+                lit.elements.nodes.len()
+            );
+            for (idx, &elem) in lit.elements.nodes.iter().enumerate() {
                 if elem.is_none() {
                     continue;
                 }
+                eprintln!("DEBUG: Checking array element {}: elem={:?}", idx, elem);
                 if self.assignment_targets_reference_internal(elem, target) {
+                    eprintln!("DEBUG: Array element MATCHED!");
                     return true;
                 }
             }
+            eprintln!("DEBUG: No array elements matched");
         }
 
         if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
