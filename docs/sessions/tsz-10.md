@@ -41,7 +41,15 @@ Per `NORTH_STAR.md` and the existing codebase:
 
 ### Task 1: Truthiness & Type-of Narrowing
 
-**Status**: 🔄 IN PROGRESS (Started 2026-02-05)
+**Status**: ✅ SUBSTANTIAL PROGRESS (typeof complete, truthiness verified)
+
+**Completed Work**:
+1. ✅ Fixed typeof inequality narrowing bug (!= and !== operators)
+2. ✅ Verified typeof with any/unknown works correctly
+3. ✅ Verified basic truthiness narrowing works (null/undefined/void removal)
+4. ✅ "Missing Type Resolution" bug fixed (enables type alias narrowing)
+
+**Remaining**: Truthiness edge cases (literal unions) - matches TypeScript behavior (no action needed)
 
 **Gemini Consultation**: Asked for approach validation. Key findings:
 - Bugs from commit f2d4ae5d5 appear to already be fixed in current codebase
