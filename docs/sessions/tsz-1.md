@@ -1325,7 +1325,75 @@ Enables better union/intersection reduction by detecting disjoint template liter
 
 ---
 
-## Redefined Priorities (2025-02-05 Post-Task #30)
+## Redefined Priorities (2025-02-05 Post-Gemin Session)
+
+### Priority 1: Task #32 - The Canonicalizer 🚧 ACTIVE
+**Status**: Foundation Complete, Moving to Implementation Phase
+
+**Why Absolute Priority**: This is the engine that turns `Lazy(DefId)` into `Recursive(u32)`. Without it, the `Recursive` variant is dead code and tsz remains "nominal-first" for type aliases.
+
+**Completed Foundation**:
+- ✅ TypeKey::Recursive(u32) variant added
+- ✅ Visitor pattern integrated
+- ✅ All 21 pattern matches fixed
+- ✅ All tests pass (Commit: dca01dde7)
+
+**Implementation Roadmap**:
+
+#### Step 1: Implement `get_def_kind()` in TypeResolver
+- **File**: `src/solver/db.rs`
+- **Action**: Add `get_def_kind(def_id: DefId) -> DefKind` to TypeResolver trait
+- **Why**: Distinguish TypeAlias (structural) from Interface/Class (nominal)
+- **Status**: 📋 Ready to start
+
+#### Step 2: MANDATORY Gemini Consultation (Question 1)
+Before implementing Canonicalizer, ask:
+```bash
+./scripts/ask-gemini.mjs --include=src/solver "I am ready to implement the Canonicalizer for Task #32.
+Goal: Transform cyclic TypeAlias graphs into trees using TypeKey::Recursive(u32).
+
+My planned approach:
+1. Create Canonicalizer struct in src/solver/intern.rs with stack: Vec<DefId>
+2. Implement intern_canonical(type_id) with De Bruijn index transformation
+3. Add canonical_cache: DashMap<TypeId, TypeId> to TypeInterner
+
+Is this correct? How to handle TypeApplication (generics)?
+Should I canonicalize TypeParameter names for alpha-equivalence?"
+```
+
+#### Step 3: Implement Canonicalizer
+- Based on Gemini's guidance from Question 1
+- Stack-based cycle detection
+- Transform Lazy -> Recursive for TypeAlias only
+
+#### Step 4: Gemini Question 2 (Pro)
+- Implementation review before integration
+
+#### Step 5: Conformance Baseline
+- Run `recursiveTypes` suite to find target test cases
+- These will validate Canonicalizer once implemented
+
+---
+
+### Priority 2: Structural Identity Baseline 📋 NEXT
+**Status**: Planned after Canonicalizer implementation
+
+**Why**: Run specific recursive conformance tests to identify where nominality currently causes false negatives.
+
+**Action**: Run conformance tests for `recursiveTypes` and `typeRelationships` suites.
+
+**Goal**: Find "Gold Standard" test cases for validating Canonicalizer.
+
+---
+
+### Priority 3: Refined Object Overlap (TS2367) Gaps 📝 Planned
+**Status**: Backlog
+
+**Focus**: Address literal widening and template literal disjointness in overlap checks.
+
+---
+
+## Previous Task Status Reference
 
 ### Task #34: Intersection Reduction ✅ COMPLETE (2025-02-05)
 **Status**: ✅ Complete
