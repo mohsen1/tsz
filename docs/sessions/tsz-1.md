@@ -864,8 +864,6 @@ Recommendation: Defer and move to higher-ROI tasks (Weak Type Detection TS2559).
 
 **Commit**: a3533d7db
 
-**Commit**: a3533d7db
-
 ---
 
 ### Task #27: Weak Type Detection (TS2559) ✅ ALREADY IMPLEMENTED (2025-02-05)
@@ -900,7 +898,33 @@ Fixed compilation error in `src/solver/db.rs` where `PropertyAccessEvaluator::ne
 
 ---
 
+### Task #28: Fix Stack Overflow in test_interface_extends_class_no_recursion_crash ⚠️ DEFERRED (2025-02-05)
+**Status**: ⚠️ Deferred - Issue is deeper than expected (2025-02-05)
+**Why**: Unblock Task #26 simplification infrastructure
+
+**Investigation Findings**:
+The stack overflow is NOT in `private_brand_assignability_override` as initially hypothesized.
+
+**Attempted Fix**:
+1. Added `brand_in_progress: FxHashSet<(TypeId, TypeId)>` to CompatChecker
+2. Changed `private_brand_assignability_override` from &self to &mut self
+3. Added cycle detection with coinductive semantics (return Some(true) on cycle)
+4. Created `private_brand_assignability_inner` helper function
+5. Updated all recursive calls to use proper guarded entry point
+
+**Result**: Test STILL overflows after fix.
+
+**Conclusion**:
+The issue is in a deeper part of the call stack - likely in type evaluation, subtype checking, or another layer. The problem requires deeper investigation into the full type checking pipeline, not just the private brand checking.
+
+This is likely an **expansive recursion** issue where the type grows on every step (e.g., `T` -> `Box<T>` -> `Box<Box<T>>`). Fixing this usually requires a fundamental change in how `TypeEvaluator` and `SubtypeChecker` share state or how `Lazy` types are cached.
+
+**Recommendation**: Defer to future session or pass to another session with more time for deep architectural investigation. Pivot to Tasks #19-21 (Index Checker Compatibility) which are well-defined and high-ROI.
+
+---
+
 **Next Session**:
-- Ask Gemini for next high-priority task (skip Task #15)
+- Start with Task #19 (Index checker compatibility)
+- Ask Gemini pre-implementation question before coding (MANDATORY)
 - Focus on tasks with better ROI and clearer architectural path
 - Continue following Two-Question Rule
