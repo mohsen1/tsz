@@ -196,6 +196,13 @@ Fixed `0o`, `0O` to emit TS1178 "Octal digit expected."
 
 **File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
 
+### TS1489 for decimals with leading zeros (commit 8e33a8e)
+
+Fixed `009`, `08` to emit TS1489 "Decimals with leading zeros are not allowed."
+These are numbers starting with `0` that contain non-octal digits (8 or 9).
+
+**File**: `src/parser/state_expressions.rs` - `parse_numeric_literal()`
+
 ## Recommended Approach
 
 1. **Short-term**: Focus on other conformance improvements
