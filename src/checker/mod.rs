@@ -112,6 +112,9 @@ mod const_assertion_tests;
 #[path = "tests/freshness_stripping_tests.rs"]
 mod freshness_stripping_tests;
 #[cfg(test)]
+#[path = "tests/function_bivariance.rs"]
+mod function_bivariance;
+#[cfg(test)]
 #[path = "tests/global_type_tests.rs"]
 mod global_type_tests;
 #[cfg(test)]
