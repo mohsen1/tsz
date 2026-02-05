@@ -5662,11 +5662,11 @@ fn test_circular_extends_conflicting_lower_bounds() {
     let results = ctx.resolve_all_with_constraints().unwrap();
 
     assert_eq!(results.len(), 2);
-    // T gets union of string | number from cycle propagation
+    // Both T and U get union of string | number (SCC unification makes them equivalent)
+    // Previous test expected U to keep NUMBER, but that violated T extends U constraint
     let expected_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(results[0], (t_name, expected_union));
-    // U gets its direct lower bound (number)
-    assert_eq!(results[1], (u_name, TypeId::NUMBER));
+    assert_eq!(results[1], (u_name, expected_union));
 }
 
 #[test]

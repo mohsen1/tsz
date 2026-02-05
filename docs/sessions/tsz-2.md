@@ -121,12 +121,37 @@ Example: T extends U, U extends T with T.lower="hello", U.lower="world"
 - Expected: Both T and U → STRING (unified)
 - Actual: T → STRING, U → "world" (not unified, causes BoundsViolation)
 
-### Next Steps
+### Next Steps - Gemini Pro Guidance (2026-02-05)
 
-1. Investigate cycle detection and unification logic
-2. Ask Gemini Pro: "How should type parameters in cycles be unified?"
-3. Implement cycle unification (SCC detection + candidate merging)
-4. Test and iterate
+**Recommendation**: Continue with SCC-based unification (do not split session).
+
+**Approach**: Identify strongly connected components (SCCs) and unify them BEFORE fixed-point propagation.
+
+**Implementation Plan**:
+
+1. **Add `unify_circular_constraints()` helper** - called at start of `strengthen_constraints`
+   - Build dependency graph of InferenceVar nodes based on upper_bounds
+   - Detect SCCs (cycles) using Tarjan's or simpler algorithm
+   - For each SCC with >1 variable: call `self.unify_vars(var_a, var_b)`
+
+2. **Leverage existing `UnifyValue` for InferenceInfo** (lines 75-103)
+   - Already handles merging of candidates and upper_bounds!
+   - When T and U are unified, their candidate sets automatically merge
+
+3. **Run fixed-point propagation AFTER unification**
+   - Now much more effective since cycles are pre-unified
+   - Propagates merged results from unified cycles up the DAG
+
+**Critical Edge Cases**:
+- Only unify naked type parameters: T extends U, U extends T
+- DO NOT unify F-bounded polymorphism: T extends List<T>
+- Check: Only follow upper_bounds that are TypeKey::TypeParameter
+- `unify_vars` may trigger Conflict if both already resolved to different types (good - catches errors early)
+
+**Why This Fixes Remaining Tests**:
+- Literal Types: T("a") <-> U("b") becomes Root({"a", "b"}) → both resolve to STRING
+- Conflicting Lower Bounds: Merged into one InferenceInfo, BCT handles conflict
+- Concrete Upper/Lower: Upper bounds merged, validation against intersection works
 
 ## Gemini Pro Algorithm (2026-02-05)
 
