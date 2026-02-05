@@ -542,21 +542,12 @@ impl<'a> FlowAnalyzer<'a> {
                     // CRITICAL FIX: Try to get assigned type for ALL assignments, including destructuring
                     // Previously: Only direct assignments (x = ...) worked
                     // Now: Destructuring ([x] = ...) also works because get_assigned_type handles it
-                    eprintln!("DEBUG: targets_reference=true, calling get_assigned_type");
                     if let Some(assigned_type) = self.get_assigned_type(flow.node, reference) {
                         // Killing definition: replace type with RHS type and stop traversal
-                        eprintln!(
-                            "DEBUG: get_assigned_type returned Some({:?})",
-                            assigned_type
-                        );
                         assigned_type
                     } else {
                         // If we can't resolve the RHS type, conservatively return declared type
                         // The value HAS changed, so we can't continue to antecedent
-                        eprintln!(
-                            "DEBUG: get_assigned_type returned None, returning current_type={:?}",
-                            current_type
-                        );
                         current_type
                     }
                 } else if self.assignment_affects_reference_node(flow.node, reference) {
@@ -1169,42 +1160,21 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if let Some(rhs) = self.assignment_rhs_for_reference(assignment_node, target) {
-            eprintln!(
-                "DEBUG: get_assigned_type: got rhs={:?} from assignment_rhs_for_reference",
-                rhs
-            );
             // For flow narrowing, prefer literal types from AST nodes over the type checker's widened types
             // This ensures that `x = 42` narrows to literal 42.0, not just NUMBER
             // This matches TypeScript's behavior where control flow analysis preserves literal types
-            eprintln!(
-                "DEBUG: get_assigned_type: about to call literal_type_from_node with rhs={:?}",
-                rhs
-            );
             if let Some(literal_type) = self.literal_type_from_node(rhs) {
-                eprintln!(
-                    "DEBUG: get_assigned_type: literal_type_from_node returned {:?}",
-                    literal_type
-                );
                 return Some(literal_type);
             }
             if let Some(nullish_type) = self.nullish_literal_type(rhs) {
-                eprintln!(
-                    "DEBUG: get_assigned_type: nullish_literal_type returned {:?}",
-                    nullish_type
-                );
                 return Some(nullish_type);
             }
             // Fall back to type checker's result for non-literal expressions
             if let Some(node_types) = self.node_types
                 && let Some(&rhs_type) = node_types.get(&rhs.0)
             {
-                eprintln!(
-                    "DEBUG: get_assigned_type: node_types returned {:?}",
-                    rhs_type
-                );
                 return Some(rhs_type);
             }
-            eprintln!("DEBUG: get_assigned_type: no type found, returning None");
             return None;
         }
 
@@ -1236,26 +1206,11 @@ impl<'a> FlowAnalyzer<'a> {
             let bin = self.arena.get_binary_expr(node)?;
             if bin.operator_token == SyntaxKind::EqualsToken as u16 {
                 if self.is_matching_reference(bin.left, reference) {
-                    eprintln!(
-                        "DEBUG: assignment_rhs_for_reference: direct match, returning bin.right={:?}",
-                        bin.right
-                    );
                     return Some(bin.right);
                 }
-                eprintln!(
-                    "DEBUG: assignment_rhs_for_reference: calling match_destructuring_rhs, left={:?}, right={:?}",
-                    bin.left, bin.right
-                );
                 if let Some(rhs) = self.match_destructuring_rhs(bin.left, bin.right, reference) {
-                    eprintln!(
-                        "DEBUG: assignment_rhs_for_reference: match_destructuring_rhs returned Some({:?})",
-                        rhs
-                    );
                     return Some(rhs);
                 }
-                eprintln!(
-                    "DEBUG: assignment_rhs_for_reference: match_destructuring_rhs returned None"
-                );
             }
             return None;
         }
@@ -1344,44 +1299,15 @@ impl<'a> FlowAnalyzer<'a> {
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
             {
-                let elements = if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-                    self.arena.get_literal_expr(node).map(|lit| &lit.elements)?
-                } else {
-                    self.arena
-                        .get_binding_pattern(node)
-                        .map(|pat| &pat.elements)?
-                };
-                let rhs_elements = self.array_literal_elements(rhs);
-                eprintln!(
-                    "DEBUG: match_destructuring_rhs: array pattern, rhs_elements={:?}",
-                    rhs_elements.is_some()
-                );
-                for (index, &elem) in elements.nodes.iter().enumerate() {
-                    if elem.is_none() {
-                        continue;
-                    }
-                    if !self.assignment_targets_reference_internal(elem, target) {
-                        continue;
-                    }
-                    let rhs_elem = rhs_elements
-                        .and_then(|rhs_list| rhs_list.nodes.get(index).copied())
-                        .unwrap_or(NodeIndex::NONE);
-                    eprintln!(
-                        "DEBUG: match_destructuring_rhs: index={}, rhs_elem={:?}",
-                        index, rhs_elem
-                    );
-                    if let Some(found) = self.match_destructuring_rhs(elem, rhs_elem, target) {
-                        return Some(found);
-                    }
-                    if !rhs_elem.is_none() {
-                        eprintln!(
-                            "DEBUG: match_destructuring_rhs: returning rhs_elem={:?}",
-                            rhs_elem
-                        );
-                        return Some(rhs_elem);
-                    }
-                    return None;
-                }
+                // CRITICAL FIX: For array destructuring, we should NOT narrow to the RHS element type.
+                // Unlike direct assignment (x = 1 narrows x to literal 1), destructuring extracts
+                // a value from an array, which clears the narrowing to the declared type.
+                //
+                // Example: [x] = [1] should clear x to string | number, not narrow to literal 1.
+                //
+                // By returning None here, we signal that the RHS type should not be used,
+                // which causes get_assigned_type to return None, triggering initial_type return.
+                return None;
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::OBJECT_BINDING_PATTERN =>
@@ -1661,7 +1587,6 @@ impl<'a> FlowAnalyzer<'a> {
                 .map(|bin| {
                     let is_op = self.is_assignment_operator(bin.operator_token);
                     let targets = self.assignment_targets_reference_internal(bin.left, target);
-                    eprintln!("DEBUG: assignment_targets_reference_node binary: is_op={}, targets={}, assignment_node={:?}, target={:?}", is_op, targets, assignment_node, target);
                     is_op && targets
                 })
                 .unwrap_or(false);
