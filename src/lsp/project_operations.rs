@@ -1234,19 +1234,31 @@ impl Project {
         output: &mut Vec<ImportCandidate>,
         seen: &mut FxHashSet<(String, String, String, bool)>,
     ) {
-        for file_name in self.files.keys() {
+        // Try optimized path for named exports using symbol index
+        let candidate_files = self.symbol_index.get_files_with_symbol(missing_name);
+        let use_optimized = !candidate_files.is_empty();
+
+        let files_to_check: Vec<String> = if use_optimized {
+            candidate_files
+        } else {
+            // Fallback to checking all files for default/namespace exports
+            // (where import name can be different from export name)
+            self.files.keys().cloned().collect()
+        };
+
+        for file_name in files_to_check {
             if file_name == from_file.file_name() {
                 continue;
             }
 
             let Some(module_specifier) =
-                self.module_specifier_from_files(from_file.file_name(), file_name)
+                self.module_specifier_from_files(from_file.file_name(), &file_name)
             else {
                 continue;
             };
 
             let mut visited = FxHashSet::default();
-            let matches = self.matching_exports_in_file(file_name, missing_name, &mut visited);
+            let matches = self.matching_exports_in_file(&file_name, missing_name, &mut visited);
 
             for export_match in matches {
                 let candidate = ImportCandidate {
@@ -1272,6 +1284,37 @@ impl Project {
                 }
             }
         }
+    }
+
+    /// Check if a file has a default export.
+    fn file_has_default_export(&self, file_name: &str) -> bool {
+        let Some(file) = self.files.get(file_name) else {
+            return false;
+        };
+        let arena = file.arena();
+        let Some(root_node) = arena.get(file.root()) else {
+            return false;
+        };
+        let Some(source_file) = arena.get_source_file(root_node) else {
+            return false;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            };
+            let Some(export) = arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export {
+                return true;
+            }
+        }
+
+        false
     }
 
     pub(crate) fn completion_from_import_candidate(
