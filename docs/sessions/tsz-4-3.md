@@ -1,7 +1,7 @@
-# Session TSZ-4-3: Enum Polish & TSZ-6 Phase 3 Initiation
+# Session TSZ-4-3: Enum Polish
 
 **Started**: 2026-02-05
-**Status**: 🟡 ACTIVE
+**Status**: 🟡 ACTIVE - Ready for Implementation
 **Previous Session**: TSZ-4-2 (Enum Member Distinction - COMPLETE)
 
 ## Context
@@ -11,9 +11,110 @@ Conformance suite shows significant progress: 35/80 enum tests pass, only 5 miss
 
 ## Goal
 
-**Task 1**: Investigate and fix the 5 remaining missing TS2322 enum errors.
+Fix the 5 remaining missing TS2322 enum errors to achieve 100% enum nominal typing correctness.
 
-**Task 2**: Initiate TSZ-6 Phase 3 (Union/Intersection Member Resolution) after enum polish is complete.
+## Investigation Results (2026-02-05) - COMPLETE ✅
+
+### Identified Root Cause
+
+**Failing Test**: `enumLiteralAssignableToEnumInsideUnion.ts`
+
+**Test Case**:
+```typescript
+namespace X { export enum Foo { A, B } }
+namespace Z { export enum Foo { A = 1 << 1, B = 1 << 2 } }
+const e1: X.Foo | boolean = Z.Foo.A; // Should error TS2322 but doesn't
+```
+
+**Root Cause**:
+- Source: `Z.Foo.A` (TypeKey::Enum with DefId for Z.Foo)
+- Target: `X.Foo | boolean` (TypeKey::Union)
+- The **Checker layer's** `enum_assignability_override` only handles cases where BOTH source and target are `TypeKey::Enum`
+- When target is a Union, it falls through without checking if the union contains an enum with different DefId
+
+**Key Discovery**:
+Conformance tests use the **Checker layer** implementation in `src/checker/state_type_environment.rs`, NOT the Solver layer implementation in `src/solver/compat.rs`!
+
+## Implementation Plan (Validated by Gemini)
+
+### Location
+`src/checker/state_type_environment.rs` in the `enum_assignability_override` function
+
+### Approach
+Add union checking logic in the `else` branch (when not both are TypeKey::Enum):
+
+```rust
+// Check if source is enum and target is a union containing an enum
+if let Some(TypeKey::Enum(s_def, _)) = source_key {
+    if let Some(TypeKey::Union(members)) = target_key {
+        let member_list = self.ctx.types.type_list(members);
+
+        // Check each constituent of the union
+        for &member in member_list.iter() {
+            if let Some(TypeKey::Enum(member_def, _)) = self.ctx.types.lookup(member) {
+                if s_def != member_def {
+                    // Nominal mismatch - reject!
+                    return Some(false);
+                }
+            }
+        }
+        // All enum constituents match (or no enum constituents)
+    }
+}
+```
+
+### Edge Cases to Handle (from Gemini)
+1. **Literal Enums**: Ensure `enum E { A = 1 }` where `1` is assignable to `E` still works
+2. **The `any` hole**: `X.Foo | any` should still allow assignment (unless strict mode)
+3. **Intersection Types**: `X.Foo & { brand: string }` should still reject `Z.Foo.A`
+4. **Recursive Resolution**: Avoid triggering `cycle_stack` circular type resolution
+
+## Success Criteria
+
+- [ ] Implement union checking in Checker layer
+- [ ] Test with `enumLiteralAssignableToEnumInsideUnion.ts` - should see TS2322
+- [ ] Run full enum conformance suite - 0 missing TS2322 errors
+- [ ] Ask Gemini Question 2 (Pro) for implementation review
+- [ ] Fix any bugs found by Gemini review
+- [ ] Final conformance verification
+
+## Next Steps (When Resuming)
+
+1. Implement the fix in `src/checker/state_type_environment.rs`
+2. Build and test with `enumLiteralAssignableToEnumInsideUnion.ts`
+3. Run `./scripts/conformance.sh run --filter "enum"` to verify all 5 errors fixed
+4. Ask Gemini Question 2 (Pro): `./scripts/ask-gemini.mjs --pro --include=src/checker/state_type_environment.rs`
+5. Fix any bugs identified by Gemini
+6. Commit and document results
+
+## Estimated Complexity
+
+**LOW** (2-3 hours)
+- Implementation is straightforward
+- Clear test case to verify
+- Gemini validation available
+- Isolated from TSZ-3 circular dependency issues
+
+## Dependencies
+
+- TSZ-4-2 (Enum Member Distinction) - COMPLETE ✅
+- Gemini consultation for approach - COMPLETE ✅
+- Gemini Question 2 (Pro review) - PENDING
+
+## Related Sessions
+
+- **TSZ-4-1**: Strict Null Checks & Lawyer Layer - COMPLETE
+- **TSZ-4-2**: Enum Member Distinction - COMPLETE
+- **TSZ-4-3**: Enum Polish (THIS SESSION) - IN PROGRESS
+- **TSZ-6 Phase 3**: Union/Intersection Member Resolution - NEXT AFTER THIS
+- **TSZ-3**: CFA Narrowing - BLOCKED (expert Solver knowledge required)
+
+## Notes
+
+- This is the "last mile" for enum correctness
+- Completing this provides stable foundation before TSZ-6 Phase 3
+- Must follow Two-Question Rule per AGENTS.md
+- Code is clean and ready for implementation
 
 ## Task 1: Debug Missing TS2322 Errors
 
