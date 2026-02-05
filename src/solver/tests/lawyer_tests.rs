@@ -4,7 +4,35 @@ use super::*;
 use crate::solver::AnyPropagationMode;
 use crate::solver::compat::CompatChecker;
 use crate::solver::intern::TypeInterner;
+use crate::solver::types::{FunctionShape, ParamInfo};
 use crate::solver::{LiteralValue, PropertyInfo, TypeId, Visibility};
+
+// Helper function to create a simple function type
+fn create_function_type(
+    interner: &TypeInterner,
+    params: Vec<TypeId>,
+    return_type: TypeId,
+) -> TypeId {
+    let param_infos: Vec<ParamInfo> = params
+        .into_iter()
+        .map(|type_id| ParamInfo {
+            name: None,
+            type_id,
+            rest: false,
+            optional: false,
+        })
+        .collect();
+
+    interner.function(FunctionShape {
+        type_params: vec![],
+        params: param_infos,
+        this_type: None,
+        return_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    })
+}
 
 // =============================================================================
 // AnyPropagationRules Tests
@@ -351,12 +379,14 @@ fn test_any_in_function_parameters_strict_mode() {
     checker.set_strict_any_propagation(true);
 
     // Create function types: (x: any) => void and (x: number) => void
-    let any_param = interner.function_shape(
+    let any_param = create_function_type(
+        &interner,
         vec![TypeId::ANY], // params: [any]
         TypeId::VOID,      // return: void
     );
 
-    let number_param = interner.function_shape(
+    let number_param = create_function_type(
+        &interner,
         vec![TypeId::NUMBER], // params: [number]
         TypeId::VOID,         // return: void
     );
@@ -532,4 +562,225 @@ fn test_top_level_any_always_works() {
     checker.set_strict_any_propagation(false);
     assert!(checker.is_assignable(TypeId::ANY, TypeId::NUMBER));
     assert!(checker.is_assignable(TypeId::STRING, TypeId::ANY));
+}
+
+// =============================================================================
+// TSZ-4 Task 2: Function Bivariance Tests
+// =============================================================================
+
+#[test]
+fn test_function_bivariance_legacy_mode() {
+    // In legacy mode (strictFunctionTypes=false), function parameters are bivariant
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Ensure we're in legacy mode (default)
+    checker.set_strict_function_types(false);
+
+    // Create function types: (x: string) => void and (x: any) => void
+    let string_param = create_function_type(
+        &interner,
+        vec![TypeId::STRING], // params: [string]
+        TypeId::VOID,         // return: void
+    );
+
+    let any_param = create_function_type(
+        &interner,
+        vec![TypeId::ANY], // params: [any]
+        TypeId::VOID,      // return: void
+    );
+
+    // In legacy mode, bivariance allows both directions
+    // (x: string) => void should be assignable to (x: any) => void
+    assert!(
+        checker.is_assignable(string_param, any_param),
+        "Legacy mode: (x: string) => void should be assignable to (x: any) => void (bivariance)"
+    );
+
+    // (x: any) => void should be assignable to (x: string) => void
+    assert!(
+        checker.is_assignable(any_param, string_param),
+        "Legacy mode: (x: any) => void should be assignable to (x: string) => void (bivariance)"
+    );
+}
+
+#[test]
+fn test_function_contravariance_strict_mode() {
+    // In strict mode (strictFunctionTypes=true), function parameters are contravariant
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Enable strict function types
+    checker.set_strict_function_types(true);
+
+    // Create function types
+    let string_param = create_function_type(
+        &interner,
+        vec![TypeId::STRING], // params: [string]
+        TypeId::VOID,         // return: void
+    );
+
+    let any_param = create_function_type(
+        &interner,
+        vec![TypeId::ANY], // params: [any]
+        TypeId::VOID,      // return: void
+    );
+
+    // In strict mode, parameters are contravariant
+    // (x: any) => void should be assignable to (x: string) => void
+    // because any is a supertype of string (contravariance: target <: source)
+    assert!(
+        checker.is_assignable(any_param, string_param),
+        "Strict mode: (x: any) => void should be assignable to (x: string) => void (contravariance)"
+    );
+
+    // (x: string) => void should NOT be assignable to (x: any) => void
+    // because string is NOT a supertype of any
+    assert!(
+        !checker.is_assignable(string_param, any_param),
+        "Strict mode: (x: string) => void should NOT be assignable to (x: any) => void (contravariance)"
+    );
+}
+
+#[test]
+fn test_methods_always_bivariant() {
+    // Methods are always bivariant regardless of strictFunctionTypes
+    let interner = TypeInterner::new();
+
+    // Create method types by manually constructing FunctionShape with is_method=true
+    use crate::solver::types::FunctionShape;
+
+    let method_string = FunctionShape {
+        type_params: vec![],
+        params: vec![crate::solver::types::ParamInfo {
+            name: None,
+            type_id: TypeId::STRING,
+            rest: false,
+            optional: false,
+        }],
+        return_type: TypeId::VOID,
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true, // KEY DIFFERENCE: methods have is_method=true
+    };
+
+    let method_any = FunctionShape {
+        type_params: vec![],
+        params: vec![crate::solver::types::ParamInfo {
+            name: None,
+            type_id: TypeId::ANY,
+            rest: false,
+            optional: false,
+        }],
+        return_type: TypeId::VOID,
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true, // KEY DIFFERENCE: methods have is_method=true
+    };
+
+    // Intern the function shapes
+    let method_string_id = interner.intern_function_shape(method_string);
+    let method_any_id = interner.intern_function_shape(method_any);
+
+    // Test in strict mode
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_strict_function_types(true);
+
+    // Methods should still be bivariant even in strict mode
+    assert!(
+        checker.is_assignable(method_string_id, method_any_id),
+        "Strict mode: method (x: string) => void should be assignable to method (x: any) => void (methods bivariant)"
+    );
+
+    assert!(
+        checker.is_assignable(method_any_id, method_string_id),
+        "Strict mode: method (x: any) => void should be assignable to method (x: string) => void (methods bivariant)"
+    );
+
+    // Test in legacy mode
+    checker.set_strict_function_types(false);
+
+    assert!(
+        checker.is_assignable(method_string_id, method_any_id),
+        "Legacy mode: method (x: string) => void should be assignable to method (x: any) => void (methods bivariant)"
+    );
+
+    assert!(
+        checker.is_assignable(method_any_id, method_string_id),
+        "Legacy mode: method (x: any) => void should be assignable to method (x: string) => void (methods bivariant)"
+    );
+}
+
+#[test]
+fn test_function_with_multiple_parameters() {
+    // Test bivariance with multiple parameters
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Legacy mode: bivariant
+    checker.set_strict_function_types(false);
+
+    // (x: string, y: number) => void
+    let func1 = create_function_type(
+        &interner,
+        vec![TypeId::STRING, TypeId::NUMBER],
+        TypeId::VOID,
+    );
+
+    // (x: any, y: any) => void
+    let func2 = create_function_type(&interner, vec![TypeId::ANY, TypeId::ANY], TypeId::VOID);
+
+    // Bivariance allows both directions
+    assert!(
+        checker.is_assignable(func1, func2),
+        "Legacy mode: (string, number) => void should be assignable to (any, any) => void"
+    );
+
+    assert!(
+        checker.is_assignable(func2, func1),
+        "Legacy mode: (any, any) => void should be assignable to (string, number) => void"
+    );
+
+    // Strict mode: contravariant
+    checker.set_strict_function_types(true);
+
+    // Only (any, any) => void assignable to (string, number) => void
+    assert!(
+        checker.is_assignable(func2, func1),
+        "Strict mode: (any, any) => void should be assignable to (string, number) => void (contravariance)"
+    );
+
+    assert!(
+        !checker.is_assignable(func1, func2),
+        "Strict mode: (string, number) => void should NOT be assignable to (any, any) => void (contravariance)"
+    );
+}
+
+#[test]
+fn test_function_variance_with_return_types() {
+    // Return types are always covariant (regardless of parameter variance)
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    checker.set_strict_function_types(false);
+
+    // () => string
+    let returns_string = create_function_type(&interner, vec![], TypeId::STRING);
+
+    // () => any
+    let returns_any = create_function_type(&interner, vec![], TypeId::ANY);
+
+    // Return type covariance: string <: any, so () => string <: () => any
+    assert!(
+        checker.is_assignable(returns_string, returns_any),
+        "() => string should be assignable to () => any (covariant return types)"
+    );
+
+    // But () => any is NOT assignable to () => string
+    assert!(
+        !checker.is_assignable(returns_any, returns_string),
+        "() => any should NOT be assignable to () => string (covariant return types)"
+    );
 }
