@@ -371,6 +371,7 @@ pub mod diagnostic_codes {
     pub const VARIABLE_DECLARATION_EXPECTED: u32 = 1134;
     pub const PROPERTY_OR_SIGNATURE_EXPECTED: u32 = 1131;
     pub const ENUM_MEMBER_EXPECTED: u32 = 1132;
+    pub const ENUM_MEMBER_NAME_MUST_BE_FOLLOWED_BY: u32 = 1357; // An enum member name must be followed by a ',', '=', or '}'.
     pub const STATEMENT_EXPECTED: u32 = 1129;
     pub const CATCH_OR_FINALLY_EXPECTED: u32 = 1472;
     pub const DECORATORS_NOT_VALID_HERE: u32 = 1206;
