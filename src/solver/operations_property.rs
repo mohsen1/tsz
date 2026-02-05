@@ -669,10 +669,16 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                             }
                             nullable_causes.push(cause);
                         }
-                        // PropertyNotFound or IsUnknown: skip this member, continue checking others
-                        PropertyAccessResult::PropertyNotFound { .. }
-                        | PropertyAccessResult::IsUnknown => {
-                            // Member doesn't have this property - skip it
+                        // PropertyNotFound: if ANY member is missing the property, the property does not exist on the Union
+                        PropertyAccessResult::PropertyNotFound { .. } => {
+                            return PropertyAccessResult::PropertyNotFound {
+                                type_id: obj_type,
+                                property_name: prop_atom,
+                            };
+                        }
+                        // IsUnknown: if any member is unknown, we cannot safely access the property
+                        PropertyAccessResult::IsUnknown => {
+                            return PropertyAccessResult::IsUnknown;
                         }
                     }
                 }

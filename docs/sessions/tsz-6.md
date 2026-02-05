@@ -187,51 +187,45 @@ Modify `resolve_application_property` to substitute only the found property's ty
 
 ### Phase 3: Union/Intersection Member Resolution
 
-**Status**: 🔄 IN PROGRESS (2026-02-05)
+**Status**: ✅ ALREADY IMPLEMENTED (2026-02-05)
 
 **File**: `src/solver/operations_property.rs`
-**Function**: `resolve_property_access_inner` (around line 641)
 
-**Task**: Handle property access on unions and intersections
+**Discovery**: Upon attempting to implement Phase 3, discovered that Union and Intersection property resolution was **already fully implemented** in the existing codebase:
 
-**Implementation Plan** (from Gemini 2026-02-05):
+- **Union case**: Lines 606-734 - comprehensive implementation handling any/error/unknown types, nullable members, index signatures, and recursive resolution
+- **Intersection case**: Lines 751-848 - comprehensive implementation handling nullable members, unknown types, and index signatures
 
-#### For Unions (`A | B`)
-1. Iterate through every constituent of the union
-2. Call `resolve_property_access_inner` recursively for each constituent
-3. **Validation**: Property must exist in **all** constituents
-4. **Result**: Union of all resolved property types
-5. **Edge Cases**:
-   - If any constituent is `any`, result includes `any`
-   - If any constituent is `never`, ignore it
-   - Optional properties: Mark as optional if optional in any constituent
+**Existing Implementation Details**:
 
-#### For Intersections (`A & B`)
-1. Iterate through constituents
-2. Collect property type from **any** constituent that has it
-3. **Result**: Intersection of property types that exist in multiple constituents
-4. **Special Handling**: Function signatures merged into overloaded signatures
+#### Union Property Resolution (line 606)
+- Handles `any` contagion (if any member is `any`, returns `any`)
+- Handles `error` contagion (if any member is `error`, returns `error`)
+- Filters out `unknown` members (only returns `IsUnknown` if ALL members are `unknown`)
+- Partitions members into nullable and non-nullable
+- Recursively resolves properties on each member
+- Combines results into union of property types
+- Falls back to index signatures if property not found
 
-#### Helper Functions to Implement
-- `resolve_union_property` - handle union member resolution
-- `resolve_intersection_property` - handle intersection member resolution
+#### Intersection Property Resolution (line 751)
+- Iterates through all members
+- Collects property types from any member that has the property
+- Handles nullable/unknown cases
+- Falls back to index signatures (if ANY member has an index signature, property access succeeds)
+- Returns intersection of property types
 
-#### Edge Cases to Handle
-1. **Optional Properties**: Union should include `undefined` if strictNullChecks
-2. **Discriminant Properties**: Resolve common type before narrowing
-3. **Recursive Types**: Use `PropertyAccessGuard` to prevent infinite loops
-4. **Empty Unions/Intersections**: `Union([])` = `never`, `Intersection([])` = `unknown`
+**Test Case Discrepancy** (2026-02-05):
 
-#### Potential Pitfalls
-1. **Performance**: Large unions (50+ constituents) can be slow - cache results
-2. **`any` Propagation**: `(T | any).prop` should result in `any`
-3. **Private Members**: Check Resolver trait for access context
+Found test case where tsc reports error but tsz doesn't:
+```typescript
+type A = { x: number };
+type B = { y: string };
+type U = A | B;
+const u: U = { x: 1 } as U;
+const val = u.x; // tsc: Property 'x' does not exist on type 'B'
+```
 
-#### Next Steps
-1. Add failing test for union property access
-2. Add match arms for `TypeKey::Union` and `TypeKey::Intersection`
-3. Implement helper functions
-4. Test and commit
+**Next Step**: Ask Gemini to review the existing Union property resolution implementation to verify if this behavior is correct or if there's a bug.
 
 ## Implementation Guidance (from Gemini Flash 2026-02-05)
 
