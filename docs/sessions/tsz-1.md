@@ -250,23 +250,51 @@ if (1 === 2) { }       // both number, overlap possible
 
 ---
 
-### Priority 3: TS2416 - Signature Override Mismatch
-**Status**: 📝 Planned
-**Why**: Structural validation of class/interface hierarchies
-
-**Description**: When a class extends another, verify new signatures are valid subtypes of old ones.
-- Interaction: tsz-4 handles *accessibility* (private/protected)
-- tsz-1 handles *type* compatibility (structural subtyping)
-
----
-
-### Priority 3: TS2416 - Signature Override Mismatch
-**Status**: 📝 Planned
+### Priority 3: TS2416 - Signature Override Mismatch ✅ COMPLETE
+**Status**: ✅ Completed (2025-02-05)
 **Why**: Critical for class hierarchy and interface implementation tests
 
-**Implementation**:
-1. Implement `is_signature_assignable_to` in Solver
-2. Add check to `src/checker/declarations.rs` for class heritage
+**Implementation Summary**:
+
+TS2416 (Property '{0}' in type '{1}' is not assignable to the same property in base type '{2}')
+now correctly distinguishes between methods (bivariant) and function properties (contravariant).
+
+**Key Changes**:
+
+1. **src/checker/assignability_checker.rs** - Added `is_assignable_to_bivariant`:
+   - Calls `CompatChecker.is_assignable_to_bivariant_callback`
+   - Disables strict_function_types for method override checking
+   - Follows same pattern as `is_assignable_to` with ref resolution
+
+2. **src/checker/class_checker.rs** - Updated `check_property_inheritance_compatibility`:
+   - Handle METHOD_DECLARATION nodes (previously missing)
+   - Create function types with `is_method: true` for methods
+   - Track `is_method` flag for variance selection
+   - Track `is_static` flag for static/instance compatibility
+   - Handle SET_ACCESSOR for derived and base members
+   - Skip private base members (they trigger different errors)
+   - Use `is_assignable_to_bivariant` for methods (bivariant)
+   - Use `is_assignable_to` for properties/accessors (contravariant with strictFunctionTypes)
+
+**Bug Fixes from Gemini Pro Review**:
+
+1. **Static members**: Fixed by tracking `is_static` in tuple and checking `is_static == base_is_static`
+   - Static members are now checked (not skipped)
+   - Ensures static only overrides static, instance only instance
+
+2. **Private base members**: Fixed by adding `has_private_modifier` check
+   - Private base members are skipped (they trigger different errors, not TS2416)
+   - Protected members still participate in TS2416 checks
+
+3. **SET_ACCESSOR**: Added complete handling in both derived and base members
+   - Extracts type from first parameter in `accessor.parameters.nodes`
+   - Uses parameter type (not return type) for setters
+
+**Gemini Pro Review**: "The code is ready to be committed. It correctly implements the logic required to fix the identified bugs."
+
+**Commit**: `cd01b467e`
+
+**Impact**: TS2416 now correctly handles method vs property variance, static members, and accessors.
 
 ---
 
