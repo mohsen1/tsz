@@ -1,7 +1,7 @@
 # Session: tsz-2 - Phase 5: Enforce Solver-First Architecture
 
 **Started**: 2026-02-05
-**Status**: Active - Anti-Pattern 8.1 Refactoring
+**Status**: COMPLETED - Clean handoff ready
 **Focus**: Remove direct TypeKey inspection from Checker, enforce Solver-First boundary
 
 **Previous Session**: Coinductive Subtyping (COMPLETE)
@@ -136,9 +136,19 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
 - All reviewed and approved by Gemini Pro
 
 **Remaining Tasks for Next Session:**
-- Task #30: Refactor generators.rs standalone functions (add TypeResolver parameters)
+- Task #30: Refactor generators.rs standalone functions
+  - WARNING: High Risk - Requires TypeResolver signature changes
+  - Will ripple through checker's call stack
+  - Needs careful Gemini Pro review
+
 - Task #31: Refactor state_type_analysis.rs (18 TypeKey violations)
+  - WARNING: High Risk - Core logic for contextual typing and literal narrowing
+  - Area where "3 critical bugs" pattern is most likely to occur
+  - Requires fresh perspective and full Two-Question Rule compliance
+
 - ~65 TypeKey violations remaining across 18 checker files
+  - All tools now in place (17 Solver helpers available)
+  - Ready for systematic refactoring in next session
 
 **✅ Task #28 Complete - Primitive Type Identity Helpers (2026-02-05):**
 - Implemented 11 intrinsic type query functions in type_queries.rs
@@ -246,17 +256,22 @@ Does this handle all edge cases correctly?"
 
 ## Session History
 
-- 2026-02-05: Completed Phase 4.3 Migration (Ref → Lazy/DefId)
-- 2026-02-05: Redefined session to Phase 5 - Anti-Pattern 8.1 Removal
-- 2026-02-05: Gemini consultation complete - clear path forward
-- 2026-02-05: Implemented `for_each_child` traversal helper with Gemini review
-- 2026-02-05: Refactored assignability_checker.rs using new helper (60% code reduction)
-- 2026-02-05: Implemented is_promise_like, is_valid_for_in_target, is_invokable_type helpers
-- 2026-02-05: Implemented get_iterator_info in operations.rs
-- 2026-02-05: Gemini Pro review complete - fixed 3 critical bugs
-- 2026-02-05: Refactored iterators.rs to use new Solver helpers
-- 2026-02-05: Refactored generators.rs to use get_iterator_info
-- 2026-02-05: All changes committed and pushed to origin
+**2026-02-05 - SESSION COMPLETED:**
+- Completed Phase 4.3 Migration (Ref → Lazy/DefId)
+- Redefined session to Phase 5 - Anti-Pattern 8.1 Removal
+- Gemini consultation complete - clear path forward
+- Implemented `for_each_child` traversal helper with Gemini review
+- Refactored assignability_checker.rs using new helper (60% code reduction)
+- Implemented is_promise_like, is_valid_for_in_target, is_invokable_type helpers
+- Implemented get_iterator_info in operations.rs
+- Gemini Pro review complete - fixed 3 critical bugs
+- Refactored iterators.rs to use new Solver helpers
+- Refactored generators.rs to use get_iterator_info
+- Implemented 11 primitive type identity helpers (Task #28)
+- Verified 6 structural extraction helpers (Task #29)
+- Removed 228 lines of dead enum code
+- **Final State**: 17 Solver helpers available, ~45 violations eliminated
+- **Decision**: Wrap up for clean handoff (Gemini recommendation based on fatigue/risk management)
 
 ## Notes
 
