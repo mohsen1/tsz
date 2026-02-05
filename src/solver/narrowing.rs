@@ -189,7 +189,7 @@ impl<'a> NarrowingContext<'a> {
         while fuel > 0 {
             fuel -= 1;
 
-            // 1. Handle Lazy types
+            // 1. Handle Lazy types (DefId-based, not SymbolRef)
             if let Some(_def_id) = lazy_def_id(self.db, type_id) {
                 type_id = self.db.evaluate_type(type_id);
                 continue;
@@ -421,16 +421,20 @@ impl<'a> NarrowingContext<'a> {
         // This ensures type aliases are resolved to their actual union types
         let resolved_type = self.resolve_type(union_type);
 
-        // Get union members - normalize single types to "union of 1" slice
-        // This allows single-object narrowing to work correctly
-        let single_member_storage;
-        let members_list_storage;
-        let members: &[TypeId] = if let Some(members_id) = union_list_id(self.db, resolved_type) {
-            members_list_storage = self.db.type_list(members_id);
-            &members_list_storage
-        } else {
-            single_member_storage = [resolved_type];
-            &single_member_storage[..]
+        // CRITICAL FIX: Use classify_for_union_members instead of union_list_id
+        // This correctly handles intersections containing unions, nested unions, etc.
+        let single_member_storage: Vec<TypeId>;
+        let members: &[TypeId] = match classify_for_union_members(self.db, resolved_type) {
+            UnionMembersKind::Union(members_list) => {
+                // Convert Vec to slice for iteration
+                single_member_storage = members_list.into_iter().collect::<Vec<_>>();
+                &single_member_storage
+            }
+            UnionMembersKind::NotUnion => {
+                // Not a union at all - treat as single member
+                single_member_storage = vec![resolved_type];
+                &single_member_storage
+            }
         };
 
         trace!(
