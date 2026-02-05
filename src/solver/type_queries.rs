@@ -2524,7 +2524,6 @@ pub fn get_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId>
 // =============================================================================
 
 use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
-use crate::solver::subtype::TypeResolver;
 
 /// Check if a type is "promise-like" (has a callable 'then' method).
 ///

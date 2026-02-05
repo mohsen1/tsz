@@ -364,10 +364,9 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     ) -> crate::solver::operations_property::PropertyAccessResult {
         // Default implementation using the non-resolving version
         // Implementers that have TypeResolver capability should override this
-        let evaluator =
-            crate::solver::operations_property::PropertyAccessEvaluator::new_no_resolver(
-                self.as_type_database(),
-            );
+        let evaluator = crate::solver::operations_property::PropertyAccessEvaluator::new(
+            self.as_type_database(),
+        );
         evaluator.resolve_property_access(object_type, prop_name)
     }
 
