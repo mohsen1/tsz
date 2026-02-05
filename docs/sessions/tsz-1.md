@@ -1096,21 +1096,47 @@ Tuple subtyping is **ALREADY FULLY IMPLEMENTED** in `src/solver/subtype_rules/tu
 
 ---
 
-### Task #31: Object Reduction in Simplification 🚧 IN PROGRESS
-**Status**: 🚧 High Priority - Next Task
-**Estimated Impact**: Critical for North Star (O(1) type equality)
+### Task #31: Object Reduction in Simplification ✅ COMPLETE (2025-02-05)
+**Status**: ✅ Complete (2025-02-05)
+**Priority**: Critical for North Star (O(1) type equality)
+**Estimated Impact**: High (Performance + Correctness)
 
-**Description**:
-Enable object reduction in union/intersection simplification to achieve canonical forms.
+**Implementation Summary**:
+Implemented shallow object reduction in TypeInterner to enable O(1) type equality via canonical forms.
 
-**Current State**:
-- Simplification infrastructure exists (Task #26)
-- Object reduction DISABLED due to complexity with generics
-- Task #26 documentation: "Object reduction proved too complex for the interner layer"
+**Changes Made** (src/solver/intern.rs):
+1. **Re-enabled object handling** in `is_subtype_shallow` (was disabled)
+2. **Rewrote `is_object_shape_subtype_shallow`** with proper subtyping rules:
+   - Width subtyping: Source can have extra properties
+   - Type Identity: Common properties require identical TypeIds
+   - Optional: Required <: Optional (true), Optional <: Required (false)
+   - Readonly: Mutable <: Readonly (true), Readonly <: Mutable (false)
+   - Nominal: If target has symbol, source must match
+   - Index Signatures: Skipped (too complex for shallow check)
 
-**Implementation Plan** (Two-Question Rule):
-1. ✅ Ask Gemini Question 1: How to implement shallow structural subtype check?
-2. ⏭️ Implement in `src/solver/intern.rs`
-3. ⏭️ Ask Gemini Question 2: Review the implementation
-4. ⏭️ Enable object reduction in simplification methods
-5. ⏭️ Test and verify O(1) equality improvements
+**Algorithm**:
+- Uses O(N+M) two-pointer scan since properties are sorted by Atom
+- Zero allocations, no recursion
+- Safe for interner-level reduction (avoids circular dependencies)
+
+**Example Reductions**:
+- `{a: 1} | {a: 1, b: 2}` → `{a: 1, b: 2}` (keeps more specific)
+- `{a: 1} & {a: 1, b: 2}` → `{a: 1, b: 2}` (keeps more specific)
+
+**Gemini Pro Review**:
+**Verdict: ✅ Correct and Safe**
+
+"The code is **approved**. It correctly implements the 'Lawyer' rules for object compatibility in a way that is safe for the 'Judge' (Interner) to execute without recursion."
+
+- Width Subtyping: Correct
+- Optionality: Correct
+- Readonly: Correct
+- Algorithm: Optimal O(N+M)
+- Index Signatures: Correct decision to skip
+
+**Files**: `src/solver/intern.rs`
+
+**Commit**: `c5cb4a31d`
+
+**North Star Impact**:
+This implementation enables the interner to reduce object unions/intersections to canonical forms, moving toward O(1) type equality without triggering the full SubtypeChecker recursion.
