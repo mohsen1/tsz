@@ -730,3 +730,86 @@ fn test_parent_id_interning_distinct_shape_ids() {
         "Objects with different parent_id should have different ObjectShapeIds"
     );
 }
+
+// Task #42: Test union order independence (canonicalization)
+#[test]
+fn test_union_order_independence() {
+    let interner = TypeInterner::new();
+
+    // Create two literal types
+    let type_a = interner.literal_string("a");
+    let type_b = interner.literal_string("b");
+
+    // Create union A | B
+    let union_ab = interner.union(vec![type_a, type_b]);
+
+    // Create union B | A (reverse order)
+    let union_ba = interner.union(vec![type_b, type_a]);
+
+    // They should have the same TypeId (order independence)
+    assert_eq!(
+        union_ab, union_ba,
+        "Unions should be order-independent: A | B == B | A"
+    );
+
+    // Also test with more members
+    let type_c = interner.literal_string("c");
+    let union_abc = interner.union(vec![type_a, type_b, type_c]);
+    let union_cba = interner.union(vec![type_c, type_b, type_a]);
+
+    assert_eq!(
+        union_abc, union_cba,
+        "Unions with 3+ members should be order-independent"
+    );
+}
+
+// Task #42: Test intersection order independence
+#[test]
+fn test_intersection_order_independence() {
+    let interner = TypeInterner::new();
+
+    // Create two literal types (non-callable for simplicity)
+    let type_a = interner.literal_string("a");
+    let type_b = interner.literal_string("b");
+
+    // Create intersection A & B
+    let inter_ab = interner.intersection(vec![type_a, type_b]);
+
+    // Create intersection B & A (reverse order)
+    let inter_ba = interner.intersection(vec![type_b, type_a]);
+
+    // They should have the same TypeId (order independence for non-callables)
+    assert_eq!(
+        inter_ab, inter_ba,
+        "Intersections should be order-independent: A & B == B & A"
+    );
+}
+
+// Task #42: Test union redundancy elimination
+#[test]
+fn test_union_redundancy_elimination() {
+    let interner = TypeInterner::new();
+
+    let type_a = interner.literal_string("a");
+
+    // A | A should simplify to A
+    let union_aa = interner.union(vec![type_a, type_a]);
+
+    assert_eq!(union_aa, type_a, "Union of A | A should simplify to A");
+}
+
+// Task #42: Test intersection redundancy elimination
+#[test]
+fn test_intersection_redundancy_elimination() {
+    let interner = TypeInterner::new();
+
+    let type_a = interner.literal_string("a");
+
+    // A & A should simplify to A
+    let inter_aa = interner.intersection(vec![type_a, type_a]);
+
+    assert_eq!(
+        inter_aa, type_a,
+        "Intersection of A & A should simplify to A"
+    );
+}
