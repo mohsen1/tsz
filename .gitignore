@@ -88,4 +88,9 @@ tests/debug/
 # Pre-commit hook temp files
 .conformance-value
 *cache*
+<<<<<<< HEAD
 scripts/conformance/dist.target-bench/
+=======
+scripts/conformance/dist
+.target-bench/
+>>>>>>> f0f0a9e81 (chore: update .gitignore and enhance benchmark script)
