@@ -215,8 +215,8 @@ if (1 === 2) { }       // both number, overlap possible
 
 ---
 
-### Priority 2: Task #18 - Structural Intersection Normalization
-**Status**: 🚧 In Progress (2025-02-05)
+### Priority 2: Task #18 - Structural Intersection Normalization ✅ COMPLETE
+**Status**: ✅ Completed (2025-02-05)
 **Why**: High-impact. Fixes foundational issues that affect TS2367 overlap detection.
 
 **Gemini Recommendation**: Proceed with Task #18 instead of fixing Task #17 gaps directly.
@@ -224,38 +224,29 @@ if (1 === 2) { }       // both number, overlap possible
 - Fixes the Interning Bug discovered in Task #16.0
 - Completes the "What" (Solver defines what `A & B` is)
 
-**Implementation Plan** (Per Gemini Flash 2025-02-05):
+**Completed Implementation**:
 
-**File**: `src/solver/intern.rs`
+1. **Fixed Visibility Merging** (`src/solver/intern.rs` lines 1334-1342):
+   - Implements "most restrictive wins" rule: Private > Protected > Public
+   - Pattern matching order is critical (Private must be first)
+   - Verified by Gemini Pro ✅
 
-1. **Fix Visibility Merging in `try_merge_objects_in_intersection`**:
-   - Inside property merging loop (around line 853)
-   - Add visibility merging: `Private > Protected > Public` (most restrictive wins)
-   - Use helpers from `solver/types.rs` or manipulate bitflags directly
+2. **Verified Disjoint Literals**:
+   - `intersection_has_disjoint_primitives` correctly handles 1 & 2
+   - Type interning ensures different literals have unique TypeIds
+   - Direct equality check identifies disjoint literals
 
-2. **Verify Disjoint Literals**:
-   - `intersection_has_disjoint_primitives` already correctly handles 1 & 2
-   - Due to type interning, different `LiteralValue` get unique `TypeId`
-   - Direct equality check correctly identifies disjoint literals
+3. **Added 4 Solver Unit Tests** (`src/solver/tests/intern_tests.rs`):
+   - test_intersection_visibility_merging: private & public = private ✅
+   - test_intersection_disjoint_literals: 1 & 2 = NEVER ✅
+   - test_intersection_object_merging: {a:1} & {b:2} = {a:1, b:2} ✅
+   - test_intersection_disjoint_property_types: {a:1} & {a:2} = NEVER ✅
 
-3. **Verify Disjoint Objects**:
-   - `intersection_has_disjoint_object_literals` should detect `{ kind: "A" } & { kind: "B" }` -> NEVER
+**Commit**: `206acc76c`
 
-4. **Add Solver Unit Tests** (`src/solver/tests/intern_tests.rs`):
-   - Test: `1 & 2` should be `NEVER`
-   - Test: `{ a: 1 } & { b: 2 }` should be `{ a: 1, b: 2 }` (merged)
-   - Test: `{ a: 1 } & { a: 2 }` should be `NEVER` (disjoint property types)
+**Gemini Pro Review**: "Verdict: ✅ Correct" - Implementation matches TypeScript behavior
 
-**Edge Cases** (Per Gemini Pro 2025-02-05):
-1. **Branded Type Exception**: `string & { __brand: "UserId" }` should NOT be reduced to `never`
-2. **Optional vs Required**: `existing.optional && prop.optional` is correct (required wins)
-3. **Readonly Accumulation**: `existing.readonly || prop.readonly` is correct
-4. **Index Signature Compatibility**: Specific properties must be assignable to index signature
-5. **Infinite Recursion**: Use `intersect_types_raw2` inside merger, NOT `self.intersection()`
-
-**Must Follow Two-Question Rule**:
-- Question 1: Ask Gemini Flash for approach validation ✅ COMPLETE
-- Question 2: Ask Gemini Pro for implementation review (PENDING - after code is written)
+**Impact**: Fixes foundational intersection normalization that affects TS2367 overlap detection and object interning.
 
 ---
 
