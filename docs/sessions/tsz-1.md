@@ -832,8 +832,27 @@ Built infrastructure for union/intersection simplification in TypeEvaluator with
 **Pre-existing Issue Discovered**:
 - `test_interface_extends_class_no_recursion_crash` overflows stack
 - Verified this occurs WITHOUT my changes (reverted and tested)
-- Root cause: recursive type structure in interface-extends-class scenario
-- This is outside the scope of tsz-1 (Judge layer)
+- Root cause: recursive type structure in interface-extends-class scenario with **private properties**
+
+**Further Investigation** (2025-02-05):
+The test involves private properties (`#prop`) in a complex inheritance scenario:
+```typescript
+class C {
+    #prop;  // private property
+    func(x: I) { x.#prop = 123; }
+}
+interface I extends C {}  // interface extends class with private member
+```
+
+**Root Cause Hypothesis** (from Gemini Flash):
+The issue is likely in `private_brand_assignability_override` in `src/solver/compat.rs` (lines 485–580).
+- This function performs recursive calls for Union, Intersection, and Lazy types
+- **Does NOT have a recursion guard** (unlike SubtypeChecker or ShapeExtractor)
+- If the private property's type is recursive, this function will spin forever
+
+**Resolution**:
+This is a deep architectural issue requiring significant time to fix properly.
+Recommendation: Defer and move to higher-ROI tasks (Weak Type Detection TS2559).
 
 **Gemini Pro Review**:
 - Infrastructure is **sound and bug-free**
