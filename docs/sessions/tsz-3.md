@@ -151,42 +151,74 @@ Inference needs to happen in "waves." Some constraints are "High Priority" (expl
 
 **Goal**: Update type signatures to support priority-based constraints.
 
-#### Task 7.1.1: Define InferencePriority Enum (HIGH)
+#### Task 7.1.1: Define InferencePriority Enum (HIGH) ✅ COMPLETE
 **File**: `src/solver/types.rs`
 
-**Goal**: Define standard priority levels matching TypeScript's internal implementation.
+**Status**: ✅ Complete (commit `913b8323c`)
 
-**Priority Levels** (from tsc):
+**Implementation**:
+- Added `InferencePriority` enum with 8 priority levels matching TypeScript
+- Implemented helper methods:
+  - `should_process_in_pass()` - check if priority matches current pass
+  - `next_level()` - get next priority for multi-pass iteration
+  - `NORMAL`, `HIGHEST`, `LOWEST` constants
+
+**Priority Levels**:
 ```rust
 pub enum InferencePriority {
-    NakedTypeVariable = 1 << 0,       // Highest
-    HomomorphicMappedType = 1 << 1,
+    NakedTypeVariable = 1 << 0,       // Highest - direct type parameters
+    HomomorphicMappedType = 1 << 1,   // Structure-preserving mapped types
     PartialHomomorphicMappedType = 1 << 2,
-    MappedType = 1 << 3,
-    ContravariantConditional = 1 << 4,
-    ReturnType = 1 << 5,
-    LowPriority = 1 << 6,
+    MappedType = 1 << 3,              // Generic mapped types
+    ContravariantConditional = 1 << 4, // Conditional in contravariant position
+    ReturnType = 1 << 5,              // Contextual from return position
+    LowPriority = 1 << 6,             // Lowest - fallback inference
     Circular = 1 << 7,                // Prevents infinite loops
 }
 ```
 
-#### Task 7.1.2: Refactor constrain_types Signatures (HIGH)
-**File**: `src/solver/operations.rs`
+#### Task 7.1.2: Refactor constrain_types Signatures (HIGH) 🔄 READY TO START
+**File**: `src/solver/operations.rs`, `src/solver/infer.rs`
 
-**Goal**: Update `constrain_types` and all recursive helpers to accept `InferencePriority`.
+**Status**: 🟡 Gemini Question 1 ANSWERED - Ready to implement
 
-**Functions to Update** (6+ helpers):
-- `constrain_types`
-- `constrain_types_impl`
-- `constrain_properties`
-- `constrain_function_to_call_signature`
-- `constrain_call_signature_to_function`
-- `constrain_callable_signatures`
-- `constrain_properties_against_index_signatures`
+**Gemini Pro Guidance Received** (2026-02-05):
 
-**Approach**: Add `priority: InferencePriority` parameter to each function, propagate through call chain.
+**Call Graph**: `resolve_generic_call_inner` → `constrain_types` → `constrain_types_impl` → [dispatch to helpers]
 
-**Expected Outcome**: Code compiles with `Priority::Normal` passed everywhere.
+**10 Functions to Modify** in operations.rs:
+1. `constrain_types`
+2. `constrain_types_impl`
+3. `constrain_tuple_types`
+4. `constrain_properties`
+5. `constrain_function_to_call_signature`
+6. `constrain_call_signature_to_function`
+7. `constrain_call_signature_to_call_signature` (was missed)
+8. `constrain_matching_signatures`
+9. `constrain_properties_against_index_signatures`
+10. `constrain_index_signatures_to_properties`
+
+**Additional Changes Required**:
+- Update `src/solver/infer.rs` to use `crate::solver::types::InferencePriority`
+- Update `InferenceCandidate` and `add_candidate` in infer.rs
+- Remove old priority enum if it exists in infer.rs
+
+**Critical Constraints from Gemini**:
+- **DO NOT** use default parameters - require explicit priority at every call site
+- Must update ALL recursive call sites to pass priority through
+- This is HIGH BLAST RADIUS - affects core inference logic
+
+**Implementation Strategy**:
+1. Add `priority: InferencePriority` parameter to all 10 functions
+2. Update all call sites to pass `InferencePriority::NORMAL` initially
+3. Test to ensure no regression in existing inference behavior
+4. Later (Phase 7b): Implement actual priority-based filtering logic
+
+**Post-Implementation Review** (MANDATORY - Two-Question Rule):
+After completing the refactoring, MUST ask Gemini Pro to review:
+1) Did I miss any functions?
+2) Are all call sites passing priority correctly?
+3) Any type system bugs introduced?
 
 ---
 
