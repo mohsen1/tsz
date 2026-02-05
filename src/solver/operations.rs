@@ -2931,7 +2931,6 @@ pub fn solve_generic_instantiation<C: AssignabilityChecker>(
 // =============================================================================
 
 use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
-use crate::solver::subtype::TypeResolver;
 
 /// Information about an iterator type extracted from a type.
 ///
