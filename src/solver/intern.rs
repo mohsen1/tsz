@@ -2015,6 +2015,17 @@ impl TypeInterner {
             return false;
         }
 
+        // 2.5. Disjoint properties check: if source and target have completely different
+        // properties, they are not in a subtype relationship. This prevents incorrect
+        // reductions like `{b?: number} | {a?: number}` from being reduced to `{a?: number}`.
+        let has_any_property_overlap = s
+            .properties
+            .iter()
+            .any(|sp| t.properties.iter().any(|tp| sp.name == tp.name));
+        if !has_any_property_overlap {
+            return false;
+        }
+
         // 3. Structural scan: Source must satisfy all Target properties
         // Properties are sorted by Atom, so we can use two-pointer scan for O(N+M)
         let mut s_idx = 0;
