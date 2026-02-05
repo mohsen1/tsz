@@ -1,7 +1,7 @@
 # Session TSZ-6-3: Union/Intersection Member Resolution
 
 **Started**: 2026-02-05
-**Status**: 🟡 ACTIVE
+**Status**: 🟡 ACTIVE - Gemini Question 1 COMPLETE ✅
 **Previous Session**: TSZ-4-3 (Enum Polish - COMPLETE)
 
 ## Context
@@ -51,36 +51,85 @@ console.log(i.x); // Should work, but may not resolve correctly
 - Example: `(A & B).prop` exists if either A or B has `prop`
 - Result: `type(A.prop) & type(B.prop)` (may resolve to `never` if incompatible)
 
-## Implementation Plan (from Gemini)
+## Implementation Plan (from Gemini Question 1) - VALIDATED ✅
 
-### Architecture: Solver-First
+### Architecture: Solver-First - VALIDATED ✅
 
 **CRITICAL**: Follow North Star Rule 2 - Use Visitor Pattern
 - Do NOT match on `TypeKey::Union` or `TypeKey::Intersection` in Checker
 - MUST use visitor pattern from `src/solver/visitor.rs`
 
-### File Locations
+**Gemini Validation**: "Your approach is correct and highly recommended. Moving this logic into a Visitor ensures recursion is handled centrally and North Star compliance is satisfied."
 
-1. **Visitor**: `src/solver/visitor.rs` (new visitor for member collection)
-2. **Operations**: `src/solver/operations_property.rs` (integration)
-3. **Testing**: `src/solver/tests/` (unit tests)
+### File Locations (from Gemini)
+
+| File | Function/Struct | Action |
+|:---|:---|:---|
+| `src/solver/visitor.rs` | `PropertyVisitor` (New) | Create new visitor for member resolution |
+| `src/solver/operations_property.rs` | `PropertyAccessEvaluator` | Refactor to implement `TypeVisitor` |
+| `src/solver/operations_property.rs` | `resolve_property_access_inner` | Replace `match key` with `self.visit_type(obj_type)` |
 
 ### Implementation Steps
 
-**Step 1**: Create `MemberCollector` visitor in `src/solver/visitor.rs`
-- Extract all properties from a type
-- For Unions: Intersect the property sets
-- For Intersections: Union the property sets
-- Handle `TypeKey::Ref` and recursive types
+**Step 1**: Refactor `PropertyAccessEvaluator` to implement `TypeVisitor`
+- Move logic from `match` statements into `visit_*` methods
+- Implement `visit_object`, `visit_array`, `visit_intrinsic`, etc.
+- Ensure `visiting: FxHashSet<TypeId>` is checked before recursing
 
-**Step 2**: Integrate into `resolve_property_access_inner`
-- Use visitor instead of direct TypeKey matching
-- Preserve existing logic for Object, Array, etc.
+**Step 2**: Implement `visit_union` (All Must Have)
+```rust
+fn visit_union(&mut self, list_id: u32) -> Self::Output {
+    let members = self.interner.type_list(TypeListId(list_id));
+    for &member in members {
+        let res = self.visit_type(self.interner, member);
+        if res.is_not_found() {
+            return PropertyAccessResult::PropertyNotFound; // Early exit
+        }
+    }
+    // All members have the property - union the types
+    self.merge_union_results(results)
+}
+```
 
-**Step 3**: Handle result type merging
-- Union properties: union the types
-- Intersection properties: intersect the types
-- Handle conflicts (e.g., `string & number` = `never`)
+**Step 3**: Implement `visit_intersection` (Any Can Have)
+```rust
+fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+    let members = self.interner.type_list(TypeListId(list_id));
+    let mut successes = Vec::new();
+
+    for &member in members {
+        let res = self.visit_type(self.interner, member);
+        if let PropertyAccessResult::Success { type_id } = res {
+            successes.push(type_id);
+        }
+    }
+
+    if successes.is_empty() {
+        return PropertyAccessResult::PropertyNotFound;
+    }
+    // Intersection of all found types
+    PropertyAccessResult::Success {
+        type_id: self.interner.intersect(successes),
+    }
+}
+```
+
+**Step 4**: Handle `visit_lazy` for automatic recursion
+- Resolver handles `Lazy` -> `Union` -> `Lazy` chains
+- No manual `evaluate_type` calls needed
+
+**Step 5**: Update `resolve_property_access_inner`
+- Replace large `match key` block with `evaluator.visit_type(obj_type)`
+
+### Edge Cases (from Gemini)
+
+1. **Infinite Recursion**: Use `visiting` set before `visit_lazy`
+2. **`any` in Unions**: `A | any` always succeeds (returns `any`)
+3. **`unknown` in Unions**: Usually fails unless property common to all
+4. **Optional Properties**: `{ x: string } | { x?: number }` → `string | number | undefined`
+5. **Index Signatures**: Handle in intersections carefully
+
+## Success Criteria
 
 ## Complexity Assessment
 
@@ -143,8 +192,8 @@ console.log(i.x); // ✅ OK, type is string & number
 - TSZ-4-2: Enum Member Distinction - COMPLETE ✅
 - TSZ-4-3: Enum Polish - COMPLETE ✅
 - TSZ-6 Phase 1-2: Member Resolution Basics - COMPLETE ✅
-- Gemini Question 1: PENDING
-- Gemini Question 2: PENDING
+- Gemini Question 1: COMPLETE ✅ (approach validated)
+- Gemini Question 2: PENDING (implementation review)
 
 ## Estimated Complexity
 
