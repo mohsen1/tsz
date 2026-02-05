@@ -1,94 +1,59 @@
-# Session tsz-2: Generic Type Inference & Application Expansion
+# Session tsz-2: Coinductive Subtyping (Recursive Types)
 
 **Started**: 2026-02-05
 **Status**: Active
-**Goal**: Fix Application type expansion to enable complex generic libraries (Redux, etc.)
+**Goal**: Implement coinductive subtyping logic to handle recursive types without infinite loops
 
 ## Problem Statement
 
-From Gemini's consultation:
+From NORTH_STAR.md Section 4.4:
 
-> "The comments in `src/solver/evaluate.rs` (lines 185-215) explicitly identify a major bottleneck: `Application(Lazy(def_id), args)` types (like `Reducer<S, A>`) are often not expanding to their structural forms. This leads to 'Any poisoning' or `Ref(N)<error>` diagnostics."
+> "TypeScript uses 'coinductive' subtyping for recursive types. This means we compute the Greatest Fixed Point (GFP) rather than Least Fixed Point (LFP). When comparing `type A = { self: A }` and `type B = { self: B }`, we assume they are subtypes and verify consistency."
 
-**Impact**: 
-- Blocks complex libraries like Redux
-- Causes hundreds of `TS2339` (Property does not exist) and `TS2322` (Type not assignable) errors
-- Prevents the checker from seeing underlying function signatures of generic type aliases
+Without coinductive subtyping, the compiler will crash or enter infinite loops when comparing recursive types.
+
+**Impact**:
+- Blocks complex recursive type definitions (linked lists, trees, Redux state)
+- Causes stack overflow crashes
+- Prevents proper type checking of self-referential generics
 
 ## Technical Details
 
-**Files**: 
-- `src/solver/infer.rs` - Type inference logic
-- `src/solver/evaluate.rs` - Type evaluation with Application bottleneck (lines 185-215)
-- `src/solver/application.rs` - Application type handling
+**Files**:
+- `src/solver/subtype.rs` - Core subtype checking logic
+- `src/solver/mod.rs` - Solver state management
+- `src/solver/visitor.rs` - Traversal of recursive structures
 
-**Root Cause**: 
-`Application(Lazy(def_id), args)` types pass through unchanged in many contexts, preventing the Solver from expanding generic type aliases to their structural forms.
-
-**Example**:
-```typescript
-type Reducer<S, A> = (state: S, action: A) => S;
-const myReducer: Reducer<State, Action> = (state, action) => state;
-
-// TypeScript can see myReducer is a function with (state, action) => state
-// tsz sees Application(Lazy(Reducer), [State, Action]) without expanding
-```
+**Root Cause**:
+When comparing `A` and `B` where both contain references to themselves, the naive approach leads to infinite recursion: `is_subtype_of(A, B)` → check properties → `is_subtype_of(A, B)` → ...
 
 ## Implementation Strategy
 
 ### Phase 1: Investigation (Pre-Implementation)
-1. Read `src/solver/evaluate.rs` lines 185-215 to understand current Application handling
-2. Read `src/solver/application.rs` to understand Application type structure
-3. Ask Gemini: "What's the correct approach to expand Application types? Where should expansion happen?"
+1. Read `docs/architecture/NORTH_STAR.md` Section 4.4 on Coinductive Subtyping
+2. Ask Gemini: "What's the correct approach for cycle detection in subtype checking?"
+3. Review existing `cycle_stack` or similar mechanisms in `subtype.rs`
 
 ### Phase 2: Implementation
-1. Implement Application type expansion in evaluation loop
-2. Ensure recursive expansion for nested generics
-3. Add conformance tests to verify improvement
+1. Implement cycle tracking using `HashSet<(TypeId, TypeId)>` or similar
+2. When entering a subtype check, add the pair to the set
+3. If the pair is already in the set, return `true` (assume subtypes)
+4. Remove the pair when exiting the check
+5. Add depth limiting to prevent "type-system bombs"
 
 ### Phase 3: Validation
-1. Run conformance tests to measure improvement
-2. Test with real-world generic libraries (Redux, RxJS, etc.)
-3. Ask Gemini Pro to review implementation for correctness
+1. Write unit tests for recursive types
+2. Test with complex recursive structures
+3. Ask Gemini Pro to review implementation
 
 ## Success Criteria
 
-- [ ] Generic type aliases expand to structural forms
-- [ ] `TS2339` and `TS2322` errors reduced significantly
-- [ ] Complex libraries like Redux work correctly
-- [ ] No "Any poisoning" from opaque Application types
-- [ ] Conformance test pass rate increases measurably
-
-## Progress
-
-### 2026-02-05
-
-1. **Investigation Phase**:
-   - Read `src/solver/evaluate.rs` and found existing `evaluate_application` function (lines 404-451)
-   - Found existing `ApplicationEvaluator` in `src/solver/application.rs`
-   - Found unit tests in `src/solver/tests/evaluate_tests.rs` that document expected behavior
-
-2. **Consultation with Gemini**:
-   - Asked for guidance on correct approach for Application type expansion
-   - Gemini confirmed: focus on `evaluate.rs:evaluate_application`
-   - Key insight: Application types are treated as opaque instead of being transparently expanded
-
-3. **Test Infrastructure Cleanup**:
-   - Fixed PropertyInfo and FunctionShape struct field issues (36 → 11 errors)
-   - Fixed TypeGuard::Discriminant property_name → property_path (11 → 9 errors)
-   - Remaining 9 errors (E0283, E0308) are in unrelated modules (expression_ops.rs)
-
-4. **Next Steps**:
-   - Implement Application expansion in `evaluate_application` based on Gemini's guidance
-   - The key is to: resolve Lazy base → get type params → evaluate args → instantiate → recurse
-
-5. **Implementation (2026-02-05)**:
-   - **Code Review with Gemini Pro**: Revealed critical issue - `evaluate_application` only handled `Lazy` types, not `Ref` types
-   - **Fix Applied**: Added `TypeKey::Ref` handling in `evaluate_application` (commit 527957375)
-   - **Result**: Application types with both `Ref` and `Lazy` bases now properly expand
-   - **Impact**: Fixes 'Ref(N)<error>' diagnostics and enables proper type checking for generic libraries
+- [ ] No stack overflows when comparing recursive types
+- [ ] `type A = { self: A }` and `type B = { self: B }` are correctly identified as subtypes
+- [ ] Depth limiting prevents infinite loops
+- [ ] Unit tests cover simple and mutually recursive types
+- [ ] Generic recursive types work (e.g., `List<number>` vs `List<string>`)
 
 ## Session History
 
-*Created 2026-02-05 following Gemini consultation after tsz-1 conclusion.*
-*Completed 2026-02-05 - Application type expansion implemented for both Ref and Lazy types.*
+*Created 2026-02-05 after completing Application type expansion.*
