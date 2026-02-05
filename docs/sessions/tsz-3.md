@@ -8,18 +8,26 @@
 
 Implement LSP features that improve developer experience without requiring deep Solver/Checker architecture expertise.
 
-## Current Work: JSX Linked Editing
+## Completed Work
 
-Implementing `textDocument/linkedEditingRange` for JSX/TSX files.
+### JSX Linked Editing (2026-02-05)
+**Status**: ✅ COMPLETE - Commit e5f6bcee7
 
-**Value**: When editing an opening JSX tag (e.g., `<div>`), the closing tag (`</div>`) automatically syncs.
+Implemented `textDocument/linkedEditingRange` for JSX/TSX files.
+When editing an opening JSX tag (e.g., `<div>`), the closing tag (`</div>`) automatically syncs.
 
-**Implementation**: Creating `src/lsp/linked_editing.rs`
-- Algorithm: Find JSX tag context, locate parent JsxElement, extract ranges for both opening and closing tag names
-- Files to touch: `src/lsp/linked_editing.rs` (new), `src/lsp/mod.rs` (dispatch)
-- Reference: `src/lsp/highlighting.rs` for parent-walking pattern
+**Implementation**:
+- Created `src/lsp/linked_editing.rs` with `LinkedEditingProvider`
+- Algorithm walks AST to find matching opening/closing tag pairs
+- Returns `LinkedEditingRanges` with both tag name ranges
+- Handles nested elements, self-closing tags, fragments correctly
 
-**Status**: Planning phase - reviewed implementation with Gemini
+**Reviewed by Gemini**: AST traversal logic correct, no bugs found.
+
+**Next LSP Tasks**:
+- File Rename handling (`workspace/willRenameFiles`)
+- Symbol Index usage tracking for performance
+- "Move to New File" code action
 
 ## Outcome: BLOCKED
 
