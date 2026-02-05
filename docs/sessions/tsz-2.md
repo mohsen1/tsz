@@ -105,30 +105,47 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
   * Checks if type is valid for for...in loops
   * Returns true for Object, Array, TypeParameter, Any
   * Simple TypeKey matching (no resolver needed)
+- Implemented `is_invokable_type(db, type_id) -> bool` in type_queries.rs
+  * More specific than is_callable_type - checks for call signatures
+  * Prevents class constructors (only construct sigs) from being "invokable"
+  * Handles Intersections recursively
 - Committed and pushed to origin (commit: 1efb7d837)
-- Awaiting Gemini Pro review (Question 2) - blocked by rate limit
 
-**🔄 Redefined Session (2026-02-05):**
+**✅ Gemini Pro Review Complete (2026-02-05):**
+- Submitted Question 2 (implementation review) for all three helpers
+- Gemini Pro identified 3 critical bugs:
+  1. `get_iterator_info` - Was using function type instead of its return type
+  2. `is_valid_for_in_target` - Missing Tuples, Unions, Intersections, Literals, Primitives
+  3. `is_promise_like` - Should check call signatures not just callable type
+- All bugs fixed and committed (commit: 19d781774)
+- Code compiles successfully with all fixes applied
 
-**Priority 1: Validation (BLOCKED by rate limit)**
-1. Get Gemini Pro review of is_promise_like and is_valid_for_in_target
-2. Propose get_iterator_info design for approach validation
+**✅ Completed Refactoring (2026-02-05):**
 
-**Priority 2: Refactoring (Post-Validation)**
-1. Refactor iterators.rs:666-708 to use validated helpers
-2. Implement get_iterator_info in operations.rs (once approved)
-3. Refactor generators.rs to use get_iterator_info
+**iterators.rs Refactoring (COMPLETE):**
+- Refactored Promise detection (lines 664-683)
+  * Replaced manual TypeKey inspection with is_promise_like helper
+  * Removed nested TypeKey::Function and TypeKey::Object pattern matching
+  * Now uses PropertyAccessEvaluator-based check
+- Refactored for-in validation (lines 697-713)
+  * Replaced manual TypeKey matching with is_valid_for_in_target helper
+  * Removed direct TypeKey::Object, TypeKey::Array, TypeKey::Parameter checks
+  * Now supports Tuples, Unions, Intersections, Literals, Primitives
+- Committed (commit: 7d7d331ad)
 
-**Priority 3: Productive "Wait" Tasks (Do Now)**
-While waiting for rate limit reset:
-1. ~~✏️ Write unit tests for get_iterator_info~~ (Attempted but have compilation errors with test structures - defer to after implementation)
-2. 🧹 Checked for orphaned imports - none found (clippy clean)
-3. 📝 Update documentation - update session file with current status
+**generators.rs Refactoring (COMPLETE):**
+- Refactored get_iterator_return_type method
+  * Replaced manual TypeKey::Object inspection with get_iterator_info
+  * Removed property iteration for 'return' method
+  * Now uses PropertyAccessEvaluator-based protocol detection
+- Note: Standalone helper functions still use TypeKey (require TypeResolver context)
+- Committed (commit: 2287db16b)
 
 **Remaining TypeKey Violations:**
-- iterators.rs:666-708 (awaiting validation, then refactor)
-- iterators.rs:990-1116 (needs get_iterator_info)
-- generators.rs:568+ (needs get_iterator_info)
+- generators.rs: Standalone functions (get_async_iterable_element_type, extract_async_iterator_element, etc.)
+  * These require TypeResolver context which would need signature changes
+  * Lower priority - called from methods that don't have TypeResolver access
+- Other files: Need audit and prioritization
 
 ### Step 2: Refactor Primitives (Low Risk)
 Target: Simple type identity checks
@@ -197,6 +214,12 @@ Does this handle all edge cases correctly?"
 - 2026-02-05: Gemini consultation complete - clear path forward
 - 2026-02-05: Implemented `for_each_child` traversal helper with Gemini review
 - 2026-02-05: Refactored assignability_checker.rs using new helper (60% code reduction)
+- 2026-02-05: Implemented is_promise_like, is_valid_for_in_target, is_invokable_type helpers
+- 2026-02-05: Implemented get_iterator_info in operations.rs
+- 2026-02-05: Gemini Pro review complete - fixed 3 critical bugs
+- 2026-02-05: Refactored iterators.rs to use new Solver helpers
+- 2026-02-05: Refactored generators.rs to use get_iterator_info
+- 2026-02-05: All changes committed and pushed to origin
 
 ## Notes
 
