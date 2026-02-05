@@ -665,6 +665,8 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> TypeId {
+        use crate::solver::types::TypeKey;
+
         // Prevent infinite loops in circular type aliases
         if !visited.insert(type_id) {
             return type_id;
@@ -688,6 +690,25 @@ impl<'a> CheckerState<'a> {
                     return self.resolve_lazy_type_inner(resolved, visited);
                 }
             }
+        }
+
+        // Handle unions and intersections - resolve each member
+        if let Some(TypeKey::Union(list_id)) = self.ctx.types.lookup(type_id) {
+            let members = self.ctx.types.type_list(list_id);
+            let resolved_members: Vec<TypeId> = members
+                .iter()
+                .map(|&member| self.resolve_lazy_type_inner(member, visited))
+                .collect();
+            return self.ctx.types.union(resolved_members);
+        }
+
+        if let Some(TypeKey::Intersection(list_id)) = self.ctx.types.lookup(type_id) {
+            let members = self.ctx.types.type_list(list_id);
+            let resolved_members: Vec<TypeId> = members
+                .iter()
+                .map(|&member| self.resolve_lazy_type_inner(member, visited))
+                .collect();
+            return self.ctx.types.intersection(resolved_members);
         }
 
         type_id
