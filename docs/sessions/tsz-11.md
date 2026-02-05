@@ -1,106 +1,65 @@
-# Session TSZ-11: Truthiness & Equality Narrowing
+# Session TSZ-11: Control Flow Analysis Integration
 
 **Started**: 2026-02-05
-**Status**: Active
-**Goal**: Implement narrowing for truthiness checks (`if (x)`) and equality/identity checks (`if (x === null)`)
+**Status**: 🔄 ACTIVE (Architecture Validation Phase)
 
-## Problem Statement
+## Goal
 
-From NORTH_STAR.md and the TypeScript type system:
+Integrate the `FlowAnalyzer` into the main Checker loop so that narrowed types calculated by the Solver are actually used during type checking.
 
-TypeScript supports narrowing through:
-1. **Truthiness checks**: `if (x)` narrows `string | null` to `string` in the true branch
-2. **Strict equality**: `if (x === null)` narrows to exclude `null`
-3. **Loose equality**: `if (x == null)` narrows to exclude both `null` AND `undefined` (Lawyer rule)
+## Context
 
-Currently, tsz does not implement these narrowing operations, which limits the effectiveness of control flow analysis.
+Previous session (TSZ-10) implemented the narrowing logic (truthiness, typeof, instanceof, discriminant unions, assertion functions), but discovered a critical architectural gap: **the Checker does not query the Flow Graph when resolving identifier types**.
 
-**Impact:**
-- Blocks proper handling of nullable types
-- Reduces type safety in conditional branches
-- Incomplete control flow analysis
+### Problem Statement
 
-## Technical Details
+When TypeScript checks this code:
+```typescript
+class Animal {}
+class Dog extends Animal { bark() {} }
+function test(animal: Animal) {
+  if (animal instanceof Dog) {
+    animal.bark(); // Should work (animal is narrowed to Dog)
+  }
+}
+```
 
-**Files**:
-- `src/solver/narrowing.rs` - Add `narrow_by_truthiness` and `narrow_by_equality`
-- `src/checker/control_flow_narrowing.rs` - Detect equality expressions in guards
-- `src/solver/visitor.rs` - Use visitor to identify falsy types
+Current TSZ behavior:
+- ✅ FlowAnalyzer correctly narrows `animal` to `Dog` inside the if block
+- ✅ Narrowing logic in Solver is correct
+- ❌ When checking `animal.bark()`, the Checker uses the declared type `Animal`
+- ❌ Error: "Property 'bark' does not exist on type 'Animal'"
 
-**Root Causes**:
-- No implementation of truthiness narrowing (falsy type filtering)
-- No implementation of equality narrowing (literal value exclusion)
-- Loose equality (`==`) has special TypeScript behavior (Lawyer rule)
+Root cause: `get_type_of_symbol()` (state_type_analysis.rs:751) uses a flow-insensitive cache keyed only by `SymbolId`.
 
-## Implementation Strategy
+## Plan
 
-### Phase 1: Investigation (Current Phase)
-1. Read existing narrowing code in `src/solver/narrowing.rs`
-2. Ask Gemini Question 1: Approach validation
-3. Understand falsy component detection
+### Phase 1: Architecture Validation (MANDATORY GEMINI)
 
-### Phase 2: Truthiness Narrowing
-1. Implement `narrow_by_truthiness(type_id)` in Solver
-2. Filter union members to exclude falsy types:
-   - `null`
-   - `undefined`
-   - `false` (boolean)
-   - `0` and `NaN` (number)
-   - `""` (empty string)
-   - `0n` (bigint)
-3. Handle special cases: `any`, `unknown`, `never`
-4. Add tests for truthiness narrowing
+Task 1: Consult Gemini on integration point - See full details in session file
 
-### Phase 3: Equality Narrowing (Strict)
-1. Implement `narrow_by_equality(type_id, literal_value, is_exclusive)`
-2. For `=== literal`: exclude the literal value
-3. For `!== literal`: keep only the literal value
-4. Handle `null` and `undefined` specially
-5. Add tests for strict equality
+### Phase 2: Implementation
 
-### Phase 4: Equality Narrowing (Loose - Lawyer Rule)
-1. Implement loose equality semantics
-2. `== null` narrows to exclude both `null` AND `undefined`
-3. `!= null` keeps only `null | undefined`
-4. This is a TypeScript-specific "Lawyer" rule
-5. Add tests for loose equality
+Task 2: Implement get_flow_type_of_node
+Task 3: Wire into identifier checking
 
-### Phase 5: Checker Integration
-1. Update `extract_type_guard` to detect equality expressions
-2. Pass guard to Solver for narrowing calculation
-3. Ensure proper integration with control flow analysis
-4. Test with complex control flow
+### Phase 3: Verification
+
+Task 4-7: Verify all narrowing types and run regression tests
+
+## Risks
+
+Performance, Recursion, Breaking Existing Code - see full details in session file
 
 ## Success Criteria
 
-- [ ] `if (x)` narrows `string | null` to `string` in true branch
-- [ ] `if (x === null)` narrows `string | null` to `null` in true branch
-- [ ] `if (x == null)` narrows to exclude both `null` AND `undefined`
-- [ ] Falsy types are correctly identified and excluded
-- [ ] Works with union types, intersections, and lazy types
-- [ ] No regressions in existing narrowing
+1. ✅ instanceof narrowing works end-to-end
+2. ✅ typeof narrowing works end-to-end
+3. ✅ discriminant narrowing works end-to-end
+4. ✅ No regression in existing type checking
+5. ✅ Acceptable performance
 
-## Session History
+## References
 
-*Created 2026-02-05 after completing TSZ-10.*
-*Recommended by Gemini as next high-value task.*
-*Completes the Control Flow Analysis story alongside discriminant narrowing.*
-
----
-
-## Investigation Results (2026-02-05)
-
-### Existing Infrastructure
-
-**Falsy Component Detection** (already implemented):
-- `falsy_component(type_id)` - returns the falsy part of a type
-- `narrow_to_falsy(type_id)` - narrows to only the falsy part
-- Located in `src/checker/control_flow_narrowing.rs`
-
-**Truthy Narrowing** (already implemented!):
-- `narrow_excluding_type` - excludes a specific type from a union
-- Used in conjunction with `falsy_component`
-- Already working for basic cases
-
-**Status**: Need to verify if truthiness narrowing is already working or needs implementation.
-
+- Previous Session: docs/sessions/history/tsz-10.md
+- North Star Architecture: docs/architecture/NORTH_STAR.md
