@@ -184,10 +184,47 @@ Be brutal - if wrong, tell me exactly what to fix.
 - **TSZ-6**: Literal Type Widening & Const Assertions (THIS SESSION)
 
 ## Success Criteria
-- [ ] Priority 1: widen_type function implemented
+- [x] Priority 1: widen_type function implemented
 - [ ] Priority 2: let/var use widening, const doesn't
 - [ ] Priority 3: Object properties widened correctly
 - [ ] Priority 4: as const syntax implemented
 - [ ] Priority 5: Freshness stripped after assignment
 - [ ] All tests passing
 - [ ] Conformance improvement (fewer TS2322 errors)
+
+## Work Log
+
+### 2026-02-05: Priority 1 Complete - widen_type Implementation
+
+**Implemented**: `src/solver/widening.rs` with full literal type widening support
+
+**Features**:
+- String/Number/Boolean/BigInt literals → primitives
+- Unique symbols → symbol type
+- Union members → recursive widening
+- Object properties → recursive widening (preserving readonly)
+- Index signatures preserved during object widening
+- Type parameters and other non-widening types preserved
+
+**Critical Design Decisions** (per Gemini consultation):
+1. **Readonly properties NOT widened** - TypeScript preserves literal types in readonly properties
+2. **Index signatures preserved** - Must use `object_with_index` when reconstructing ObjectWithIndex types
+3. **Recursive property widening** - Properties widened even for nested objects
+
+**Test Coverage**: 10 passing tests
+- Basic literal widening (string, number, boolean)
+- Union widening
+- Type parameter preservation
+- Unique symbol widening
+- Object property widening (flat and nested)
+- Readonly property preservation
+
+**Code Review**: Consulted Gemini Pro twice:
+1. **Pre-implementation**: Validated direct pattern matching approach
+2. **Post-implementation**: Found and fixed two critical bugs:
+   - Missing readonly property handling
+   - Index signature loss during reconstruction
+
+**Commit**: `fd8cf1a50` - "feat(tsz-6): implement widen_type for literal types in Solver"
+
+**Next Priority**: Integrate widening into variable declarations (let vs const)
