@@ -1930,15 +1930,10 @@ impl<'a> FlowAnalyzer<'a> {
             }
 
             // Truthiness check: if (x)
+            // Use Solver-First architecture: delegate to TypeGuard::Truthy
             _ => {
                 if self.is_matching_reference(condition_idx, target) {
-                    if is_true_branch {
-                        // Remove null/undefined (truthy narrowing)
-                        let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                        return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
-                    }
-                    // False branch - keep only falsy types (use Solver for NaN handling)
-                    return narrowing.narrow_to_falsy(type_id);
+                    return narrowing.narrow_type(type_id, &TypeGuard::Truthy, is_true_branch);
                 }
             }
         }

@@ -2130,8 +2130,15 @@ impl<'a> NarrowingContext<'a> {
         .entered();
 
         // Handle special cases
-        if source_type == TypeId::ANY || source_type == TypeId::UNKNOWN {
+        if source_type == TypeId::ANY {
             return source_type;
+        }
+
+        // CRITICAL FIX: unknown in truthy branch narrows to exclude null/undefined
+        // TypeScript: if (x: unknown) { x } -> x is not null | undefined
+        if source_type == TypeId::UNKNOWN {
+            let narrowed = self.narrow_excluding_type(source_type, TypeId::NULL);
+            return self.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
         }
 
         let resolved = self.resolve_type(source_type);
