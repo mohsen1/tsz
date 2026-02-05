@@ -1779,15 +1779,23 @@ impl<'a> FlowAnalyzer<'a> {
                     {
                         // Check if the guard applies to our target reference
                         if self.is_matching_reference(guard_target, target) {
-                            // CRITICAL: Invert sense for inequality operators (!==)
-                            // For `typeof x !== "string"`, the true branch should EXCLUDE string
+                            // CRITICAL: Invert sense for inequality operators (!== and !=)
+                            // For `typeof x !== "string"` or `typeof x != "string"`, the true branch should EXCLUDE string
                             let effective_sense = match &guard {
-                                crate::solver::TypeGuard::Typeof(_)
+                                crate::solver::TypeGuard::Typeof(_) => {
+                                    // Handle both strict (!==) and loose (!) inequality
                                     if bin.operator_token
-                                        == SyntaxKind::ExclamationEqualsEqualsToken as u16 =>
-                                {
-                                    !is_true_branch
+                                        == SyntaxKind::ExclamationEqualsEqualsToken as u16
+                                        || bin.operator_token
+                                            == SyntaxKind::ExclamationEqualsToken as u16
+                                    {
+                                        !is_true_branch
+                                    } else {
+                                        is_true_branch
+                                    }
                                 }
+                                // Predicates (isString(x)) don't use binary operators in this context,
+                                // so they don't need inversion here.
                                 _ => is_true_branch,
                             };
                             // Delegate to Solver for the calculation (Solver responsibility: RESULT)

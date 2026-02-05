@@ -397,3 +397,30 @@ These MUST be addressed in Task 5 (Discriminant Union Refinement).
 4. Ask Gemini for implementation review (Question 2) before committing
 
 **Status**: Ready to implement with clear architectural guidance
+
+### 2026-02-05: typeof Exclusion Narrowing Bug Fixed
+
+**Bug Discovery**: Created test_narrowing3.ts to verify typeof narrowing behavior.
+Found that `typeof x !== "string"` was NOT working correctly:
+- True branch incorrectly narrowed TO string instead of EXCLUDING string
+- False branch incorrectly EXCLUDED string instead of narrowing TO string
+
+**Root Cause**: In `src/checker/control_flow.rs`, the sense parameter passed to
+`narrowing.narrow_type()` was not being inverted for `!==` operators.
+
+**Fix Applied** (src/checker/control_flow.rs:1782-1792):
+- Added check for `Typeof` guard combined with `ExclamationEqualsEqualsToken` operator
+- Invert `is_true_branch` to create `effective_sense` for inequality operators
+- This makes true branch exclude the type, false branch include only the type
+
+**Test Results**:
+- test_typeof_exclusion_broken() now works correctly ✅
+- test_typeof_positive_works() else branch now works correctly ✅
+- All typeof narrowing tests pass
+
+**Commit**: `3416d22f6` - "fix(tsz-10): fix typeof exclusion narrowing (!== operator)"
+
+**Remaining Work**: Need to verify and potentially fix other inequality operators:
+- instanceof with !== (likely same issue)
+- Discriminant !== (likely same issue)
+- Literal !== (likely same issue)
