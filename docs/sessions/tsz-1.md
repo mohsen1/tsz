@@ -153,12 +153,81 @@ function foo(x: string): void {  // TS2394 reported correctly
 }
 ```
 
-**Known Limitations**:
-- Method overload checking depends on binder correctly marking overload declarations (no body)
-- In some cases, binder treats all method declarations as implementations, resulting in TS2393 (Duplicate function implementation) instead of TS2394
-- This is a binder issue, not a checker issue
+**Status**: Function overload validation works correctly. Method/constructor overload validation is blocked by architectural complexity (see "Method/Constructor Overload Blockage" below).
 
 **Conformance Impact**: To be measured
+
+---
+
+### ✅ TS2393 False Positive Fix - Completed 2026-02-05
+
+**Problem**: Valid method overloads (multiple signatures + 1 implementation) were incorrectly reporting TS2393 "Duplicate function implementation".
+
+**Root Cause**: In `src/checker/state_checking_members.rs`, the `check_duplicate_class_members` function had duplicate TS2393 reporting code:
+- Lines 357-378: Correct check `if method_impl_count > 1` → Report TS2393
+- Lines 379-401: **BUG** - `else` block with exact same TS2393 reporting code
+
+When `method_impl_count == 1` (valid overloads), the `else` block would execute and incorrectly report TS2393 for the implementation.
+
+**Fix Applied**:
+Removed the duplicate `else` block (lines 379-401) that was causing false positives.
+
+**Testing Results**:
+```typescript
+// Before fix: TS2393 false positive
+class Foo {
+    method(x: string): void;  // Overload
+    method(x: number): void;  // Overload
+    method(x: string): void {  // TS2393 - WRONG!
+        console.log(x);
+    }
+}
+
+// After fix: No error (valid overloads)
+class Foo {
+    method(x: string): void;
+    method(x: number): void;
+    method(x: string): void {  // No error - CORRECT!
+        console.log(x);
+    }
+}
+
+// Multiple implementations still caught correctly
+class Bar {
+    method() {}  // TS2393 - CORRECT!
+    method() {}  // TS2393 - CORRECT!
+}
+```
+
+**Conformance Impact**: Reduces false positives, improves diagnostic quality.
+
+---
+
+### ⚠️ Method/Constructor Overload Validation - Blocked 2026-02-05
+
+**Status**: Architectural complexity blocks TS2394 validation for methods and constructors.
+
+**Problem**: `check_overload_compatibility` cannot validate method/constructor overloads because `get_type_of_node(method_node)` returns `TypeId::ERROR`.
+
+**Root Cause**:
+- Function declarations have standalone types → TS2394 works ✅
+- Method declarations are part of class type → `get_type_of_node` returns ERROR ❌
+- Methods don't have independently computable types like functions do
+
+**Attempted Solutions**:
+1. Using `get_type_of_symbol` - returns class type, not method signature
+2. Class-level validation - still blocked by ERROR type issue
+
+**Required Solution** (deferred):
+- Use `call_signature_from_function()` to build CallSignature manually
+- Convert CallSignature to TypeId (mechanism unclear)
+- Or implement Symbol-based signature resolution in Solver
+
+**Recommendation**: Document as "Symbol-based Signature Resolution" requirement and defer to future work. Focus on TS2564 Property Initialization instead.
+
+---
+
+### ✅ Overload Implementation Validation - Completed 2026-02-05
 
 ---
 
@@ -249,35 +318,67 @@ See detailed description at top of file.
 
 ## Next Steps
 
-### 1. Fix Binder Method Overload Issue (IMMEDIATE PRIORITY)
+### 1. TS2564 Property Initialization (PRIORITY TASK)
 
-**Problem**: TS2394 validation for method overloads doesn't work correctly because binder doesn't distinguish overload declarations from implementations.
+**Why**: This is the highest-impact task for TSZ-1. A **+2-3% conformance boost** is significant, and it perfectly aligns with the TSZ-1 mandate for **Flow Analysis**.
 
-**Root Cause**: In `src/binder/state.rs`, `MethodDeclaration` handling likely doesn't check for presence of `body` to correctly mark overloads.
+**Approach**:
+1. **Refactor to `FxHashSet`** for performance (per NORTH_STAR.md Section 3.4)
+2. **Walk constructor FlowNode graph** to verify property assignment
+3. **Handle multiple constructors** (must assign in all)
+4. **Handle edge cases**:
+   - Properties with initializers
+   - Getter/setter properties
+   - Assignments after `super()` call
 
-**Impact**: Current TS2394 implementation reports TS2393 (Duplicate function implementation) instead of TS2394 for incompatible method overloads.
+**Mandatory Gemini Consultation** (per AGENTS.md workflow):
+```bash
+# Question 1: Approach Validation
+./scripts/ask-gemini.mjs --include=src/checker/class_checker.rs \
+  "I am implementing TS2564 (Property 'x' has no initializer and is not definitely assigned in the constructor).
+   I plan to walk the FlowNode graph of the constructor in src/checker/class_checker.rs.
+   How should I handle classes with multiple constructors, and how do I correctly identify if a property
+   assignment happened after a super() call?"
 
-**Action Items**:
-- Investigate `src/binder/state.rs` method declaration handling
-- Ensure overload declarations (no body) are correctly flagged
-- Verify fix by testing method overload TS2394 reporting
+# Question 2: Implementation Review
+./scripts/ask-gemini.mjs --pro --include=src/checker/class_checker.rs \
+  "I implemented TS2564 property initialization checking.
+   Changes: [PASTE CODE]
+   Please review: 1) Is this logic correct for TypeScript? 2) Did I miss any edge cases?"
+```
 
-**Note**: Use Gemini consultation for this fix even though it's in the binder.
+**Existing Infrastructure**:
+- `src/checker/flow_analysis.rs` - `is_definitely_assigned_at` logic
+- Adapt for class member symbols rather than local variables
 
 ---
 
-### 2. TS2564 Property Initialization (NEXT MAJOR TASK)
+### 2. Method/Constructor Overload Validation (DEFERRED)
 
-After fixing binder issue, proceed to TS2564:
+**Status**: Architectural complexity blocks progress.
 
-1. **Refactor to `FxHashSet`** for performance
-2. **Complete constructor CFG traversal**
-3. **Handle edge cases**:
-   - Multiple constructors (must assign in all)
-   - Properties with initializers
-   - Getter/setter properties
+**Issue**: `get_type_of_node(method_node)` returns `TypeId::ERROR` because methods don't have standalone types like functions do.
 
-**Approach**:
+**Required Solution**:
+- Use `call_signature_from_function()` to build CallSignature manually
+- Implement Symbol-based signature resolution in Solver
+- Or architect different validation approach for class members
+
+**Recommendation**: Document as "Symbol-based Signature Resolution" requirement. Focus on TS2564 instead (higher impact, clearer path).
+
+---
+
+### 3. TS2454 Module-Level Definite Assignment (DEFERRED)
+
+**Status**: Low priority, architecture heavy.
+
+**Remaining Work**:
+- Extend binder to create flow nodes for module-level statements
+- Complete CFA integration for all variable scopes
+
+**Recommendation**: Keep as low priority - requires significant binder architectural changes.
+
+---
 - Ask Gemini Question 1: CFG walking strategy for property initialization
 - Implement in `src/checker/class_checker.rs`
 - Ask Gemini Question 2: Implementation review
