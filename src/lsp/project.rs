@@ -89,6 +89,8 @@ pub struct ProjectFile {
     pub(crate) type_cache: Option<TypeCache>,
     pub(crate) scope_cache: ScopeCache,
     pub(crate) strict: bool,
+    /// Flag indicating if caches were invalidated and diagnostics need re-computation
+    pub(crate) diagnostics_dirty: bool,
 }
 
 impl ProjectFile {
@@ -118,6 +120,7 @@ impl ProjectFile {
             type_cache: None,
             scope_cache: ScopeCache::default(),
             strict,
+            diagnostics_dirty: false,
         }
     }
 
@@ -181,6 +184,7 @@ impl ProjectFile {
     pub fn invalidate_caches(&mut self) {
         self.type_cache = None;
         self.scope_cache.clear();
+        self.diagnostics_dirty = true;
     }
 
     pub fn update_source_with_edits(&mut self, source_text: String, edits: &[TextEdit]) {
@@ -496,6 +500,7 @@ impl ProjectFile {
             .collect();
 
         self.type_cache = Some(checker.extract_cache());
+        self.diagnostics_dirty = false;
         diagnostics
     }
 
@@ -1740,6 +1745,33 @@ impl Project {
             start.elapsed(),
             scope_stats,
         );
+
+        result
+    }
+
+    /// Get diagnostics for all files that have stale (dirty) diagnostics.
+    ///
+    /// This method should be called after `update_file()` to provide diagnostics
+    /// for all files that were affected by the change (transitively).
+    ///
+    /// Returns a map of file_name -> diagnostics for all files with dirty flags.
+    pub fn get_stale_diagnostics(&mut self) -> FxHashMap<String, Vec<LspDiagnostic>> {
+        let mut result = FxHashMap::default();
+
+        // Collect all file names first to avoid borrow issues
+        let file_names: Vec<String> = self.files.keys().cloned().collect();
+
+        for file_name in file_names {
+            if let Some(file) = self.files.get(&file_name) {
+                if file.diagnostics_dirty {
+                    // Drop the reference before calling get_diagnostics to avoid borrow issues
+                    drop(file);
+                    if let Some(diagnostics) = self.get_diagnostics(&file_name) {
+                        result.insert(file_name, diagnostics);
+                    }
+                }
+            }
+        }
 
         result
     }
