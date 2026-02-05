@@ -1271,9 +1271,9 @@ if (isStringArray(x)) {
 
     let flow_after = binder.get_node_flow(ident_after).expect("flow after");
     let narrowed_after = analyzer.get_flow_type(ident_after, union, flow_after);
-    // After destructuring with assignment, type is widened to primitive (number)
-    // This matches TypeScript's verified behavior
-    assert_eq!(narrowed_after, TypeId::NUMBER);
+    // For local variables, TypeScript preserves narrowing across method calls
+    // Only property accesses reset narrowing after mutations
+    assert_eq!(narrowed_after, string_array);
 }
 
 // ============================================================================
