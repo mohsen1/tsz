@@ -648,3 +648,50 @@ Per Gemini Pro feedback, fixed 2 bugs in the initial implementation:
 
 **Status**: Priority 1 COMPLETE ✅
 
+### Commit: `1e2c94465` - fix(solver): handle unions/intersections correctly in private brand checking ✅
+
+**Priority 2 COMPLETE - Private Brand Nominality!**
+
+**What Was Done**:
+Per Gemini Pro feedback, completely rewrote `private_brand_assignability_override` to use recursive structure that preserves Union/Intersection semantics.
+
+**Initial Implementation Issues** (found by Gemini Pro):
+1. **Flattening Bug**: Collected all shapes into a single `Vec<u32>`, losing Union vs Intersection distinction
+2. **Logic Inversions**:
+   - Union Source (A | B) -> Target: Checked "at least one" instead of "all"
+   - Target Union: Checked "all" instead of "at least one"
+   - Intersection Source: Checked "all" instead of "at least one"
+
+**Correct Implementation** (recursive structure):
+1. Target Union (A | B): Source must match AT LEAST ONE (OR logic)
+2. Source Union (A | B): ALL variants must match target (AND logic)
+3. Target Intersection (A & B): Source must match ALL (AND logic)
+4. Source Intersection (A & B): AT LEAST ONE must match target (OR logic)
+5. Handle Lazy types with recursive resolution
+6. Base case: Extract and compare object shapes for nominal checking
+
+**Key Insight**:
+Do NOT flatten composite types. Use recursive structure to preserve logical operators.
+
+**Test Results**: All 31 tests passing ✅
+- 10/10 private_brands tests
+- 10/10 solver::enum_nominality tests
+- 11/11 enum_nominality_tests tests
+
+**Files Modified**:
+- `src/solver/compat.rs`: Rewrote `private_brand_assignability_override` with proper recursive handling
+
+**Mandatory Gemini Workflow Completed**:
+- ✅ PRE-implementation consultation (identified flattening bug)
+- ✅ POST-implementation review #1 (found logic inversions)
+- ✅ POST-implementation review #2 (verified recursive structure is correct)
+- ✅ Applied all fixes per Gemini guidance
+- ✅ Verified all tests pass
+
+**Next Steps**:
+1. Clean up temporary `collect_shapes_recursive` function (no longer needed)
+2. Move to Priority 3: Constructor Accessibility
+3. Move to Priority 4: Literal Type Widening
+
+**Status**: Priority 2 COMPLETE ✅
+
