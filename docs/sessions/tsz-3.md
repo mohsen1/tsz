@@ -188,22 +188,52 @@ Added support for auto-import completions via transitive wildcard re-exports (`e
 
 **Value**: Auto-import completions now correctly suggest importing from re-exporting modules, matching TypeScript's behavior where re-export paths are preferred over direct import paths.
 
+### Prefix Matching (2026-02-05)
+**Status**: ✅ COMPLETE - Commit 4a5c5441e
+
+Added prefix matching support for auto-import completions, enabling users to type partial names and get relevant suggestions (e.g., "use" → "useEffect", "useState").
+
+**Implementation** (`src/lsp/symbol_index.rs`):
+- Added `sorted_names: Vec<String>` field to maintain all symbol names in sorted order
+- Added `get_symbols_with_prefix()` method for O(log N + M) prefix search using binary search
+- Added `insert_sorted_name()` helper to insert names while maintaining sorted order
+- Added `remove_sorted_name()` helper for cleanup
+- Updated `add_definition()` and `add_reference()` to maintain `sorted_names`
+- Updated `remove_file()` to properly clean up `sorted_names` based on reference counting
+- Added 8 new tests for prefix matching functionality
+
+**Implementation** (`src/lsp/project_operations.rs`):
+- Added `collect_import_candidates_for_prefix()` method
+- Checks ALL files for wildcard re-exports (same approach as transitive re-exports)
+- Uses `get_symbols_with_prefix()` to find matching symbols efficiently
+
+**Implementation** (`src/lsp/project.rs`):
+- Updated `get_completions()` to use prefix matching instead of exact matching
+- Now provides completions for partial identifiers, improving UX significantly
+
+**Testing**:
+- ✅ Added `test_project_completions_prefix_matching()` integration test
+- ✅ All 67 project tests passing
+- ✅ All 36 SymbolIndex tests passing
+
+**Value**: Users can now type partial identifiers and get relevant auto-import suggestions, matching the "magical" IDE experience where typing "use" suggests "useEffect", "useState", etc.
+
 ## Session Status
 
 **Status**: 🔄 ACTIVE - Ready for next feature
 
 **Completed LSP Features** (all working with SymbolIndex optimization):
 - ✅ File Rename (with directory support, dynamic imports, and require calls)
-- ✅ Auto-Import Completions (with additionalTextEdits, O(1) lookup for named exports, and transitive re-export support)
+- ✅ Auto-Import Completions (with prefix matching, additionalTextEdits, O(1) lookup, and transitive re-export support)
 - ✅ JSX Linked Editing
-- ✅ SymbolIndex integration (O(1) auto-import candidate lookup)
+- ✅ SymbolIndex integration (O(1) auto-import candidate lookup, O(log N) prefix search)
 - ✅ Workspace Symbols (project-wide symbol search via Cmd+T / Ctrl+T)
 - ✅ Transitive Re-exports (auto-import via `export * from './mod'`)
+- ✅ Prefix Matching (partial identifier completion, e.g., "use" → "useEffect")
 
 **Next Options** (per Gemini consultation):
-1. **Add Prefix Matching** - Suggest completions for partial matches (e.g., `Lis` → `List`)
-2. **Deep Indexing** - Enhance SymbolIndex to track nested symbols (class members, interface members)
-3. **Move to different session** - Solver/Checker work, coordination work, or other LSP features
+1. **Deep Indexing** - Enhance SymbolIndex to track nested symbols (class members, interface members)
+2. **Move to different session** - Solver/Checker work, coordination work, or other LSP features
 
 **Previous Blocked Work** (CFA):
 - Assertion functions narrowing - COMPLETE (safe to keep)
