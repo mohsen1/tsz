@@ -954,6 +954,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> TypeSubstitution {
         use crate::solver::types::InferencePriority;
 
+        // Save state to prevent pollution if evaluator is reused
+        let previous_defaulted = std::mem::take(&mut self.defaulted_placeholders);
+
         let mut infer_ctx = InferenceContext::new(self.interner.as_type_database());
         let mut substitution = TypeSubstitution::new();
         let mut var_map: FxHashMap<TypeId, crate::solver::infer::InferenceVar> =
@@ -981,6 +984,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             substitution.insert(tp.name, placeholder_id);
             var_map.insert(placeholder_id, var);
+
+            // Track defaulted placeholders to prevent union inference in constrain_types
+            if tp.default.is_some() {
+                self.defaulted_placeholders.insert(placeholder_id);
+            }
 
             // Add type parameter constraint as upper bound (if concrete)
             if let Some(constraint) = tp.constraint {
@@ -1060,6 +1068,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // 4. Fix variables with enough information from Round 1
         let _ = infer_ctx.fix_current_variables();
+
+        // Restore state to prevent pollution if evaluator is reused
+        self.defaulted_placeholders = previous_defaulted;
 
         // 5. Return current substitution for Checker to use in Round 2
         infer_ctx.get_current_substitution()
