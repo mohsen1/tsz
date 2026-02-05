@@ -1016,6 +1016,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Don't emit TS2307 for modules in the resolved_modules set.
+        // The CLI driver populates this set for modules that have been resolved
+        // but whose exports might not yet be available in the binder.
+        if self.module_exists_cross_file(module_specifier) {
+            return;
+        }
+
+        // Don't emit for ambient module matches (declared modules, shorthand modules)
+        if self.is_ambient_module_match(module_specifier) {
+            return;
+        }
+
         // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
         // IMPORTANT: Mark as emitted BEFORE calling self.error() to prevent race conditions
         // where multiple code paths check the set simultaneously
