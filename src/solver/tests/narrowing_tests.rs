@@ -285,11 +285,11 @@ fn test_narrow_by_discriminant() {
     let union = interner.union(vec![member_add, member_remove]);
 
     // Narrow to "add" variant
-    let narrowed = narrow_by_discriminant(&interner, union, type_name, type_add);
+    let narrowed = narrow_by_discriminant(&interner, union, &[type_name], type_add);
     assert_eq!(narrowed, member_add);
 
     // Narrow to "remove" variant
-    let narrowed = narrow_by_discriminant(&interner, union, type_name, type_remove);
+    let narrowed = narrow_by_discriminant(&interner, union, &[type_name], type_remove);
     assert_eq!(narrowed, member_remove);
 }
 
@@ -316,7 +316,7 @@ fn test_narrow_by_discriminant_no_match() {
 
     // Narrowing {type: "add"} by (type === "unknown") results in never
     // because "add" can never equal "unknown"
-    let narrowed = narrow_by_discriminant(&interner, union, type_name, type_unknown);
+    let narrowed = narrow_by_discriminant(&interner, union, &[type_name], type_unknown);
     assert_eq!(narrowed, TypeId::NEVER);
 }
 
@@ -366,7 +366,7 @@ fn test_narrow_excluding_discriminant() {
     let ctx = NarrowingContext::new(&interner);
 
     // Exclude "a" - should get "b" | "c"
-    let narrowed = ctx.narrow_by_excluding_discriminant(union, type_name, type_a);
+    let narrowed = ctx.narrow_by_excluding_discriminant(union, &[type_name], type_a);
     let expected = interner.union(vec![member_b, member_c]);
     assert_eq!(narrowed, expected);
 }

@@ -6,6 +6,7 @@
 //! These functions operate purely on TypeIds and maintain no AST dependencies.
 
 use crate::solver::TypeDatabase;
+use crate::solver::subtype::NoopResolver;
 use crate::solver::types::{IntrinsicKind, LiteralValue, TypeId, TypeKey};
 use crate::solver::{TypeResolver, is_subtype_of};
 
@@ -455,7 +456,7 @@ mod tests {
     fn test_bct_empty() {
         let interner = TypeInterner::new();
         // BCT of empty set -> never
-        let result = compute_best_common_type(&interner, &[], None);
+        let result = compute_best_common_type::<NoopResolver>(&interner, &[], None);
         assert_eq!(result, TypeId::NEVER);
     }
 
@@ -463,7 +464,7 @@ mod tests {
     fn test_bct_single() {
         let interner = TypeInterner::new();
         // BCT of [string] -> string
-        let result = compute_best_common_type(&interner, &[TypeId::STRING], None);
+        let result = compute_best_common_type::<NoopResolver>(&interner, &[TypeId::STRING], None);
         assert_eq!(result, TypeId::STRING);
     }
 
@@ -471,7 +472,7 @@ mod tests {
     fn test_bct_all_same() {
         let interner = TypeInterner::new();
         // BCT of [string, string, string] -> string
-        let result = compute_best_common_type(
+        let result = compute_best_common_type::<NoopResolver>(
             &interner,
             &[TypeId::STRING, TypeId::STRING, TypeId::STRING],
             None,
@@ -483,7 +484,11 @@ mod tests {
     fn test_bct_different() {
         let interner = TypeInterner::new();
         // BCT of [string, number] -> string | number
-        let result = compute_best_common_type(&interner, &[TypeId::STRING, TypeId::NUMBER], None);
+        let result = compute_best_common_type::<NoopResolver>(
+            &interner,
+            &[TypeId::STRING, TypeId::NUMBER],
+            None,
+        );
         // Result should be a union type (not equal to either input)
         assert_ne!(result, TypeId::STRING);
         assert_ne!(result, TypeId::NUMBER);
@@ -493,7 +498,7 @@ mod tests {
     fn test_bct_error_propagation() {
         let interner = TypeInterner::new();
         // BCT of [string, ERROR, number] -> ERROR
-        let result = compute_best_common_type(
+        let result = compute_best_common_type::<NoopResolver>(
             &interner,
             &[TypeId::STRING, TypeId::ERROR, TypeId::NUMBER],
             None,
