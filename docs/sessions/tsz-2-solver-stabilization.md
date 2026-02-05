@@ -14,7 +14,8 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 - ✅ **Fixed generic inference in Round 2** - Preserved placeholder connections for unresolved type parameters
 - ✅ **Fixed intersection normalization** - Added `null & object = never` rule
 - ✅ **Fixed property access for Array/Tuple** - Added type substitution for generic applications
-- Reduced test failures from 37 → 31 → 22 → 20 → 13
+- ✅ **Fixed function variance tests** - Fixed test bugs (missing strict_function_types, incorrect any expectation)
+- Reduced test failures from 37 → 31 → 22 → 20 → 13 → 11
 
 ## Redefined Priorities (2026-02-05 by Gemini Pro)
 
@@ -50,7 +51,23 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 
 ---
 
-### Priority 3: Function Variance (2 tests) - NEXT 🔴
+### ✅ Priority 3: Function Variance (2 tests) - COMPLETED
+**Fixed**: Test bugs - no code changes needed
+**Tests**:
+- ✅ `test_any_in_function_parameters_strict_mode` - Fixed test to call `set_strict_function_types(true)`
+- ✅ `test_function_variance_with_return_types` - Fixed incorrect expectation (any IS assignable to string)
+
+**Root Cause**: Test bugs, not implementation bugs
+1. `test_any_in_function_parameters_strict_mode` only called `set_strict_any_propagation(true)` but not `set_strict_function_types(true)`
+2. `test_function_variance_with_return_types` incorrectly expected `() => any` NOT to be assignable to `() => string`
+
+**Fix**:
+- Test 1: Added `checker.set_strict_function_types(true)`
+- Test 2: Changed expectation to `is_assignable(returns_any, returns_string)` because `any` is assignable to everything
+
+---
+
+### Priority 4: Generic Inference & Constraints (2 tests) - NEXT 🔴
 **Tests**:
 - `test_any_in_function_parameters_strict_mode`
 - `test_function_variance_with_return_types`
