@@ -676,9 +676,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// These types are NOT safe for simplification because bypassing evaluation
     /// would produce incorrect results (e.g., treating T[K] as a distinct type from
     /// the value it evaluates to).
+    ///
+    /// ## Task #37: Deep Structural Simplification
+    ///
+    /// After implementing the Canonicalizer (Task #32), we can now safely handle
+    /// `Lazy` (type aliases) and `Application` (generics) structurally. These types
+    /// are now "unlocked" for simplification because:
+    /// - `Lazy` types are canonicalized using De Bruijn indices
+    /// - `Application` types are recursively canonicalized
+    /// - The SubtypeChecker's fast-path (Task #36) uses O(1) structural identity
+    ///
+    /// Types that remain "complex" are those that are **inherently deferred**:
+    /// - `TypeParameter`, `Infer`: Waiting for generic substitution
+    /// - `Conditional`, `Mapped`, `IndexAccess`, `KeyOf`: Require type-level computation
+    /// - These cannot be compared structurally until they are fully evaluated
     fn is_complex_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::types::TypeKey;
-
         let Some(key) = self.interner.lookup(type_id) else {
             return false;
         };
@@ -687,17 +699,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             key,
             TypeKey::TypeParameter(_)
                 | TypeKey::Infer(_) // Type parameter for conditional types
-                | TypeKey::Lazy(_)
                 | TypeKey::Conditional(_)
                 | TypeKey::Mapped(_)
                 | TypeKey::IndexAccess(_, _)
                 | TypeKey::KeyOf(_)
-                | TypeKey::Application(_)
                 | TypeKey::TypeQuery(_)
                 | TypeKey::TemplateLiteral(_)
                 | TypeKey::ReadonlyType(_)
                 | TypeKey::StringIntrinsic { .. }
                 | TypeKey::ThisType // Context-dependent polymorphic type
+                                    // Note: Lazy and Application are REMOVED (Task #37)
+                                    // They are now handled by the Canonicalizer (Task #32)
         )
     }
 
@@ -754,11 +766,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// 1. **Early exit for large unions** (>25 members) to avoid O(N²) explosion
     /// 2. **Skip complex types** that require full resolution:
-    ///    - TypeParameter, Lazy, Conditional, Mapped, IndexAccess, KeyOf, Application, TypeQuery
+    ///    - TypeParameter, Infer, Conditional, Mapped, IndexAccess, KeyOf, TypeQuery
     ///    - TemplateLiteral, ReadonlyType, String manipulation types
+    ///    - Note: Lazy and Application are NOW safe (Task #37: handled by Canonicalizer)
     /// 3. **Fast-path for any/unknown**: If any member is any, entire union becomes any
-    /// 4. **Identity check**: O(1) TypeId equality before calling O(N) subtype check
-    /// 5. **Depth limit**: max_depth=5 prevents stack overflow on recursive structures
+    /// 4. **Identity check**: O(1) structural identity via SubtypeChecker (Task #36 fast-path)
+    /// 5. **Depth limit**: MAX_SUBTYPE_DEPTH enables deep recursive type simplification (Task #37)
     ///
     /// ## Example Reductions
     ///
@@ -790,10 +803,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Use SubtypeChecker with bypass_evaluation=true to prevent infinite recursion
-        use crate::solver::subtype::SubtypeChecker;
+        // Task #37: Use MAX_SUBTYPE_DEPTH for deep structural simplification
+        use crate::solver::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
         let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
         checker.bypass_evaluation = true;
-        checker.max_depth = 5; // Conservative limit to prevent stack overflow
+        checker.max_depth = MAX_SUBTYPE_DEPTH; // Deep simplification for recursive types
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
         let mut i = 0;
@@ -837,11 +851,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// 1. **Early exit for large intersections** (>25 members) to avoid O(N²) explosion
     /// 2. **Skip complex types** that require full resolution:
-    ///    - TypeParameter, Lazy, Conditional, Mapped, IndexAccess, KeyOf, Application, TypeQuery
+    ///    - TypeParameter, Infer, Conditional, Mapped, IndexAccess, KeyOf, TypeQuery
     ///    - TemplateLiteral, ReadonlyType, String manipulation types
+    ///    - Note: Lazy and Application are NOW safe (Task #37: handled by Canonicalizer)
     /// 3. **Fast-path for any/unknown**: If any member is any, entire intersection becomes any
-    /// 4. **Identity check**: O(1) TypeId equality before calling O(N) subtype check
-    /// 5. **Depth limit**: max_depth=5 prevents stack overflow on recursive structures
+    /// 4. **Identity check**: O(1) structural identity via SubtypeChecker (Task #36 fast-path)
+    /// 5. **Depth limit**: MAX_SUBTYPE_DEPTH enables deep recursive type simplification (Task #37)
     ///
     /// ## Example Reductions
     ///
@@ -865,10 +880,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Use SubtypeChecker with bypass_evaluation=true to prevent infinite recursion
-        use crate::solver::subtype::SubtypeChecker;
+        // Task #37: Use MAX_SUBTYPE_DEPTH for deep structural simplification
+        use crate::solver::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
         let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
         checker.bypass_evaluation = true;
-        checker.max_depth = 5; // Conservative limit to prevent stack overflow
+        checker.max_depth = MAX_SUBTYPE_DEPTH; // Deep simplification for recursive types
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
         let mut i = 0;
