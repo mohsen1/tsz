@@ -1782,7 +1782,16 @@ impl ParserState {
             // Skip leading 0 and check remaining digits don't contain 8 or 9
             let has_non_octal =
                 integer_part.len() > 1 && integer_part[1..].bytes().any(|b| b == b'8' || b == b'9');
-            if !has_non_octal && integer_part.len() > 1 {
+            if has_non_octal {
+                // TS1489: Decimals with leading zeros are not allowed (e.g., 009, 08)
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    end_pos - start_pos,
+                    "Decimals with leading zeros are not allowed.",
+                    diagnostic_codes::DECIMALS_WITH_LEADING_ZEROS_NOT_ALLOWED,
+                );
+            } else if integer_part.len() > 1 {
                 use crate::checker::types::diagnostics::diagnostic_codes;
                 // Convert legacy octal to modern octal for the suggestion (e.g., "01" -> "0o1")
                 let suggested = format!("0o{}", &integer_part[1..]);
