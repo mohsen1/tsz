@@ -1404,7 +1404,7 @@ fn test_type_guard_discriminant() {
 
     // x.kind === "a"
     let guard = TypeGuard::Discriminant {
-        property_name: kind_name,
+        property_path: vec![kind_name],
         value_type: kind_a,
     };
     let narrowed = ctx.narrow_type(union, &guard, true);
@@ -1448,7 +1448,7 @@ fn test_type_guard_discriminant_negated() {
 
     // x.kind !== "a" (sense=false)
     let guard = TypeGuard::Discriminant {
-        property_name: kind_name,
+        property_path: vec![kind_name],
         value_type: kind_a,
     };
     let narrowed = ctx.narrow_type(union, &guard, false);
