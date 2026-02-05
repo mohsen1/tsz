@@ -6060,7 +6060,8 @@ c.y;
 
 #[test]
 fn test_strict_null_checks_property_access() {
-    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo, Visibility};
+    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use crate::solver::{PropertyInfo, TypeId, Visibility};
 
     // Test property access on nullable types
     let types = TypeInterner::new();
@@ -6100,7 +6101,8 @@ fn test_strict_null_checks_property_access() {
 
 #[test]
 fn test_strict_null_checks_undefined_type() {
-    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo, Visibility};
+    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use crate::solver::{PropertyInfo, TypeId, Visibility};
 
     // Test property access on possibly undefined types
     let types = TypeInterner::new();
@@ -6138,9 +6140,8 @@ fn test_strict_null_checks_undefined_type() {
 
 #[test]
 fn test_strict_null_checks_both_null_and_undefined() {
-    use crate::solver::{
-        PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo, TypeKey, Visibility,
-    };
+    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use crate::solver::{PropertyInfo, TypeId, TypeKey, Visibility};
 
     // Test property access on type that is both null and undefined
     let types = TypeInterner::new();
@@ -6190,7 +6191,8 @@ fn test_strict_null_checks_both_null_and_undefined() {
 
 #[test]
 fn test_strict_null_checks_non_nullable_success() {
-    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo, Visibility};
+    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use crate::solver::{PropertyInfo, TypeId, Visibility};
 
     // Test that non-nullable types succeed normally
     let types = TypeInterner::new();
@@ -6223,7 +6225,7 @@ fn test_strict_null_checks_non_nullable_success() {
 
 #[test]
 fn test_strict_null_checks_null_only() {
-    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult};
+    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing property directly on null type
     let types = TypeInterner::new();
@@ -6367,7 +6369,7 @@ fn test_variable_self_reference_no_2403() {
 
 #[test]
 fn test_symbol_property_access_description() {
-    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, TypeKey};
+    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing .description on symbol type
     let types = TypeInterner::new();
@@ -6396,7 +6398,7 @@ fn test_symbol_property_access_description() {
 
 #[test]
 fn test_symbol_property_access_methods() {
-    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult};
+    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing methods on symbol type
     let types = TypeInterner::new();
@@ -6432,7 +6434,7 @@ fn test_symbol_property_access_methods() {
 
 #[test]
 fn test_symbol_property_not_found() {
-    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult};
+    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing non-existent property on symbol type
     let types = TypeInterner::new();
@@ -11292,9 +11294,8 @@ type B = A;
 
 #[test]
 fn test_index_signature_at_solver_level() {
-    use crate::solver::{
-        IndexSignature, ObjectFlags, ObjectShape, PropertyAccessEvaluator, PropertyAccessResult,
-    };
+    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use crate::solver::{IndexSignature, ObjectFlags, ObjectShape};
 
     // Test that index signature resolution is tracked at solver level
     let types = TypeInterner::new();

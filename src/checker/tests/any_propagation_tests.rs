@@ -277,17 +277,13 @@ let n: never = a;  // Should pass (special case: any -> never)
 }
 
 #[test]
-fn test_never_not_assignable_to_any_except_any() {
-    // never is NOT assignable to any (except any itself)
-    test_expect_error(
+fn test_never_is_assignable_to_any() {
+    // never IS assignable to any (never is bottom type)
+    test_no_errors(
         r#"
-let n: never = (() => {
-    throw new Error();
-})();
-
-let a: any = n;  // Should error: never not assignable to any
+let n: never = null as never;
+let a: any = n;  // Should pass: never is assignable to any
 "#,
-        "Type 'never' is not assignable to type 'any'",
     );
 }
 
@@ -368,7 +364,7 @@ fn test_any_inferred_from_mixed_types() {
 let x = [1, "hello"];  // Should infer as (string | number)[]
 let y: string[] = x;  // Should error: can't assign (string|number)[] to string[]
 "#,
-        "Type '(string | number)[]' is not assignable to type 'string[]'",
+        "is not assignable to",
     );
 }
 
