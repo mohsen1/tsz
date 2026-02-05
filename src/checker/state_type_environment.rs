@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let member_type = match self.enum_kind(sym_id) {
+        let _member_type = match self.enum_kind(sym_id) {
             Some(EnumKind::String) => TypeId::STRING,
             Some(EnumKind::Numeric) => TypeId::NUMBER,
             Some(EnumKind::Mixed) => {
@@ -62,10 +62,32 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let name_atom = self.ctx.types.intern_string(&name);
+
+                // Fix: Create TypeKey::Enum(member_def_id, literal_type) for each member
+                // This preserves nominal identity so E.A is not assignable to E.B
+                let member_sym_id = self
+                    .ctx
+                    .binder
+                    .get_node_symbol(member_idx)
+                    .or_else(|| self.ctx.binder.get_node_symbol(member.name))
+                    .expect("Enum member must have a symbol");
+                let member_def_id = self
+                    .ctx
+                    .symbol_to_def
+                    .borrow()
+                    .get(&member_sym_id)
+                    .copied()
+                    .expect("Enum member must have a DefId");
+                let literal_type = self.enum_member_type_from_decl(member_idx);
+                let specific_member_type = self
+                    .ctx
+                    .types
+                    .intern(TypeKey::Enum(member_def_id, literal_type));
+
                 props.entry(name_atom).or_insert(PropertyInfo {
                     name: name_atom,
-                    type_id: member_type,
-                    write_type: member_type,
+                    type_id: specific_member_type,
+                    write_type: specific_member_type,
                     optional: false,
                     readonly: true,
                     is_method: false,
