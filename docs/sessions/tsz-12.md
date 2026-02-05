@@ -199,3 +199,31 @@ User-defined type guards and assertion predicates are fully functional.
 - Work best with union types where predicate type is a member
 
 **Next Task**: Exhaustiveness Checking (Task 3)
+
+### Task 3: Exhaustiveness Checking (IN PROGRESS)
+
+**Status**: Mandatory Gemini consultation complete - implementation approach defined.
+
+**Problem**: After exhaustive switch/if-else, variables should narrow to `never`.
+
+**Gemini Guidance (Question 1 - Approach Validation)**:
+
+The solution is to model the "implicit default" path in the control flow graph. When a switch statement has no `default` clause, execution falls through to the end if no case matches. On this path, the type is narrowed by excluding all case values. If all possible values are covered, the result becomes `never`.
+
+**Implementation Plan**:
+
+1. **Flow Graph Construction** (`src/checker/flow_graph_builder.rs`):
+   - Modify `build_switch_statement` to create an implicit default flow node when no default clause exists
+   - Connect this node to the end label
+
+2. **Control Flow Analysis** (`src/checker/control_flow.rs`):
+   - Update `handle_switch_clause_iterative` to recognize implicit default nodes
+   - Apply `narrow_by_default_switch_clause` for implicit defaults
+
+3. **Narrowing Logic** (`src/checker/flow_narrowing.rs`):
+   - Already exists - `narrow_by_default_switch_clause` handles the type algebra
+   - `narrow_excluding_types` in solver automatically produces `never` when all union members are excluded
+
+**Key Insight**: Don't explicitly check "is exhaustive". Instead, model the "else" path. If the switch is exhaustive, the type on the "else" path becomes `never` automatically.
+
+**Next**: Implement the changes following Gemini's guidance.
