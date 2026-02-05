@@ -22,6 +22,8 @@
 //!
 //! Note: pub(super) fields and methods allow future submodules to access Printer internals.
 
+#![allow(clippy::print_stderr)]
+
 use crate::emit_context::EmitContext;
 use crate::parser::NodeIndex;
 use crate::parser::node::{Node, NodeArena};

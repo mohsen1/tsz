@@ -6,6 +6,8 @@
 //!
 //! Note: These tests simulate missing lib.d.ts by not loading lib files.
 
+#![allow(clippy::print_stderr)]
+
 use crate::binder::BinderState;
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;

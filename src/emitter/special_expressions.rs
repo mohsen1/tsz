@@ -3,6 +3,8 @@
 //! This module handles emission of special expressions like yield, await, spread,
 //! and decorators that don't fit neatly into other categories.
 
+#![allow(clippy::print_stderr)]
+
 use super::Printer;
 use crate::parser::node::Node;
 use crate::parser::syntax_kind_ext;

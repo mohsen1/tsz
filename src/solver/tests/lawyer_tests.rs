@@ -5,7 +5,7 @@ use crate::solver::AnyPropagationMode;
 use crate::solver::compat::CompatChecker;
 use crate::solver::intern::TypeInterner;
 use crate::solver::types::{FunctionShape, ParamInfo};
-use crate::solver::{LiteralValue, PropertyInfo, TypeId, Visibility};
+use crate::solver::{PropertyInfo, TypeId, Visibility};
 
 // Helper function to create a simple function type
 fn create_function_type(

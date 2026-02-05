@@ -425,7 +425,6 @@ fn compilation_cache_to_build_info(
         module: Some(format!("{:?}", options.printer.module)),
         declaration: Some(options.emit_declarations),
         strict: Some(options.checker.strict),
-        ..Default::default()
     };
 
     BuildInfo {
@@ -1298,7 +1297,7 @@ fn is_binary_file(bytes: &[u8]) -> bool {
 }
 
 #[derive(Debug, Clone)]
-struct SourceEntry {
+pub(crate) struct SourceEntry {
     path: PathBuf,
     text: Option<String>,
     /// If true, this file appears to be binary (emit TS1490)

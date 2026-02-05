@@ -153,8 +153,6 @@ impl<'a> LinkedEditingProvider<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // TODO: Add tests once we have test infrastructure setup
     // Test cases to cover:
     // 1. Simple element: <div></div>

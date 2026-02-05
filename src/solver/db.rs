@@ -378,7 +378,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     }
 
     fn is_property_readonly(&self, object_type: TypeId, prop_name: &str) -> bool {
-        crate::solver::operations::property_is_readonly(
+        crate::solver::operations_property::property_is_readonly(
             self.as_type_database(),
             object_type,
             prop_name,
@@ -391,7 +391,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         wants_string: bool,
         wants_number: bool,
     ) -> bool {
-        crate::solver::operations::is_readonly_index_signature(
+        crate::solver::operations_property::is_readonly_index_signature(
             self.as_type_database(),
             object_type,
             wants_string,
@@ -1031,6 +1031,7 @@ pub struct BinderTypeDatabase<'a> {
     pub binder: &'a crate::binder::BinderState,
     pub type_env: Rc<RefCell<crate::solver::subtype::TypeEnvironment>>,
     /// Cached array base type params (to avoid RefCell lifetime issues)
+    #[allow(dead_code)]
     cached_array_base_params: std::sync::Mutex<Option<Box<[TypeParamInfo]>>>,
 }
 

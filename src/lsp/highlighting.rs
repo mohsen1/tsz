@@ -7,6 +7,8 @@
 //! Also supports keyword highlighting for matching control flow keywords:
 //! if/else, try/catch/finally, switch/case/default, while/do.
 
+#![allow(clippy::print_stderr)]
+
 use crate::binder::BinderState;
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::references::FindReferences;

@@ -956,7 +956,7 @@ mod tests {
 
         let temp = TempDir::new().unwrap();
         let config_path = create_test_project(temp.path(), config);
-        let project = load_project(&config_path).unwrap();
+        let _project = load_project(&config_path).unwrap();
 
         // The project claims to be composite but doesn't emit declarations
         // Our simple check won't catch this because we check the raw source

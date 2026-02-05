@@ -9,6 +9,8 @@
 //! - Control flow analysis
 //! - Error diagnostics
 
+#![allow(clippy::print_stderr)]
+
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
@@ -6576,7 +6578,7 @@ const val = obj.x;
 #[ignore] // TODO: Fix this test
 fn test_checker_lowers_full_source_file() {
     use crate::parser::ParserState;
-    use crate::solver::{SymbolRef, TypeKey};
+    use crate::solver::TypeKey;
 
     let source = r#"
 interface Foo { x: number; }

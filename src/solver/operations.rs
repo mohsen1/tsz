@@ -2931,6 +2931,7 @@ pub fn solve_generic_instantiation<C: AssignabilityChecker>(
 // =============================================================================
 
 use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+use crate::solver::subtype::TypeResolver;
 
 /// Information about an iterator type extracted from a type.
 ///
@@ -3227,9 +3228,6 @@ pub fn get_async_iterable_element_type(
         None => TypeId::ANY,
     }
 }
-
-// Re-export property access types from extracted module
-pub use crate::solver::operations_property::*;
 
 // =============================================================================
 // Binary Operations - Extracted to binary_ops.rs

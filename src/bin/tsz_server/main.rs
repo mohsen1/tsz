@@ -18,6 +18,10 @@
 //!   --logVerbosity, --logFile, --globalPlugins, --pluginProbeLocations, etc.
 //!
 //! Environment variables (tsserver-compatible):
+
+#![allow(clippy::print_stderr)]
+
+//! Environment variables (tsserver-compatible):
 //!   TSS_LOG     - Configure logging (e.g., "-level verbose -file /tmp/tsserver.log")
 //!   TSS_DEBUG   - Enable debug mode on specified port
 //!   TSS_DEBUG_BRK - Enable debug mode with break on startup

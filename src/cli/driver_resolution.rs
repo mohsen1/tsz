@@ -1578,6 +1578,7 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
 ///
 /// Analyzes used symbols and determines which need import statements
 /// because they're from other modules.
+#[allow(dead_code)]
 fn calculate_required_imports(
     binder: &crate::binder::BinderState,
     used_symbols: &rustc_hash::FxHashSet<crate::binder::SymbolId>,
@@ -2050,6 +2051,7 @@ pub(crate) fn canonicalize_or_owned(path: &Path) -> PathBuf {
 /// This replaces the functionality of the `pathdiff` crate using only std::path.
 /// It determines the common prefix, calculates how many ".." segments are needed
 /// to get out of `base`, and then appends the remaining segments of `path`.
+#[allow(dead_code)]
 fn diff_paths(path: &Path, base: &Path) -> PathBuf {
     let path_comps: Vec<_> = path.components().collect();
     let base_comps: Vec<_> = base.components().collect();

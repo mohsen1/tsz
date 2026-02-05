@@ -5,6 +5,8 @@
 
 // Allow dead code for binder infrastructure methods that will be used in future phases
 
+#![allow(clippy::print_stderr)]
+
 use crate::binder::{
     ContainerKind, FlowNodeArena, FlowNodeId, Scope, ScopeContext, ScopeId, SymbolArena, SymbolId,
     SymbolTable, flow_flags, symbol_flags,

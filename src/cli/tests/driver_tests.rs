@@ -1,3 +1,5 @@
+#![allow(clippy::print_stderr)]
+
 use super::args::CliArgs;
 use super::driver::{
     CompilationCache, compile, compile_with_cache, compile_with_cache_and_changes,

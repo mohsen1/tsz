@@ -258,6 +258,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Set the inheritance graph for nominal class subtype checking.
     /// Propagates to the internal SubtypeChecker.
+    #[allow(unsafe_code)]
     pub fn set_inheritance_graph(
         &mut self,
         graph: Option<&crate::solver::inheritance::InheritanceGraph>,

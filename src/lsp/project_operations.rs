@@ -1876,6 +1876,7 @@ impl Project {
     }
 
     /// Check if a file has a default export.
+    #[allow(dead_code)]
     fn file_has_default_export(&self, file_name: &str) -> bool {
         let Some(file) = self.files.get(file_name) else {
             return false;

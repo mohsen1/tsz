@@ -76,11 +76,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let mut found_readonly = None;
 
                 for &member in members_list.iter() {
-                    if let (opt, ro) = self.get_property_modifiers_for_key(Some(member), key_name) {
-                        // Found the property in this constituent
-                        found_optional = Some(found_optional.unwrap_or(true) && opt);
-                        found_readonly = Some(found_readonly.unwrap_or(false) || ro);
-                    }
+                    let (opt, ro) = self.get_property_modifiers_for_key(Some(member), key_name);
+                    // Found the property in this constituent
+                    found_optional = Some(found_optional.unwrap_or(true) && opt);
+                    found_readonly = Some(found_readonly.unwrap_or(false) || ro);
                 }
 
                 if let (Some(opt), Some(ro)) = (found_optional, found_readonly) {

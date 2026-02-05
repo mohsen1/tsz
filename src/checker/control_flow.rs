@@ -117,6 +117,7 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) type_environment: Option<Rc<RefCell<crate::solver::TypeEnvironment>>>,
     /// Cache for loop mutation analysis: (LoopNodeId, SymbolId) -> is_mutated
     /// This prevents O(N^2) complexity when checking mutations in nested loops
+    #[allow(dead_code)]
     loop_mutation_cache: RefCell<FxHashMap<(FlowNodeId, SymbolId), bool>>,
 }
 
@@ -1073,6 +1074,7 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Check if this is a direct assignment to a reference (e.g., `x = value`)
     /// as opposed to a destructuring assignment (e.g., `[x] = [value]`)
+    #[allow(dead_code)]
     pub(crate) fn is_direct_assignment_to_reference(
         &self,
         assignment_node: NodeIndex,
@@ -2050,6 +2052,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// if the variable is actually mutated in the loop body.
     ///
     /// Results are cached to prevent O(N^2) complexity.
+    #[allow(dead_code)]
     fn is_symbol_mutated_in_loop(&self, loop_id: FlowNodeId, sym_id: SymbolId) -> bool {
         // Check cache first
         if let Some(&is_mutated) = self.loop_mutation_cache.borrow().get(&(loop_id, sym_id)) {
@@ -2117,6 +2120,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// This checks for direct assignments (reassignments) to the symbol.
     /// Note: Array method calls like push() do NOT mutate the variable binding,
     /// only the array contents. CFA tracks variable reassignments, not object mutations.
+    #[allow(dead_code)]
     fn node_mutates_symbol(&self, node_idx: NodeIndex, sym_id: SymbolId) -> bool {
         let Some(node) = self.arena.get(node_idx) else {
             return false;
@@ -2136,6 +2140,7 @@ impl<'a> FlowAnalyzer<'a> {
     ///
     /// This is a SymbolId-aware version of assignment_targets_reference that
     /// checks if the left side of an assignment refers to the given symbol.
+    #[allow(dead_code)]
     fn assignment_targets_symbol(&self, node_idx: NodeIndex, sym_id: SymbolId) -> bool {
         let node_idx = self.skip_parenthesized(node_idx);
         let Some(node) = self.arena.get(node_idx) else {

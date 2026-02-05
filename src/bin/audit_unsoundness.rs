@@ -7,6 +7,8 @@
 //!   cargo run --bin audit_unsoundness -- --missing
 //!   cargo run --bin audit_unsoundness -- --phase 1
 
+#![allow(clippy::print_stderr)]
+
 use std::env;
 use std::process;
 use wasm::solver::unsoundness_audit::{

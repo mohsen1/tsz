@@ -17,6 +17,8 @@
 //! - Pre-parsed approach (deserialize only): ~20-50ms
 //! - Improvement: 10-15x faster startup
 
+#![allow(clippy::print_stderr)]
+
 use crate::binder::{SymbolArena, SymbolTable};
 use crate::parser::node::NodeArena;
 use bincode::Options;

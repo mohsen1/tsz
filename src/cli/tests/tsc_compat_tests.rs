@@ -1,14 +1,17 @@
-/// Integration tests that compare tsz output against tsc (TypeScript compiler) output
-/// to ensure they match character-by-character.
-///
-/// These tests require `tsc` to be installed and available in PATH.
-/// They compare the diagnostic output format (non-pretty mode) between tsz and tsc
-/// to verify that tsz produces identical output to tsc for identical inputs.
-///
-/// Note: Some tests compare output structure only (ignoring error span positions)
-/// because tsz's type checker may report errors on different AST nodes than tsc.
-/// Tests that use error codes/types where both compilers agree on spans will
-/// verify exact char-by-char matches.
+#![allow(clippy::print_stderr)]
+
+//! Integration tests that compare tsz output against tsc (TypeScript compiler) output
+//! to ensure they match character-by-character.
+//!
+//! These tests require `tsc` to be installed and available in PATH.
+//! They compare the diagnostic output format (non-pretty mode) between tsz and tsc
+//! to verify that tsz produces identical output to tsc for identical inputs.
+//!
+//! Note: Some tests compare output structure only (ignoring error span positions)
+//! because tsz's type checker may report errors on different AST nodes than tsc.
+//! Tests that use error codes/types where both compilers agree on spans will
+//! verify exact char-by-char matches.
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};

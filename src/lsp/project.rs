@@ -1765,8 +1765,6 @@ impl Project {
         for file_name in file_names {
             if let Some(file) = self.files.get(&file_name) {
                 if file.diagnostics_dirty {
-                    // Drop the reference before calling get_diagnostics to avoid borrow issues
-                    drop(file);
                     if let Some(diagnostics) = self.get_diagnostics(&file_name) {
                         result.insert(file_name, diagnostics);
                     }

@@ -13,6 +13,8 @@
 //! - Dependency graphs between files
 //! - Emitted file signatures for output caching
 
+#![allow(clippy::print_stderr)]
+
 use anyhow::{Context, Result};
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};

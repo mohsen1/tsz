@@ -13,6 +13,8 @@
 //! The semantic walk leverages `collect_all_types()` from the solver to extract
 //! all referenced types, then maps `DefId` -> `SymbolId` via `TypeResolver`.
 
+#![allow(clippy::print_stderr)]
+
 use crate::binder::{BinderState, SymbolId};
 use crate::checker::TypeCache;
 use crate::parser::NodeIndex;

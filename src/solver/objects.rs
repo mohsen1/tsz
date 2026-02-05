@@ -233,7 +233,6 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interner::Atom;
     use crate::solver::def::DefId;
     use crate::solver::intern::TypeInterner;
 

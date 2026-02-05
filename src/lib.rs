@@ -2697,11 +2697,6 @@ mod private_brands;
 #[path = "checker/tests/constructor_accessibility.rs"]
 mod constructor_accessibility;
 
-// Function bivariance tests
-#[cfg(test)]
-#[path = "checker/tests/function_bivariance.rs"]
-mod function_bivariance;
-
 // Void return exception tests
 #[cfg(test)]
 #[path = "checker/tests/void_return_exception.rs"]

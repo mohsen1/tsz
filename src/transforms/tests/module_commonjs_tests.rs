@@ -1,3 +1,5 @@
+#![allow(clippy::print_stderr)]
+
 use super::module_commonjs::*;
 
 #[test]

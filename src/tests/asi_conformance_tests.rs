@@ -3,6 +3,8 @@
 //! Test ASI (Automatic Semicolon Insertion) behavior against JavaScript/TypeScript spec.
 //! Focus on TS1005 (token expected) and TS1109 (expression expected) error codes.
 
+#![allow(clippy::print_stderr)]
+
 use crate::checker::types::diagnostics::diagnostic_codes;
 use crate::parser::ParserState;
 

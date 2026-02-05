@@ -3,7 +3,6 @@
 //! These tests verify that import statements are correctly updated when
 //! files or directories are renamed.
 
-use crate::lsp::position::Position;
 use crate::lsp::project::{FileRename, Project};
 
 /// Helper function to create a test project with multiple files.
