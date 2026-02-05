@@ -1254,68 +1254,98 @@ impl Project {
         new_name: String,
     ) -> Result<WorkspaceEdit, String> {
         let start = Instant::now();
-        let mut scope_stats = ScopeCacheStats::default();
-        let result = (|| {
-            let normalized_name = {
-                let file = self
-                    .files
-                    .get(file_name)
-                    .ok_or_else(|| "You cannot rename this element.".to_string())?;
-                let provider = RenameProvider::new(
-                    file.parser.get_arena(),
-                    &file.binder,
-                    &file.line_map,
-                    file.file_name.clone(),
-                    file.parser.get_source_text(),
-                );
-                provider.normalize_rename_at_position(position, &new_name)?
-            };
 
-            let (symbol_id, local_name, import_targets, export_names, source_file_name) = {
+        // Step 1: Normalize the new name
+        let normalized_name = {
+            let file = self
+                .files
+                .get(file_name)
+                .ok_or_else(|| "You cannot rename this element.".to_string())?;
+            let provider = RenameProvider::new(
+                file.parser.get_arena(),
+                &file.binder,
+                &file.line_map,
+                file.file_name.clone(),
+                file.parser.get_source_text(),
+            );
+            provider.normalize_rename_at_position(position, &new_name)?
+        };
+
+        // Step 2: Resolve the symbol at the cursor position
+        let (symbol_id, local_name) = {
+            let file = self
+                .files
+                .get_mut(file_name)
+                .ok_or_else(|| "You cannot rename this element.".to_string())?;
+            let offset = file
+                .line_map
+                .position_to_offset(position, file.source_text())
+                .ok_or_else(|| "Could not find symbol to rename".to_string())?;
+            let node_idx = find_node_at_offset(file.arena(), offset);
+            if node_idx.is_none() {
+                return Err("Could not find symbol to rename".to_string());
+            }
+
+            let finder = FindReferences::new(
+                file.parser.get_arena(),
+                &file.binder,
+                &file.line_map,
+                file.file_name.clone(),
+                file.parser.get_source_text(),
+            );
+            let symbol_id = finder
+                .resolve_symbol_for_node_with_scope_cache(
+                    file.root(),
+                    node_idx,
+                    &mut file.scope_cache,
+                    None,
+                )
+                .ok_or_else(|| "Could not find symbol to rename".to_string())?;
+            let symbol = file
+                .binder()
+                .symbols
+                .get(symbol_id)
+                .ok_or_else(|| "Could not find symbol to rename".to_string())?;
+            let local_name = symbol.escaped_name.clone();
+
+            (symbol_id, local_name)
+        };
+
+        // Step 3: Check if this is a heritage member (class/interface member)
+        let is_heritage_member = {
+            let file = self
+                .files
+                .get(file_name)
+                .ok_or_else(|| "Could not find file".to_string())?;
+            let symbol = file.binder().symbols.get(symbol_id);
+            symbol
+                .map(|s| Self::is_heritage_member_symbol(file, s))
+                .unwrap_or(false)
+        };
+
+        // Step 4: If heritage member, use heritage-aware rename logic
+        if is_heritage_member {
+            return self.get_heritage_rename_edits(
+                file_name,
+                symbol_id,
+                &local_name,
+                normalized_name,
+                start,
+            );
+        }
+
+        // Step 5: Otherwise, use standard rename logic (imports/exports)
+        let scope_stats = ScopeCacheStats::default();
+        let result = (|| {
+            let (import_targets, export_names, source_file_name) = {
                 let file = self
                     .files
                     .get_mut(file_name)
                     .ok_or_else(|| "You cannot rename this element.".to_string())?;
-                let offset = file
-                    .line_map
-                    .position_to_offset(position, file.source_text())
-                    .ok_or_else(|| "Could not find symbol to rename".to_string())?;
-                let node_idx = find_node_at_offset(file.arena(), offset);
-                if node_idx.is_none() {
-                    return Err("Could not find symbol to rename".to_string());
-                }
-
-                let finder = FindReferences::new(
-                    file.parser.get_arena(),
-                    &file.binder,
-                    &file.line_map,
-                    file.file_name.clone(),
-                    file.parser.get_source_text(),
-                );
-                let symbol_id = finder
-                    .resolve_symbol_for_node_with_scope_cache(
-                        file.root(),
-                        node_idx,
-                        &mut file.scope_cache,
-                        Some(&mut scope_stats),
-                    )
-                    .ok_or_else(|| "Could not find symbol to rename".to_string())?;
-                let symbol = file
-                    .binder()
-                    .symbols
-                    .get(symbol_id)
-                    .ok_or_else(|| "Could not find symbol to rename".to_string())?;
-                let local_name = symbol.escaped_name.clone();
                 let import_targets = file.import_targets_for_local(&local_name);
                 let export_names = file.exported_names_for_symbol(symbol_id);
-
-                (
-                    symbol_id,
-                    local_name,
-                    import_targets,
-                    export_names,
-                    file.file_name().to_string(),
-                )
+                let source_file_name = file.file_name().to_string();
+                (import_targets, export_names, source_file_name)
             };
 
             let mut workspace_edit = {
@@ -1558,6 +1588,99 @@ impl Project {
             .record(ProjectRequestKind::Rename, start.elapsed(), scope_stats);
 
         result
+    }
+
+    /// Heritage-aware rename: Renames a class/interface member across the entire
+    /// inheritance hierarchy.
+    ///
+    /// This handles renaming members that are overridden in derived classes or
+    /// override base class members. For example, renaming `Base.foo()` should
+    /// also rename `Derived.foo()` when `Derived extends Base`.
+    ///
+    /// # Arguments
+    /// * `file_name` - The file containing the symbol being renamed
+    /// * `symbol_id` - The SymbolId of the member being renamed
+    /// * `local_name` - The current name of the member
+    /// * `new_name` - The new name for the member
+    /// * `start` - Instant for performance tracking
+    ///
+    /// # Returns
+    /// * `Ok(WorkspaceEdit)` - The workspace edit with all rename changes
+    /// * `Err(String)` - Error message if rename failed
+    fn get_heritage_rename_edits(
+        &mut self,
+        file_name: &str,
+        symbol_id: crate::binder::SymbolId,
+        local_name: &str,
+        new_name: String,
+        start: Instant,
+    ) -> Result<WorkspaceEdit, String> {
+        let mut workspace_edit = WorkspaceEdit::default();
+
+        // Get the file containing the symbol
+        let file = self
+            .files
+            .get(file_name)
+            .ok_or_else(|| "Could not find file".to_string())?;
+
+        // Find ALL related symbols in the inheritance hierarchy
+        let heritage_symbols = self.find_all_heritage_members(file, symbol_id, local_name);
+
+        // For each heritage symbol, find all its references and generate rename edits
+        for (_heritage_file_path, heritage_symbol_id) in heritage_symbols {
+            // Use pool scan optimization: get candidate files that contain this symbol name
+            let candidate_files = self.get_candidate_files_for_symbol(local_name);
+
+            for target_file_path in candidate_files {
+                let target_file = match self.files.get_mut(&target_file_path) {
+                    Some(f) => f,
+                    None => continue,
+                };
+
+                // Create a RenameProvider for this file
+                let provider = RenameProvider::new(
+                    target_file.parser.get_arena(),
+                    &target_file.binder,
+                    &target_file.line_map,
+                    target_file.file_name.clone(),
+                    target_file.parser.get_source_text(),
+                );
+
+                // Get rename edits for this specific heritage symbol in this file
+                // Note: We must use the heritage_symbol_id, not the original symbol_id,
+                // because Base.foo and Derived.foo are different SymbolIds
+                match provider.provide_rename_edits_for_symbol(
+                    target_file.root(),
+                    heritage_symbol_id,
+                    new_name.clone(),
+                ) {
+                    Ok(edits) => {
+                        // Merge the edits into the workspace edit
+                        for (file_path, text_edits) in edits.changes {
+                            for edit in text_edits {
+                                workspace_edit.add_edit(file_path.clone(), edit);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // If we can't find references in this file, continue silently
+                        // This can happen if the file doesn't actually reference this symbol
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Deduplicate the workspace edit in case multiple symbols produced edits for the same location
+        Self::dedup_workspace_edit(&mut workspace_edit);
+
+        self.performance.record(
+            ProjectRequestKind::Rename,
+            start.elapsed(),
+            ScopeCacheStats::default(),
+        );
+
+        Ok(workspace_edit)
     }
 
     pub(crate) fn definition_from_import(
