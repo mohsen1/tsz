@@ -7,14 +7,11 @@
 ## Active Tasks
 
 ### Task #16: Robust Optional Property Subtyping & Narrowing
-**Status**: 🔄 In Progress (Critical Bug Found)
+**Status**: 🔄 In Progress (Root Cause Analysis Complete)
 **Priority**: High
 **Estimated Impact**: +2-3% conformance
 
-**Description**:
-Fix critical bugs in optional property subtyping and narrowing logic identified in AGENTS.md investigation.
-
-**Investigation Findings**:
+**Investigation Complete**:
 1. `narrow_by_discriminant` (line 491): ✅ CORRECT - `is_subtype_of(literal, prop_type)`
 2. `narrow_by_excluding_discriminant` (line 642): ✅ CORRECT - `is_subtype_of(prop_type, excluded_value)`
 3. `resolve_type`: Handles Lazy and Application types correctly
@@ -25,49 +22,68 @@ Fix critical bugs in optional property subtyping and narrowing logic identified 
 **Location**: `src/solver/subtype.rs` lines 1064-1071
 **Issue**: Intersection property merging **overwrites** instead of **intersecting** types
 
-```rust
-// WRONG - Current code:
-if let Some(existing) = merged_properties.iter_mut().find(|p| p.name == prop.name) {
-    *existing = prop.clone(); // 🚨 Overwrites!
-}
-```
+**Root Cause Analysis** (from Gemini Flash):
+- `intern.rs`'s `try_merge_objects_in_intersection` only works for fully collapsible intersections (all concrete objects)
+- For intersections with TypeParameters, Unions, or Lazy types, the `SubtypeChecker` must manually merge
+- Calling `interner.intersection2()` during subtype checking creates infinite recursion:
+  - SubtypeChecker → interner.intersection2 → normalize_intersection → is_subtype_of → **LOOP**
 
-**Example of Bug**:
-```typescript
-type A = { a: string };
-type B = { a: number };
-type C = A & B;
-// Current: a has type number (WRONG - overwrites)
-// Correct: a should have type string & number (which is never)
-```
+**Architectural Issue**: "Judge vs. Lawyer" conflict
+- SubtypeChecker (Judge) is trying to perform type construction (Solver's job) during a relationship check
+- North Star Rule 1: Solver handles WHAT, Judge handles RELATIONS
 
-**Required Fix**:
-When same property appears in multiple intersection members:
-1. Intersect the types: `merged_type = interner.intersection(existing.type, new.type)`
-2. Merge flags: required wins over optional
-3. Handle write_type intersection contravariantly
+**Implementation Plan** (from Gemini Flash):
+
+**Step 1**: Create `PropertyCollector` visitor in `src/solver/objects.rs`
+- Walk TypeIds recursively
+- If Object: collect properties
+- If Intersection: recursively collect and merge collisions
+- Call `resolve_type` before inspecting any TypeKey (fixes Lazy/Ref resolution bug)
+
+**Step 2**: Implement "Safe" merging in PropertyCollector
+- **Type**: Do NOT call `interner.intersection2()`. Use new low-level `intersect_types_raw()` that creates TypeKey::Intersection WITHOUT normalization
+- **Flags**: Required wins (AND logic), Readonly accumulates (OR logic)
+- **Write Type**: Intersect contravariantly
+
+**Step 3**: Update `src/solver/subtype.rs` to use PropertyCollector
+- Judge asks "What are the effective properties?" and gets pre-merged map
+- No direct calls to interner.intersection during checking
+
+**Step 4**: MANDATORY - Ask Gemini BEFORE implementing:
+> "I am implementing `intersect_types_raw` in `src/solver/intern.rs` to avoid stack overflows during subtyping. It should create a `TypeKey::Intersection` without calling `normalize_intersection` which triggers `is_subtype_of`. Is this the correct way to break the cycle, or should I use the `cycle_stack` from the `SubtypeChecker`?"
 
 **Test Cases** (from Gemini):
 ```typescript
-// 1. Intersection Merging
+// 1. Basic Intersection Merging (The "Never" Case)
 type A = { a: string };
 type B = { a: number };
 type C = A & B;
-declare let c: C;
-c.a = 1; // Should error: Type 'number' is not assignable to type 'never'
+let c: C = { a: "any" as any };
+// @ts-expect-error: Type 'string' is not assignable to type 'never'
+c.a = "hello";
 
-// 2. Intersection Optionality
+// 2. Optionality Merging (Required wins)
 type O = { x?: string };
 type R = { x: string };
 type M = O & R;
-declare let m: M;
-m.x = undefined; // Should error: required wins
-```
+let m: M = { x: "hi" };
+// @ts-expect-error: Type 'undefined' is not assignable to type 'string'
+m.x = undefined;
 
-**Next Steps**:
-1. Fix intersection merging in `subtype.rs:1064-1071`
-2. Run test cases to verify fix
-3. Follow Two-Question Rule: Ask Gemini Pro to review the fix
+// 3. Discriminant Narrowing with Intersections
+type Union = ({ kind: "a", val: string } & { extra: number }) | { kind: "b", val: number };
+function check(v: Union) {
+    if (v.kind === "a") {
+        v.val.toUpperCase(); // Should work
+        v.extra.toFixed();   // Should work
+    }
+}
+
+// 4. Deep Intersection (Stack Overflow Guard)
+type Deep<T> = { prop: T & { x: string } };
+type Rec = Deep<Deep<string>>;
+// Ensures getting properties doesn't crash
+```
 **Status**: Pending
 **Priority**: High
 **Estimated Impact**: +2-3% conformance
