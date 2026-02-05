@@ -850,6 +850,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.do_refined_object_overlap_check(a_resolved, b_resolved);
         }
 
+        // Template literal disjointness detection
+        // Two template literals with different starting/ending text are disjoint
+        if let (Some(a_spans), Some(b_spans)) = (
+            template_literal_id(self.interner, a_resolved),
+            template_literal_id(self.interner, b_resolved),
+        ) {
+            return self.are_template_literals_overlapping(a_spans, b_spans);
+        }
+
         // Conservative: assume overlap for complex types we haven't fully handled yet
         // (unions, intersections, generics, etc.)
         // Better to miss some TS2367 errors than to emit them incorrectly
@@ -910,6 +919,115 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             // At least one isn't a literal, so they overlap
             true
+        }
+    }
+
+    /// Check if two template literal types have any overlap.
+    ///
+    /// Template literals are disjoint if they have incompatible fixed text spans.
+    /// For example:
+    /// - `foo${string}` and `bar${string}` are disjoint (different prefixes)
+    /// - `foo${string}` and `foo${number}` may overlap (same prefix, compatible types)
+    /// - `a${string}b` and `a${string}c` are disjoint (different suffixes)
+    ///
+    /// Returns false if types are guaranteed disjoint, true otherwise.
+    fn are_template_literals_overlapping(
+        &self,
+        a: TemplateLiteralId,
+        b: TemplateLiteralId,
+    ) -> bool {
+        // Fast path: same template literal definitely overlaps
+        if a == b {
+            return true;
+        }
+
+        let a_spans = self.interner.template_list(a);
+        let b_spans = self.interner.template_list(b);
+
+        // Templates with different numbers of spans might still overlap
+        // if the type holes are wide enough (e.g., string)
+        // We need to check if there's any possible string that matches both patterns
+
+        // For simplicity, we check if there are incompatible fixed text spans
+        let a_len = a_spans.len();
+        let b_len = b_spans.len();
+
+        // Collect fixed text patterns from both templates
+        // Two templates are disjoint if they have incompatible fixed text at any position
+        let mut a_idx = 0;
+        let mut b_idx = 0;
+
+        loop {
+            // Skip type holes in both templates
+            while a_idx < a_len && matches!(a_spans[a_idx], TemplateSpan::Type(_)) {
+                a_idx += 1;
+            }
+            while b_idx < b_len && matches!(b_spans[b_idx], TemplateSpan::Type(_)) {
+                b_idx += 1;
+            }
+
+            // If both reached the end, they overlap (both can match empty string after all type holes)
+            if a_idx >= a_len && b_idx >= b_len {
+                return true;
+            }
+
+            // If only one reached the end, check if the remaining can be empty
+            if a_idx >= a_len {
+                // A exhausted, B has more content
+                // They overlap only if B's remaining content is all type holes
+                return b_spans[b_idx..]
+                    .iter()
+                    .all(|s| matches!(s, TemplateSpan::Type(_)));
+            }
+            if b_idx >= b_len {
+                // B exhausted, A has more content
+                return a_spans[a_idx..]
+                    .iter()
+                    .all(|s| matches!(s, TemplateSpan::Type(_)));
+            }
+
+            // Both have text spans - check if they match
+            match (&a_spans[a_idx], &b_spans[b_idx]) {
+                (TemplateSpan::Text(a_text), TemplateSpan::Text(b_text)) => {
+                    let a_str = self.interner.resolve_atom(*a_text);
+                    let b_str = self.interner.resolve_atom(*b_text);
+
+                    // Check if the text spans can match
+                    // They must have at least one common prefix
+                    let min_len = a_str.len().min(b_str.len());
+                    if a_str[..min_len] != b_str[..min_len] {
+                        // Incompatible prefixes - templates are disjoint
+                        return false;
+                    }
+
+                    // Advance past the common prefix
+                    let advance = min_len;
+                    a_idx += 1;
+                    b_idx += 1;
+
+                    // If one text span is exhausted, the other must have type holes to continue
+                    if a_str.len() > advance {
+                        // A's text is longer - B needs a type hole to consume the rest
+                        if b_idx >= b_len || !matches!(b_spans[b_idx], TemplateSpan::Type(_)) {
+                            // B can't consume the rest of A's text - disjoint unless A's extra text is a prefix
+                            // that B's type hole can match
+                            return a_str[advance..].is_empty();
+                        }
+                    }
+                    if b_str.len() > advance {
+                        // B's text is longer - A needs a type hole to consume the rest
+                        if a_idx >= a_len || !matches!(a_spans[a_idx], TemplateSpan::Type(_)) {
+                            return b_str[advance..].is_empty();
+                        }
+                    }
+                }
+                _ => {
+                    // One is text, one is type - they're compatible
+                    // The type can match any string, so we advance both
+                    a_idx += 1;
+                    b_idx += 1;
+                }
+            }
         }
     }
 

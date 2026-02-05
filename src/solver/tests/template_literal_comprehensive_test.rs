@@ -2,29 +2,31 @@
 //!
 //! This test suite verifies:
 //! 1. Template literal inference from string literals
-//! 2. String manipulation intrinsics (Uppercase, Lowercase, Capitalize, Uncapitalize, Trim)
+//! 2. String manipulation intrinsics (Uppercase, Lowercase, Capitalize, Uncapitalize)
 //! 3. Union distribution in template literals
 //! 4. Complex pattern backtracking
+//!
+//! Note: Trim is not currently implemented in StringIntrinsicKind
 
 use crate::solver::intern::TypeInterner;
 use crate::solver::types::*;
 
 #[test]
-fn test_trim_intrinsic_basic() {
+fn test_uppercase_intrinsic_basic() {
     let interner = TypeInterner::new();
 
-    // Test Trim on a string literal
-    let input = interner.literal_string("  hello  ");
-    let trimmed = interner.intern(TypeKey::StringIntrinsic {
-        kind: StringIntrinsicKind::Trim,
+    // Test Uppercase on a string literal
+    let input = interner.literal_string("hello");
+    let upper = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uppercase,
         type_arg: input,
     });
 
     // Evaluate the intrinsic
     // Note: In the actual system, this would go through evaluation
     // For now, we're just testing that the type is created correctly
-    if let Some(TypeKey::StringIntrinsic { kind, type_arg }) = interner.lookup(trimmed) {
-        assert_eq!(kind, StringIntrinsicKind::Trim);
+    if let Some(TypeKey::StringIntrinsic { kind, type_arg }) = interner.lookup(upper) {
+        assert_eq!(kind, StringIntrinsicKind::Uppercase);
         assert_eq!(type_arg, input);
     } else {
         panic!("Expected StringIntrinsic type");
@@ -32,24 +34,24 @@ fn test_trim_intrinsic_basic() {
 }
 
 #[test]
-fn test_trim_distributes_over_union() {
+fn test_uppercase_distributes_over_union() {
     let interner = TypeInterner::new();
 
     // Create a union of string literals
-    let s1 = interner.literal_string("  foo  ");
-    let s2 = interner.literal_string("  bar  ");
-    let s3 = interner.literal_string("  baz  ");
+    let s1 = interner.literal_string("foo");
+    let s2 = interner.literal_string("bar");
+    let s3 = interner.literal_string("baz");
     let union = interner.union(vec![s1, s2, s3]);
 
-    // Apply Trim to the union
-    let trimmed = interner.intern(TypeKey::StringIntrinsic {
-        kind: StringIntrinsicKind::Trim,
+    // Apply Uppercase to the union
+    let upper = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uppercase,
         type_arg: union,
     });
 
     // Should create a StringIntrinsic wrapping the union
-    if let Some(TypeKey::StringIntrinsic { kind, type_arg }) = interner.lookup(trimmed) {
-        assert_eq!(kind, StringIntrinsicKind::Trim);
+    if let Some(TypeKey::StringIntrinsic { kind, type_arg }) = interner.lookup(upper) {
+        assert_eq!(kind, StringIntrinsicKind::Uppercase);
         // The type_arg should be the union
         assert_eq!(type_arg, union);
     } else {
@@ -115,15 +117,15 @@ fn test_all_string_intrinsics() {
         })
     ));
 
-    // Test Trim
-    let trim = interner.intern(TypeKey::StringIntrinsic {
-        kind: StringIntrinsicKind::Trim,
+    // Test Lowercase
+    let lower = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Lowercase,
         type_arg: input,
     });
     assert!(matches!(
-        interner.lookup(trim),
+        interner.lookup(lower),
         Some(TypeKey::StringIntrinsic {
-            kind: StringIntrinsicKind::Trim,
+            kind: StringIntrinsicKind::Lowercase,
             ..
         })
     ));
@@ -140,19 +142,14 @@ fn test_template_literal_with_union() {
     let union = interner.union(vec![a, b, c]);
 
     // Create template literal: `prefix-${union}`
+    // This automatically expands to: "prefix-a" | "prefix-b" | "prefix-c"
     let template = interner.template_literal(vec![
         TemplateSpan::Text(interner.intern_string("prefix-")),
         TemplateSpan::Type(union),
     ]);
 
-    // Should create a template literal type
-    assert!(matches!(
-        interner.lookup(template),
-        Some(TypeKey::TemplateLiteral(_))
-    ));
-
-    // The template should expand to a union: "prefix-a" | "prefix-b" | "prefix-c"
-    // (This expansion happens during evaluation, not creation)
+    // The template should expand to a union of string literals
+    assert!(matches!(interner.lookup(template), Some(TypeKey::Union(_))));
 }
 
 #[test]
@@ -178,10 +175,8 @@ fn test_template_literal_cartesian_product() {
         TemplateSpan::Type(right_union),
     ]);
 
-    assert!(matches!(
-        interner.lookup(template),
-        Some(TypeKey::TemplateLiteral(_))
-    ));
+    // Should expand to a union of string literals
+    assert!(matches!(interner.lookup(template), Some(TypeKey::Union(_))));
 }
 
 #[test]
@@ -333,14 +328,16 @@ fn test_template_literal_all_text() {
     let interner = TypeInterner::new();
 
     // Create a template literal with only text (no type holes)
+    // This should collapse to a single string literal
     let template = interner.template_literal(vec![
         TemplateSpan::Text(interner.intern_string("hello")),
         TemplateSpan::Text(interner.intern_string(" ")),
         TemplateSpan::Text(interner.intern_string("world")),
     ]);
 
+    // Should collapse to a single string literal "hello world"
     assert!(matches!(
         interner.lookup(template),
-        Some(TypeKey::TemplateLiteral(_))
+        Some(TypeKey::Literal(LiteralValue::String(_)))
     ));
 }

@@ -126,6 +126,12 @@ mod intersection_union_tests;
 #[cfg(test)]
 #[path = "tests/template_expansion_tests.rs"]
 mod template_expansion_tests;
+#[cfg(test)]
+#[path = "tests/template_literal_comprehensive_test.rs"]
+mod template_literal_comprehensive_test;
+#[cfg(test)]
+#[path = "tests/template_literal_subtype_tests.rs"]
+mod template_literal_subtype_tests;
 // tracer_tests: tests are in tracer.rs module
 #[cfg(test)]
 #[path = "tests/type_law_tests.rs"]
