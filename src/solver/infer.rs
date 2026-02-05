@@ -3232,13 +3232,149 @@ impl<'a> InferenceContext<'a> {
         Ok(())
     }
 
+    /// Detect and unify type parameters that form circular constraints.
+    /// For example, if T extends U and U extends T, they should be unified
+    /// into a single equivalence class for inference purposes.
+    fn unify_circular_constraints(&mut self) -> Result<(), InferenceError> {
+        use std::collections::{HashMap, HashSet};
+
+        let type_params: Vec<_> = self.type_params.clone();
+
+        // Build adjacency list: var -> set of vars it extends (upper bounds)
+        let mut graph: HashMap<InferenceVar, HashSet<InferenceVar>> = HashMap::new();
+        let mut var_for_param: HashMap<Atom, InferenceVar> = HashMap::new();
+
+        for (name, var, _) in type_params.iter() {
+            let root = self.table.find(*var);
+            var_for_param.insert(*name, root);
+            graph.entry(root).or_default();
+        }
+
+        // Populate edges based on upper_bounds
+        for (_name, var, _) in type_params.iter() {
+            let root = self.table.find(*var);
+            let info = self.table.probe_value(root);
+
+            for &upper in &info.upper_bounds {
+                // Only follow naked type parameter upper bounds (not List<T>, etc.)
+                if let Some(TypeKey::TypeParameter(param_info)) = self.interner.lookup(upper) {
+                    if let Some(&upper_var) = var_for_param.get(&param_info.name) {
+                        let upper_root = self.table.find(upper_var);
+                        // Add edge: root extends upper_root
+                        graph
+                            .entry(root)
+                            .or_default()
+                            .insert(upper_root);
+                    }
+                }
+            }
+        }
+
+        // Find SCCs using Tarjan's algorithm
+        let mut index_counter = 0;
+        let mut indices: HashMap<InferenceVar, usize> = HashMap::new();
+        let mut lowlink: HashMap<InferenceVar, usize> = HashMap::new();
+        let mut stack: Vec<InferenceVar> = Vec::new();
+        let mut on_stack: HashSet<InferenceVar> = HashSet::new();
+        let mut sccs: Vec<Vec<InferenceVar>> = Vec::new();
+
+        fn strongconnect(
+            var: InferenceVar,
+            graph: &HashMap<InferenceVar, HashSet<InferenceVar>>,
+            index_counter: &mut usize,
+            indices: &mut HashMap<InferenceVar, usize>,
+            lowlink: &mut HashMap<InferenceVar, usize>,
+            stack: &mut Vec<InferenceVar>,
+            on_stack: &mut HashSet<InferenceVar>,
+            sccs: &mut Vec<Vec<InferenceVar>>,
+        ) {
+            indices.insert(var, *index_counter);
+            lowlink.insert(var, *index_counter);
+            *index_counter += 1;
+            stack.push(var);
+            on_stack.insert(var);
+
+            if let Some(neighbors) = graph.get(&var) {
+                for &neighbor in neighbors {
+                    if !indices.contains_key(&neighbor) {
+                        strongconnect(
+                            neighbor,
+                            graph,
+                            index_counter,
+                            indices,
+                            lowlink,
+                            stack,
+                            on_stack,
+                            sccs,
+                        );
+                        let neighbor_low = *lowlink.get(&neighbor).unwrap_or(&0);
+                        let var_low = lowlink.get_mut(&var).unwrap();
+                        *var_low = (*var_low).min(neighbor_low);
+                    } else if on_stack.contains(&neighbor) {
+                        let neighbor_idx = *indices.get(&neighbor).unwrap_or(&0);
+                        let var_low = lowlink.get_mut(&var).unwrap();
+                        *var_low = (*var_low).min(neighbor_idx);
+                    }
+                }
+            }
+
+            if *lowlink.get(&var).unwrap_or(&0) == *indices.get(&var).unwrap_or(&0) {
+                let mut scc = Vec::new();
+                loop {
+                    let w = stack.pop().unwrap();
+                    on_stack.remove(&w);
+                    scc.push(w);
+                    if w == var {
+                        break;
+                    }
+                }
+                sccs.push(scc);
+            }
+        }
+
+        // Run Tarjan's on all nodes
+        for &var in graph.keys() {
+            if !indices.contains_key(&var) {
+                strongconnect(
+                    var,
+                    &graph,
+                    &mut index_counter,
+                    &mut indices,
+                    &mut lowlink,
+                    &mut stack,
+                    &mut on_stack,
+                    &mut sccs,
+                );
+            }
+        }
+
+        // Unify variables within each SCC (if SCC has >1 member)
+        for scc in sccs {
+            if scc.len() > 1 {
+                // Unify all variables in this SCC
+                let first = scc[0];
+                for &other in &scc[1..] {
+                    self.unify_vars(first, other)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Strengthen constraints by analyzing relationships between type parameters.
     /// For example, if T <: U and we know T = string, then U must be at least string.
     pub fn strengthen_constraints(&mut self) -> Result<(), InferenceError> {
+        // Phase 1: Detect and unify circular constraints (SCCs)
+        // This ensures that type parameters in cycles (T extends U, U extends T)
+        // are treated as a single equivalence class for inference.
+        self.unify_circular_constraints()?;
+
         let type_params: Vec<_> = self.type_params.clone();
         let mut changed = true;
         let mut iterations = 0;
 
+        // Phase 2: Fixed-point propagation
         // Iterate to fixed point - continue until no new candidates are added
         while changed && iterations < MAX_CONSTRAINT_ITERATIONS {
             changed = false;
