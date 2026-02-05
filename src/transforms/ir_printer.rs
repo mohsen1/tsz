@@ -611,6 +611,7 @@ impl<'a> IRPrinter<'a> {
                 }
 
                 self.decrease_indent();
+                self.write_indent();
                 self.write("}(");
                 if let Some(base) = base_class {
                     self.emit_node(base);
@@ -861,6 +862,8 @@ impl<'a> IRPrinter<'a> {
                     // Add newline between sequence items (but not after the last one)
                     if i < nodes.len() - 1 {
                         self.write_line();
+                        // Preserve parent indentation for subsequent items
+                        self.write_indent();
                     }
                 }
             }
