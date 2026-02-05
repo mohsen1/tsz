@@ -5,13 +5,22 @@
 **Focus**: Implement TypeScript's nominal "escape hatches" and type system quirks in the Lawyer layer (CompatChecker)
 
 **Session Scope**:
-- ✅ Priority 1: Enum Nominality (COMPLETE)
-- ✅ Priority 2: Private Brand Checking (COMPLETE)
-- ✅ Priority 3: Constructor Accessibility (COMPLETE)
-- 🔄 Priority 4: Function Bivariance (ACTIVE - renamed from Priority 5)
-- 📝 Priority 5: Literal Type Widening (DEFERRED - not Lawyer Layer, requires Type Inference work)
+- ✅ Priority 1: Enum Nominality (COMPLETE - 21 tests)
+- ✅ Priority 2: Private Brand Checking (COMPLETE - 31 tests)
+- ✅ Priority 3: Constructor Accessibility (COMPLETE - 13 tests)
+- 🔄 Priority 4: Function Bivariance Verification (ACTIVE - tests needed)
+- 📝 Priority 5: Void Return Exception (NEW)
+- 📝 Priority 6: Any-Propagation Hardening (NEW)
 
-**Note**: Per Gemini Flash guidance (2026-02-05), skipped Literal Type Widening as it belongs in Type Inference layer (`src/solver/infer.rs`), not Lawyer Layer (`src/solver/compat.rs`). Function Bivariance promoted to Priority 4 as it's explicitly listed in NORTH_STAR.md Section 3.3 as a core Lawyer responsibility.
+**Key Insight**: Per Gemini Flash (2026-02-05), "infrastructure exists" doesn't mean it works correctly. Need to verify with tests and tsz-tracing to ensure bivariance logic matches tsc exactly.
+
+**Completed**:
+- Enum Nominality with TypeKey::Enum wrapper
+- Private Brand Checking with recursive Union/Intersection handling
+- Constructor Accessibility for both new expressions and class inheritance
+
+**In Progress**:
+- Function Bivariance verification (write tests, use tsz-tracing)
 
 ## Previous Session (COMPLETE)
 
@@ -109,29 +118,66 @@ Fixing these will resolve hundreds of conformance failures.
 - `src/solver/compat.rs` - Replace string matching with SymbolId comparison
 - `src/checker/symbol_resolver.rs` - Extract symbol flags to check for `private`/`protected`
 
-#### Priority 4: Function Bivariance (The Method Quirk) 🔄 ACTIVE
-**Goal**: Implement the rule where methods are checked bivariantly, while function properties are checked contravariantly
-- Methods (`method(arg: T): void`) are bivariant for parameters (legacy compatibility)
-- Function properties (`prop: (arg: T) => void`) are contravariant (sound)
-- This is a high-impact conformance gap mentioned in NORTH_STAR.md Section 3.3
+#### Priority 4: Function Bivariance Verification & Hardening 🔄 ACTIVE
+**Goal**: Verify existing bivariance infrastructure matches tsc exactly
+- "Infrastructure exists" doesn't mean it works correctly
+- Need to write comprehensive tests
+- Use tsz-tracing to verify logic is working for the right reasons
+
+**Key Test Cases** (from Gemini Flash):
+1. **Arrow Function Properties**: Should be contravariant even in strict mode (properties, not methods)
+2. **Method Shorthand**: `method(): void` should be bivariant
+3. **Strict Mode Toggle**: Ensure `strictFunctionTypes: true` enforces contravariance for non-methods
+
+**Action Items**:
+- Create `src/checker/tests/function_bivariance.rs`
+- Test both strict mode on/off
+- Verify `lower.rs` distinguishes MethodSignature from PropertySignature
+- Use tsz-tracing to confirm `are_parameters_compatible_impl` receives correct flags
 
 **Files**:
-- `src/solver/compat.rs` - Add bivariance override in CompatChecker
-- `src/checker/symbol_resolver.rs` - Check SymbolFlags to distinguish methods from properties
-- `src/solver/lawyer.rs` - Document bivariance in QUIRKS section
+- `src/solver/subtype_rules/functions.rs` - Verify bivariance toggle logic
+- `src/solver/lower.rs` - Verify is_method flag is set correctly
+- `src/solver/subtype.rs` - Verify check_subtype_with_method_variance is called
 
-**Key Logic**:
-- If target is a Method, allow bivariant parameter checking (either direction)
-- If target is a Function Property, use Judge's strict contravariance
-- Must handle --strictFunctionTypes compiler flag
+#### Priority 5: Void Return Exception 📝 NEW
+**Goal**: Implement/verify Lawyer rule where function returning void can be assigned function returning any type T
+- In strict set theory, `() => number` is NOT subtype of `() => void`
+- TypeScript allows this for callback ergonomics
+- Classic "Lawyer" override
 
-**Key Questions** (to ask Gemini):
-1. How do I reliably distinguish a Method from a Function Property in the TypeKey/Symbol system?
-2. Does bivariance apply only to top-level parameters, or should it be recursive for nested function types?
-3. Are there specific flags (e.g., --strictFunctionTypes) that should toggle this behavior?
-4. What happens with overloads? Do all signatures in a method's CallableShape become bivariant?
+**Example**:
+```typescript
+function takesCallback(cb: () => void) {
+    cb(); // Can call with () => number
+}
+takesCallback(() => 5); // Should be allowed
+```
 
-#### Priority 5: Literal Type Widening (Freshness Counterpart) 📝 DEFERRED
+**Questions** (to ask Gemini):
+- Where is the logic that allows `() => T` to be assigned to `() => void`?
+- Is this in Judge or Lawyer layer?
+
+**Files**:
+- `src/solver/compat.rs` - Check is_assignable_to for void exception
+- `src/solver/subtype_rules/functions.rs` - Verify return type check respects this quirk
+
+#### Priority 6: Any-Propagation Hardening 📝 NEW
+**Goal**: Verify `any` behaves as both top and bottom type in Lawyer layer without polluting Judge's logic
+- NORTH_STAR.md Section 3.3 describes `any` as the "black hole"
+- Verify CompatChecker correctly uses `any` to silence structural mismatches
+- Ensure it doesn't suppress errors inappropriately (strict contexts, intrinsics)
+
+**Key Concerns**:
+- Does `any` correctly suppress structural errors only when appropriate?
+- Are there strict contexts where `any` should NOT silence errors?
+- Does it interact correctly with intrinsic checks?
+
+**Files**:
+- `src/solver/compat.rs` - Verify any propagation logic
+- Verify interaction with strict mode checks
+
+#### ~~Priority 5~~: Literal Type Widening 📝 DEFERRED (moved to future session)
 **Status**: DEFERRED to future session - not a Lawyer Layer task
 
 **Why Deferred**:
@@ -148,13 +194,13 @@ When implementing, modify Type Inference layer:
 - Handle union type edge cases (`"a" | "b"` → `string`)
 
 ### Success Criteria
-- [x] `Enum A` assigned to `Enum B` produces a diagnostic ✅
-- [x] `Class A { private x }` assigned to `Class B { private x }` produces a diagnostic ✅
-- [x] `new C()` where `C` has a private constructor produces a diagnostic ✅
-- [ ] Methods are bivariant for parameters, function properties are contravariant
+- [x] `Enum A` assigned to `Enum B` produces a diagnostic ✅ (21 tests)
+- [x] `Class A { private x }` assigned to `Class B { private x }` produces a diagnostic ✅ (31 tests)
+- [x] `new C()` where `C` has a private constructor produces a diagnostic ✅ (13 tests)
+- [ ] **Function Bivariance**: Verified with tests for strictFunctionTypes (on/off) and Method vs. Property
+- [ ] **Void Return Exception**: `(x: T) => number` assignable to `(x: T) => void`
+- [ ] **Any-Propagation**: `any` correctly suppresses structural errors in CompatChecker
 - [ ] No regressions in existing tests
-
-**Note**: Literal Type Widening removed from success criteria - deferred to future session (not Lawyer Layer work)
 
 ---
 
