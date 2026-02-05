@@ -207,6 +207,19 @@ function foo(x: unknown) {
 
 **Complexity**: Medium (missing recursive step, not massive refactor)
 
+**Root Cause Identified** (Question 4, 2026-02-05):
+**The Problem**: `evaluate_type()` in `src/solver/evaluate.rs` treats `TypeKey::Application` as a final type
+rather than eagerly expanding **Type Aliases**.
+
+- **Interfaces/Classes**: Opaque/nominal - `Box<number>` stays as `Box<number>`
+- **Type Aliases**: Transparent - `Result<number>` MUST expand to `Union` for narrowing
+
+**Required Fix**:
+Modify `src/solver/evaluate.rs` to detect `SymbolFlags::TYPE_ALIAS` and call `instantiate()`
+to unwrap `Application` types into their structural form (Union, Object, etc.)
+
+**Code Location**: `src/solver/evaluate.rs` - Application type evaluation logic
+
 **Completed Work** (2026-02-05):
 1. ✅ Implemented TypeResolver injection into NarrowingContext
 2. ✅ Added blanket impl for `&T` to fix `!Sized` trait object error
