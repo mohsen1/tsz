@@ -125,9 +125,28 @@ impl<'a> CheckerState<'a> {
     /// For enum types, returns the enum symbol itself.
     fn get_enum_identity(&self, type_id: TypeId) -> Option<SymbolId> {
         let key = self.ctx.types.lookup(type_id)?;
+
         if let TypeKey::Enum(def_id, _) = key {
-            let sym_id = self.ctx.def_to_symbol_id(def_id)?;
-            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            // 1. Resolve DefId to SymbolId
+            let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
+                tracing::debug!("get_enum_identity: DefId {:?} has no SymbolId", def_id);
+                return None;
+            };
+
+            // 2. FIX: Use get_symbol_globally instead of ctx.binder.get_symbol
+            // This handles cross-file symbols and lib.d.ts symbols
+            let Some(symbol) = self.get_symbol_globally(sym_id) else {
+                tracing::debug!("get_enum_identity: Symbol {:?} not found globally", sym_id);
+                return None;
+            };
+
+            tracing::trace!(
+                "get_enum_identity: type={:?} sym={:?} flags={:?} parent={:?}",
+                type_id,
+                sym_id,
+                symbol.flags,
+                symbol.parent
+            );
 
             if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
                 // For a member, the identity is the parent Enum symbol
@@ -188,7 +207,11 @@ impl<'a> CheckerState<'a> {
                     return Some(self.check_structural_assignability(s_inner, t_inner, env));
                 } else {
                     // Different enums - Nominally incompatible!
-                    // Fall through to check for Numeric Enum -> number rules below
+                    // CRITICAL FIX: Do not fall through. If both are Enums and IDs differ,
+                    // they are never assignable, even if values match.
+                    // This preserves numeric enum <-> number compatibility because
+                    // that case doesn't match the (TypeKey::Enum, TypeKey::Enum) pattern.
+                    return Some(false);
                 }
             }
         }
