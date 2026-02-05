@@ -1252,6 +1252,36 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
         }
 
+        // BUG FIX: Handle number -> Union enum type (e.g., number -> E where E = E.A | E.B)
+        // Check if source is number and target is a numeric enum TYPE (not a member)
+        let is_source_number = source == TypeId::NUMBER
+            || matches!(
+                self.interner.lookup(source),
+                Some(TypeKey::Literal(LiteralValue::Number(_)))
+            );
+
+        if is_source_number {
+            // Check if target is an enum type (Union of enum members from same parent)
+            if self.subtype.resolver.is_enum_type(target, self.interner) {
+                // Target is a numeric enum TYPE, check if it's a numeric enum
+                // We need to get the DefId to check is_numeric_enum
+                if let Some(members) = visitor::union_list_id(self.interner, target) {
+                    // Get first member to extract parent enum DefId
+                    let member_list = self.interner.type_list(members);
+                    if let Some(&first_member) = member_list.first() {
+                        if let Some((def_id, _)) =
+                            visitor::enum_components(self.interner, first_member)
+                        {
+                            if self.subtype.resolver.is_numeric_enum(def_id) {
+                                // number -> numeric enum TYPE E is allowed
+                                return Some(true);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let source_enum = visitor::enum_components(self.interner, source);
         let target_enum = visitor::enum_components(self.interner, target);
 
@@ -1272,8 +1302,31 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             (None, Some((t_def, _))) => {
                 // Check if target is a numeric enum
                 if self.subtype.resolver.is_numeric_enum(t_def) {
-                    // Numeric enums allow number assignability (Rule #7)
-                    // Return None to let SubtypeChecker handle it structurally
+                    // Rule #7: Numeric enums allow number assignability
+                    // BUT we need to distinguish between:
+                    // - `let x: E = 1` (enum TYPE - allowed)
+                    // - `let x: E.A = 1` (enum MEMBER - rejected)
+
+                    // Check if source is number-like (number or number literal)
+                    let is_source_number = source == TypeId::NUMBER
+                        || matches!(
+                            self.interner.lookup(source),
+                            Some(TypeKey::Literal(LiteralValue::Number(_)))
+                        );
+
+                    if is_source_number {
+                        // If target is the full Enum Type (e.g., `let x: E = 1`), allow it.
+                        if self.subtype.resolver.is_enum_type(target, self.interner) {
+                            return Some(true);
+                        }
+
+                        // If target is a specific member (e.g., `let x: E.A = 1`),
+                        // fall through to structural check.
+                        // - `1 -> E.A(0)` will fail structural check (Correct)
+                        // - `0 -> E.A(0)` will pass structural check (Correct)
+                        return None;
+                    }
+
                     None
                 } else {
                     // String enums do NOT allow raw string assignability
