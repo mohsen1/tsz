@@ -42,7 +42,7 @@ use crate::interner::Atom;
 use crate::solver::def::DefId;
 use crate::solver::types::{
     CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, MappedTypeId,
-    ObjectShapeId, OrderedFloat, StringIntrinsicKind, TemplateLiteralId, TupleListId,
+    ObjectShapeId, OrderedFloat, StringIntrinsicKind, TemplateLiteralId, TupleElement, TupleListId,
     TypeApplicationId, TypeListId, TypeParamInfo,
 };
 use crate::solver::{LiteralValue, SymbolRef, TypeDatabase, TypeId, TypeKey};
@@ -1908,5 +1908,181 @@ impl<'a> EmptyObjectChecker<'a> {
             }
             _ => false,
         }
+    }
+}
+
+// =============================================================================
+// Const Assertion Visitor
+// =============================================================================
+
+/// Visitor that applies `as const` transformation to a type.
+///
+/// This visitor implements the const assertion logic from TypeScript:
+/// - Literals: Preserved as-is
+/// - Arrays: Converted to readonly tuples
+/// - Tuples: Marked readonly, elements recursively const-asserted
+/// - Objects: All properties marked readonly, recursively const-asserted
+/// - Other types: Preserved as-is (any, unknown, primitives, etc.)
+pub struct ConstAssertionVisitor<'a> {
+    /// The type database/interner.
+    pub db: &'a dyn TypeDatabase,
+    /// Types currently being visited to prevent infinite recursion.
+    pub visiting: FxHashSet<TypeId>,
+}
+
+impl<'a> ConstAssertionVisitor<'a> {
+    /// Create a new ConstAssertionVisitor.
+    pub fn new(db: &'a dyn TypeDatabase) -> Self {
+        Self {
+            db,
+            visiting: FxHashSet::default(),
+        }
+    }
+
+    /// Apply const assertion to a type, returning the transformed type ID.
+    pub fn apply_const_assertion(&mut self, type_id: TypeId) -> TypeId {
+        // Prevent infinite recursion
+        if !self.visiting.insert(type_id) {
+            return type_id;
+        }
+
+        let result =
+            match self.db.lookup(type_id) {
+                // Literals: preserved as-is
+                Some(TypeKey::Literal(_)) => type_id,
+
+                // Arrays: Convert to readonly tuple
+                Some(TypeKey::Array(element_type)) => {
+                    let const_element = self.apply_const_assertion(element_type);
+                    // Arrays become readonly tuples when const-asserted
+                    let tuple_elem = TupleElement {
+                        type_id: const_element,
+                        name: None,
+                        optional: false,
+                        rest: false,
+                    };
+                    let tuple_type = self.db.tuple(vec![tuple_elem]);
+                    self.db.readonly_type(tuple_type)
+                }
+
+                // Tuples: Mark readonly and recurse on elements
+                Some(TypeKey::Tuple(list_id)) => {
+                    let elements = self.db.tuple_list(list_id);
+                    let const_elements: Vec<TupleElement> = elements
+                        .iter()
+                        .map(|elem| {
+                            let const_type = self.apply_const_assertion(elem.type_id);
+                            TupleElement {
+                                type_id: const_type,
+                                name: elem.name,
+                                optional: elem.optional,
+                                rest: elem.rest,
+                            }
+                        })
+                        .collect();
+                    let tuple_type = self.db.tuple(const_elements);
+                    self.db.readonly_type(tuple_type)
+                }
+
+                // Objects: Mark all properties readonly and recurse
+                Some(TypeKey::Object(shape_id)) => {
+                    let shape = self.db.object_shape(shape_id);
+                    let mut new_props = Vec::with_capacity(shape.properties.len());
+
+                    for prop in &shape.properties {
+                        let const_prop_type = self.apply_const_assertion(prop.type_id);
+                        let const_write_type = self.apply_const_assertion(prop.write_type);
+                        new_props.push(crate::solver::types::PropertyInfo {
+                            name: prop.name,
+                            type_id: const_prop_type,
+                            write_type: const_write_type,
+                            optional: prop.optional,
+                            readonly: true, // Mark as readonly
+                            is_method: prop.is_method,
+                            visibility: prop.visibility,
+                            parent_id: prop.parent_id,
+                        });
+                    }
+
+                    self.db.object(new_props)
+                }
+
+                // Objects with index signatures
+                Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                    let shape = self.db.object_shape(shape_id);
+                    let mut new_props = Vec::with_capacity(shape.properties.len());
+
+                    for prop in &shape.properties {
+                        let const_prop_type = self.apply_const_assertion(prop.type_id);
+                        let const_write_type = self.apply_const_assertion(prop.write_type);
+                        new_props.push(crate::solver::types::PropertyInfo {
+                            name: prop.name,
+                            type_id: const_prop_type,
+                            write_type: const_write_type,
+                            optional: prop.optional,
+                            readonly: true, // Mark as readonly
+                            is_method: prop.is_method,
+                            visibility: prop.visibility,
+                            parent_id: prop.parent_id,
+                        });
+                    }
+
+                    // Mark index signatures as readonly
+                    let string_index = shape.string_index.as_ref().map(|idx| {
+                        crate::solver::types::IndexSignature {
+                            key_type: idx.key_type,
+                            value_type: self.apply_const_assertion(idx.value_type),
+                            readonly: true,
+                        }
+                    });
+
+                    let number_index = shape.number_index.as_ref().map(|idx| {
+                        crate::solver::types::IndexSignature {
+                            key_type: idx.key_type,
+                            value_type: self.apply_const_assertion(idx.value_type),
+                            readonly: true,
+                        }
+                    });
+
+                    let mut new_shape = (*shape).clone();
+                    new_shape.properties = new_props;
+                    new_shape.string_index = string_index;
+                    new_shape.number_index = number_index;
+
+                    self.db.object_with_index(new_shape)
+                }
+
+                // Readonly types: Unwrap, process, re-wrap
+                Some(TypeKey::ReadonlyType(inner)) => {
+                    let const_inner = self.apply_const_assertion(inner);
+                    self.db.readonly_type(const_inner)
+                }
+
+                // Unions: Recursively apply to all members
+                Some(TypeKey::Union(list_id)) => {
+                    let members = self.db.type_list(list_id);
+                    let const_members: Vec<TypeId> = members
+                        .iter()
+                        .map(|&m| self.apply_const_assertion(m))
+                        .collect();
+                    self.db.union(const_members)
+                }
+
+                // Intersections: Recursively apply to all members
+                Some(TypeKey::Intersection(list_id)) => {
+                    let members = self.db.type_list(list_id);
+                    let const_members: Vec<TypeId> = members
+                        .iter()
+                        .map(|&m| self.apply_const_assertion(m))
+                        .collect();
+                    self.db.intersection(const_members)
+                }
+
+                // All other types: preserved as-is
+                _ => type_id,
+            };
+
+        self.visiting.remove(&type_id);
+        result
     }
 }
