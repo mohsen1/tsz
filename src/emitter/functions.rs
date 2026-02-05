@@ -81,13 +81,31 @@ impl<'a> Printer<'a> {
         self.emit_function_parameters_js(&func.parameters.nodes);
         self.write(") ");
 
+        // DEBUG MARKER
+        if std::env::var("TSZ_DEBUG_EMIT").is_ok() {
+            self.write("/* DEBUG emit_function_expression */");
+        }
+
         // Emit body - check if it's a simple single-statement body
         let body_node = self.arena.get(func.body);
         let is_simple_body = if let Some(body) = body_node {
             if let Some(block) = self.arena.get_block(body) {
                 // Single return statement = simple body
-                block.statements.nodes.len() == 1
-                    && self.is_simple_return_statement(block.statements.nodes[0])
+                let stmt_count = block.statements.nodes.len();
+                let is_simple = if stmt_count == 1 {
+                    self.is_simple_return_statement(block.statements.nodes[0])
+                } else {
+                    false
+                };
+
+                if std::env::var("TSZ_DEBUG_EMIT").is_ok() {
+                    eprintln!(
+                        "DEBUG emit_function_expression: stmt_count={}, is_simple_body={}",
+                        stmt_count, is_simple
+                    );
+                }
+
+                is_simple
             } else {
                 false
             }
@@ -98,6 +116,9 @@ impl<'a> Printer<'a> {
         if is_simple_body {
             self.emit_single_line_block(func.body);
         } else {
+            if std::env::var("TSZ_DEBUG_EMIT").is_ok() {
+                eprintln!("DEBUG emit_function_expression: using multi-line emit");
+            }
             self.emit(func.body);
         }
     }
@@ -107,12 +128,29 @@ impl<'a> Printer<'a> {
         let Some(node) = self.arena.get(stmt_idx) else {
             return false;
         };
+
+        // DEBUG: Check node kind
+        if std::env::var("TSZ_DEBUG_EMIT").is_ok() {
+            eprintln!(
+                "DEBUG is_simple_return_statement: node.kind={}, RETURN_STATEMENT={}",
+                node.kind,
+                syntax_kind_ext::RETURN_STATEMENT
+            );
+        }
+
         if node.kind != syntax_kind_ext::RETURN_STATEMENT {
             return false;
         }
         // Consider it simple if it has an expression (not just "return;")
         if let Some(ret) = self.arena.get_return_statement(node) {
-            return !ret.expression.is_none();
+            let has_expr = !ret.expression.is_none();
+            if std::env::var("TSZ_DEBUG_EMIT").is_ok() {
+                eprintln!(
+                    "DEBUG is_simple_return_statement: has_expression={}",
+                    has_expr
+                );
+            }
+            return has_expr;
         }
         false
     }
