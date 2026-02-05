@@ -2,6 +2,35 @@
 
 ## Completed Tasks
 
+### ✅ Lib Loading Target Respect Fix - Completed 2026-02-05
+
+**Problem**: After fixing cross-arena cache poisoning, conformance dropped because `tsz` was loading ES2015+ types even when `--target es5` was specified.
+
+**Root Cause**: 
+`resolve_lib_files` was following `/// <reference lib="..." />` directives in lib files. Specifically, `lib.dom.d.ts` references `es2015`, causing ES2015 collections (Map, Set, WeakSet) to be loaded even for ES5 targets.
+
+**TypeScript Behavior**: 
+tsc does NOT follow reference directives when loading default libs based on target. These references are only used when explicitly including libs via `--lib`.
+
+**Fix Applied** (`src/cli/config.rs`):
+1. Added `resolve_lib_files_with_options(libs, follow_references)` - parameterized reference following
+2. Added `default_libs_for_target(target)` - explicit lib lists for ES5/ES2015
+3. Added `should_follow_references_for_target(target)` - ES2016+ follows refs, ES5/ES2015 don't
+4. Updated `resolve_default_lib_files` and `materialize_embedded_libs` to use new functions
+
+**Verification**:
+```bash
+# Before fix: No error (Map incorrectly available)
+./.target/release/tsz /tmp/test_es5.ts --noEmit --target es5
+
+# After fix: Correct error matching tsc
+error TS2583: Cannot find name 'Map'. Do you need to change your target library?
+```
+
+**Conformance Impact**: +0.2% (39.5% -> 39.7%)
+
+---
+
 ### ✅ Cross-Arena Cache Poisoning Fix - Completed 2026-02-05
 
 **Previous Claim**: "Lib loading was already working" - INCORRECT
@@ -34,7 +63,7 @@ self.ctx.symbol_types.remove(&sym_id);
 - Before: Any-poisoning masked incorrect symbol resolution, tests passed by accident
 - After: Symbols resolve correctly, revealing that libs load regardless of target/lib options
 - TS2304 "missing" increased because symbols are now found that shouldn't be available for certain targets
-- Next step: Fix lib loading to respect target/lib compiler options
+- Fixed by: Lib Loading Target Respect Fix (above)
 
 ### ⚠️ TS2454 Module-Level Fix - In Progress 2026-02-05
 **Status**: Partial Fix Applied, Deeper Issue Discovered
