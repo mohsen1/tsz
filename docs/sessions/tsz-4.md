@@ -554,3 +554,67 @@ Const declarations may use a different code path than variable declarations, OR 
 **Current Status**: Deep debugging needed to find the actual code path for type annotation compatibility checking in const declarations.
 
 **Blocker Level**: CRITICAL - Found architectural issue that prevents enum nominal typing from working. Need to trace the exact code execution path to understand why the Lawyer layer is bypassed.
+
+### Commit: `c85b1fdf9` - feat(tsz-4): fix enum member property access and nominal identity ✅
+
+**BREAKTHROUGH - ALL 15 ENUM TESTS PASSING!**
+
+**Root Cause Discovery**:
+The issue was NOT that `enum_assignability_override` wasn't being called. The issue was that:
+1. **Tracing wasn't working in tests** - The test environment doesn't initialize the tracing subscriber, so all `tracing::debug!` calls were no-ops
+2. **Enum property access returned `any`** - When accessing `E.A`, the expression was typed as `any` instead of `TypeKey::Enum(def_id, literal_type)`
+
+**True Root Cause**:
+`classify_namespace_member` in `src/solver/type_queries_extended.rs` didn't recognize `TypeKey::Enum` types. When checking property access like `E.A`:
+1. `E` resolved to `TypeKey::Enum(def_id, union_type)`
+2. `classify_namespace_member` only handled `Callable` and `Lazy`, falling through to `Other`
+3. Property access failed, returning `any`
+4. `any` is assignable to everything, so no TS2322 errors were emitted
+
+**Fixes Implemented**:
+
+1. **Added Enum variant to NamespaceMemberKind** (`src/solver/type_queries_extended.rs`):
+   ```rust
+   pub enum NamespaceMemberKind {
+       SymbolRef(SymbolRef),
+       Lazy(DefId),
+       Callable(CallableShapeId),
+       Enum(DefId),  // NEW
+       Other,
+   }
+   ```
+
+2. **Updated classify_namespace_member** to handle `TypeKey::Enum`:
+   ```rust
+   Some(TypeKey::Enum(def_id, _)) => NamespaceMemberKind::Enum(def_id),
+   ```
+
+3. **Added enum member lookup** in `resolve_namespace_value_member` and `namespace_has_type_only_member`
+
+4. **Fixed `get_enum_identity`** to use AST parent lookup instead of `symbol.parent`:
+   - `symbol.parent` was `u32::MAX` for enum members (sentinel value)
+   - Now uses `arena.get_extended` to find parent enum node
+   - Looks up parent enum symbol via `binder.get_node_symbol`
+
+5. **Fixed numeric enum assignability**:
+   - `number` is NOT assignable to enum members (e.g., `1` to `E.A` where `E.A = 0` should fail)
+   - Enum members ARE assignable to `number` (e.g., `E.A` to `number` should succeed)
+
+**Test Results**: 15/15 enum nominality tests passing ✅
+
+**Files Modified**:
+- `src/solver/type_queries_extended.rs`: Added `Enum` variant and handling
+- `src/checker/type_checking_queries.rs`: Added enum member lookup
+- `src/checker/state_type_environment.rs`: Fixed `get_enum_identity` and numeric enum rules
+- `src/checker/assignability_checker.rs`: Debug logging (temporary)
+- `src/checker/state.rs`: Debug logging (temporary)
+- `src/checker/state_checking.rs`: Debug logging (temporary)
+
+**Next Steps**:
+1. Clean up debug eprintln statements (temporary logging)
+2. Run full test suite to ensure no regressions
+3. Ask Gemini for POST-implementation review (per AGENTS.md)
+4. Move to Priority 2: Private Brand Checking
+5. Move to Priority 3: Constructor Accessibility
+
+**Status**: Priority 1 COMPLETE! 🎉
