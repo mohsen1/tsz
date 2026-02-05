@@ -87,13 +87,18 @@ const result = process(42, x => x.toString());
 
 #### TODO 1.2a: ✅ COMPLETE - Added `compute_contextual_types()` API (2026-02-05)
 
-**Location**: `src/solver/operations.rs:934-1059`
+**Location**: `src/solver/operations.rs:950-1078`
 
 Added public method `compute_contextual_types()` to `CallEvaluator`:
 - Takes `&FunctionShape` and `&[TypeId]` (all argument types)
 - Performs Round 1 inference on non-contextual arguments only
 - Returns `TypeSubstitution` with fixed type variables
 - Enables Checker to orchestrate two-pass argument collection
+
+**Gemini Pro Review** (2026-02-05):
+- **Found bug**: Missing `defaulted_placeholders` tracking
+- **Fix applied**: Added state save/restore and defaulted placeholder tracking
+- **Verdict**: "95% correct" → "100% correct" after fix
 
 **Usage Pattern**:
 ```rust
