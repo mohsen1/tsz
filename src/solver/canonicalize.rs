@@ -154,11 +154,29 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
             TypeKey::Intersection(members_id) => {
                 let members = self.interner.type_list(members_id);
+                // 1. Canonicalize all members
                 let c_members: Vec<TypeId> =
                     members.iter().map(|&m| self.canonicalize(m)).collect();
-                // Sort structural members, but preserve callable order (overloads matter)
-                // For now, just canonicalize members without reordering
-                self.interner.intersection(c_members)
+
+                // 2. Separate callables (preserve order) from structural types (sort)
+                let mut structural = Vec::new();
+                let mut callables = Vec::new();
+                for m in c_members {
+                    if self.is_callable_type(m) {
+                        callables.push(m);
+                    } else {
+                        structural.push(m);
+                    }
+                }
+
+                // 3. Sort structural members by canonical TypeId (commutative)
+                structural.sort_by_key(|t| t.0);
+                structural.dedup();
+
+                // 4. Combine: structural first (sorted), then callables (preserved order)
+                let mut final_members = structural;
+                final_members.extend(callables);
+                self.interner.intersection(final_members)
             }
 
             // Generic type application (e.g., Box<string>)
@@ -174,6 +192,16 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
             TypeKey::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
+
+                // Enter new scope if this function has type parameters (alpha-equivalence)
+                let pushed_scope = if !shape.type_params.is_empty() {
+                    let param_names: Vec<Atom> = shape.type_params.iter().map(|p| p.name).collect();
+                    self.param_stack.push(param_names);
+                    true
+                } else {
+                    false
+                };
+
                 // Canonicalize this_type if present
                 let c_this_type = shape.this_type.map(|t| self.canonicalize(t));
                 // Canonicalize return type
@@ -189,16 +217,41 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                         rest: p.rest,
                     })
                     .collect();
-                // Type params are just metadata (names/constraints) - preserve as-is
-                let type_params = shape.type_params.clone();
-                let type_predicate = shape.type_predicate.clone();
+
+                // Canonicalize type parameter constraints and defaults
+                let c_type_params: Vec<crate::solver::types::TypeParamInfo> = shape
+                    .type_params
+                    .iter()
+                    .map(|tp| crate::solver::types::TypeParamInfo {
+                        name: tp.name,
+                        constraint: tp.constraint.map(|c| self.canonicalize(c)),
+                        default: tp.default.map(|d| self.canonicalize(d)),
+                        is_const: tp.is_const,
+                    })
+                    .collect();
+
+                // Canonicalize type predicate (if it has a type_id)
+                let c_type_predicate =
+                    shape
+                        .type_predicate
+                        .as_ref()
+                        .map(|pred| crate::solver::types::TypePredicate {
+                            asserts: pred.asserts,
+                            target: pred.target.clone(),
+                            type_id: pred.type_id.map(|t| self.canonicalize(t)),
+                        });
+
+                // Pop scope
+                if pushed_scope {
+                    self.param_stack.pop();
+                }
 
                 let new_shape = crate::solver::types::FunctionShape {
-                    type_params,
+                    type_params: c_type_params,
                     params: c_params,
                     this_type: c_this_type,
                     return_type: c_return_type,
-                    type_predicate,
+                    type_predicate: c_type_predicate,
                     is_constructor: shape.is_constructor,
                     is_method: shape.is_method,
                 };
@@ -206,11 +259,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 self.interner.function(new_shape)
             }
 
-            TypeKey::Callable(_shape_id) => {
-                // For now, preserve callable type as-is
-                // TODO: Canonicalize parameter and return types if needed
-                type_id
-            }
+            TypeKey::Callable(shape_id) => self.canonicalize_callable(shape_id),
 
             // Primitives and literals are already canonical
             TypeKey::Intrinsic(_) | TypeKey::Literal(_) | TypeKey::Error => type_id,
@@ -360,6 +409,144 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         // Intern using the appropriate method
         // Note: object_with_index takes ObjectShape by value and sorts properties
         self.interner.object_with_index(new_shape)
+    }
+
+    /// Check if a type is a callable (Function or Callable).
+    fn is_callable_type(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeKey::Function(_)) | Some(TypeKey::Callable(_)) => true,
+            _ => false,
+        }
+    }
+
+    /// Canonicalize a single call signature with type parameter scope management.
+    fn canonicalize_signature(
+        &mut self,
+        sig: &crate::solver::types::CallSignature,
+    ) -> crate::solver::types::CallSignature {
+        // Enter new scope if this signature has type parameters (alpha-equivalence)
+        let pushed_scope = if !sig.type_params.is_empty() {
+            let param_names: Vec<Atom> = sig.type_params.iter().map(|p| p.name).collect();
+            self.param_stack.push(param_names);
+            true
+        } else {
+            false
+        };
+
+        // Canonicalize this_type if present
+        let c_this_type = sig.this_type.map(|t| self.canonicalize(t));
+
+        // Canonicalize return type
+        let c_return_type = self.canonicalize(sig.return_type);
+
+        // Canonicalize parameter types
+        let c_params: Vec<crate::solver::types::ParamInfo> = sig
+            .params
+            .iter()
+            .map(|p| crate::solver::types::ParamInfo {
+                name: p.name,
+                type_id: self.canonicalize(p.type_id),
+                optional: p.optional,
+                rest: p.rest,
+            })
+            .collect();
+
+        // Canonicalize type parameter constraints and defaults
+        let c_type_params: Vec<crate::solver::types::TypeParamInfo> = sig
+            .type_params
+            .iter()
+            .map(|tp| crate::solver::types::TypeParamInfo {
+                name: tp.name,
+                constraint: tp.constraint.map(|c| self.canonicalize(c)),
+                default: tp.default.map(|d| self.canonicalize(d)),
+                // Preserve other fields as-is
+                is_const: tp.is_const,
+            })
+            .collect();
+
+        // Canonicalize type predicate (if it has a type_id)
+        let c_type_predicate =
+            sig.type_predicate
+                .as_ref()
+                .map(|pred| crate::solver::types::TypePredicate {
+                    asserts: pred.asserts,
+                    target: pred.target.clone(),
+                    type_id: pred.type_id.map(|t| self.canonicalize(t)),
+                });
+
+        // Pop scope
+        if pushed_scope {
+            self.param_stack.pop();
+        }
+
+        crate::solver::types::CallSignature {
+            type_params: c_type_params,
+            params: c_params,
+            this_type: c_this_type,
+            return_type: c_return_type,
+            type_predicate: c_type_predicate,
+            is_method: sig.is_method,
+        }
+    }
+
+    /// Canonicalize a callable type (overloaded functions).
+    fn canonicalize_callable(&mut self, shape_id: crate::solver::types::CallableShapeId) -> TypeId {
+        let shape = self.interner.callable_shape(shape_id);
+
+        // Canonicalize all call signatures (order matters for overload resolution)
+        let c_call_signatures: Vec<crate::solver::types::CallSignature> = shape
+            .call_signatures
+            .iter()
+            .map(|sig| self.canonicalize_signature(sig))
+            .collect();
+
+        // Canonicalize all construct signatures
+        let c_construct_signatures: Vec<crate::solver::types::CallSignature> = shape
+            .construct_signatures
+            .iter()
+            .map(|sig| self.canonicalize_signature(sig))
+            .collect();
+
+        // Canonicalize properties
+        let mut new_props = Vec::with_capacity(shape.properties.len());
+        for prop in &shape.properties {
+            let mut new_prop = prop.clone();
+            new_prop.type_id = self.canonicalize(prop.type_id);
+            new_prop.write_type = self.canonicalize(prop.write_type);
+            new_props.push(new_prop);
+        }
+
+        // Canonicalize index signatures
+        let new_string_index =
+            shape
+                .string_index
+                .as_ref()
+                .map(|idx| crate::solver::types::IndexSignature {
+                    key_type: self.canonicalize(idx.key_type),
+                    value_type: self.canonicalize(idx.value_type),
+                    readonly: idx.readonly,
+                });
+
+        let new_number_index =
+            shape
+                .number_index
+                .as_ref()
+                .map(|idx| crate::solver::types::IndexSignature {
+                    key_type: self.canonicalize(idx.key_type),
+                    value_type: self.canonicalize(idx.value_type),
+                    readonly: idx.readonly,
+                });
+
+        let new_shape = crate::solver::types::CallableShape {
+            call_signatures: c_call_signatures,
+            construct_signatures: c_construct_signatures,
+            properties: new_props,
+            string_index: new_string_index,
+            number_index: new_number_index,
+            symbol: shape.symbol,
+        };
+
+        self.interner.callable(new_shape)
     }
 
     /// Clear the cache (useful for testing or bulk operations).
