@@ -15,9 +15,9 @@
 ## Success Criteria
 
 ### Phase A: Fix Compound Assignments
-- [ ] `test_compound_assignment_clears_narrowing` passes
-- [ ] `get_assigned_type` or flow graph builder handles compound operators
-- [ ] Compound assignments properly kill narrowing and narrow to result type
+- [x] `test_compound_assignment_clears_narrowing` passes
+- [x] `get_assigned_type` handles compound operators
+- [x] Compound assignments properly kill narrowing and narrow to result type
 
 ### Phase B: Fix Array Mutation Side-Effects
 - [ ] `test_array_mutation_clears_predicate_narrowing` passes
@@ -132,6 +132,36 @@ Previous tsz-3 sessions:
 - Identified 2 pre-existing failing tests as focus areas
 - Created session file with clear success criteria
 
+### 2026-02-05: Phase A Complete - Compound Assignment Fix
+
+**Status**: ✅ Compound assignment narrowing implemented and tested
+
+**What Was Done**:
+1. Consulted Gemini Flash for approach validation
+2. Implemented compound assignment handling in `get_assigned_type`
+3. Initially used simple fallback (NUMBER for all arithmetic operators)
+4. Gemini Pro review revealed bug: += could be string concatenation OR number addition
+5. Refined implementation to use literal type checking for += heuristic
+6. Added helper functions: is_compound_assignment_operator, map_compound_operator_to_binary, is_number_type
+
+**Implementation Details**:
+- **File**: `src/checker/control_flow.rs`
+- **Function**: `get_assigned_type` (lines 1274-1370)
+- **Key Changes**:
+  - Detects compound assignment operators (+=, -=, *=, etc.)
+  - When `node_types` available: Uses `BinaryOpEvaluator` to compute result type
+  - When `node_types` unavailable: Uses heuristics
+    - Arithmetic/bitwise operators → NUMBER
+    - `+=` with numeric literal → NUMBER
+    - `+=` with non-literal → preserve narrowing (could be string)
+    - Logical/??= operators → preserve narrowing
+
+**Test Results**:
+- ✅ `test_compound_assignment_clears_narrowing` - PASSING
+- ⚠️ `test_array_mutation_clears_predicate_narrowing` - Still failing (pre-existing issue)
+
+**Commit**: c992f94c9 - "feat(flow-analysis): add compound assignment narrowing"
+
 ---
 
-*Session created by tsz-3 on 2026-02-05*
+*Session updated by tsz-3 on 2026-02-05*
