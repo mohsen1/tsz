@@ -1628,6 +1628,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Check overload compatibility for method implementations
+        if !method.body.is_none() {
+            self.check_overload_compatibility(member_idx);
+        }
+
         self.pop_type_parameters(type_param_updates);
     }
 
@@ -1726,6 +1731,11 @@ impl<'a> CheckerState<'a> {
         // Reset in_constructor flag
         if let Some(ref mut class_info) = self.ctx.enclosing_class {
             class_info.in_constructor = false;
+        }
+
+        // Check overload compatibility for constructor implementations
+        if !ctor.body.is_none() {
+            self.check_overload_compatibility(member_idx);
         }
     }
 
@@ -1962,6 +1972,94 @@ impl<'a> CheckerState<'a> {
                 &message,
                 diagnostic_codes::IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION,
             );
+        }
+    }
+
+    /// Check overload compatibility: implementation must be assignable to all overload signatures.
+    ///
+    /// Reports TS2394 when an implementation signature is not compatible with its overload signatures.
+    /// This check ensures that the implementation can handle all valid calls that match the overloads.
+    ///
+    /// Per TypeScript's variance rules:
+    /// - Implementation parameters must be supertypes of overload parameters (contravariant)
+    /// - Implementation return type must be subtype of overload return type (covariant)
+    /// - Effectively: Implementation <: Overload (implementation is assignable to overload)
+    ///
+    /// This handles:
+    /// - Function declarations
+    /// - Method declarations (class methods)
+    /// - Constructor declarations
+    pub(crate) fn check_overload_compatibility(&mut self, impl_node_idx: NodeIndex) {
+        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        // 1. Get the implementation's symbol
+        let Some(impl_sym_id) = self.ctx.binder.get_node_symbol(impl_node_idx) else {
+            return;
+        };
+
+        let Some(symbol) = self.ctx.binder.get_symbol(impl_sym_id) else {
+            return;
+        };
+
+        // 2. Get the implementation's type
+        let impl_type = self.get_type_of_node(impl_node_idx);
+        if impl_type == crate::solver::TypeId::ERROR {
+            return;
+        }
+
+        // 3. Check each overload declaration
+        for &decl_idx in &symbol.declarations {
+            // Skip the implementation itself
+            if decl_idx == impl_node_idx {
+                continue;
+            }
+
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+
+            // 4. Check if this declaration is an overload (has no body)
+            // We must handle Functions, Methods, and Constructors
+            let is_overload = match decl_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_function(decl_node)
+                    .map(|f| f.body.is_none())
+                    .unwrap_or(false),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(decl_node)
+                    .map(|m| m.body.is_none())
+                    .unwrap_or(false),
+                k if k == syntax_kind_ext::CONSTRUCTOR => self
+                    .ctx
+                    .arena
+                    .get_constructor(decl_node)
+                    .map(|c| c.body.is_none())
+                    .unwrap_or(false),
+                _ => false, // Not a callable declaration we care about
+            };
+
+            if !is_overload {
+                continue;
+            }
+
+            // 5. Get the overload's type
+            let overload_type = self.get_type_of_node(decl_idx);
+            if overload_type == crate::solver::TypeId::ERROR {
+                continue;
+            }
+
+            // 6. Check assignability: Impl <: Overload
+            if !self.is_assignable_to(impl_type, overload_type) {
+                self.error_at_node(
+                    decl_idx,
+                    diagnostic_messages::OVERLOAD_NOT_COMPATIBLE_WITH_IMPLEMENTATION,
+                    diagnostic_codes::OVERLOAD_SIGNATURE_NOT_COMPATIBLE,
+                );
+            }
         }
     }
 
@@ -2277,6 +2375,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     diagnostic_codes::IMPLICIT_ANY_RETURN,
                 );
             }
+        }
+
+        // Check overload compatibility: implementation must be assignable to all overloads
+        // This is the function implementation validation (TS2394)
+        if !func.body.is_none() {
+            // Only check for implementations (functions with bodies)
+            self.check_overload_compatibility(func_idx);
         }
 
         self.pop_type_parameters(type_param_updates);

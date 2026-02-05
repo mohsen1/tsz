@@ -133,6 +133,8 @@ pub mod diagnostic_messages {
     pub const CANNOT_INVOKE_EXPRESSION: &str = "This expression is not callable.";
     pub const NO_OVERLOAD_MATCHES: &str = "No overload matches this call.";
     pub const OVERLOAD_SIGNATURE: &str = "Overload {0} of {1}, '{2}', gave the following error.";
+    pub const OVERLOAD_NOT_COMPATIBLE_WITH_IMPLEMENTATION: &str =
+        "This overload signature is not compatible with its implementation signature.";
 
     // Object literal errors
     pub const EXCESS_PROPERTY: &str =
@@ -433,6 +435,7 @@ pub mod diagnostic_codes {
     pub const FUNCTION_IMPLEMENTATION_MISSING: u32 = 2391; // Function implementation is missing
     pub const MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS: u32 = 2392; // Multiple constructor implementations are not allowed
     pub const DUPLICATE_FUNCTION_IMPLEMENTATION: u32 = 2393; // Duplicate function implementation
+    pub const OVERLOAD_SIGNATURE_NOT_COMPATIBLE: u32 = 2394; // This overload signature is not compatible with its implementation signature
     pub const NOT_ALL_CODE_PATHS_RETURN_VALUE: u32 = 2366;
     pub const THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE: u32 = 2351; // This expression is not constructable. Type 'X' has no construct signatures.
     pub const ARITHMETIC_OPERAND_MUST_BE_NUMBER: u32 = 2356; // An arithmetic operand must be of type 'any', 'number', 'bigint' or an enum type.

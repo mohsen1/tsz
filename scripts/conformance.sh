@@ -138,6 +138,7 @@ run_tests() {
     local extra_args=()
     local verbose=false
     local has_error_code=false
+    local has_max=false
     local prev_arg=""
     for arg in "$@"; do
         if [[ "$arg" == --workers* ]]; then
@@ -157,6 +158,10 @@ run_tests() {
         if [[ "$arg" == --error-code* ]] || [ "$prev_arg" = "--error-code" ]; then
             has_error_code=true
         fi
+        # Check for --max (either --max N or --max=N)
+        if [[ "$arg" == --max* ]] || [ "$prev_arg" = "--max" ]; then
+            has_max=true
+        fi
         prev_arg="$arg"
         extra_args+=("$arg")
     done
@@ -166,8 +171,14 @@ run_tests() {
         extra_args+=(--print-test)
     fi
 
-    # If --error-code is present, capture output and print test file contents before FINAL RESULTS
-    if [ "$has_error_code" = true ]; then
+    # Show summary with failing test contents when --error-code, --max, or --verbose is used
+    local show_summary=false
+    if [ "$has_error_code" = true ] || [ "$has_max" = true ] || [ "$verbose" = true ]; then
+        show_summary=true
+    fi
+
+    # If summary mode, capture output and print test file contents
+    if [ "$show_summary" = true ]; then
         # Use temp file to capture output while showing real-time progress
         local tmpfile
         tmpfile=$(mktemp)
@@ -224,7 +235,7 @@ run_tests() {
         
         rm -f "$tmpfile"
     else
-        # No --error-code, run normally
+        # No summary mode, run normally
         $RUNNER_BIN \
             --test-dir "$TEST_DIR" \
             --cache-file "$CACHE_FILE" \
