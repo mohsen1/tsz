@@ -2,6 +2,8 @@
 //!
 //! Provides efficient node lookup using the flat NodeArena structure.
 
+use std::path::{Path, PathBuf};
+
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 
@@ -88,6 +90,101 @@ pub fn find_nodes_in_range(arena: &NodeArena, start: u32, end: u32) -> Vec<NodeI
     }
 
     result
+}
+
+/// Calculate the new relative path for an import statement after a file rename.
+///
+/// # Arguments
+/// * `importer_path` - Path of the file containing the import statement
+/// * `_old_target_path` - Original path of the imported file (before rename) - unused for now
+/// * `new_target_path` - New path of the imported file (after rename)
+/// * `current_specifier` - The current import specifier (e.g., "./utils" or "../types")
+///
+/// # Returns
+/// * `Some(String)` - The new import specifier in the same style as current_specifier
+/// * `None` - If the calculation fails
+///
+/// # Examples
+/// ```ignore
+/// // When utils.ts moves to src/utils.ts
+/// calculate_new_relative_path(
+///     Path::new("/project/main.ts"),
+///     Path::new("/project/utils.ts"),
+///     Path::new("/project/src/utils.ts"),
+///     "./utils"
+/// ) // Returns: Some("./src/utils")
+/// ```
+pub fn calculate_new_relative_path(
+    importer_path: &Path,
+    _old_target_path: &Path,
+    new_target_path: &Path,
+    current_specifier: &str,
+) -> Option<String> {
+    // Parse the current specifier to understand the user's style
+    let has_dot_slash_prefix = current_specifier.starts_with("./");
+    let has_parent_reference = current_specifier.starts_with("../");
+
+    // Get the directory containing the importer
+    let importer_dir = importer_path.parent()?;
+
+    // Calculate relative path from importer_dir to new_target
+    // Use Path::strip_prefix to find common ancestor
+    let new_relative = relative_path(importer_dir, new_target_path)?;
+
+    // Convert to string and apply the same style as current_specifier
+    let mut result = new_relative.to_string_lossy().to_string();
+
+    // Apply user's prefix style
+    if has_dot_slash_prefix && !result.starts_with("./") && !result.starts_with("../") {
+        result = format!("./{}", result);
+    } else if !has_dot_slash_prefix && !has_parent_reference && result.starts_with("./") {
+        // Remove ./ if user didn't use it originally
+        result = result[2..].to_string();
+    }
+
+    Some(result)
+}
+
+/// Calculate a relative path from `from` to `to`.
+///
+/// This is a simplified version of pathdiff that uses std::path only.
+fn relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
+    use std::path::PathBuf;
+
+    // Try to find a common ancestor
+    let from_components = from.components().collect::<Vec<_>>();
+    let to_components = to.components().collect::<Vec<_>>();
+
+    // Remove filename from 'from' (it's a directory path)
+    if !from_components.is_empty() {
+        // from_components is already a directory (from parent()), so keep as is
+    }
+
+    // Find common prefix
+    let mut common = 0;
+    while common < from_components.len().min(to_components.len())
+        && from_components[common] == to_components[common]
+    {
+        common += 1;
+    }
+
+    // Build "../" for each remaining component in 'from'
+    let mut result = PathBuf::new();
+    for _ in 0..(from_components.len() - common) {
+        result.push("..");
+    }
+
+    // Add remaining components from 'to'
+    for &component in &to_components[common..] {
+        result.push(component);
+    }
+
+    // Special case: same directory
+    if result.as_os_str().is_empty() {
+        result.push(".");
+    }
+
+    Some(result)
 }
 
 #[cfg(test)]
