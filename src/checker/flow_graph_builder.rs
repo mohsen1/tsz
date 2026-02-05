@@ -786,6 +786,9 @@ impl<'a> FlowGraphBuilder<'a> {
             label: NodeIndex::NONE,
         });
 
+        // Track whether a default clause exists for exhaustiveness checking
+        let mut has_default_clause = false;
+
         // Bind case block
         if let Some(case_block_node) = self.arena.get(switch_data.case_block) {
             let Some(case_block) = self.arena.get_block(case_block_node) else {
@@ -831,6 +834,7 @@ impl<'a> FlowGraphBuilder<'a> {
                     }
 
                     syntax_kind_ext::DEFAULT_CLAUSE => {
+                        has_default_clause = true;
                         if let Some(clause) = self.arena.get_case_clause(clause_node) {
                             let clause_flow = self.create_switch_clause_flow(
                                 pre_switch_flow,
@@ -852,6 +856,22 @@ impl<'a> FlowGraphBuilder<'a> {
 
                     _ => {}
                 }
+            }
+
+            // Exhaustiveness checking: if no default clause, create implicit default path
+            // This path represents "no case matched" and should narrow the discriminant type
+            // by excluding all case values. If all cases are covered, this becomes `never`.
+            // IMPORTANT: Do NOT use fallthrough_flow here - implicit default is separate
+            // from the case clauses and represents the "no match" path only.
+            if !has_default_clause {
+                let implicit_default_flow = self.create_switch_clause_flow(
+                    pre_switch_flow,
+                    FlowNodeId::NONE, // No fallthrough - implicit default is separate path
+                    switch_data.case_block, // Use case_block as marker for implicit default
+                );
+
+                // Connect implicit default to end label (fallthrough from switch)
+                self.add_antecedent(end_label, implicit_default_flow);
             }
         }
 
