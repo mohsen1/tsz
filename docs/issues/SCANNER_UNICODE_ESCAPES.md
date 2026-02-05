@@ -1,7 +1,8 @@
 # Scanner: Unicode Escapes in Identifiers
 
-**Status**: NEEDS FIX
+**Status**: FIXED
 **Discovered**: 2026-02-05
+**Fixed**: 2026-02-05
 **Component**: Scanner (scanner_impl.rs)
 **Conformance Impact**: Minor (~5 tests)
 
@@ -69,10 +70,30 @@ This requires switching from zero-allocation mode to allocation mode when escape
   - `peek_unicode_escape()` (line 1462)
   - `scan_unicode_escape_value()` (line 1544)
 
+## Solution
+
+The fix was implemented in `src/scanner/scanner_impl.rs`:
+
+1. Modified `scan_identifier()` to check for backslash mid-identifier
+2. Added `continue_identifier_with_escapes()` function that:
+   - Copies already-scanned portion to a String
+   - Continues scanning with allocation mode
+   - Handles unicode escapes using existing `scan_unicode_escape_value()`
+   - Sets `TokenFlags::UnicodeEscape` flag
+
+This preserves zero-allocation performance for normal identifiers while correctly handling the less common case of unicode escapes mid-identifier.
+
 ## Testing
 
 Test with files containing Unicode escapes in identifiers:
 ```bash
 echo 'class C\u0032 {}' > /tmp/test.ts
-./target/debug/tsz /tmp/test.ts
+cargo run --bin tsz -- /tmp/test.ts
 ```
+
+Unit tests added in `src/tests/scanner_impl_tests.rs`:
+- `test_unicode_escape_mid_identifier` - basic case
+- `test_unicode_escape_mid_identifier_multiple` - multiple escapes
+- `test_unicode_escape_mid_identifier_extended` - `\u{...}` form
+- `test_unicode_escape_mid_identifier_digit` - escape producing digit
+- `test_unicode_escape_not_identifier_part` - escape not an identifier part
