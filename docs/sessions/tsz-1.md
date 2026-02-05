@@ -2,9 +2,89 @@
 
 **Session ID**: tsz-1
 **Last Updated**: 2025-02-05
-**Focus**: Solver (Type Relations & Narrowing)
+**Focus**: Missing Diagnostic Codes Implementation
+
+## New Focus: Diagnostic Gap Analysis (2025-02-05)
+
+**Strategic Shift**: After consulting with Gemini, shifting focus to implementing critical missing TypeScript diagnostic codes that would most improve conformance.
+
+### Top Priority Missing Diagnostics
+
+| Priority | Code | Description | Impact |
+|:---|:---|:---|:---|
+| **1** | **TS2367** | Comparison overlap check ("This condition will always return false") | High - Essential for control flow conformance |
+| **2** | **TS2300** | Duplicate Identifier | High - Fundamental to block scoping |
+| **3** | **TS2352** | Invalid Type Assertion ("Conversion may be a mistake") | Medium - Required for type cast tests |
+| **4** | **TS2416** | Signature Override Mismatch | Medium - Critical for class hierarchy |
+| **5** | **TS2366** | Not all code paths return | Medium - Control flow analysis |
+
+### Already Implemented Diagnostics
+
+Based on Gemini's analysis of `src/checker/error_reporter.rs`:
+- **Assignability**: TS2322, TS2741, TS2326, TS2353, TS2559
+- **Name Resolution**: TS2304, TS2552, TS2583, TS2584, TS2662
+- **Properties**: TS2339, TS2540, TS2803, TS7053
+- **Functions/Calls**: TS2345, TS2348, TS2349, TS2554, TS2555, TS2556, TS2769
+- **Classes/Inheritance**: TS2506, TS2507, TS2351, TS2715, TS2420, TS2415
+- **Operators**: TS18050, TS2469, TS2362, TS2363, TS2365
+- **Variables**: TS2403, TS2454
+- **Types**: TS2314, TS2344, TS2693, TS2585, TS2749
+
+### Next Task: TS2367 - Comparison Overlap Detection
+
+**Why First**: TS2367 is critical for control flow and equality conformance tests.
+
+**Implementation Plan** (pending Gemini consultation):
+1. Add `are_types_overlapping` query to `src/solver/`
+2. Update `src/checker/expr.rs` to check comparison expressions (`==`, `===`, `!=`, `!==`)
+3. Add reporting logic to `src/checker/error_reporter.rs`
+
+**Example**:
+```typescript
+if (1 === "one") {  // TS2367: This condition will always return false
+    // ...
+}
+```
 
 ## Active Tasks
+
+### Task #17: TS2367 - Comparison Overlap Detection
+**Status**: 📋 Planned
+**Priority**: High (NEW FOCUS)
+**Estimated Impact**: +1-2% conformance
+
+**Description**:
+Implement TS2367 diagnostic: "This condition will always return 'false' since the types 'X' and 'Y' have no overlap."
+
+**Why This First**:
+- Essential for control flow and equality conformance tests
+- Affects `if` statements, `switch` cases, and conditional expressions
+- High-impact, relatively self-contained implementation
+
+**Gemini Guidance** (Flash 2025-02-05):
+> "Requires: 1) Modifying `src/solver/` to add `are_types_overlapping` query
+> 2) Updating `src/checker/expr.rs` to check comparison expressions
+> 3) Adding reporting logic to `src/checker/error_reporter.rs`"
+
+**Example Cases**:
+```typescript
+// Should emit TS2367
+if (1 === "one") { }
+if (true === 1) { }
+
+// Should NOT emit TS2367 (types overlap)
+if (1 === 2) { }
+if (x === y) { }  // where x and y could be same type
+```
+
+**Implementation Steps**:
+1. ✅ Ask Gemini Question 1: What's the right approach for type overlap detection?
+2. ⏭️ Implement `are_types_overlapping` in solver
+3. ⏭️ Ask Gemini Question 2: Review the implementation
+4. ⏭️ Integrate into checker's comparison expression handling
+5. ⏭️ Add tests
+
+---
 
 ### Task #16: Robust Optional Property Subtyping & Narrowing
 **Status**: 🔄 In Progress (Implementation Phase)
