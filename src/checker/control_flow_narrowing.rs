@@ -949,42 +949,64 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
-    pub(crate) fn discriminant_property(&self, expr: NodeIndex, target: NodeIndex) -> Option<Atom> {
+    pub(crate) fn discriminant_property(
+        &self,
+        expr: NodeIndex,
+        target: NodeIndex,
+    ) -> Option<Vec<Atom>> {
         self.discriminant_property_info(expr, target)
-            .and_then(|(prop, is_optional, _base)| if is_optional { None } else { Some(prop) })
+            .and_then(|(path, is_optional, _base)| if is_optional { None } else { Some(path) })
     }
 
     pub(crate) fn discriminant_property_info(
         &self,
         expr: NodeIndex,
-        target: NodeIndex,
-    ) -> Option<(Atom, bool, NodeIndex)> {
-        eprintln!(
-            "DEBUG discriminant_property_info: expr={}, target={}",
-            expr.0, target.0
-        );
+        _target: NodeIndex,
+    ) -> Option<(Vec<Atom>, bool, NodeIndex)> {
         let expr = self.skip_parenthesized(expr);
-        let node = self.arena.get(expr)?;
+        let _node = self.arena.get(expr)?;
 
-        eprintln!(
-            "DEBUG discriminant_property_info: expr node kind={}",
-            node.kind
-        );
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            eprintln!("DEBUG discriminant_property_info: is property access");
-            let access = self.arena.get_access_expr(node)?;
+        // Collect the property path by walking up the access chain
+        // For action.payload.kind, we want ["payload", "kind"]
+        let mut path: Vec<Atom> = Vec::new();
+        let mut is_optional = false;
+        let mut current = expr;
+
+        loop {
+            let current_node = self.arena.get(current)?;
+            let access = if current_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                self.arena.get_access_expr(current_node)?
+            } else if current_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                self.arena.get_access_expr(current_node)?
+            } else {
+                // Not a property/element access - we've reached the base
+                break;
+            };
+
+            // Track if any segment uses optional chaining
+            if access.question_dot_token {
+                is_optional = true;
+            }
+
+            // Get the property name for this segment
+            let prop_name = if current_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let name_node = self.arena.get(access.name_or_argument)?;
+                let ident = self.arena.get_identifier(name_node)?;
+                self.interner.intern_string(&ident.escaped_text)
+            } else {
+                // Element access
+                self.literal_atom_from_node_or_type(access.name_or_argument)?
+            };
+
+            // Add to path (will be reversed later)
+            path.push(prop_name);
+
+            // Move to the next level up
+            let access_target = access.expression;
+            let access_target = self.skip_parenthesized(access_target);
+            let access_target_node = self.arena.get(access_target)?;
+
             // Unwrap assignment expressions to get the actual target
-            // e.g., in (o = fn()).done, access.expression is the assignment,
-            // and we need to extract 'o' from the left side of the assignment
-            let access_target = access.expression;
-            let access_target = self.skip_parenthesized(access_target);
-            let access_target_node = self.arena.get(access_target)?;
-
-            eprintln!(
-                "DEBUG discriminant_property_info: access_target={}",
-                access_target.0
-            );
-            // If the expression is an assignment, use the left-hand side
             let effective_target = if access_target_node.kind == syntax_kind_ext::BINARY_EXPRESSION
             {
                 let binary = self.arena.get_binary_expr(access_target_node)?;
@@ -997,50 +1019,18 @@ impl<'a> FlowAnalyzer<'a> {
                 access_target
             };
 
-            eprintln!(
-                "DEBUG discriminant_property_info: effective_target={}, target={}",
-                effective_target.0, target.0
-            );
-            // Don't check matching here - let the caller decide if this is a match
-            // The caller might want to narrow the base, not the full property access
-            let name_node = self.arena.get(access.name_or_argument)?;
-            let ident = self.arena.get_identifier(name_node)?;
-            let name = self.interner.intern_string(&ident.escaped_text);
-            eprintln!(
-                "DEBUG discriminant_property_info: FOUND property {:?}, base={:?}",
-                name, effective_target.0
-            );
-            // Return the property name, optional flag, and the BASE of the property access
-            return Some((name, access.question_dot_token, effective_target));
+            current = effective_target;
         }
 
-        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            let access = self.arena.get_access_expr(node)?;
-            // Unwrap assignment expressions for element access too
-            let access_target = access.expression;
-            let access_target = self.skip_parenthesized(access_target);
-            let access_target_node = self.arena.get(access_target)?;
+        // Reverse the path to get correct order (["payload", "kind"] not ["kind", "payload"])
+        path.reverse();
 
-            let effective_target = if access_target_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            {
-                let binary = self.arena.get_binary_expr(access_target_node)?;
-                if binary.operator_token == SyntaxKind::EqualsToken as u16 {
-                    binary.left
-                } else {
-                    access_target
-                }
-            } else {
-                access_target
-            };
-
-            // Don't check matching here - let the caller decide if this is a match
-            // The caller might want to narrow the base, not the full property access
-            let name = self.literal_atom_from_node_or_type(access.name_or_argument)?;
-            // Return the property name, optional flag, and the BASE of the property access
-            return Some((name, access.question_dot_token, effective_target));
+        if path.is_empty() {
+            return None;
         }
 
-        None
+        // current is now the base (e.g., "action" in action.payload.kind)
+        Some((path, is_optional, current))
     }
 
     pub(crate) fn discriminant_comparison(
@@ -1048,24 +1038,24 @@ impl<'a> FlowAnalyzer<'a> {
         left: NodeIndex,
         right: NodeIndex,
         target: NodeIndex,
-    ) -> Option<(Atom, TypeId, bool, NodeIndex)> {
-        if let Some((prop, is_optional, base)) = self.discriminant_property_info(left, target)
+    ) -> Option<(Vec<Atom>, TypeId, bool, NodeIndex)> {
+        if let Some((path, is_optional, base)) = self.discriminant_property_info(left, target)
             && let Some(literal) = self.literal_type_from_node(right)
         {
             // CRITICAL FIX: Only apply discriminant narrowing if we are narrowing the BASE object.
             // If target is the property access itself (e.g. switch(obj.kind)),
             // we should use literal comparison, not discriminant narrowing.
             if self.is_matching_reference(base, target) {
-                return Some((prop, literal, is_optional, base));
+                return Some((path, literal, is_optional, base));
             }
         }
 
-        if let Some((prop, is_optional, base)) = self.discriminant_property_info(right, target)
+        if let Some((path, is_optional, base)) = self.discriminant_property_info(right, target)
             && let Some(literal) = self.literal_type_from_node(left)
         {
             // CRITICAL FIX: Only apply discriminant narrowing if we are narrowing the BASE object.
             if self.is_matching_reference(base, target) {
-                return Some((prop, literal, is_optional, base));
+                return Some((path, literal, is_optional, base));
             }
         }
 
@@ -1075,7 +1065,7 @@ impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn narrow_by_discriminant_for_type(
         &self,
         type_id: TypeId,
-        prop_name: Atom,
+        prop_path: &[Atom],
         literal_type: TypeId,
         is_true_branch: bool,
         narrowing: &NarrowingContext,
@@ -1086,17 +1076,9 @@ impl<'a> FlowAnalyzer<'a> {
         {
             if constraint != type_id {
                 let narrowed_constraint = if is_true_branch {
-                    narrowing.narrow_by_discriminant(
-                        constraint,
-                        std::slice::from_ref(&prop_name),
-                        literal_type,
-                    )
+                    narrowing.narrow_by_discriminant(constraint, prop_path, literal_type)
                 } else {
-                    narrowing.narrow_by_excluding_discriminant(
-                        constraint,
-                        std::slice::from_ref(&prop_name),
-                        literal_type,
-                    )
+                    narrowing.narrow_by_excluding_discriminant(constraint, prop_path, literal_type)
                 };
                 if narrowed_constraint != constraint {
                     return self.interner.intersection2(type_id, narrowed_constraint);
@@ -1105,17 +1087,9 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if is_true_branch {
-            narrowing.narrow_by_discriminant(
-                type_id,
-                std::slice::from_ref(&prop_name),
-                literal_type,
-            )
+            narrowing.narrow_by_discriminant(type_id, prop_path, literal_type)
         } else {
-            narrowing.narrow_by_excluding_discriminant(
-                type_id,
-                std::slice::from_ref(&prop_name),
-                literal_type,
-            )
+            narrowing.narrow_by_excluding_discriminant(type_id, prop_path, literal_type)
         }
     }
 
@@ -1945,13 +1919,13 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((TypeGuard::LiteralEquality(nullish_type), target, false));
         }
 
-        // Check for discriminant comparison: x.kind === "circle"
-        if let Some((prop_name, literal_type, is_optional, discriminant_base)) =
+        // Check for discriminant comparison: x.kind === "circle" or x.payload.kind === "circle"
+        if let Some((property_path, literal_type, is_optional, discriminant_base)) =
             self.discriminant_comparison(bin.left, bin.right, target)
         {
             return Some((
                 TypeGuard::Discriminant {
-                    property_path: vec![prop_name],
+                    property_path,
                     value_type: literal_type,
                 },
                 discriminant_base, // Use the BASE of the property access, not the full access

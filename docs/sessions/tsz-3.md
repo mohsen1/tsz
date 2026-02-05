@@ -121,11 +121,26 @@ function test2(x: unknown) {
 
 ---
 
-### Phase 3: Nested Discriminants (PENDING)
+### Phase 3: Nested Discriminants (� ACTIVE)
 
-**Status**: ⏸️ NOT STARTED
+**Status**: 🟡 IN PROGRESS - IMPLEMENTATION
 
-Support for `action.payload.kind` style discriminants.
+**Problem**: Support narrowing for nested discriminant paths like `action.payload.kind`.
+
+**Current Limitation**: `discriminant_property_info` only returns the immediate parent property. Real-world Redux/Flux code uses nested discriminants.
+
+**Implementation Plan**:
+1. Modify `discriminant_property_info` to return `Vec<Atom>` (full property path)
+2. Update `narrow_by_binary_expr` to pass the path to the solver
+3. Update `src/solver/narrowing.rs` to recursively descend into types based on path
+4. Handle optional properties in the path (e.g., `action.payload?.kind`)
+
+**Critical Bugs to Avoid** (from previous attempt):
+1. Reversed subtype check - must check `is_subtype_of(literal, property_type)`
+2. Missing type resolution - must handle `Lazy`, `Ref`, `Intersection` types
+3. Optional properties - must handle `{ prop?: "a" }` correctly
+
+**Gemini Consultation**: Pending - asking about architecture before implementation
 
 ---
 
