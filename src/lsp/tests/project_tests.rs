@@ -2618,3 +2618,81 @@ fn test_project_load_tsconfig_updates_all_files() {
     fs::remove_file(&tsconfig_path).ok();
     fs::remove_dir(&temp_dir).ok();
 }
+
+#[test]
+fn test_auto_import_via_reexport() {
+    let mut project = Project::new();
+
+    // a.ts - declares the symbol
+    project.set_file("a.ts".to_string(), "export const MyUtil = 42;".to_string());
+
+    // b.ts - re-exports from a.ts
+    project.set_file("b.ts".to_string(), "export * from './a';".to_string());
+
+    // c.ts - tries to use MyUtil (should suggest importing from b.ts)
+    project.set_file("c.ts".to_string(), "MyUtil;\n".to_string());
+
+    // Request completions - should find MyUtil and suggest import from b.ts (the re-export)
+    let result = project.get_completions(
+        "c.ts",
+        Position {
+            line: 0,
+            character: 2,
+        },
+    );
+
+    println!("Result: {:?}", result.is_some());
+
+    // Verify we get a completion for MyUtil
+    let result = result.unwrap();
+
+    // Should have MyUtil completions from both direct import (./a) and re-export (./b)
+    let myutil_completions: Vec<_> = result
+        .iter()
+        .filter(|item| item.label == "MyUtil")
+        .collect();
+
+    assert!(
+        !myutil_completions.is_empty(),
+        "Should find MyUtil completions"
+    );
+
+    // Should have at least one completion from ./b (the re-export)
+    let has_b_import = myutil_completions
+        .iter()
+        .any(|item| item.detail.as_deref().unwrap_or("").contains("./b"));
+
+    assert!(
+        has_b_import,
+        "Should suggest importing from ./b (the re-export). Found details: {:?}",
+        myutil_completions
+            .iter()
+            .map(|item| &item.detail)
+            .collect::<Vec<_>>()
+    );
+
+    // Verify one of the completions has all required fields
+    let completion = myutil_completions
+        .iter()
+        .find(|item| item.detail.as_deref().unwrap_or("").contains("./b"))
+        .unwrap();
+
+    // Verify it's an auto-import
+    let detail = completion.detail.as_deref().unwrap_or("");
+    assert!(
+        detail.contains("auto-import"),
+        "Should be marked as auto-import"
+    );
+
+    // Verify it suggests importing from b.ts (the re-export)
+    assert!(
+        detail.contains("./b"),
+        "Should suggest importing from b.ts (the re-export)"
+    );
+
+    // Verify additionalTextEdits are present to insert the import
+    assert!(
+        completion.additional_text_edits.is_some(),
+        "Should have additionalTextEdits to insert import"
+    );
+}
