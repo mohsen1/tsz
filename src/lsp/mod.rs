@@ -39,6 +39,7 @@ pub mod hover;
 pub mod implementation;
 pub mod inlay_hints;
 pub mod jsdoc;
+pub mod linked_editing;
 pub mod position;
 pub mod project;
 pub mod project_operations;
@@ -119,3 +120,6 @@ pub use call_hierarchy::{
 
 // Type Hierarchy
 pub use type_hierarchy::{TypeHierarchyItem, TypeHierarchyProvider};
+
+// Linked Editing
+pub use linked_editing::{LinkedEditingProvider, LinkedEditingRanges};
