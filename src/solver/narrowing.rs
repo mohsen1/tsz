@@ -369,9 +369,16 @@ impl<'a> NarrowingContext<'a> {
                     return None;
                 }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                    // Property exists but type is nullable
-                    // Use the property type (if available) or UNDEFINED
-                    type_id = property_type.unwrap_or(TypeId::UNDEFINED);
+                    // CRITICAL FIX: For optional properties (prop?: type), we need to preserve
+                    // both the property type AND undefined in the union.
+                    // This ensures that is_subtype_of(circle, "circle" | undefined) works correctly.
+                    if let Some(prop_ty) = property_type {
+                        // Create union: property_type | undefined
+                        type_id = self.db.union2(prop_ty, TypeId::UNDEFINED);
+                    } else {
+                        // No property type, just undefined
+                        type_id = TypeId::UNDEFINED;
+                    }
                 }
                 PropertyAccessResult::IsUnknown => {
                     return Some(TypeId::ANY);
