@@ -1,8 +1,9 @@
 # Session TSZ-4: Strict Null Checks & Lawyer Layer Hardening
 
-**Status**: ✅ **COMPLETE** - All 4 Goals Achieved
+**Status**: 3/4 Goals Complete ✅ - Working on Priority 3 (Object Literal Freshness)
 **Focus**: Fixed known strict-null bugs and audited Lawyer layer for missing compatibility rules
 **Blocker Resolved**: `TypeScript/tests` submodule missing - Created manual unit tests in `src/checker/tests/`.
+**Session Transfer**: Taking over from previous session - continuing with Object Literal Freshness (2026-02-05)
 
 ## Summary of Achievements (2026-02-05)
 
@@ -10,13 +11,14 @@
 1. **Test Infrastructure**: Created `src/checker/tests/strict_null_manual.rs` with 4 passing tests
 2. **Error Code Validation**: Verified TS18047/TS18048 emission matches tsc behavior
 3. **Weak Type Detection**: Fixed critical bug in `ShapeExtractor` - now resolves Lazy/Ref types
-4. **Object Literal Freshness**: Verified existing implementation is complete
 
 ### Impact
 - **Before**: Weak type detection failed for interfaces/classes (false TS2559 positives)
 - **After**: Weak type detection correctly handles all object types including interfaces and classes
 - **Test Coverage**: Manual regression tests prevent future regressions in null/undefined property access
-- **Lawyer Layer**: All four pillars verified (Any propagation, Method bivariance, Void return, Excess properties)
+
+### Remaining Work
+- **Priority 3**: Object Literal Freshness audit (Optional - current implementation appears functional)
 
 ### Key Commits
 - `9bb0a79ab` - Test infrastructure for strict null checks
@@ -28,7 +30,7 @@
 1. [x] **Infrastructure**: Create `src/checker/tests/strict_null_manual.rs` for regression testing
 2. [x] **Bugfix**: Fix TS18050/TS2531 error code selection for property access on `null`/`undefined` (Verified current behavior matches tsc)
 3. [x] **Feature**: Fix "Weak Type" detection (TS2559) in Lawyer layer
-4. [x] **Audit**: Verify Object Literal Freshness (Excess Property Checking) - Already implemented! ✅
+4. [ ] **Feature**: Implement Object Literal Freshness (Excess Property Checking) ← **CURRENT TASK**
 
 ## Current Context (2026-02-05)
 
@@ -223,44 +225,3 @@ Is this the right approach? Where should the 'freshness' state live to survive t
 
 **North Star Reference:**
 Section 3.3 - Lawyer Layer, "Excess Property Checking" is one of four pillars
-
----
-
-## Priority 3: Object Literal Freshness ✅ VERIFIED COMPLETE
-
-**Status**: ✅ Already Implemented - Verified existing implementation
-
-**Discovery:**
-Object Literal Freshness (Excess Property Checking) was already fully implemented in the codebase!
-
-**Implementation Found:**
-- **`src/solver/freshness.rs`**: Core freshness infrastructure
-  - `is_fresh_object_type()` - Checks if type has FRESH_LITERAL flag
-  - `widen_freshness()` - Removes freshness flag for widening
-- **`src/solver/types.rs`**: `ObjectFlags::FRESH_LITERAL` flag defined
-- **`src/checker/assignability_checker.rs`**: Excess property checking logic
-  - `object_literal_has_excess_properties()` - Main checking function
-  - `should_skip_weak_union_error()` - Orchestrates weak union + excess property errors
-  - Handles unions, index signatures, and fresh type widening correctly
-- **`src/checker/state_checking.rs`**: Freshness widening during variable declaration
-
-**How It Works:**
-1. Object literals are created with `FRESH_LITERAL` flag via `object_fresh()` in interner
-2. When assigned to variables, freshness is widened (removed) via `widen_freshness()`
-3. Excess property checking only applies to fresh types (via `is_fresh_object_type()`)
-4. Index signatures suppress excess property errors (allow any properties)
-5. Union types check if excess properties exist in ANY union member
-
-**Example Behavior:**
-```typescript
-interface Point { x: number; y: number; }
-const p: Point = { x: 1, y: 2, z: 3 }; // Error: Excess property 'z' (TS2353)
-
-let q = { x: 1, y: 2, z: 3 };  // Freshness widened, no error
-const r: Point = q;             // Allowed (q is not fresh)
-```
-
-**Verification:**
-No changes needed - implementation is complete and correct per tsc behavior.
-
----
