@@ -1052,13 +1052,21 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some((prop, is_optional, base)) = self.discriminant_property_info(left, target)
             && let Some(literal) = self.literal_type_from_node(right)
         {
-            return Some((prop, literal, is_optional, base));
+            // CRITICAL FIX: Only apply discriminant narrowing if we are narrowing the BASE object.
+            // If target is the property access itself (e.g. switch(obj.kind)),
+            // we should use literal comparison, not discriminant narrowing.
+            if self.is_matching_reference(base, target) {
+                return Some((prop, literal, is_optional, base));
+            }
         }
 
         if let Some((prop, is_optional, base)) = self.discriminant_property_info(right, target)
             && let Some(literal) = self.literal_type_from_node(left)
         {
-            return Some((prop, literal, is_optional, base));
+            // CRITICAL FIX: Only apply discriminant narrowing if we are narrowing the BASE object.
+            if self.is_matching_reference(base, target) {
+                return Some((prop, literal, is_optional, base));
+            }
         }
 
         None
