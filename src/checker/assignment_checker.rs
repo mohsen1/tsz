@@ -129,15 +129,10 @@ impl<'a> CheckerState<'a> {
     /// This is used to validate operands for TS2362/TS2363 errors.
     fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
         use crate::solver::BinaryOpEvaluator;
-        use crate::solver::type_queries;
 
-        // Check if this is an enum type (Ref to an enum symbol)
-        if let Some(sym_ref) = type_queries::get_ref_symbol(self.ctx.types, type_id) {
-            if let Some(symbol) = self
-                .ctx
-                .binder
-                .get_symbol(crate::binder::SymbolId(sym_ref.0))
-            {
+        // Check if this is an enum type (Lazy/DefId to an enum symbol)
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                 // Check if the symbol is an enum (ENUM flags)
                 use crate::binder::symbol_flags;
                 if (symbol.flags & symbol_flags::ENUM) != 0 {
