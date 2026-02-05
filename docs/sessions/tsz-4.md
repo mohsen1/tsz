@@ -39,7 +39,19 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 **Root Cause**: Functions emitted via `emit_function_expression_es5_params` have their own `is_simple_body` check that may not be detecting simple returns correctly
 **Next**: Need to investigate why `is_simple_body` returns false for `function (val) { return val.isSunk; }`
 
-### 2025-02-05 Session 2: Gemini Consultation
+### 2025-02-05 Session 2: Deep Investigation
+
+**Added tracing** to `is_simple_return_statement` and `emit_function_expression` to debug why simple return detection isn't working.
+
+**Finding**: Tracing output doesn't show in emitter phase (emitter runs separately from checking).
+
+**Current Status**:
+- Fix is in place (commit 169cbd95c)
+- Code path looks correct
+- But tests still failing
+- **Need**: Different debugging approach or focus on other issues
+
+**Session Status**: Active - investigating formatting issue, but may pivot to other priorities per Gemini's guidance.
 
 **Consulted Gemini** on session direction and blocker analysis.
 
