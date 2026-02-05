@@ -330,27 +330,89 @@ const result = map([1, 2, 3], x => x.toString());
 
 ## Next Actions
 
-### Immediate: Commit Discovery
+### Immediate: Commit Discovery ✅ COMPLETE
 1. ✅ Create manual test suite (`src/checker/tests/generic_inference_manual.rs`)
 2. ✅ Fix pre-existing compilation errors in `src/solver/tests/inference_candidates_tests.rs`
 3. ✅ Verify basic inference works (3 passing tests)
 4. ✅ Document discovery in session file
-5. [ ] Commit and push to origin
+5. ✅ Commit and push to origin (commit `8cc6b567a`)
 
-### Next: Fix Complex Nested Inference Bug
+### Next: Fix Complex Nested Inference Bug (Multi-Pass Inference)
+
 **Problem**: `map<T, U>(arr: T[], f: (x: T) => U): U[]` fails with "Property 'toString' does not exist on type 'T'"
 
-**Hypothesis**: The issue is in how method calls on generic types are resolved when the type parameter is not yet fully resolved.
+**Root Cause**: The issue is in how method calls on generic types are resolved when the type parameter is not yet fully resolved.
 
-**Action Plan**:
-1. Ask Gemini (Pro) for approach to deferred type resolution
-2. Investigate `resolve_generic_call_inner` for opportunities to incrementally resolve type parameters
-3. Test against TypeScript compiler behavior
+**Solution** (per Gemini Flash 2026-02-05): **Multi-Pass Inference**
 
-**Key Files to Investigate**:
+TypeScript uses "Inference Rounds":
+1. **Round 1 (Non-contextual)**: Infer from arguments that don't depend on context (like `[1, 2, 3]`)
+2. **Fixing**: "Fix" (resolve) the type variables that have enough information
+3. **Round 2 (Contextual)**: Use the fixed types to provide contextual types to remaining arguments (like the lambda)
+
+**Implementation Plan**:
+
+#### Phase 1: Modify `resolve_generic_call_inner` (src/solver/operations.rs:573-842)
+Split the argument processing loop into two phases:
+
+```rust
+// Round 1: Non-contextual arguments
+for (i, &arg_type) in arg_types.iter().enumerate() {
+    if !self.is_contextually_sensitive(arg_type) {
+        // Process non-contextual arguments (arrays, primitives)
+        self.constrain_types(...);
+    }
+}
+
+// Fixing: Resolve variables with enough information
+infer_ctx.strengthen_constraints()?;
+
+// Round 2: Contextual arguments
+for (i, &arg_type) in arg_types.iter().enumerate() {
+    if self.is_contextually_sensitive(arg_type) {
+        // Process contextual arguments (lambdas, object literals)
+        // Use current inference to instantiate target type
+        let current_subst = self.get_current_substitution(&infer_ctx, &var_map);
+        let contextual_target = instantiate_type(self.interner, target_type, &current_subst);
+        // Re-check lambda with contextual_target
+    }
+}
+```
+
+#### Phase 2: Implement `is_contextually_sensitive`
+- Function types / Callables
+- Object literals (freshness checking)
+- Type parameters with deferred constraints
+
+#### Phase 3: Fixing Mechanism (src/solver/infer.rs)
+- Modify `strengthen_constraints` to be callable multiple times
+- Ensure `resolve_with_constraints` can return partial results
+- Fix variables when they have candidates and no circular dependencies
+
+#### Phase 4: Enforce Priority Order (src/solver/types.rs)
+- **Priority 1 (`NakedTypeVariable`)**: Arguments like `arr: T[]`
+- **Priority 32 (`ReturnType`)**: Contextual return types
+- **Deferred**: Lambdas and object literals
+
+**References**:
+- Pierce & Turner: "Local Type Inference" paper
+- TypeScript Spec: "Local Type Inference" section
+- `tsc` source: `checkCalls.ts` → `inferTypeArguments`
+
+**Key Files to Modify**:
 - `src/solver/operations.rs:573-842` - `resolve_generic_call_inner`
-- `src/solver/evaluate.rs` - Type evaluation for Application types
-- `src/checker/state_type_resolution.rs` - Checker integration for generic calls
+- `src/solver/infer.rs` - `InferenceContext` fixing mechanism
+- `src/solver/types.rs` - `InferencePriority` enforcement
+
+**Test Case**:
+```typescript
+function map<T, U>(arr: T[], f: (x: T) => U): U[] {
+    return arr.map(f);
+}
+
+const result = map([1, 2, 3], x => x.toString());
+// Should infer T = number, U = string
+```
 
 ## MANDATORY Gemini Workflow (per AGENTS.md)
 
