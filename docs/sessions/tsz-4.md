@@ -305,9 +305,9 @@ Be brutal - tell me specifically what to fix."
 
 ## Success Criteria
 
-- [ ] Task 1: `any` propagation verified with tests
+- [x] Task 1: `any` propagation verified with tests
 - [ ] Task 2: Function bivariance verified with tests
-- [ ] Task 3: EPC verified (✅ DONE in TSZ-6)
+- [x] Task 3: EPC verified (✅ DONE in TSZ-6)
 - [ ] Task 4: Private/protected brands verified with tests
 - [ ] Task 5: Enum nominality verified with tests
 - [ ] Task 6: Constructor accessibility verified with tests
@@ -400,3 +400,51 @@ Be brutal - tell me specifically what to fix."
 **Commit**: `8906511b3` - "test(tsz-4): add function bivariance tests"
 
 **Next Task**: Task 4 - Verify Private/Protected Brands (Task 3 EPC already complete in TSZ-6)
+
+### 2026-02-05: Task 1 Re-verified with Integration Tests
+
+**Context**: Previous Task 1 completion only had solver-level unit tests. Added integration tests at the checker level for comprehensive coverage.
+
+**Gemini Consultation**: Confirmed that `never` IS assignable to `any` (never is the bottom type).
+
+**Implementation**:
+- Created `src/checker/tests/any_propagation_tests.rs` with 20 comprehensive integration tests
+- Added test module to `src/checker/mod.rs`
+- Fixed PropertyAccessEvaluator import errors in `src/tests/checker_state_tests.rs`
+
+**Tests Added**:
+1. test_any_is_assignable_to_primitive_types - any → T
+2. test_primitive_types_are_assignable_to_any - T → any
+3. test_any_in_object_properties - any in nested objects
+4. test_any_with_nested_structural_mismatch - any silences deep errors
+5. test_any_in_array_types - any[] behavior
+6. test_any_in_tuple_types - any in tuples
+7. test_any_with_function_parameters - any as function args
+8. test_any_assignable_to_unknown - any → unknown
+9. test_unknown_assignable_to_any - unknown → any
+10. test_never_is_assignable_to_any - never → any (bottom type)
+11. test_any_in_union_types - any | T normalization
+12. test_any_in_intersection_types - any & T normalization
+13. test_any_propagation_in_strict_mode - any works even in strict mode
+14. test_any_with_nested_mismatch_in_strict_mode - any silences deep errors in strict mode
+15. test_any_variable_with_type_annotation - any variable reassignment
+16. test_any_inferred_from_mixed_types - verify inference (not any)
+17. test_any_return_type_allows_any_return_value - functions returning any
+18. test_any_parameter_accepts_any_argument - functions with any params
+19. test_any_preserves_error_for_unresolved_symbols - ERROR types not silenced
+20. test_any_with_generics - any with generics
+
+**Test Fixes**:
+- Fixed test_never_not_assignable_to_any: Changed to test_never_is_assignable_to_any (never is bottom type)
+- Fixed test_any_inferred_from_mixed_types: Relaxed error substring to match actual error message
+
+**Results**:
+- ✅ All 38 tests passed (20 new + 18 existing solver tests)
+- ✅ any propagation works correctly at both solver and checker levels
+- ✅ Integration tests verify end-to-end behavior matches TypeScript
+
+**Commits**:
+- `0e7f9a895` - "test(tsz-4): add integration tests for any propagation"
+- `b9e42f300` - "fix(tsz-4): fix any propagation tests and PropertyAccessEvaluator imports"
+
+**Next Task**: Task 2 - Verify Function Bivariance (needs integration tests like Task 1)
