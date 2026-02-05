@@ -120,6 +120,26 @@ grep -rn "TypeKey::" src/checker/*.rs | grep -v "use crate::solver::TypeKey"
 - All bugs fixed and committed (commit: 19d781774)
 - Code compiles successfully with all fixes applied
 
+**✅ Task #29 Complete - Structural Extraction Helpers (2026-02-05):**
+- Verified functions already existed in type_queries.rs
+- Functions: get_union_members, get_intersection_members, get_object_shape_id,
+  get_object_shape, get_array_element_type, get_tuple_elements
+- Added documentation section for Phase 5 Anti-Pattern 8.1 Removal
+- Gemini Pro review: APPROVED - covers 90%+ of structural extraction needs
+- Documented shallow query pattern (caller must resolve Lazy/Ref)
+- Committed (commit: 6e5613404)
+
+**✅ Session Accomplishments Summary:**
+- Implemented 11 primitive type identity helpers
+- Verified 6 structural extraction helpers already exist
+- Total: 17 Solver helpers now available for Checker refactoring
+- All reviewed and approved by Gemini Pro
+
+**Remaining Tasks for Next Session:**
+- Task #30: Refactor generators.rs standalone functions (add TypeResolver parameters)
+- Task #31: Refactor state_type_analysis.rs (18 TypeKey violations)
+- ~65 TypeKey violations remaining across 18 checker files
+
 **✅ Task #28 Complete - Primitive Type Identity Helpers (2026-02-05):**
 - Implemented 11 intrinsic type query functions in type_queries.rs
 - Functions: is_any_type, is_unknown_type, is_never_type, is_void_type,
