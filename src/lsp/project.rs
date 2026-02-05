@@ -1615,14 +1615,18 @@ impl Project {
 
         if let Some(missing_name) = missing_name
             && !skip_auto_import
-            && !existing.contains(&missing_name)
         {
             let file = self.files.get(file_name)?;
             let mut candidates = Vec::new();
             let mut seen = FxHashSet::default();
-            self.collect_import_candidates_for_name(
+
+            // Use prefix matching for better completion UX
+            // If the missing_name is not in existing completions, try to find symbols
+            // that start with this prefix (e.g., "use" → "useEffect", "useState")
+            self.collect_import_candidates_for_prefix(
                 file,
                 &missing_name,
+                &existing,
                 &mut candidates,
                 &mut seen,
             );
