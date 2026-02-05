@@ -2,28 +2,23 @@
  * CLI-based transpiler using native tsz binary
  *
  * Replaces WASM worker approach with CLI invocation to enable full type checking.
+ * Uses async execFile (no shell) for parallel execution support.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { execSync } from 'child_process';
+import { execFile as execFileCb, execSync } from 'child_process';
+import { promisify } from 'util';
 import { fileURLToPath } from 'url';
+
+const execFile = promisify(execFileCb);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '../../..');
 
-// CLI timeout in ms - increased to 2000ms to account for:
-// - Process spawning overhead in Node.js
-// - Type checking overhead before emit
-// - Cold start time for each test file
-const CLI_TIMEOUT_MS = 2000;
-
-interface TranspileOptions {
-  target: number;
-  module: number;
-  declaration?: boolean;
-}
+// Default CLI timeout in ms
+const DEFAULT_TIMEOUT_MS = 5000;
 
 interface TranspileResult {
   js: string;
@@ -99,55 +94,54 @@ function tszInPath(): string | null {
  */
 export class CliTranspiler {
   private tszPath: string;
-  private testsRun = 0;
+  private counter = 0;
   private tempDir: string;
+  private timeoutMs: number;
 
-  constructor() {
+  constructor(timeoutMs: number = DEFAULT_TIMEOUT_MS) {
     this.tszPath = findTszBinary();
     this.tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsz-emit-'));
+    this.timeoutMs = timeoutMs;
   }
 
   /**
-   * Transpile TypeScript source using the CLI
+   * Transpile TypeScript source using the CLI.
+   * Uses async execFile (no shell) for parallel-safe execution.
    */
   async transpile(
     source: string,
     target: number,
     module: number,
-    declaration = false
+    options: { declaration?: boolean; alwaysStrict?: boolean } = {}
   ): Promise<TranspileResult> {
-    this.testsRun++;
-
-    // Create temp file
-    const testName = `test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const { declaration = false, alwaysStrict = false } = options;
+    const testName = `test_${this.counter++}`;
     const inputFile = path.join(this.tempDir, `${testName}.ts`);
 
     try {
-      // Write source to temp file
       fs.writeFileSync(inputFile, source, 'utf-8');
 
-      // Build CLI args
       const targetArg = targetToCliArg(target);
       const moduleArg = moduleToCliArg(module);
-      const args = [this.tszPath];
 
-      if (declaration) {
-        args.push('--declaration');
+      // Build args array (no shell parsing needed with execFile)
+      const args: string[] = [];
+      if (declaration) args.push('--declaration');
+      // Skip type checking and lib loading for JS-only emit -- the emitter
+      // only needs syntax. Type checking accounts for ~77% of per-test time
+      // and lib loading accounts for another ~50% of the remainder.
+      if (!declaration) {
+        args.push('--noCheck', '--noLib');
       }
+      if (alwaysStrict) args.push('--alwaysStrict', 'true');
+      args.push('--target', targetArg, '--module', moduleArg, inputFile);
 
-      args.push('--target', targetArg);
-      args.push('--module', moduleArg);
-      args.push(inputFile);
-
-      // Run CLI with timeout
-      const start = Date.now();
-      const output = execSync(args.join(' '), {
+      // Run CLI asynchronously without shell overhead
+      await execFile(this.tszPath, args, {
         cwd: this.tempDir,
         encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: CLI_TIMEOUT_MS,
+        timeout: this.timeoutMs,
       });
-      const elapsed = Date.now() - start;
 
       // Read output files
       const jsFile = inputFile.replace('.ts', '.js');
@@ -165,21 +159,18 @@ export class CliTranspiler {
       }
 
       // Clean up output files
-      if (fs.existsSync(jsFile)) fs.unlinkSync(jsFile);
-      if (dts && fs.existsSync(dtsFile)) fs.unlinkSync(dtsFile);
+      try { fs.unlinkSync(jsFile); } catch {}
+      try { fs.unlinkSync(dtsFile); } catch {}
 
       return { js, dts };
     } catch (e) {
-      // Handle timeout
+      // Handle timeout (execFile sends SIGTERM on timeout)
       if (e instanceof Error && 'killed' in e && (e as any).signal === 'SIGTERM') {
         throw new Error('TIMEOUT');
       }
       throw e;
     } finally {
-      // Clean up input file
-      if (fs.existsSync(inputFile)) {
-        fs.unlinkSync(inputFile);
-      }
+      try { fs.unlinkSync(inputFile); } catch {}
     }
   }
 

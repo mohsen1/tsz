@@ -3,23 +3,15 @@
  * TSZ Emit Test Runner
  *
  * Compares tsz JavaScript/Declaration emit output against TypeScript's baselines.
- * Uses worker threads with timeout protection to prevent hangs.
- *
- * Usage:
- *   ./run.sh [options]
- *
- * Options:
- *   --max=N           Maximum number of tests to run
- *   --filter=PATTERN  Only run tests matching pattern
- *   --verbose         Show detailed output
- *   --js-only         Only test JavaScript emit
- *   --dts-only        Only test declaration emit
+ * Runs tests in parallel with configurable concurrency and timeout.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { fileURLToPath } from 'url';
+import pc from 'picocolors';
+import pLimit from 'p-limit';
 import { parseBaseline, getEmitDiff, getEmitDiffSummary } from './baseline-parser.js';
 import { CliTranspiler } from './cli-transpiler.js';
 
@@ -29,21 +21,11 @@ const TS_DIR = path.join(ROOT_DIR, 'TypeScript');
 const BASELINES_DIR = path.join(TS_DIR, 'tests/baselines/reference');
 const CACHE_DIR = path.join(__dirname, '../.cache');
 
-// Configuration
-const TEST_TIMEOUT_MS = 2000;  // 2000ms timeout per test (increased for CLI overhead)
-const CLI_TIMEOUT_MS = 2000;   // 2000ms timeout per test (increased for CLI overhead)
+const DEFAULT_TIMEOUT_MS = 5000;
 
-// ANSI colors
-const colors = {
-  reset: '\x1b[0m',
-  bold: '\x1b[1m',
-  dim: '\x1b[2m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  cyan: '\x1b[36m',
-};
+// ============================================================================
+// Types
+// ============================================================================
 
 interface Config {
   maxTests: number;
@@ -51,6 +33,8 @@ interface Config {
   verbose: boolean;
   jsOnly: boolean;
   dtsOnly: boolean;
+  concurrency: number;
+  timeoutMs: number;
 }
 
 interface TestCase {
@@ -95,8 +79,8 @@ function hashString(str: string): string {
   return hash.toString(36);
 }
 
-function getCacheKey(source: string, target: number, module: number): string {
-  return hashString(`${source}:${target}:${module}`);
+function getCacheKey(source: string, target: number, module: number, alwaysStrict: boolean, declaration: boolean): string {
+  return hashString(`${source}:${target}:${module}:${alwaysStrict}:${declaration}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -105,7 +89,7 @@ let cacheLoaded = false;
 function loadCache(): void {
   if (cacheLoaded) return;
   cacheLoaded = true;
-  
+
   const cachePath = path.join(CACHE_DIR, 'emit-cache.json');
   if (fs.existsSync(cachePath)) {
     try {
@@ -146,7 +130,7 @@ function parseTarget(targetStr: string): number {
   if (lower.includes('es2021')) return 8;
   if (lower.includes('es2022')) return 9;
   if (lower.includes('esnext')) return 99;
-  return 1; // Default ES5
+  return 1;
 }
 
 function parseModule(moduleStr: string): number {
@@ -162,7 +146,7 @@ function parseModule(moduleStr: string): number {
   if (lower === 'esnext') return 99;
   if (lower === 'node16') return 100;
   if (lower === 'nodenext') return 199;
-  return 0; // Default None
+  return 0;
 }
 
 function extractVariantFromFilename(filename: string): { base: string; target?: string; module?: string } {
@@ -170,25 +154,20 @@ function extractVariantFromFilename(filename: string): { base: string; target?: 
   if (!match) {
     return { base: filename.replace('.js', '') };
   }
-  
+
   const base = match[1];
   const variants = match[2].split(',').map(v => v.trim());
   const result: { base: string; target?: string; module?: string } = { base };
-  
+
   for (const variant of variants) {
     const [key, value] = variant.split('=');
     if (key === 'target') result.target = value;
     if (key === 'module') result.module = value;
   }
-  
+
   return result;
 }
 
-/**
- * Parse compiler directives from test source code.
- * Uses the same pattern as the conformance runner (scripts/conformance/src/tsc-runner.ts).
- * Directives are lines like: // @target: ES5, // @module: commonjs, // @strict: true
- */
 function parseSourceDirectives(source: string): Record<string, unknown> {
   const options: Record<string, unknown> = {};
   for (const line of source.split('\n')) {
@@ -205,53 +184,56 @@ function parseSourceDirectives(source: string): Record<string, unknown> {
   return options;
 }
 
-function findTestCases(filter: string, maxTests: number): TestCase[] {
-  const testCases: TestCase[] = [];
-  
+async function findTestCases(filter: string, maxTests: number): Promise<TestCase[]> {
   if (!fs.existsSync(BASELINES_DIR)) {
     console.error(`Baselines directory not found: ${BASELINES_DIR}`);
     process.exit(1);
   }
 
   const entries = fs.readdirSync(BASELINES_DIR);
-  const jsFiles = entries.filter(e => e.endsWith('.js')).sort();
+  let jsFiles = entries.filter(e => e.endsWith('.js')).sort();
 
-  for (const baselineFile of jsFiles) {
-    if (testCases.length >= maxTests) break;
-    if (filter && !baselineFile.toLowerCase().includes(filter.toLowerCase())) continue;
+  // Apply filter before reading any files
+  if (filter) {
+    const lowerFilter = filter.toLowerCase();
+    jsFiles = jsFiles.filter(f => f.toLowerCase().includes(lowerFilter));
+  }
 
+  // Cap to maxTests before reading (we may discard some after parsing, so read a bit extra)
+  if (maxTests < Infinity) {
+    jsFiles = jsFiles.slice(0, Math.min(jsFiles.length, maxTests * 2));
+  }
+
+  // Read and parse baseline files in parallel
+  const readLimit = pLimit(64);
+  const results = await Promise.all(jsFiles.map(baselineFile => readLimit(async () => {
     const baselinePath = path.join(BASELINES_DIR, baselineFile);
-    const baselineContent = fs.readFileSync(baselinePath, 'utf-8');
+    const baselineContent = await fs.promises.readFile(baselinePath, 'utf-8');
     const baseline = parseBaseline(baselineContent);
 
-    if (!baseline.source || !baseline.js) continue;
+    if (!baseline.source || !baseline.js) return null;
 
-    // Extract variant from filename (e.g., test(target=ES5,module=commonjs).js)
     const variant = extractVariantFromFilename(baselineFile);
 
-    // Parse source directives from the original test file
-    // Directives like // @target: ES5, // @strict: true are in the .ts file, not the baseline
     let directives: Record<string, unknown> = {};
     if (baseline.testPath) {
       const testFilePath = path.join(TS_DIR, baseline.testPath);
-      if (fs.existsSync(testFilePath)) {
-        const testFileContent = fs.readFileSync(testFilePath, 'utf-8');
+      try {
+        const testFileContent = await fs.promises.readFile(testFilePath, 'utf-8');
         directives = parseSourceDirectives(testFileContent);
-      }
+      } catch {}
     }
 
-    // Filename variants override source directives, which override defaults
     const target = variant.target ? parseTarget(variant.target)
       : directives.target ? parseTarget(String(directives.target))
-      : 1; // Default ES5
+      : 1;
     const module = variant.module ? parseModule(variant.module)
       : directives.module ? parseModule(String(directives.module))
-      : 0; // Default None
+      : 0;
 
-    // Detect strict mode: @strict or @alwaysStrict directives
     const alwaysStrict = directives.strict === true || directives.alwaysstrict === true;
 
-    testCases.push({
+    return {
       baselineFile,
       testPath: baseline.testPath,
       source: baseline.source,
@@ -260,24 +242,18 @@ function findTestCases(filter: string, maxTests: number): TestCase[] {
       target,
       module,
       alwaysStrict,
-    });
-  }
+    } as TestCase;
+  })));
 
-  return testCases;
+  // Filter nulls and cap to maxTests
+  return results.filter((r): r is TestCase => r !== null).slice(0, maxTests);
 }
-
-// ============================================================================
-// CLI Transpiler Wrapper (replaces Worker-based approach)
-// ============================================================================
-
-// Compatibility wrapper - CLI transpiler is already async
-type Transpiler = CliTranspiler;
 
 // ============================================================================
 // Test Execution
 // ============================================================================
 
-async function runTest(worker: Transpiler, testCase: TestCase, config: Config): Promise<TestResult> {
+async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Config): Promise<TestResult> {
   const start = Date.now();
   const testName = testCase.baselineFile.replace('.js', '');
 
@@ -288,9 +264,8 @@ async function runTest(worker: Transpiler, testCase: TestCase, config: Config): 
   };
 
   try {
-    // Check cache
     loadCache();
-    const cacheKey = getCacheKey(testCase.source, testCase.target, testCase.module);
+    const cacheKey = getCacheKey(testCase.source, testCase.target, testCase.module, testCase.alwaysStrict, config.dtsOnly);
     let tszJs: string;
     let tszDts: string | null = null;
 
@@ -301,35 +276,25 @@ async function runTest(worker: Transpiler, testCase: TestCase, config: Config): 
       tszJs = cached.jsOutput;
       tszDts = cached.dtsOutput;
     } else {
-      // Run tsz transpile via worker
-      const transpileResult = await worker.transpile(testCase.source, testCase.target, testCase.module, config.dtsOnly);
+      const transpileResult = await transpiler.transpile(testCase.source, testCase.target, testCase.module, {
+        declaration: config.dtsOnly,
+        alwaysStrict: testCase.alwaysStrict,
+      });
       tszJs = transpileResult.js;
       tszDts = transpileResult.dts || null;
       cache.set(cacheKey, { hash: sourceHash, jsOutput: tszJs, dtsOutput: tszDts });
     }
 
-    // Prepend "use strict" prologue when source has @strict or @alwaysStrict directive
-    // Only do this for JS emit, not DTS
-    if (!config.dtsOnly && testCase.alwaysStrict && tszJs && !tszJs.trimStart().startsWith('"use strict"')) {
-      tszJs = '"use strict";\n' + tszJs;
-    }
-
-    // Compare JS
     if (!config.dtsOnly && testCase.expectedJs) {
       const expected = testCase.expectedJs.replace(/\r\n/g, '\n').trim();
       const actual = tszJs.replace(/\r\n/g, '\n').trim();
       result.jsMatch = expected === actual;
 
       if (!result.jsMatch) {
-        if (config.verbose) {
-          result.jsError = getEmitDiff(expected, actual);
-        } else {
-          result.jsError = getEmitDiffSummary(expected, actual);
-        }
+        result.jsError = config.verbose ? getEmitDiff(expected, actual) : getEmitDiffSummary(expected, actual);
       }
     }
 
-    // DTS comparison
     if (!config.jsOnly && testCase.expectedDts) {
       if (tszDts !== null) {
         const expected = testCase.expectedDts.replace(/\r\n/g, '\n').trim();
@@ -337,19 +302,14 @@ async function runTest(worker: Transpiler, testCase: TestCase, config: Config): 
         result.dtsMatch = expected === actual;
 
         if (!result.dtsMatch) {
-          if (config.verbose) {
-            result.dtsError = getEmitDiff(expected, actual);
-          } else {
-            result.dtsError = getEmitDiffSummary(expected, actual);
-          }
+          result.dtsError = config.verbose ? getEmitDiff(expected, actual) : getEmitDiffSummary(expected, actual);
         }
       } else {
-        result.dtsMatch = null; // No DTS output generated
+        result.dtsMatch = null;
       }
     }
 
     result.elapsed = Date.now() - start;
-
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : String(e);
     result.timeout = errorMsg === 'TIMEOUT';
@@ -361,19 +321,37 @@ async function runTest(worker: Transpiler, testCase: TestCase, config: Config): 
 }
 
 // ============================================================================
-// Progress Bar
+// Display Helpers
 // ============================================================================
+
+function resultStatusIcon(result: TestResult, dtsOnly: boolean): string {
+  if (result.timeout) return pc.yellow('T');
+  if (result.skipped) return pc.dim('S');
+  const match = dtsOnly ? result.dtsMatch : result.jsMatch;
+  if (match === true) return pc.green('✓');
+  if (match === false) return pc.red('✗');
+  return pc.dim('-');
+}
+
+function printVerboseResult(result: TestResult, config: Config) {
+  console.log(`  [${resultStatusIcon(result, config.dtsOnly)}] ${result.name} (${result.elapsed}ms)`);
+  if (config.dtsOnly && result.dtsError && result.dtsMatch === false) {
+    console.log(result.dtsError);
+  } else if (result.jsError && result.jsMatch === false) {
+    console.log(result.jsError);
+  }
+}
 
 function progressBar(current: number, total: number, width: number = 30): string {
   const pct = total > 0 ? current / total : 0;
   const filled = Math.round(pct * width);
   const empty = width - filled;
-  const bar = '\x1b[32m' + '█'.repeat(filled) + '\x1b[2m' + '░'.repeat(empty) + '\x1b[0m';
+  const bar = pc.green('█'.repeat(filled)) + pc.dim('░'.repeat(empty));
   return `${bar} ${(pct * 100).toFixed(1)}% | ${current.toLocaleString()}/${total.toLocaleString()}`;
 }
 
 // ============================================================================
-// Main
+// CLI
 // ============================================================================
 
 function parseArgs(): Config {
@@ -384,6 +362,8 @@ function parseArgs(): Config {
     verbose: false,
     jsOnly: false,
     dtsOnly: false,
+    concurrency: Math.max(1, os.cpus().length),
+    timeoutMs: DEFAULT_TIMEOUT_MS,
   };
 
   for (const arg of args) {
@@ -391,6 +371,11 @@ function parseArgs(): Config {
       config.maxTests = parseInt(arg.slice(6), 10);
     } else if (arg.startsWith('--filter=')) {
       config.filter = arg.slice(9);
+    } else if (arg.startsWith('--concurrency=') || arg.startsWith('-j')) {
+      const val = arg.startsWith('-j') ? arg.slice(2) : arg.slice(14);
+      config.concurrency = Math.max(1, parseInt(val, 10));
+    } else if (arg.startsWith('--timeout=')) {
+      config.timeoutMs = Math.max(500, parseInt(arg.slice(10), 10));
     } else if (arg === '--verbose' || arg === '-v') {
       config.verbose = true;
     } else if (arg === '--js-only') {
@@ -401,15 +386,17 @@ function parseArgs(): Config {
       console.log(`
 TSZ Emit Test Runner
 
-Usage: ./run.sh [options]
+Usage: ./scripts/emit/run.sh [options]
 
 Options:
-  --max=N           Maximum tests (default: all)
-  --filter=PATTERN  Filter tests by name
-  --verbose, -v     Detailed output with diffs
-  --js-only         Test JavaScript emit only
-  --dts-only        Test declaration emit only
-  --help, -h        Show this help
+  --max=N               Maximum tests (default: all)
+  --filter=PATTERN      Filter tests by name
+  --concurrency=N, -jN  Parallel workers (default: CPU count)
+  --timeout=MS          Per-test timeout in ms (default: ${DEFAULT_TIMEOUT_MS})
+  --verbose, -v         Detailed output with diffs
+  --js-only             Test JavaScript emit only
+  --dts-only            Test declaration emit only
+  --help, -h            Show this help
 `);
       process.exit(0);
     }
@@ -418,57 +405,43 @@ Options:
   return config;
 }
 
+// ============================================================================
+// Main
+// ============================================================================
+
 async function main() {
   const config = parseArgs();
+  const sep = pc.cyan('════════════════════════════════════════════════════════════');
 
   console.log('');
-  console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
-  console.log(`${colors.bold}  TSZ Emit Test Runner${colors.reset}`);
-  console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
-  console.log(`${colors.dim}  Max tests: ${config.maxTests === Infinity ? 'all' : config.maxTests}${colors.reset}`);
-  console.log(`${colors.dim}  Timeout: ${CLI_TIMEOUT_MS}ms per test${colors.reset}`);
-  if (config.filter) {
-    console.log(`${colors.dim}  Filter: ${config.filter}${colors.reset}`);
-  }
-  console.log(`${colors.dim}  Mode: ${config.jsOnly ? 'JS only' : config.dtsOnly ? 'DTS only' : 'JS + DTS'}${colors.reset}`);
-  console.log(`${colors.dim}  Engine: Native CLI (with type checking)${colors.reset}`);
-  console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
+  console.log(sep);
+  console.log(pc.bold('  TSZ Emit Test Runner'));
+  console.log(sep);
+  console.log(pc.dim(`  Max tests: ${config.maxTests === Infinity ? 'all' : config.maxTests}`));
+  console.log(pc.dim(`  Timeout: ${config.timeoutMs}ms per test`));
+  if (config.filter) console.log(pc.dim(`  Filter: ${config.filter}`));
+  console.log(pc.dim(`  Mode: ${config.jsOnly ? 'JS only' : config.dtsOnly ? 'DTS only' : 'JS + DTS'}`));
+  console.log(pc.dim(`  Workers: ${config.concurrency} parallel`));
+  console.log(pc.dim(`  Engine: Native CLI (${config.dtsOnly ? 'with type checking' : 'emit-only, --noCheck --noLib'})`));
+  console.log(sep);
   console.log('');
 
-  // Create CLI transpiler
-  const transpiler = new CliTranspiler();
+  const transpiler = new CliTranspiler(config.timeoutMs);
 
-  // Find test cases
-  console.log(`${colors.dim}Discovering test cases...${colors.reset}`);
-  const testCases = findTestCases(config.filter, config.maxTests);
-  console.log(`${colors.dim}Found ${testCases.length} test cases${colors.reset}`);
+  console.log(pc.dim('Discovering test cases...'));
+  const testCases = await findTestCases(config.filter, config.maxTests);
+  console.log(pc.dim(`Found ${testCases.length} test cases`));
   console.log('');
 
-  // Use transpiler alias for compatibility
-  const worker = transpiler as Transpiler;
-
-  // Run tests
+  // Counters
   let jsPass = 0, jsFail = 0, jsSkip = 0, jsTimeout = 0;
   let dtsPass = 0, dtsFail = 0, dtsSkip = 0;
   const failures: TestResult[] = [];
   const startTime = Date.now();
+  let completed = 0;
 
-  // Progress tracking
-  let lastProgressLen = 0;
-  function printProgress(current: number) {
-    const bar = progressBar(current, testCases.length);
-    const elapsed = (Date.now() - startTime) / 1000;
-    const rate = current > 0 ? Math.round(current / elapsed) : 0;
-    const msg = `  ${bar} | ${rate}/s`;
-    process.stdout.write('\r' + msg + ' '.repeat(Math.max(0, lastProgressLen - msg.length)));
-    lastProgressLen = msg.length;
-  }
-
-  for (let i = 0; i < testCases.length; i++) {
-    const testCase = testCases[i];
-    const result = await runTest(worker, testCase, config);
-
-    // Count results
+  function recordResult(result: TestResult) {
+    completed++;
     if (result.skipped) {
       jsSkip++;
     } else if (result.timeout) {
@@ -487,89 +460,105 @@ async function main() {
     if (result.dtsMatch === true) dtsPass++;
     else if (result.dtsMatch === false) dtsFail++;
     else dtsSkip++;
+  }
 
-    // Progress
-    if (!config.verbose) {
-      printProgress(i + 1);
-    } else {
-      // In DTS-only mode, show DTS status; otherwise show JS status
-      const status = result.timeout ? `${colors.yellow}T${colors.reset}` :
-                   result.skipped ? `${colors.dim}S${colors.reset}` :
-                   config.dtsOnly ? (
-                     result.dtsMatch === true ? `${colors.green}✓${colors.reset}` :
-                     result.dtsMatch === false ? `${colors.red}✗${colors.reset}` : `${colors.dim}-${colors.reset}`
-                   ) : (
-                     result.jsMatch === true ? `${colors.green}✓${colors.reset}` :
-                     result.jsMatch === false ? `${colors.red}✗${colors.reset}` : `${colors.dim}-${colors.reset}`
-                   );
-      console.log(`  [${status}] ${result.name} (${result.elapsed}ms)`);
-      if (config.dtsOnly && result.dtsError && result.dtsMatch === false) {
-        console.log(result.dtsError);
-      } else if (result.jsError && result.jsMatch === false) {
-        console.log(result.jsError);
+  // Progress bar (non-verbose)
+  let lastProgressLen = 0;
+  function printProgress() {
+    const bar = progressBar(completed, testCases.length);
+    const elapsed = (Date.now() - startTime) / 1000;
+    const rate = completed > 0 ? Math.round(completed / elapsed) : 0;
+    const msg = `  ${bar} | ${rate}/s`;
+    process.stdout.write('\r' + msg + ' '.repeat(Math.max(0, lastProgressLen - msg.length)));
+    lastProgressLen = msg.length;
+  }
+
+  // Run tests in parallel using p-limit
+  const limit = pLimit(config.concurrency);
+
+  if (config.verbose) {
+    // Verbose: collect results and flush in order as they complete
+    const results = new Array<TestResult | null>(testCases.length).fill(null);
+    let printedUpTo = 0;
+
+    await Promise.all(testCases.map((tc, i) => limit(async () => {
+      const result = await runTest(transpiler, tc, config);
+      results[i] = result;
+      recordResult(result);
+      // Flush contiguously completed results in order
+      while (printedUpTo < testCases.length && results[printedUpTo] !== null) {
+        printVerboseResult(results[printedUpTo]!, config);
+        printedUpTo++;
       }
-    }
+    })));
+  } else {
+    // Non-verbose: parallel with progress bar
+    await Promise.all(testCases.map(tc => limit(async () => {
+      const result = await runTest(transpiler, tc, config);
+      recordResult(result);
+      printProgress();
+    })));
   }
 
   // Cleanup
-  worker.terminate();
+  transpiler.terminate();
   saveCache();
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
   // Summary
   console.log('\n');
-  console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
-  console.log(`${colors.bold}EMIT TEST RESULTS${colors.reset}`);
-  console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
+  console.log(sep);
+  console.log(pc.bold('EMIT TEST RESULTS'));
+  console.log(sep);
 
   if (!config.dtsOnly) {
     const jsTotal = jsPass + jsFail;
     const jsPct = jsTotal > 0 ? (jsPass / jsTotal * 100).toFixed(1) : '0.0';
-    console.log(`${colors.bold}JavaScript Emit:${colors.reset}`);
-    console.log(`  ${colors.green}Passed: ${jsPass}${colors.reset}`);
-    console.log(`  ${colors.red}Failed: ${jsFail}${colors.reset}${jsTimeout > 0 ? ` (${jsTimeout} timeouts)` : ''}`);
-    console.log(`  ${colors.dim}Skipped: ${jsSkip}${colors.reset}`);
-    console.log(`  ${colors.yellow}Pass Rate: ${jsPct}% (${jsPass}/${jsTotal})${colors.reset}`);
+    console.log(pc.bold('JavaScript Emit:'));
+    console.log(`  ${pc.green(`Passed: ${jsPass}`)}`);
+    console.log(`  ${pc.red(`Failed: ${jsFail}`)}${jsTimeout > 0 ? ` (${jsTimeout} timeouts)` : ''}`);
+    console.log(`  ${pc.dim(`Skipped: ${jsSkip}`)}`);
+    console.log(`  ${pc.yellow(`Pass Rate: ${jsPct}% (${jsPass}/${jsTotal})`)}`);
   }
 
   if (!config.jsOnly && (dtsPass + dtsFail) > 0) {
     const dtsTotal = dtsPass + dtsFail;
     const dtsPct = dtsTotal > 0 ? (dtsPass / dtsTotal * 100).toFixed(1) : '0.0';
-    console.log(`${colors.bold}Declaration Emit:${colors.reset}`);
-    console.log(`  ${colors.green}Passed: ${dtsPass}${colors.reset}`);
-    console.log(`  ${colors.red}Failed: ${dtsFail}${colors.reset}`);
-    console.log(`  ${colors.dim}Skipped: ${dtsSkip}${colors.reset}`);
-    console.log(`  ${colors.yellow}Pass Rate: ${dtsPct}% (${dtsPass}/${dtsTotal})${colors.reset}`);
+    console.log(pc.bold('Declaration Emit:'));
+    console.log(`  ${pc.green(`Passed: ${dtsPass}`)}`);
+    console.log(`  ${pc.red(`Failed: ${dtsFail}`)}`);
+    console.log(`  ${pc.dim(`Skipped: ${dtsSkip}`)}`);
+    console.log(`  ${pc.yellow(`Pass Rate: ${dtsPct}% (${dtsPass}/${dtsTotal})`)}`);
   }
 
   const totalTests = testCases.length;
   const rate = totalTests > 0 ? Math.round(totalTests / parseFloat(elapsed)) : 0;
-  console.log(`${colors.dim}\nTime: ${elapsed}s (${rate} tests/sec)${colors.reset}`);
-  console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
+  console.log(pc.dim(`\nTime: ${elapsed}s (${rate} tests/sec)`));
+  console.log(sep);
 
   // Show first failures (excluding timeouts)
   const realFailures = failures.filter(f => !f.timeout);
   if (realFailures.length > 0 && !config.verbose) {
-    console.log(`\n${colors.bold}First failures:${colors.reset}`);
+    console.log(`\n${pc.bold('First failures:')}`);
     for (const f of realFailures.slice(0, 10)) {
-      const diffInfo = f.jsError ? ` ${colors.dim}(${f.jsError})${colors.reset}` : '';
-      console.log(`  ${colors.red}✗${colors.reset} ${f.name}${diffInfo}`);
+      const diffInfo = f.jsError ? ` ${pc.dim(`(${f.jsError})`)}` : '';
+      console.log(`  ${pc.red('✗')} ${f.name}${diffInfo}`);
     }
     if (realFailures.length > 10) {
-      console.log(`  ${colors.dim}... and ${realFailures.length - 10} more${colors.reset}`);
+      console.log(`  ${pc.dim(`... and ${realFailures.length - 10} more`)}`);
     }
   }
 
   // Show timeouts
   const timeouts = failures.filter(f => f.timeout);
   if (timeouts.length > 0 && !config.verbose) {
-    console.log(`\n${colors.bold}Timeouts (${timeouts.length}):${colors.reset}`);
+    console.log(`\n${pc.bold(`Timeouts (${timeouts.length}):`)}`);
     for (const f of timeouts.slice(0, 5)) {
-      console.log(`  ${colors.yellow}T${colors.reset} ${f.name}`);
+      console.log(`  ${pc.yellow('T')} ${f.name}`);
     }
     if (timeouts.length > 5) {
-      console.log(`  ${colors.dim}... and ${timeouts.length - 5} more${colors.reset}`);
+      console.log(`  ${pc.dim(`... and ${timeouts.length - 5} more`)}`);
     }
   }
 

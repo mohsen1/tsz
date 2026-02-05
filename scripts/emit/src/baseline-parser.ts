@@ -117,6 +117,7 @@ export function compareEmit(expected: string, actual: string): boolean {
 }
 
 import * as Diff from 'diff';
+import pc from 'picocolors';
 
 /**
  * Get a pretty-printed unified diff between expected and actual emit
@@ -130,33 +131,32 @@ export function getEmitDiff(expected: string, actual: string, maxLines: number =
   }
 
   const patch = Diff.createPatch('output', normExpected, normActual, 'expected', 'actual');
-  
-  // Color the diff output
+
   const lines = patch.split('\n');
   const colored: string[] = [];
   let lineCount = 0;
-  
+
   for (const line of lines) {
     if (lineCount >= maxLines) {
-      colored.push('\x1b[2m... (truncated)\x1b[0m');
+      colored.push(pc.dim('... (truncated)'));
       break;
     }
-    
+
     if (line.startsWith('+++') || line.startsWith('---')) {
-      colored.push(`\x1b[1m${line}\x1b[0m`);
+      colored.push(pc.bold(line));
     } else if (line.startsWith('+')) {
-      colored.push(`\x1b[32m${line}\x1b[0m`);
+      colored.push(pc.green(line));
       lineCount++;
     } else if (line.startsWith('-')) {
-      colored.push(`\x1b[31m${line}\x1b[0m`);
+      colored.push(pc.red(line));
       lineCount++;
     } else if (line.startsWith('@@')) {
-      colored.push(`\x1b[36m${line}\x1b[0m`);
+      colored.push(pc.cyan(line));
     } else {
       colored.push(line);
     }
   }
-  
+
   return colored.join('\n');
 }
 
