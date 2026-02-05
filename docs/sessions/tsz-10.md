@@ -94,37 +94,44 @@ function bar(x: string | null | undefined) {
 
 ### Task 2: Equality & Instanceof Narrowing
 
-**Status**: Pending
+**Status**: 🔄 IN PROGRESS (infrastructure in place, debugging narrowing application)
 
-**Goal**: Implement narrowing based on equality checks and instanceof
+**Progress Summary**:
+1. ✅ Fixed TypeResolver wiring in `apply_type_predicate_narrowing` and `narrow_by_instanceof`
+2. ✅ Committed resolver infrastructure (73e2ded5a)
+3. ❌ Instanceof narrowing still not working in practice
+4. 🔄 Debugging why narrowed types aren't being applied
 
-**Test Cases**:
+**Key Finding**:
+The narrowing INFRASTRUCTURE exists and is correct:
+- `extract_type_guard()` correctly extracts `TypeGuard::Instanceof` from binary expressions
+- `narrow_to_type()` in solver has proper subtype checking logic (lines 1465-1474)
+- Flow graph correctly creates TRUE_CONDITION/FALSE_CONDITION nodes
+- Flow analysis correctly calls `narrow_type_by_condition()` for condition nodes
+
+**Remaining Issue**:
+Narrowed types are calculated but not being APPLIED when checking expressions.
+Test case fails:
 ```typescript
-// equality narrowing
-function foo(x: "a" | "b" | "c") {
-  if (x === "a") {
-    x; // should be "a"
-  }
-}
-
-// instanceof narrowing
-class A {}
-class B {}
-function bar(x: A | B) {
-  if (x instanceof A) {
-    x; // should be A
+class Animal {}
+class Dog extends Animal { bark() {} }
+function test(animal: Animal) {
+  if (animal instanceof Dog) {
+    animal.bark(); // ERROR: Property 'bark' does not exist on type 'Animal'
   }
 }
 ```
 
-**Files to modify**:
-- `src/solver/narrowing.rs` - literal and instanceof narrowing
-- `src/checker/expr.rs` - equality expression handling
+**Next Steps** (requires Gemini consultation):
+1. Investigate where FlowAnalyzer results are consumed by expression checking
+2. Verify that `get_type_at_flow()` or equivalent is being called
+3. Check if narrowed types are stored in `node_types` map
+4. May need to trace through property access checking to see if it uses flow types
 
-**Deliverables**:
-- [ ] Implement literal equality narrowing
-- [ ] Implement instanceof narrowing
-- [ ] Add integration tests
+**Files modified**:
+- `src/checker/control_flow_narrowing.rs` - wired TypeEnvironment resolver to narrowing contexts
+
+**Gemini Consultation**: Need to ask where/how narrowed types from FlowAnalyzer are applied during expression type checking.
 
 ### Task 3: User-Defined Type Guards
 
