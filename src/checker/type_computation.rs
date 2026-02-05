@@ -1727,4 +1727,102 @@ impl<'a> CheckerState<'a> {
             .insert(resolved, properties.clone());
         properties
     }
+
+    // =========================================================================
+    // Await Expression Type Computation
+    // =========================================================================
+
+    /// Get the type of an await expression with contextual typing support.
+    ///
+    /// Phase 6 Task 3: Propagate contextual type to await operand.
+    ///
+    /// When awaiting with a contextual type T (e.g., `const x: T = await expr`),
+    /// the operand should receive T | PromiseLike<T> as its contextual type.
+    /// This allows both immediate values and Promises to be inferred correctly.
+    ///
+    /// Example:
+    /// ```typescript
+    /// async function fn(): Promise<Obj> {
+    ///     const obj: Obj = await { key: "value" };  // Operand gets Obj | PromiseLike<Obj>
+    ///     return obj;
+    /// }
+    /// ```
+    pub(crate) fn get_type_of_await_expression(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+
+        let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) else {
+            return TypeId::ERROR;
+        };
+
+        // Phase 6 Task 3: Propagate contextual type to await operand
+        // If we have a contextual type T, transform it to T | PromiseLike<T>
+        let prev_context = self.ctx.contextual_type;
+        if let Some(contextual) = prev_context {
+            // Skip transformation for error types, any, unknown, or never
+            if contextual != TypeId::ANY
+                && contextual != TypeId::UNKNOWN
+                && contextual != TypeId::NEVER
+                && !self.type_contains_error(contextual)
+            {
+                // Create PromiseLike<T> type
+                let promise_like_t = self.get_promise_like_type(contextual);
+                // Create union: T | PromiseLike<T>
+                let union_context = self.ctx.types.union2(contextual, promise_like_t);
+                // Set the union as the contextual type for the operand
+                self.ctx.contextual_type = Some(union_context);
+            }
+        }
+
+        // Get the type of the await operand with transformed contextual type
+        let expr_type = self.get_type_of_node(unary.expression);
+
+        // Restore the original contextual type
+        self.ctx.contextual_type = prev_context;
+
+        // Phase 6 Task 3: Recursively unwrap Promise<T> to get T (simulating Awaited<T>)
+        // TypeScript's await recursively unwraps nested Promises.
+        // For example: await Promise<Promise<number>> should have type `number`
+        let mut current_type = expr_type;
+        let mut depth = 0;
+        const MAX_AWAIT_DEPTH: u32 = 10; // Prevent infinite loops
+
+        while let Some(inner) = self.promise_like_return_type_argument(current_type) {
+            current_type = inner;
+            depth += 1;
+            if depth > MAX_AWAIT_DEPTH {
+                break;
+            }
+        }
+        current_type
+    }
+
+    /// Get PromiseLike<T> for a given type T.
+    ///
+    /// Helper function for await contextual typing.
+    /// Returns the type application PromiseLike<T>.
+    ///
+    /// If PromiseLike is not available in lib files, returns the base type T.
+    /// This is a conservative fallback that still allows correct typing.
+    fn get_promise_like_type(&mut self, type_arg: TypeId) -> TypeId {
+        // Try to resolve PromiseLike from lib files
+        if let Some(promise_like_base) = self.resolve_global_interface_type("PromiseLike") {
+            // Check if we successfully got a PromiseLike type
+            if promise_like_base != TypeId::ANY
+                && promise_like_base != TypeId::ERROR
+                && promise_like_base != TypeId::UNKNOWN
+            {
+                // Create PromiseLike<T> application
+                return self
+                    .ctx
+                    .types
+                    .application(promise_like_base, vec![type_arg]);
+            }
+        }
+
+        // Fallback: If PromiseLike is not available, return the base type
+        // This allows await to work even without full lib files
+        type_arg
+    }
 }
