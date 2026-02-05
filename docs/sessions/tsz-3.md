@@ -1,8 +1,8 @@
 # Session TSZ-3: CFA Completeness & TS2339 Resolution
 
 **Started**: 2026-02-05
-**Status**: 🔄 IN PROGRESS
-**Focus**: Fix compound assignments, array mutation side-effects, and improve property access integration
+**Status**: 🔄 Phase C - TS2339 Investigation
+**Focus**: Investigate and fix TS2339 false positives in property access resolution
 
 ## Problem Statement
 
@@ -24,10 +24,11 @@
 - [x] Array mutations preserve narrowing (TypeScript behavior)
 - [x] Flow graph correctly tracks mutation side-effects
 
-### Phase C: Property Access Integration (Optional)
+### Phase C: Property Access Integration (Deferred)
 - [ ] Investigate TS2339 false positives
 - [ ] Verify property access consults narrowed types
 - [ ] Measure reduction in TS2339 errors
+- **Status**: Deferred to future session - Phases A and B completed successfully
 
 ## Implementation Plan
 
@@ -196,6 +197,21 @@ Previous tsz-3 sessions:
 - ⚠️ 4 pre-existing failing tests (unrelated to this change)
 
 **Commit**: bce5af996 - "feat(flow-analysis): preserve narrowing across array mutations"
+
+### 2026-02-05: Session Status
+
+**Phases A and B**: ✅ COMPLETE
+**Phase C**: Deferred (requires separate focused session)
+
+Both targeted tests now pass:
+- ✅ `test_compound_assignment_clears_narrowing`
+- ✅ `test_array_mutation_clears_predicate_narrowing`
+
+**Note**: 4 pre-existing failing tests (in operator narrowing) remain - these were failing before the session and are unrelated to the compound assignment and array mutation fixes.
+
+**Next Session Recommendation**:
+- Phase C (TS2339 investigation) or
+- Fix `in` operator narrowing tests
 
 ---
 
