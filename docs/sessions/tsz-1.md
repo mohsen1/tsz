@@ -93,10 +93,49 @@ console.log(x);  // tsc --strict: TS2454, tsz: No error
 
 ## Active Tasks
 
-### Task 1: Overload Implementation Validation
-**Priority**: High (Missing Diagnostic)
-**Estimated Impact**: +2-3% conformance
-**Effort**: Medium
+### ✅ Overload Implementation Validation - Completed 2026-02-05
+
+**Problem**: TSZ did not validate that function/method/constructor implementations are compatible with all their overload signatures, allowing unsound implementations that TypeScript would reject.
+
+**Root Cause**: No validation of overload compatibility after implementation checking.
+
+**Fix Applied** (`src/checker/state_checking_members.rs`):
+1. Added TS2394 error code and message to `diagnostics.rs`
+2. Implemented `check_overload_compatibility()` function:
+   - Gets implementation's symbol and type
+   - Iterates through all symbol declarations
+   - For each overload (declaration without body), checks if implementation is assignable
+   - Uses `is_assignable_to(impl_type, overload_type)` for validation
+   - Reports TS2394 on overload declaration when incompatible
+3. Added calls in:
+   - `check_function_declaration` (StatementCheckCallbacks impl)
+   - `check_method_declaration`
+   - `check_constructor_declaration`
+
+**Implementation Approach** (based on Gemini Pro guidance):
+- Implementation parameters must be supertypes of overload parameters (contravariant)
+- Implementation return type must be subtype of overload return type (covariant)
+- Effectively: Implementation <: Overload (assignability check)
+- Handles: Function declarations, Method declarations, Constructor declarations
+
+**Testing Results**:
+```typescript
+// Test 1: Function overload - WORKS ✅
+function foo(x: string): void;
+function foo(x: number): void;
+function foo(x: string): void {  // TS2394 reported correctly
+    console.log(x);
+}
+```
+
+**Known Limitations**:
+- Method overload checking depends on binder correctly marking overload declarations (no body)
+- In some cases, binder treats all method declarations as implementations, resulting in TS2393 (Duplicate function implementation) instead of TS2394
+- This is a binder issue, not a checker issue
+
+**Conformance Impact**: To be measured
+
+---
 
 **Context**:
 From architectural review section 5.4: "Function overload matching validation missing"
@@ -118,7 +157,7 @@ Validate that function implementations are assignable to all their overload sign
 
 ---
 
-### Task 2: TS2564 Property Initialization
+### Task 1: TS2564 Property Initialization
 **Priority**: Medium (Missing Diagnostic)
 **Estimated Impact**: +2-3% conformance
 **Effort**: Medium
@@ -143,7 +182,7 @@ Fix and complete TS2564 diagnostic for class properties without initializers.
 
 ---
 
-### Task 3: TS2454 Definite Assignment
+### Task 2: TS2454 Definite Assignment
 **Priority**: Low (Architecture Heavy)
 **Estimated Impact**: +3-5% conformance
 **Effort**: Hard
@@ -185,9 +224,14 @@ See detailed description at top of file.
 
 ## Next Steps (Missing Diagnostics Focus)
 
-1. **Overload Implementation Validation** (Active):
-   - Ask Gemini for approach validation (MANDATORY per AGENTS.md)
-   - Implement validation in `src/checker/declarations.rs`
+1. **TS2564 Property Initialization** (Next Priority):
+   - Refactor to use `FxHashSet` for performance
+   - Complete constructor flow graph analysis
+   - Handle multiple constructors and getter/setter properties
+
+2. **TS2454 Definite Assignment** (Deferred):
+   - Requires binder changes for module-level flow nodes
+   - Architectural complexity makes this lower priority
    - Test with function overloads that have incompatible implementations
 
 2. **TS2564 Property Initialization**:
