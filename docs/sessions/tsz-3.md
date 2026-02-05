@@ -61,9 +61,111 @@ Previous tsz-3 Phase 1 successfully delivered:
 
 ---
 
-## Phase 1: Fix CFA Regressions (🔄 ACTIVE - COMPLEX INTERACTION)
+## Phase 1: Fix CFA Regressions (🔄 ACTIVE - STABILIZE FOUNDATION)
 
-**Status**: 🟡 IN PROVESTIGATION - FOUND FIX BUT BREAKS OTHER TESTS
+**Status**: 🟡 IN PROGRESS - FOLLOWING GEMINI'S PRIORITIZED APPROACH
+
+**Gemini's Recommendation** (2026-02-05): "Fix the Foundation Path"
+
+Build advanced features on a stable narrowing engine. The circular extends
+failures signal that the Solver's resolution and cycle-detection are tightly
+coupled with narrowing in a fragile way.
+
+---
+
+## Task 1: Array Destructuring Narrowing (🔄 ACTIVE - INVESTIGATION)
+
+**Tests**:
+- `test_array_destructuring_assignment_clears_narrowing`
+- `test_array_destructuring_default_initializer_clears_narrowing`
+
+**Expected Behavior**: When `[x] = [1]` is encountered after narrowing `x` to `string`, the narrowing should be cleared and `x` should return to `string | number`.
+
+**Investigation Findings** (2026-02-05):
+
+1. ✅ `assignment_affects_reference` in `control_flow_narrowing.rs:29` correctly handles array literals (line 78-88)
+2. ✅ Flow graph code at `control_flow.rs:1269` correctly processes array literal expressions
+3. ❌ Test still fails: Gets `TypeId(111)` instead of expected `TypeId(130)` (union)
+4. ⚠️ Debug output shows only ONE narrowing operation (the typeof check), no clearing after assignment
+
+**Hypothesis**: The flow graph is not creating a node for the array destructuring assignment `[x] = [1]`, so there's no opportunity to clear the narrowing.
+
+**Next Steps**:
+1. Need to understand WHERE flow nodes are created for assignments
+2. Check if destructuring assignments are being added to the flow graph
+3. May need to add explicit flow node creation for destructuring patterns
+
+**Estimated Complexity**: LOW-MEDIUM (1-3 hours, requires understanding flow graph architecture)
+
+---
+
+## Task 2: Truthiness Narrowing (⏸️ PENDING - MEDIUM PRIORITY)
+
+**Test**: `test_truthiness_false_branch_narrows_to_falsy`
+
+**Why Core**: Fundamental CFA feature. If this fails, `narrow_by_truthiness` is likely missing `resolve_type()` or `evaluate()`.
+
+**Expected**: False branch of `if (x)` where `x: string | number | boolean | null | undefined` should narrow to `"" | 0 | false | null | undefined`.
+
+**Files**: `src/solver/narrowing.rs` - `narrow_by_truthiness`
+
+**Estimated Complexity**: MEDIUM (1-2 hours)
+
+---
+
+## Task 3: Circular Extends Deep Dive (⏸️ PENDING - CRITICAL BLOCKER)
+
+**Tests**:
+- `test_circular_extends_chain_with_endpoint_bound`
+- `test_circular_extends_conflicting_lower_bounds`
+- `test_circular_extends_with_literal_types`
+- `test_circular_extends_with_concrete_upper_and_lower`
+- `test_circular_extends_three_way_with_one_lower_bound`
+
+**Why Critical**: The `asserts` fix is logically correct but breaks these tests. This suggests:
+- Tests were passing due to "lucky" side effect of incorrect narrowing logic
+- By not calling `narrow_excluding_type`, we're passing unresolved/raw circular types
+- Previous logic might have returned `Error` or `Never` early, avoiding circularity checks
+
+**Hypothesis**: Doing LESS work (returning `source_type` early) triggers circularity detection that was previously avoided.
+
+**Investigation Plan**:
+1. Re-apply the `asserts` fix
+2. Run one failing test with `TSZ_LOG=trace TSZ_LOG_FORMAT=tree`
+3. Find where Solver returns `TypeId::ERROR` or triggers circularity diagnostic
+4. Compare with trace WITHOUT the fix
+5. Determine if tests are valid or if Solver needs to "suspend" circularity checks during narrowing
+
+**Files**: `src/solver/narrowing.rs` - Type resolution, circularity detection
+
+**Estimated Complexity**: HIGH (4-6 hours, deep solver tracing)
+
+---
+
+## Task 4: Assertion Predicate Fix (✅ IMPLEMENTED - BLOCKED BY TASK 3)
+
+**Status**: ✅ CODE READY - AWAITING CIRCULAR EXTENDS INVESTIGATION
+
+**What**:
+- Fix `TypeGuard::Predicate` in `src/solver/narrowing.rs:1784`
+- Assertions only narrow in true branch, false branch unchanged
+- Validated by Gemini as correct TypeScript semantics
+
+**Why Blocked**: The fix breaks 5 circular extends tests (Task 3)
+
+**Next**: After Task 3 completes, re-apply this fix
+
+---
+
+## Task 5: Any Narrowing (⏸️ PENDING - BLOCKED BY TASK 3)
+
+**Status**: ⏸️ PAUSED - SAME BLOCKER AS ASSERTIONS
+
+**Previous Session**: Trying to narrow `any` broke the SAME 5 circular extends tests
+
+**Next**: After Task 3 completes, can re-enable `any` narrowing
+
+---
 
 **Test Failures**:
 
