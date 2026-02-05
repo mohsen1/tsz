@@ -1,9 +1,9 @@
 # Session TSZ-5: Multi-Pass Generic Inference & Contextual Typing
 
 **Started**: 2026-02-05
-**Status**: 🔄 Starting - Planning Phase
+**Status**: 🔄 Partially Implemented - Infrastructure Complete, Integration In Progress
 **Focus**: Implement multi-pass inference to fix complex nested generic type inference
-**Blocker**: None - Ready to start implementation
+**Last Updated**: 2026-02-05
 
 ## Summary
 
@@ -34,20 +34,82 @@ TypeScript uses "Inference Rounds" (per Gemini Flash 2026-02-05):
 2. **Fixing**: "Fix" (resolve) the type variables that have enough information
 3. **Round 2 (Contextual)**: Use the fixed types to provide contextual types to remaining arguments (like the lambda)
 
+## Implementation Status
+
+### ✅ Complete Components
+
+1. **Contextual Sensitivity Detection** (`src/solver/operations.rs:1373-1475`)
+   - `is_contextually_sensitive()` helper to detect lambdas, callables, and object literals
+   - Uses visitor pattern to recursively check types
+   - Correctly identifies function types, callable types, unions, intersections, etc.
+
+2. **Variable Fixing Mechanism** (`src/solver/infer.rs:3016-3109`)
+   - `fix_current_variables()` method on `InferenceContext`
+   - Resolves variables with candidates after Round 1
+   - Sets `resolved` field to prevent Round 2 from overriding
+   - `get_current_substitution()` returns current best types for all variables
+
+3. **Two-Pass Argument Processing** (`src/solver/operations.rs:682-839`)
+   - Round 1: Processes non-contextual arguments (arrays, primitives)
+   - Fixing: Calls `fix_current_variables()` to resolve variables
+   - Round 2: Processes contextual arguments (lambdas) with fixed types
+   - Creates contextual target types by instantiating with current substitution
+
+4. **TypeSubstitution API Enhancement** (`src/solver/instantiate.rs:96-102`)
+   - Added `map()` method to expose internal substitution map
+   - Enables building new substitutions from existing ones
+
+### ⚠️ Known Limitations
+
+**Current Issue**: Lambda type checker doesn't use contextual target types
+
+The multi-pass inference infrastructure is in place, but there's a critical gap:
+- Round 2 computes the contextual target type (e.g., `(x: number) => U`)
+- However, the lambda type checker doesn't receive/use this contextual type
+- Lambda parameters still have the original TypeParameter types
+
+**Example Test**:
+```typescript
+function process<T, U>(value: T, callback: (x: T) => U): U {
+    return callback(value);
+}
+
+const result = process(42, x => x.toString());
+// Current: x has type T (TypeParameter)
+// Expected: x should have type number (from T = number in Round 1)
+```
+
+**Error**: `Property 'toString' does not exist on type 'T'`
+
+### 🔧 Remaining Work
+
+**Required**: Integrate contextual target types with lambda type checking
+
+1. **Modify lambda type checker** (`src/checker/expr.rs` or similar):
+   - Accept contextual target type parameter
+   - Use contextual type to infer lambda parameter types
+   - Ensure lambda body checking uses inferred parameter types
+
+2. **Pass contextual type from Solver to Checker**:
+   - Modify `resolve_generic_call_inner` to return contextual types
+   - Or add a separate mechanism to provide contextual types to Checker
+
+3. **Handle nested generics**:
+   - The `arr.map(f)` case requires method resolution on generic types
+   - This is a separate issue from lambda contextual typing
+   - May require additional work in property access resolution
+
 ## Implementation Plan
 
-### Priority 1: Refactor `resolve_generic_call_inner` (src/solver/operations.rs)
+### Priority 1: Refactor `resolve_generic_call_inner` (src/solver/operations.rs) ✅ COMPLETE
 
 **Task**: Split the single argument loop into two distinct passes
 
-**Current Code** (lines 680-745):
-```rust
-// Single loop processes all arguments
-for (i, &arg_type) in arg_types.iter().enumerate() {
-    // Collect constraints from all arguments at once
-    self.constrain_types(...);
-}
-```
+**Status**: Complete
+- Round 1 processes non-contextual arguments
+- Fixing resolves variables with candidates
+- Round 2 processes contextual arguments with fixed types
+
 
 **New Code** (two passes):
 ```rust
@@ -201,3 +263,42 @@ Be specific if it's wrong - tell me exactly what to fix.
 
 ## Session History
 Created 2026-02-05 following completion of Generic Type Inference Investigation in tsz-2.
+
+## Next Steps
+
+### Immediate: Gemini Pro Review
+Before proceeding with lambda integration, ask Gemini Pro to review the current implementation:
+
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver/operations.rs --include=src/solver/infer.rs "
+I implemented the Multi-Pass Inference infrastructure for tsz-5:
+
+1. is_contextually_sensitive() - detects lambdas, callables, etc.
+2. fix_current_variables() - resolves variables after Round 1
+3. get_current_substitution() - returns current best types
+4. Two-pass argument processing in resolve_generic_call_inner()
+
+However, there's a critical gap: the lambda type checker doesn't use the contextual
+target types computed in Round 2, so lambda parameters still have unresolved
+TypeParameter types.
+
+Questions:
+1) Is my two-pass infrastructure correct for TypeScript?
+2) How should the contextual target type be passed to the lambda type checker?
+3) What files/functions need to be modified to make lambdas use contextual types?
+4) Is there a simpler approach I'm missing?
+
+Please provide specific file paths and function names for the lambda integration.
+"
+```
+
+### Priority 1: Lambda Contextual Type Integration
+Research and implement how to pass contextual target types to the lambda type checker.
+
+### Priority 2: Test and Validate
+- Create comprehensive tests for multi-pass inference
+- Verify no regressions in existing tests
+- Document edge cases and limitations
+
+### Priority 3: Method Resolution on Generic Types
+The `arr.map(f)` case requires additional work to handle method calls on generic types before type parameters are resolved. This is a separate issue from lambda contextual typing.

@@ -679,10 +679,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             );
         }
 
-        // 3. Collect constraints from arguments
+        // 3. Multi-pass constraint collection for proper contextual typing
+
+        // Prepare rest tuple inference info
         let rest_tuple_inference =
             self.rest_tuple_inference_target(&instantiated_params, arg_types, &var_map);
         let rest_tuple_start = rest_tuple_inference.as_ref().map(|(start, _, _)| *start);
+
+        // === Round 1: Process non-contextual arguments ===
+        // These are arguments like arrays, primitives, and objects that don't need
+        // contextual typing. Processing them first allows us to infer type parameters
+        // that contextual arguments (lambdas) can then use.
         for (i, &arg_type) in arg_types.iter().enumerate() {
             if rest_tuple_start.is_some_and(|start| i >= start) {
                 continue;
@@ -692,6 +699,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             else {
                 break;
             };
+
+            // Skip contextually sensitive arguments (will process in Round 2)
+            if self.is_contextually_sensitive(arg_type) {
+                continue;
+            }
 
             let mut visited = FxHashSet::default();
             if !self.type_contains_placeholder(target_type, &var_map, &mut visited) {
@@ -704,11 +716,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     };
                 }
             } else {
-                // Target type contains placeholders - check against their constraints.
-                // Instantiate the constraint with the substitution first, since the raw
-                // constraint references original type params (e.g., `keyof T`), not
-                // placeholders. After instantiation, skip if it still has placeholders
-                // (meaning dependent type params haven't been inferred yet).
+                // Target type contains placeholders - check against their constraints
                 if let Some(TypeKey::TypeParameter(tp)) = self.interner.lookup(target_type)
                     && let Some(constraint) = tp.constraint
                 {
@@ -741,6 +749,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 crate::solver::types::InferencePriority::NakedTypeVariable,
             );
         }
+
+        // Process rest tuple in Round 1 (it's non-contextual)
         if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
             self.constrain_types(
                 &mut infer_ctx,
@@ -748,6 +758,85 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 tuple_type,
                 target_type,
                 crate::solver::types::InferencePriority::NakedTypeVariable,
+            );
+        }
+
+        // === Fixing: Resolve variables with enough information ===
+        // This "fixes" type variables that have candidates from Round 1,
+        // preventing Round 2 from overriding them with lower-priority constraints.
+        if let Err(_) = infer_ctx.fix_current_variables() {
+            // Fixing failed - this might indicate a constraint conflict
+            // Continue with partial fixing, final resolution will detect errors
+        }
+
+        // === Round 2: Process contextual arguments ===
+        // These are arguments like lambdas that need contextual typing.
+        // Now that non-contextual arguments have been processed, we can provide
+        // proper contextual types to lambdas based on fixed type variables.
+        for (i, &arg_type) in arg_types.iter().enumerate() {
+            if rest_tuple_start.is_some_and(|start| i >= start) {
+                continue;
+            }
+            let Some(target_type) =
+                self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
+            else {
+                break;
+            };
+
+            // Only process contextually sensitive arguments in Round 2
+            if !self.is_contextually_sensitive(arg_type) {
+                continue;
+            }
+
+            // Get current substitution with fixed types from Round 1
+            // The substitution maps placeholder names (like __infer_0) to their resolved types
+            let placeholder_subst = infer_ctx.get_current_substitution();
+            let contextual_target =
+                instantiate_type(self.interner, target_type, &placeholder_subst);
+
+            // Check assignability with contextual target type
+            let mut visited = FxHashSet::default();
+            if !self.type_contains_placeholder(contextual_target, &var_map, &mut visited) {
+                // No placeholder in contextual_target - check assignability directly
+                if !self.checker.is_assignable_to(arg_type, contextual_target) {
+                    return CallResult::ArgumentTypeMismatch {
+                        index: i,
+                        expected: contextual_target,
+                        actual: arg_type,
+                    };
+                }
+            } else {
+                // Target type contains placeholders - check against their constraints
+                if let Some(TypeKey::TypeParameter(tp)) = self.interner.lookup(contextual_target)
+                    && let Some(constraint) = tp.constraint
+                {
+                    let inst_constraint =
+                        instantiate_type(self.interner, constraint, &placeholder_subst);
+                    let mut constraint_visited = FxHashSet::default();
+                    if !self.type_contains_placeholder(
+                        inst_constraint,
+                        &var_map,
+                        &mut constraint_visited,
+                    ) {
+                        // Constraint is fully concrete - safe to check now
+                        if !self.checker.is_assignable_to(arg_type, inst_constraint) {
+                            return CallResult::ArgumentTypeMismatch {
+                                index: i,
+                                expected: inst_constraint,
+                                actual: arg_type,
+                            };
+                        }
+                    }
+                }
+            }
+
+            // arg_type <: contextual_target (with ReturnType priority for contextual args)
+            self.constrain_types(
+                &mut infer_ctx,
+                &var_map,
+                arg_type,
+                contextual_target,
+                crate::solver::types::InferencePriority::ReturnType,
             );
         }
 
@@ -1357,6 +1446,126 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             TypeKey::TypeParameter(_)
             | TypeKey::Infer(_)
             | TypeKey::Intrinsic(_)
+            | TypeKey::Literal(_)
+            | TypeKey::Lazy(_)
+            | TypeKey::TypeQuery(_)
+            | TypeKey::UniqueSymbol(_)
+            | TypeKey::ThisType
+            | TypeKey::ModuleNamespace(_)
+            | TypeKey::Error => false,
+        }
+    }
+
+    /// Check if a type is contextually sensitive (requires contextual typing for inference).
+    ///
+    /// Contextually sensitive types include:
+    /// - Function types (lambda expressions)
+    /// - Callable types (object with call signatures)
+    /// - Union/Intersection types containing contextually sensitive members
+    /// - Object literals with callable properties (methods)
+    ///
+    /// These types need deferred inference in Round 2 after non-contextual
+    /// arguments have been processed and type variables have been fixed.
+    fn is_contextually_sensitive(&self, type_id: TypeId) -> bool {
+        let key = match self.interner.lookup(type_id) {
+            Some(key) => key,
+            None => return false,
+        };
+
+        match key {
+            // Function types are contextually sensitive (lambdas need contextual parameter types)
+            TypeKey::Function(_) => true,
+
+            // Callable types are contextually sensitive (objects with call signatures)
+            TypeKey::Callable(_) => true,
+
+            // Union/Intersection: contextually sensitive if any member is
+            TypeKey::Union(members) | TypeKey::Intersection(members) => {
+                let members = self.interner.type_list(members);
+                members
+                    .iter()
+                    .any(|&member| self.is_contextually_sensitive(member))
+            }
+
+            // Object types: check if any property is callable (has methods)
+            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+                let shape = self.interner.object_shape(shape_id);
+                shape
+                    .properties
+                    .iter()
+                    .any(|prop| self.is_contextually_sensitive(prop.type_id))
+            }
+
+            // Array types: check element type
+            TypeKey::Array(elem) => self.is_contextually_sensitive(elem),
+
+            // Tuple types: check all elements
+            TypeKey::Tuple(elements) => {
+                let elements = self.interner.tuple_list(elements);
+                elements
+                    .iter()
+                    .any(|elem| self.is_contextually_sensitive(elem.type_id))
+            }
+
+            // Type applications: check base and arguments
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                self.is_contextually_sensitive(app.base)
+                    || app
+                        .args
+                        .iter()
+                        .any(|&arg| self.is_contextually_sensitive(arg))
+            }
+
+            // Readonly types: look through to inner type
+            TypeKey::ReadonlyType(inner) => self.is_contextually_sensitive(inner),
+
+            // Type parameters with constraints: check constraint
+            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => info
+                .constraint
+                .is_some_and(|constraint| self.is_contextually_sensitive(constraint)),
+
+            // Index access: check both object and key types
+            TypeKey::IndexAccess(obj, key) => {
+                self.is_contextually_sensitive(obj) || self.is_contextually_sensitive(key)
+            }
+
+            // Conditional types: check all branches
+            TypeKey::Conditional(cond_id) => {
+                let cond = self.interner.conditional_type(cond_id);
+                self.is_contextually_sensitive(cond.check_type)
+                    || self.is_contextually_sensitive(cond.extends_type)
+                    || self.is_contextually_sensitive(cond.true_type)
+                    || self.is_contextually_sensitive(cond.false_type)
+            }
+
+            // Mapped types: check constraint and template
+            TypeKey::Mapped(mapped_id) => {
+                let mapped = self.interner.mapped_type(mapped_id);
+                self.is_contextually_sensitive(mapped.constraint)
+                    || self.is_contextually_sensitive(mapped.template)
+            }
+
+            // KeyOf, StringIntrinsic: check operand
+            TypeKey::KeyOf(operand)
+            | TypeKey::StringIntrinsic {
+                type_arg: operand, ..
+            } => self.is_contextually_sensitive(operand),
+
+            // Enum types: check member type
+            TypeKey::Enum(_def_id, member_type) => self.is_contextually_sensitive(member_type),
+
+            // Template literals: check type spans
+            TypeKey::TemplateLiteral(spans) => {
+                let spans = self.interner.template_list(spans);
+                spans.iter().any(|span| match span {
+                    TemplateSpan::Text(_) => false,
+                    TemplateSpan::Type(inner) => self.is_contextually_sensitive(*inner),
+                })
+            }
+
+            // Non-contextually sensitive types
+            TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::Lazy(_)
             | TypeKey::TypeQuery(_)

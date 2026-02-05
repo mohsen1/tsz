@@ -97,6 +97,13 @@ impl TypeSubstitution {
     pub fn len(&self) -> usize {
         self.map.len()
     }
+
+    /// Get a reference to the internal substitution map.
+    ///
+    /// This is useful for building new substitutions based on existing ones.
+    pub fn map(&self) -> &FxHashMap<Atom, TypeId> {
+        &self.map
+    }
 }
 
 /// Instantiator for applying type substitutions.
