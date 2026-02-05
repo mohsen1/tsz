@@ -16,6 +16,7 @@
 mod apparent;
 mod application;
 pub mod binary_ops;
+pub mod canonicalize;
 mod class_hierarchy;
 pub mod compat;
 mod contextual;
@@ -61,6 +62,7 @@ pub use visitor::*;
 pub(crate) use apparent::*;
 pub use application::*;
 pub use binary_ops::*;
+pub use canonicalize::*;
 pub use class_hierarchy::*;
 pub use compat::*;
 pub use contextual::*;
