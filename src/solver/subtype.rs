@@ -70,20 +70,16 @@ impl SubtypeResult {
 
 /// Returns true for unit types where `source != target` implies disjointness.
 ///
-/// This intentionally excludes null/undefined/void/never because their assignability
-/// semantics are special-cased elsewhere (e.g., strictNullChecks, void assignability).
+/// This intentionally excludes:
+/// - null/undefined/void/never (special-cased assignability semantics)
+/// - Tuples (labeled tuples like [a: 1] vs [b: 1] are compatible despite different TypeIds)
+///
+/// Only safe for primitives where identity implies structural equality.
 fn is_disjoint_unit_type(types: &dyn TypeDatabase, ty: TypeId) -> bool {
     match types.lookup(ty) {
         Some(TypeKey::Literal(_)) | Some(TypeKey::UniqueSymbol(_)) => true,
-        Some(TypeKey::Tuple(list_id)) => {
-            let elements = types.tuple_list(list_id);
-            if elements.iter().any(|e| e.rest || e.optional) {
-                return false;
-            }
-            elements
-                .iter()
-                .all(|e| is_disjoint_unit_type(types, e.type_id))
-        }
+        // Note: Tuples removed to avoid labeled tuple bug
+        // TypeScript treats [a: 1] and [b: 1] as compatible even though they have different TypeIds
         _ => false,
     }
 }
