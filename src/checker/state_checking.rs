@@ -875,17 +875,20 @@ impl<'a> CheckerState<'a> {
                 if target_prop_types.is_empty() {
                     let prop_name = self.ctx.types.resolve_atom(source_prop.name);
                     self.error_excess_property_at(&prop_name, target, idx);
+                } else {
+                    // =============================================================
+                    // NESTED OBJECT LITERAL EXCESS PROPERTY CHECKING
+                    // =============================================================
+                    // For nested object literals, recursively check for excess properties
+                    // Example: { x: { y: 1, z: 2 } } where target is { x: { y: number } }
+                    // should error on 'z' in the nested object literal
+                    // =============================================================
+                    self.check_nested_object_literal_excess_properties(
+                        source_prop.name,
+                        target_prop_types.first().copied(),
+                        idx,
+                    );
                 }
-                // TODO: Nested excess property checking for object literal properties
-                // Currently we only check the top-level object literal. To properly check
-                // nested object literals, we need to:
-                // 1. Find the property element in the AST for this property name
-                // 2. Get the value expression for that property
-                // 3. Check if it's syntactically an object literal
-                // 4. If so, recursively call check_object_literal_excess_properties with
-                //    the nested expression's NodeIndex
-                // For now, nested object literal properties do not trigger excess property
-                // checking, which matches TypeScript behavior in many cases.
             }
             return;
         }
@@ -914,11 +917,113 @@ impl<'a> CheckerState<'a> {
                 if target_prop.is_none() {
                     let prop_name = self.ctx.types.resolve_atom(source_prop.name);
                     self.error_excess_property_at(&prop_name, target, idx);
+                } else if let Some(target_prop) = target_prop {
+                    // =============================================================
+                    // NESTED OBJECT LITERAL EXCESS PROPERTY CHECKING
+                    // =============================================================
+                    // For nested object literals, recursively check for excess properties
+                    self.check_nested_object_literal_excess_properties(
+                        source_prop.name,
+                        Some(target_prop.type_id),
+                        idx,
+                    );
                 }
-                // TODO: Nested excess property checking - see comment above in union case
             }
         }
         // Note: Missing property checks are handled by solver's explain_failure
+    }
+
+    /// Check nested object literal properties for excess properties.
+    ///
+    /// This implements recursive excess property checking for nested object literals.
+    /// For example, in `const p: { x: { y: number } } = { x: { y: 1, z: 2 } }`,
+    /// the nested object literal `{ y: 1, z: 2 }` should be checked for excess property `z`.
+    fn check_nested_object_literal_excess_properties(
+        &mut self,
+        prop_name: crate::interner::Atom,
+        target_prop_type: Option<TypeId>,
+        obj_literal_idx: NodeIndex,
+    ) {
+        // Get the AST node for the object literal
+        let Some(obj_node) = self.ctx.arena.get(obj_literal_idx) else {
+            return;
+        };
+
+        let Some(obj_lit) = self.ctx.arena.get_literal_expr(obj_node) else {
+            return;
+        };
+
+        // Iterate through the properties in the AST to find the one matching prop_name
+        for &elem_idx in obj_lit.elements.iter() {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            // Get the property name from this element
+            let elem_prop_name = match elem_node.kind {
+                SyntaxKind::PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_property_assignment(elem_node)
+                    .and_then(|prop| self.get_property_name(prop.name))
+                    .map(|name| self.ctx.types.intern_string(&name)),
+                SyntaxKind::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_shorthand_property(elem_node)
+                    .and_then(|prop| self.get_property_name(prop.name))
+                    .map(|name| self.ctx.types.intern_string(&name)),
+                _ => None,
+            };
+
+            // Skip if this property doesn't match the one we're looking for
+            if elem_prop_name != Some(prop_name) {
+                continue;
+            }
+
+            // Get the value expression for this property
+            let value_idx = match elem_node.kind {
+                SyntaxKind::PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_property_assignment(elem_node)
+                    .map(|prop| prop.expression),
+                SyntaxKind::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    // For shorthand properties, the value expression is the same as the property name expression
+                    self.ctx
+                        .arena
+                        .get_shorthand_property(elem_node)
+                        .and_then(|prop| prop.name)
+                }
+                _ => None,
+            };
+
+            let Some(value_idx) = value_idx else {
+                continue;
+            };
+
+            // Check if the value expression is an object literal
+            let Some(value_node) = self.ctx.arena.get(value_idx) else {
+                continue;
+            };
+
+            if value_node.kind == SyntaxKind::OBJECT_LITERAL_EXPRESSION {
+                // Get the type of the nested object literal
+                let nested_source_type = self.get_type_of_node(value_idx);
+
+                // Check if we have a target type for this property
+                if let Some(nested_target_type) = target_prop_type {
+                    // Recursively check the nested object literal for excess properties
+                    self.check_object_literal_excess_properties(
+                        nested_source_type,
+                        nested_target_type,
+                        value_idx,
+                    );
+                }
+
+                return;
+            }
+        }
     }
 
     /// Resolve property access using TypeEnvironment (includes lib.d.ts types).
