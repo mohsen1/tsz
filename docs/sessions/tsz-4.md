@@ -39,19 +39,24 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 **Root Cause**: Functions emitted via `emit_function_expression_es5_params` have their own `is_simple_body` check that may not be detecting simple returns correctly
 **Next**: Need to investigate why `is_simple_body` returns false for `function (val) { return val.isSunk; }`
 
-### 2025-02-05 Session 2: Deep Investigation
+### 2025-02-05 Session 3: Gemini Redefinition (PIVOT)
 
-**Added tracing** to `is_simple_return_statement` and `emit_function_expression` to debug why simple return detection isn't working.
+**Consulted Gemini Pro** on session redefinition.
 
-**Finding**: Tracing output doesn't show in emitter phase (emitter runs separately from checking).
+**Key Insights from Gemini:**
+1. **Formatting fix issue**: Likely `param_transforms.has_transforms()` is true, or node kind mismatch
+2. **Recommendation**: PIVOT from formatting to structural issues
+3. **Rationale**: "Logic errors (missing exports, wrong class structures, missing declarations) are blocking far more tests than newline formatting"
 
-**Current Status**:
-- Fix is in place (commit 169cbd95c)
-- Code path looks correct
-- But tests still failing
-- **Need**: Different debugging approach or focus on other issues
+**Revised Priority Order (per Gemini):**
+1. **Fix "Use Strict" Emission** (HIGH ROI) - Affects every CommonJS test
+2. **Basic Declaration Emit** (0% pass rate) - Separate mode needs infrastructure
+3. **Module/Class Merging** (Complex feature) - Symbol resolution and AST manipulation
 
-**Session Status**: Active - investigating formatting issue, but may pivot to other priorities per Gemini's guidance.
+**Action Plan:**
+- Defer formatting investigation (low ROI at 4.9% pass rate)
+- Focus on structural correctness first
+- Return to formatting once pass rate improves
 
 **Consulted Gemini** on session direction and blocker analysis.
 
