@@ -135,6 +135,9 @@ mod ts2322_tests;
 #[cfg(test)]
 #[path = "tests/value_usage_tests.rs"]
 mod value_usage_tests;
+#[cfg(test)]
+#[path = "tests/widening_integration_tests.rs"]
+mod widening_integration_tests;
 
 // Re-export key types
 pub use crate::solver::types::Visibility;
