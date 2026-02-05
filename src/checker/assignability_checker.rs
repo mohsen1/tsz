@@ -35,6 +35,21 @@ impl<'a> CheckerState<'a> {
     /// can check assignability against the intersection, we need to ensure A and B
     /// are resolved and in type_env so the subtype checker can resolve them.
     pub(crate) fn ensure_refs_resolved(&mut self, type_id: TypeId) {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.ensure_refs_resolved_inner(type_id, &mut visited);
+    }
+
+    fn ensure_refs_resolved_inner(
+        &mut self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) {
+        // Cycle detection: skip types already visited to prevent infinite
+        // recursion on self-referencing types (e.g., LinkedList<T>).
+        if !visited.insert(type_id) {
+            return;
+        }
+
         use crate::solver::TypeKey;
 
         let Some(type_key) = self.ctx.types.lookup(type_id) else {
@@ -56,9 +71,8 @@ impl<'a> CheckerState<'a> {
                             env.insert_def(def_id, result);
                         }
                         // Recurse into the resolved type to ensure nested Lazy types
-                        // are also resolved. E.g., resolving a function type's Lazy(DefId)
-                        // must also resolve its parameter types' Lazy(DefId) references.
-                        self.ensure_refs_resolved(result);
+                        // are also resolved.
+                        self.ensure_refs_resolved_inner(result, visited);
                     }
                 }
             }
@@ -67,7 +81,7 @@ impl<'a> CheckerState<'a> {
             TypeKey::Intersection(members) => {
                 let member_list = self.ctx.types.type_list(members);
                 for &member in member_list.iter() {
-                    self.ensure_refs_resolved(member);
+                    self.ensure_refs_resolved_inner(member, visited);
                 }
             }
 
@@ -75,25 +89,25 @@ impl<'a> CheckerState<'a> {
             TypeKey::Union(members) => {
                 let member_list = self.ctx.types.type_list(members);
                 for &member in member_list.iter() {
-                    self.ensure_refs_resolved(member);
+                    self.ensure_refs_resolved_inner(member, visited);
                 }
             }
 
             // For type applications, ensure base and args are resolved
             TypeKey::Application(app_id) => {
                 let app = self.ctx.types.type_application(app_id);
-                self.ensure_refs_resolved(app.base);
+                self.ensure_refs_resolved_inner(app.base, visited);
                 for &arg in &app.args {
-                    self.ensure_refs_resolved(arg);
+                    self.ensure_refs_resolved_inner(arg, visited);
                 }
             }
 
             // For functions, resolve parameter and return types
             TypeKey::Function(sig) => {
                 let func_sig = self.ctx.types.function_shape(sig);
-                self.ensure_refs_resolved(func_sig.return_type);
+                self.ensure_refs_resolved_inner(func_sig.return_type, visited);
                 for param in &func_sig.params {
-                    self.ensure_refs_resolved(param.type_id);
+                    self.ensure_refs_resolved_inner(param.type_id, visited);
                 }
             }
 
@@ -101,15 +115,15 @@ impl<'a> CheckerState<'a> {
             TypeKey::Callable(sig) => {
                 let callable = self.ctx.types.callable_shape(sig);
                 for signature in &callable.call_signatures {
-                    self.ensure_refs_resolved(signature.return_type);
+                    self.ensure_refs_resolved_inner(signature.return_type, visited);
                     for param in &signature.params {
-                        self.ensure_refs_resolved(param.type_id);
+                        self.ensure_refs_resolved_inner(param.type_id, visited);
                     }
                 }
                 for signature in &callable.construct_signatures {
-                    self.ensure_refs_resolved(signature.return_type);
+                    self.ensure_refs_resolved_inner(signature.return_type, visited);
                     for param in &signature.params {
-                        self.ensure_refs_resolved(param.type_id);
+                        self.ensure_refs_resolved_inner(param.type_id, visited);
                     }
                 }
             }
@@ -118,13 +132,13 @@ impl<'a> CheckerState<'a> {
             TypeKey::Object(shape_id) => {
                 let shape = self.ctx.types.object_shape(shape_id);
                 for prop in &shape.properties {
-                    self.ensure_refs_resolved(prop.type_id);
+                    self.ensure_refs_resolved_inner(prop.type_id, visited);
                 }
                 if let Some(ref sig) = shape.string_index {
-                    self.ensure_refs_resolved(sig.value_type);
+                    self.ensure_refs_resolved_inner(sig.value_type, visited);
                 }
                 if let Some(ref sig) = shape.number_index {
-                    self.ensure_refs_resolved(sig.value_type);
+                    self.ensure_refs_resolved_inner(sig.value_type, visited);
                 }
             }
 
@@ -132,13 +146,13 @@ impl<'a> CheckerState<'a> {
             TypeKey::ObjectWithIndex(shape_id) => {
                 let shape = self.ctx.types.object_shape(shape_id);
                 for prop in &shape.properties {
-                    self.ensure_refs_resolved(prop.type_id);
+                    self.ensure_refs_resolved_inner(prop.type_id, visited);
                 }
                 if let Some(ref sig) = shape.string_index {
-                    self.ensure_refs_resolved(sig.value_type);
+                    self.ensure_refs_resolved_inner(sig.value_type, visited);
                 }
                 if let Some(ref sig) = shape.number_index {
-                    self.ensure_refs_resolved(sig.value_type);
+                    self.ensure_refs_resolved_inner(sig.value_type, visited);
                 }
             }
 
@@ -150,46 +164,46 @@ impl<'a> CheckerState<'a> {
 
             // For arrays, readonly, resolve the inner type
             TypeKey::Array(inner) | TypeKey::ReadonlyType(inner) | TypeKey::KeyOf(inner) => {
-                self.ensure_refs_resolved(inner);
+                self.ensure_refs_resolved_inner(inner, visited);
             }
 
             // For tuples, resolve each element type
             TypeKey::Tuple(tuple_id) => {
                 let elems = self.ctx.types.tuple_list(tuple_id);
                 for elem in elems.iter() {
-                    self.ensure_refs_resolved(elem.type_id);
+                    self.ensure_refs_resolved_inner(elem.type_id, visited);
                 }
             }
 
             // For mapped types, resolve constraint and template
             TypeKey::Mapped(mapped_id) => {
                 let mapped = self.ctx.types.mapped_type(mapped_id);
-                self.ensure_refs_resolved(mapped.constraint);
-                self.ensure_refs_resolved(mapped.template);
+                self.ensure_refs_resolved_inner(mapped.constraint, visited);
+                self.ensure_refs_resolved_inner(mapped.template, visited);
                 if let Some(name_type) = mapped.name_type {
-                    self.ensure_refs_resolved(name_type);
+                    self.ensure_refs_resolved_inner(name_type, visited);
                 }
             }
 
             // For conditional types, resolve all four components
             TypeKey::Conditional(cond_id) => {
                 let cond = self.ctx.types.conditional_type(cond_id);
-                self.ensure_refs_resolved(cond.check_type);
-                self.ensure_refs_resolved(cond.extends_type);
-                self.ensure_refs_resolved(cond.true_type);
-                self.ensure_refs_resolved(cond.false_type);
+                self.ensure_refs_resolved_inner(cond.check_type, visited);
+                self.ensure_refs_resolved_inner(cond.extends_type, visited);
+                self.ensure_refs_resolved_inner(cond.true_type, visited);
+                self.ensure_refs_resolved_inner(cond.false_type, visited);
             }
 
             // For index access types, resolve both object and index
             TypeKey::IndexAccess(obj, idx) => {
-                self.ensure_refs_resolved(obj);
-                self.ensure_refs_resolved(idx);
+                self.ensure_refs_resolved_inner(obj, visited);
+                self.ensure_refs_resolved_inner(idx, visited);
             }
 
             // For type parameters, resolve constraints
             TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
                 if let Some(constraint) = info.constraint {
-                    self.ensure_refs_resolved(constraint);
+                    self.ensure_refs_resolved_inner(constraint, visited);
                 }
             }
 
