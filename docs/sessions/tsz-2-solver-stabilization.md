@@ -16,9 +16,10 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 - ✅ **Fixed property access for Array/Tuple** - Added type substitution for generic applications
 - ✅ **Fixed function variance tests** - Fixed test bugs (missing strict_function_types, incorrect any expectation)
 - ✅ **Fixed constraint resolution** - Fixed widen_candidate_types to widen literals with multiple candidates
-- Reduced test failures from 37 → 31 → 22 → 20 → 13 → 11 → 9
+- ✅ **Fixed disjoint primitive intersection** - Added `string & number = never` reduction
+- Reduced test failures from 37 → 31 → 22 → 20 → 13 → 11 → 9 → 8
 
-## Redefined Priorities (2026-02-05 by Gemini Pro)
+## Redefined Priorities (2026-02-05 by Gemini)
 
 ### ✅ Priority 1: Intersection Normalization (2 tests) - COMPLETED
 **Fixed**: Added `intersection_has_null_undefined_with_object()` method in `src/solver/intern.rs`
@@ -98,7 +99,25 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 
 ---
 
-### Priority 5: Weak Types & Others (9 tests) - REMAINING ⚪
+### ✅ Priority A: Structural Core - Intersection Merging (1 test) - COMPLETED
+**Fixed**: Added disjoint primitive intersection reduction
+
+**Tests**:
+- ✅ `test_intersection_object_same_property_intersect_types`
+
+**Root Cause**: `intersect_types_raw()` didn't check for disjoint primitives like `string & number`
+
+**Solution**: Added `has_disjoint_primitives()` check that:
+1. Detects when intersection contains disjoint primitive types (string, number, boolean, bigint, symbol)
+2. Returns `never` for disjoint primitives (e.g., `string & number = never`)
+3. Handles literals correctly (e.g., `"hello" & 42 = never`)
+
+**Files Modified**:
+- `src/solver/intern.rs` - Added `PrimitiveKind` enum, `has_disjoint_primitives()`, `get_primitive_kind()`, `are_primitives_disjoint()`
+
+---
+
+### Priority 5: Weak Types & Others (8 tests) - REMAINING ⚪
 **Tests**:
 - `test_constraint_satisfaction_multiple_candidates`
 - `test_resolve_multiple_lower_bounds_union`
