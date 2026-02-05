@@ -1133,7 +1133,7 @@ impl Project {
 
         // Walk all nodes to find ImportDeclaration and ExportDeclaration
         // In the flat NodeArena, we iterate over all nodes
-        for (_idx, node) in arena.nodes.iter().enumerate() {
+        for node in arena.nodes.iter() {
             // Get the module specifier node for both imports and exports
             let specifier_idx = if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
                 arena.get_import_decl(node).map(|d| d.module_specifier)
@@ -1212,9 +1212,9 @@ impl Project {
     /// // Returns edits for all files that import utils.ts
     /// ```
     pub fn handle_will_rename_files(&mut self, renames: &[FileRename]) -> WorkspaceEdit {
-        use crate::lsp::file_rename::FileRenameProvider;
-        use crate::lsp::rename::TextEdit;
-        use crate::lsp::utils::calculate_new_relative_path;
+        
+        
+        
         use std::path::Path;
 
         let mut result = WorkspaceEdit::new();
@@ -1223,68 +1223,107 @@ impl Project {
             let old_path = Path::new(&rename.old_uri);
             let new_path = Path::new(&rename.new_uri);
 
-            // Get all files that import the old file
-            if let Some(dependents) = self.dependency_graph.get_dependents(&rename.old_uri) {
-                for dependent_path in dependents {
-                    // Get the dependent file
-                    let dep_file = match self.files.get(dependent_path) {
-                        Some(f) => f,
-                        None => continue,
-                    };
+            // Check if this is a directory rename
+            if self.is_directory(old_path) {
+                // Directory rename: expand to individual file renames
+                let files_in_dir = self.find_files_in_directory(old_path);
 
-                    // Create a provider to find import nodes
-                    let provider = FileRenameProvider::new(
-                        dep_file.arena(),
-                        dep_file.line_map(),
-                        dep_file.source_text(),
-                    );
+                for old_file_path in files_in_dir {
+                    // Compute the new path for this file
+                    // Relative path within the directory
+                    let relative = old_file_path
+                        .strip_prefix(&rename.old_uri)
+                        .unwrap_or(&old_file_path);
+                    let new_file_path = new_path.join(relative);
+                    let new_file_path_str = new_file_path.to_string_lossy().to_string();
 
-                    // Find all import/export specifiers in this file
-                    let import_locations = provider.find_import_specifier_nodes(dep_file.root());
-
-                    // For each import, check if it needs updating
-                    for import_loc in import_locations {
-                        // CRITICAL: Check if this import actually points to the renamed file
-                        // Without this check, we would rewrite ALL imports in the file
-                        let dependent_path_obj = Path::new(dependent_path);
-                        if !self.is_import_pointing_to_file(
-                            dependent_path_obj,
-                            &import_loc.current_specifier,
-                            &old_path,
-                        ) {
-                            // This import doesn't point to the renamed file, skip it
-                            continue;
-                        }
-
-                        // Calculate the new import path
-                        if let Some(new_specifier) = calculate_new_relative_path(
-                            Path::new(dependent_path),
-                            &old_path,
-                            &new_path,
-                            &import_loc.current_specifier,
-                        ) {
-                            // Create a TextEdit for this import
-                            let text_edit = TextEdit::new(import_loc.range, new_specifier);
-
-                            // Add to the result
-                            result.add_edit(dependent_path.clone(), text_edit);
-                        }
-                    }
+                    // Process this file rename
+                    self.process_file_rename(old_path, Path::new(&new_file_path_str), &mut result);
                 }
-            }
-
-            // Update the dependency graph to reflect the rename
-            // Remove old dependencies and add new ones
-            self.dependency_graph.remove_file(&rename.old_uri);
-            if let Some(dependents) = self.dependency_graph.get_dependents(&rename.old_uri) {
-                for _dependent in dependents {
-                    // The dependent files now need to point to the new path
-                    // This will be updated when those files are re-checked
-                }
+            } else {
+                // Single file rename
+                self.process_file_rename(old_path, new_path, &mut result);
             }
         }
 
         result
+    }
+
+    /// Process a single file rename (internal helper).
+    ///
+    /// Updates imports in all dependent files that reference the renamed file.
+    fn process_file_rename(
+        &mut self,
+        old_path: &Path,
+        new_path: &Path,
+        result: &mut WorkspaceEdit,
+    ) {
+        use crate::lsp::file_rename::FileRenameProvider;
+        use crate::lsp::rename::TextEdit;
+        use crate::lsp::utils::calculate_new_relative_path;
+        use std::path::Path;
+
+        let old_uri = old_path.to_string_lossy().to_string();
+
+        // Get all files that import the old file
+        if let Some(dependents) = self.dependency_graph.get_dependents(&old_uri) {
+            for dependent_path in dependents {
+                // Get the dependent file
+                let dep_file = match self.files.get(dependent_path) {
+                    Some(f) => f,
+                    None => continue,
+                };
+
+                // Create a provider to find import nodes
+                let provider = FileRenameProvider::new(
+                    dep_file.arena(),
+                    dep_file.line_map(),
+                    dep_file.source_text(),
+                );
+
+                // Find all import/export specifiers in this file
+                let import_locations = provider.find_import_specifier_nodes(dep_file.root());
+
+                // For each import, check if it needs updating
+                for import_loc in import_locations {
+                    // CRITICAL: Check if this import actually points to the renamed file
+                    // Without this check, we would rewrite ALL imports in the file
+                    let dependent_path_obj = Path::new(dependent_path);
+                    if !self.is_import_pointing_to_file(
+                        dependent_path_obj,
+                        &import_loc.current_specifier,
+                        old_path,
+                    ) {
+                        // This import doesn't point to the renamed file, skip it
+                        continue;
+                    }
+
+                    // Calculate the new import path
+                    if let Some(new_specifier) = calculate_new_relative_path(
+                        Path::new(dependent_path),
+                        old_path,
+                        new_path,
+                        &import_loc.current_specifier,
+                    ) {
+                        // Create a TextEdit for this import
+                        let text_edit = TextEdit::new(import_loc.range, new_specifier);
+
+                        // Add to the result
+                        result.add_edit(dependent_path.clone(), text_edit);
+                    }
+                }
+            }
+        }
+
+        // Update the dependency graph to reflect the rename
+        // Remove old dependencies and add new ones
+        self.dependency_graph.remove_file(&old_uri);
+        if let Some(dependents) = self.dependency_graph.get_dependents(&old_uri) {
+            for _dependent in dependents {
+                // The dependent files now need to point to the new path
+                // This will be updated when those files are re-checked
+            }
+        }
     }
 
     /// Fetch a file by name.
@@ -1330,6 +1369,49 @@ impl Project {
         }
 
         false
+    }
+
+    /// Check if a path represents a directory (vs a file).
+    ///
+    /// This is a heuristic check for LSP file rename operations.
+    /// In a real LSP server, you would use file system metadata, but here
+    /// we check if the path exists in our project as a prefix to other files.
+    fn is_directory(&self, path: &Path) -> bool {
+        let path_str = path.to_string_lossy();
+        let path_str_ref = path_str.as_ref();
+
+        // Check if any file in the project has this path as a prefix
+        for file_path in self.files.keys() {
+            if file_path.starts_with(path_str_ref) {
+                // Ensure it's a proper directory separator
+                let rest = &file_path[path_str_ref.len()..];
+                if rest.starts_with('/') || rest.starts_with('\\') {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Recursively find all TypeScript files within a directory path.
+    ///
+    /// Returns all .ts and .tsx files that have the given directory as a prefix.
+    fn find_files_in_directory(&self, directory: &Path) -> Vec<String> {
+        let dir_str = directory.to_string_lossy();
+        let dir_str_ref = dir_str.as_ref();
+        let mut result = Vec::new();
+
+        for file_path in self.files.keys() {
+            if file_path.starts_with(dir_str_ref) {
+                // Check if it's a .ts or .tsx file (not a directory)
+                if file_path.ends_with(".ts") || file_path.ends_with(".tsx") {
+                    result.push(file_path.clone());
+                }
+            }
+        }
+
+        result
     }
 
     /// Go to definition within a single file.
