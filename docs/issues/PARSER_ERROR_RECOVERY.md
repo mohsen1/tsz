@@ -9,14 +9,16 @@
 
 tsz's parser error recovery produces different (usually more) errors than TSC when parsing malformed code. This causes many parser conformance tests to fail.
 
-## Conformance Stats
+## Conformance Stats (Updated 2026-02-05)
 
-- Parser tests: 50.3% pass rate (420/835)
+- Parser tests: 52.8% pass rate (448/848)
 - Top error mismatches:
-  - TS2304: missing=35, extra=84 (cannot find name)
-  - TS1005: missing=29, extra=32 (token expected)
-  - TS1109: missing=11, extra=28 (expression expected)
-  - TS1128: missing=2, extra=28 (declaration expected)
+  - TS2304: missing=35, extra=80 (cannot find name) - mostly lib loading bug
+  - TS1005: missing=25, extra=28 (token expected)
+  - TS1109: missing=11, extra=25 (expression expected)
+  - TS1128: missing=2, extra=25 (declaration expected)
+  - TS2552: missing=7, extra=19 (name typo suggestion)
+  - TS1100: missing=11, extra=0 (invalid use of eval/arguments)
 
 **Note**: Many TS2304 errors are caused by the default lib loading bug (see DEFAULT_LIB_LOADING_BUG.md).
 
@@ -103,6 +105,30 @@ Fixed issue where `class C { public }` caused TS1068 errors because the parser w
 
 **File**: `src/parser/state_statements.rs` - `should_stop_class_member_modifier()`
 
+### TS1132 for leading comma in enum members (commit later)
+
+Fixed `enum E { , }` to emit TS1132 "Enum member expected" instead of generic TS1003 "Identifier expected".
+
+**File**: `src/parser/state_declarations.rs` - `parse_enum_members()`
+
+### TS1357 for invalid tokens after enum member name (commit 0299d37)
+
+Fixed `enum E { a: 1 }` to emit TS1357 "An enum member name must be followed by a ',', '=', or '}'" instead of TS1005.
+
+**File**: `src/parser/state_declarations.rs` - `parse_enum_members()`
+
+### TS1005 for shorthand properties with non-identifiers (commit 569e5bd)
+
+Fixed `{ class }`, `{ "" }`, and `{ 0 }` to emit TS1005 "':' expected" because shorthand properties only work with identifiers.
+
+**File**: `src/parser/state_expressions.rs` - `parse_property_assignment()`
+
+### TS1162 for optional markers in object literals (commit 1277c58)
+
+Fixed `{ name? }` to emit TS1162 "An object member cannot be declared optional" instead of TS1005.
+
+**File**: `src/parser/state_expressions.rs` - `parse_property_assignment()`
+
 ## Recommended Approach
 
 1. **Short-term**: Focus on other conformance improvements
@@ -118,5 +144,9 @@ Fixed issue where `class C { public }` caused TS1068 errors because the parser w
 
 Run parser conformance tests:
 ```bash
-./scripts/conformance.sh run --filter parser
+cd conformance-rust && cargo run --release --bin tsz-conformance -- \
+  --filter parser --all \
+  --test-dir ../TypeScript/tests/cases \
+  --tsz-binary ../.target/release/tsz \
+  --cache-file ../tsc-cache-full.json
 ```

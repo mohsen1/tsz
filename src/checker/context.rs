@@ -168,6 +168,19 @@ pub struct EnclosingClassInfo {
     pub in_static_method: bool,
 }
 
+/// Info about a label in scope for break/continue validation.
+#[derive(Clone, Debug)]
+pub struct LabelInfo {
+    /// The label name (e.g., "outer").
+    pub name: String,
+    /// Whether the label is on an iteration statement (for continue validation).
+    /// Only iteration labels can be targets of continue statements.
+    pub is_iteration: bool,
+    /// The function depth when this label was defined.
+    /// Used to detect if a jump crosses a function boundary.
+    pub function_depth: u32,
+}
+
 /// Persistent cache for type checking results across LSP queries.
 /// This cache survives between LSP requests but is invalidated when the file changes.
 #[derive(Clone, Debug)]
@@ -574,6 +587,31 @@ pub struct CheckerContext<'a> {
     /// This prevents widening of literal types in object/array literals.
     pub in_const_assertion: bool,
 
+    // --- Control Flow Validation ---
+    /// Depth of nested iteration statements (for/while/do-while).
+    /// Used to validate break/continue statements.
+    pub iteration_depth: u32,
+
+    /// Depth of nested switch statements.
+    /// Used to validate break statements (break is valid in switch).
+    pub switch_depth: u32,
+
+    /// Depth of nested functions.
+    /// Used to detect when labeled jumps cross function boundaries.
+    pub function_depth: u32,
+
+    /// Stack of labels in scope.
+    /// Each entry contains (label_name, is_iteration, function_depth_when_defined).
+    /// Used for labeled break/continue validation.
+    pub label_stack: Vec<LabelInfo>,
+
+    /// Whether there was a loop/switch in an outer function scope.
+    /// Used to determine TS1107 vs TS1105 for unlabeled break statements.
+    /// When true, an unlabeled break inside a function should emit TS1107,
+    /// because the break is "trying" to exit the outer loop but can't cross
+    /// the function boundary.
+    pub had_outer_loop: bool,
+
     /// Fuel counter for type resolution operations.
     /// Decremented on each type resolution to prevent timeout on pathological types.
     /// When exhausted, type resolution returns ERROR to prevent infinite loops.
@@ -678,6 +716,11 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            iteration_depth: 0,
+            switch_depth: 0,
+            function_depth: 0,
+            label_stack: Vec::new(),
+            had_outer_loop: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -766,6 +809,11 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            iteration_depth: 0,
+            switch_depth: 0,
+            function_depth: 0,
+            label_stack: Vec::new(),
+            had_outer_loop: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -857,6 +905,11 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            iteration_depth: 0,
+            switch_depth: 0,
+            function_depth: 0,
+            label_stack: Vec::new(),
+            had_outer_loop: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -947,6 +1000,11 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            iteration_depth: 0,
+            switch_depth: 0,
+            function_depth: 0,
+            label_stack: Vec::new(),
+            had_outer_loop: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -1045,6 +1103,11 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            iteration_depth: 0,
+            switch_depth: 0,
+            function_depth: 0,
+            label_stack: Vec::new(),
+            had_outer_loop: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),

@@ -109,6 +109,51 @@ pub trait StatementCheckCallbacks {
     ) {
         // Default: no exhaustiveness checking
     }
+
+    /// Check a break statement for validity.
+    /// TS1105: A 'break' statement can only be used within an enclosing iteration statement.
+    fn check_break_statement(&mut self, stmt_idx: NodeIndex);
+
+    /// Check a continue statement for validity.
+    /// TS1104: A 'continue' statement can only be used within an enclosing iteration statement.
+    fn check_continue_statement(&mut self, stmt_idx: NodeIndex);
+
+    /// Enter an iteration statement (for/while/do-while/for-in/for-of).
+    /// Increments iteration_depth for break/continue validation.
+    fn enter_iteration_statement(&mut self);
+
+    /// Leave an iteration statement.
+    /// Decrements iteration_depth.
+    fn leave_iteration_statement(&mut self);
+
+    /// Enter a switch statement.
+    /// Increments switch_depth for break validation.
+    fn enter_switch_statement(&mut self);
+
+    /// Leave a switch statement.
+    /// Decrements switch_depth.
+    fn leave_switch_statement(&mut self);
+
+    /// Save current iteration/switch context and reset it.
+    /// Used when entering a function body (function creates new context).
+    /// Returns the saved (iteration_depth, switch_depth, had_outer_loop).
+    fn save_and_reset_control_flow_context(&mut self) -> (u32, u32, bool);
+
+    /// Restore previously saved iteration/switch context.
+    /// Used when leaving a function body.
+    fn restore_control_flow_context(&mut self, saved: (u32, u32, bool));
+
+    /// Enter a labeled statement.
+    /// Pushes a label onto the label stack for break/continue validation.
+    /// `is_iteration` should be true if the labeled statement wraps an iteration statement.
+    fn enter_labeled_statement(&mut self, label: String, is_iteration: bool);
+
+    /// Leave a labeled statement.
+    /// Pops the label from the label stack.
+    fn leave_labeled_statement(&mut self);
+
+    /// Get the text of a node (used for getting label names).
+    fn get_node_text(&self, idx: NodeIndex) -> Option<String>;
 }
 
 /// Statement type checker that dispatches to specialized handlers.
@@ -215,7 +260,9 @@ impl StatementChecker {
                 };
                 if let Some((condition, statement)) = loop_data {
                     state.get_type_of_node(condition);
+                    state.enter_iteration_statement();
                     state.check_statement(statement);
+                    state.leave_iteration_statement();
                 }
             }
             syntax_kind_ext::FOR_STATEMENT => {
@@ -249,7 +296,9 @@ impl StatementChecker {
                     if !incrementor.is_none() {
                         state.get_type_of_node(incrementor);
                     }
+                    state.enter_iteration_statement();
                     state.check_statement(statement);
+                    state.leave_iteration_statement();
                 }
             }
             syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
@@ -295,7 +344,9 @@ impl StatementChecker {
                     } else {
                         state.get_type_of_node(initializer);
                     }
+                    state.enter_iteration_statement();
                     state.check_statement(statement);
+                    state.leave_iteration_statement();
                 }
             }
             syntax_kind_ext::SWITCH_STATEMENT => {
@@ -327,6 +378,9 @@ impl StatementChecker {
                         // Track if there's a default clause (for exhaustiveness checking)
                         let mut has_default = false;
 
+                        // Enter switch context for break validation
+                        state.enter_switch_statement();
+
                         for clause_idx in clauses {
                             // Extract clause data
                             let clause_data = {
@@ -354,6 +408,9 @@ impl StatementChecker {
                                 }
                             }
                         }
+
+                        // Leave switch context
+                        state.leave_switch_statement();
 
                         // Check exhaustiveness (Task 12: CFA Diagnostics)
                         state.check_switch_exhaustiveness(
@@ -426,11 +483,14 @@ impl StatementChecker {
             syntax_kind_ext::ENUM_DECLARATION => {
                 state.check_enum_duplicate_members(stmt_idx);
             }
-            syntax_kind_ext::EMPTY_STATEMENT
-            | syntax_kind_ext::DEBUGGER_STATEMENT
-            | syntax_kind_ext::BREAK_STATEMENT
-            | syntax_kind_ext::CONTINUE_STATEMENT => {
+            syntax_kind_ext::EMPTY_STATEMENT | syntax_kind_ext::DEBUGGER_STATEMENT => {
                 // No action needed
+            }
+            syntax_kind_ext::BREAK_STATEMENT => {
+                state.check_break_statement(stmt_idx);
+            }
+            syntax_kind_ext::CONTINUE_STATEMENT => {
+                state.check_continue_statement(stmt_idx);
             }
             syntax_kind_ext::IMPORT_DECLARATION => {
                 state.check_import_declaration(stmt_idx);
@@ -447,11 +507,75 @@ impl StatementChecker {
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => {
                 state.check_function_declaration(stmt_idx);
             }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                // Extract labeled statement data before mutable operations
+                let labeled_data = {
+                    let arena = state.arena();
+                    let node = arena.get(stmt_idx).unwrap();
+                    arena
+                        .get_labeled_statement(node)
+                        .map(|l| (l.label, l.statement))
+                };
+
+                if let Some((label_idx, statement_idx)) = labeled_data {
+                    // Get the label name
+                    let label_name = state.get_node_text(label_idx).unwrap_or_default();
+
+                    // Determine if the labeled statement wraps an iteration statement
+                    // This checks recursively through nested labels (e.g., target1: target2: while(...))
+                    let is_iteration = {
+                        let arena = state.arena();
+                        Self::is_iteration_or_nested_iteration(arena, statement_idx)
+                    };
+
+                    // Push label onto stack
+                    state.enter_labeled_statement(label_name, is_iteration);
+
+                    // Check the contained statement
+                    state.check_statement(statement_idx);
+
+                    // Pop label from stack
+                    state.leave_labeled_statement();
+                }
+            }
             _ => {
                 // Catch-all for other statement types
                 state.get_type_of_node(stmt_idx);
             }
         }
+    }
+
+    /// Check if a statement is an iteration statement, either directly or through nested labels.
+    /// This handles cases like `target1: target2: while(true)` where both target1 and target2
+    /// should be considered as wrapping an iteration statement.
+    fn is_iteration_or_nested_iteration(
+        arena: &crate::parser::node::NodeArena,
+        stmt_idx: crate::parser::NodeIndex,
+    ) -> bool {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            return false;
+        };
+
+        // Check if it's directly an iteration statement
+        if matches!(
+            stmt_node.kind,
+            syntax_kind_ext::FOR_STATEMENT
+                | syntax_kind_ext::FOR_IN_STATEMENT
+                | syntax_kind_ext::FOR_OF_STATEMENT
+                | syntax_kind_ext::WHILE_STATEMENT
+                | syntax_kind_ext::DO_STATEMENT
+        ) {
+            return true;
+        }
+
+        // Check if it's a labeled statement wrapping an iteration (recursively)
+        if stmt_node.kind == syntax_kind_ext::LABELED_STATEMENT {
+            if let Some(labeled) = arena.get_labeled_statement(stmt_node) {
+                return Self::is_iteration_or_nested_iteration(arena, labeled.statement);
+            }
+        }
+
+        false
     }
 }
 

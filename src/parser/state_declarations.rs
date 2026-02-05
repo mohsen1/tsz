@@ -64,6 +64,24 @@ impl ParserState {
             None
         };
 
+        // Check for duplicate extends clause: interface I extends A extends B { }
+        if self.is_token(SyntaxKind::ExtendsKeyword) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "'extends' clause already seen.",
+                diagnostic_codes::EXTENDS_CLAUSE_ALREADY_SEEN,
+            );
+            // Skip the duplicate extends and its types for recovery
+            self.next_token();
+            while self.is_identifier_or_keyword() || self.is_token(SyntaxKind::CommaToken) {
+                self.next_token();
+                if self.is_token(SyntaxKind::LessThanToken) {
+                    // Skip type arguments
+                    let _ = self.parse_type_arguments();
+                }
+            }
+        }
+
         // Parse interface body
         self.parse_expected(SyntaxKind::OpenBraceToken);
         let members = self.parse_type_members();
@@ -620,6 +638,16 @@ impl ParserState {
         {
             let start_pos = self.token_pos();
 
+            // Handle leading comma - emit TS1132 "Enum member expected" and skip
+            if self.is_token(SyntaxKind::CommaToken) {
+                self.parse_error_at_current_token(
+                    "Enum member expected.",
+                    diagnostic_codes::ENUM_MEMBER_EXPECTED,
+                );
+                self.next_token(); // Skip the comma
+                continue;
+            }
+
             // Enum member names can be identifiers, string literals, or computed property names
             // Computed property names ([x]) are not valid in enums but we recover gracefully
             let name = if self.is_token(SyntaxKind::OpenBracketToken) {
@@ -636,6 +664,32 @@ impl ParserState {
             } else {
                 self.parse_identifier_name()
             };
+
+            // Check for unexpected token after enum member name - emit TS1357
+            // Valid tokens after name are: '=', ',', '}'
+            if !self.is_token(SyntaxKind::EqualsToken)
+                && !self.is_token(SyntaxKind::CommaToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                self.parse_error_at_current_token(
+                    "An enum member name must be followed by a ',', '=', or '}'.",
+                    diagnostic_codes::ENUM_MEMBER_NAME_MUST_BE_FOLLOWED_BY,
+                );
+                // Skip to next comma, closing brace, or EOF to recover
+                while !self.is_token(SyntaxKind::CommaToken)
+                    && !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    self.next_token();
+                }
+                // Also skip the comma if we landed on one to avoid triggering TS1132
+                // on the next iteration
+                if self.is_token(SyntaxKind::CommaToken) {
+                    self.next_token();
+                }
+                continue;
+            }
 
             let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
                 self.parse_assignment_expression()
