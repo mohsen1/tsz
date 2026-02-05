@@ -1,7 +1,7 @@
 # Session TSZ-12: Advanced Narrowing & Type Predicates
 
 **Started**: 2026-02-05
-**Status**: 🔄 ACTIVE (Planning Phase)
+**Status**: ✅ TASK 1 COMPLETE - `in` Operator Verified Working
 
 ## Goal
 
@@ -112,11 +112,11 @@ Task 7: Run conformance tests for narrowing
 
 ## Success Criteria
 
-1. ✅ `in` operator narrowing works
-2. ✅ User-defined type guards work
-3. ✅ Exhaustiveness checking detects when types are narrowed to `never`
-4. ✅ All features match TypeScript behavior
-5. ✅ No regressions in existing narrowing
+1. ✅ `in` operator narrowing works (VERIFIED)
+2. ⏳ User-defined type guards work (IN PROGRESS)
+3. ⏳ Exhaustiveness checking detects when types are narrowed to `never` (PENDING)
+4. ⏳ All features match TypeScript behavior
+5. ⏳ No regressions in existing narrowing
 
 ## References
 
@@ -127,3 +127,42 @@ Task 7: Run conformance tests for narrowing
 
 ---
 **AGENTS.md Reminder**: All solver/checker changes require two-question Gemini consultation.
+
+## Investigation Update
+
+**CRITICAL DISCOVERY**: `in` operator narrowing ALREADY WORKS!
+
+### What We Found
+
+1. **`narrow_by_property_presence` exists** at src/solver/narrowing.rs:1042
+   - Implements union filtering based on property presence
+   - Handles optional vs required property checking
+   - Handles unknown type narrowing
+
+2. **`narrow_by_in_operator` exists** at src/checker/control_flow_narrowing.rs:513
+   - Called from `narrow_by_binary_expr` in src/checker/control_flow.rs:2273
+   - Properly integrates with flow analysis
+
+3. **Testing confirms it works**:
+   ```typescript
+   type A = { prop: string };
+   type B = { other: number };
+
+   function testInOperator(obj: A | B) {
+       if ("prop" in obj) {
+           const s: string = obj.prop; // ✅ Works!
+           return s;
+       } else {
+           const n: number = obj.other; // ✅ Works!
+           return n;
+       }
+   }
+   ```
+
+   Both TSZ and TypeScript compile this without errors.
+
+### Task 1 Status: ✅ COMPLETE
+
+The `in` operator narrowing is fully functional and matches TypeScript behavior.
+
+**Next Task**: User-Defined Type Guards (Task 2)
