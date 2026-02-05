@@ -11,6 +11,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 GITHOOKS_DIR="$ROOT_DIR/scripts/githooks"
+GIT_HOOKS_DIR="$ROOT_DIR/.git/hooks"
 
 echo "Installing git hooks..."
 
@@ -24,6 +25,25 @@ fi
 if ! git -C "$ROOT_DIR" rev-parse --git-dir > /dev/null 2>&1; then
     echo "Error: Not a git repository"
     exit 1
+fi
+
+# Clean up any stale symlinks or old hooks in .git/hooks/ that might conflict
+# This is important when core.hooksPath is set - old symlinks can cause issues
+if [ -d "$GIT_HOOKS_DIR" ]; then
+    echo "Cleaning up stale hooks in .git/hooks/..."
+    for hook in pre-commit prepare-commit-msg commit-msg post-commit pre-push; do
+        hook_path="$GIT_HOOKS_DIR/$hook"
+        if [ -L "$hook_path" ]; then
+            echo "  Removing stale symlink: $hook"
+            rm -f "$hook_path"
+        elif [ -f "$hook_path" ] && [ ! -f "$hook_path.sample" ]; then
+            # It's a real file (not a .sample), back it up
+            if ! grep -q "scripts/githooks" "$hook_path" 2>/dev/null; then
+                echo "  Backing up old hook: $hook -> $hook.bak"
+                mv "$hook_path" "$hook_path.bak"
+            fi
+        fi
+    done
 fi
 
 # Configure git to use scripts/githooks directory

@@ -4286,8 +4286,6 @@ fn test_void_return_exception_constructors() {
 
     // new () => void
     let void_ctor = interner.object(vec![PropertyInfo {
-        visibility: Visibility::Public,
-        parent_id: None,
         name: interner.intern_string("constructor"),
         type_id: interner.function(FunctionShape {
             params: Vec::new(),
@@ -4308,8 +4306,6 @@ fn test_void_return_exception_constructors() {
 
     // new () => Instance
     let instance_ctor = interner.object(vec![PropertyInfo {
-        visibility: Visibility::Public,
-        parent_id: None,
         name: interner.intern_string("constructor"),
         type_id: interner.function(FunctionShape {
             params: Vec::new(),
@@ -4428,6 +4424,8 @@ fn test_method_bivariance_allows_derived_methods() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // With method bivariance (default), derived method with narrower parameter is assignable
@@ -4528,6 +4526,8 @@ fn test_method_bivariance_persists_with_strict_function_types() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Methods are still bivariant even with strictFunctionTypes
@@ -4593,7 +4593,9 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         write_type: TypeId::ANY,
         optional: false,
         readonly: false,
-        is_method: true, // IS a method        visibility: Visibility::Public,        parent_id: None,
+        is_method: true, // IS a method
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_with_animal_method = interner.object(vec![PropertyInfo {
@@ -4602,7 +4604,9 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         write_type: TypeId::ANY,
         optional: false,
         readonly: false,
-        is_method: true, // IS a method        visibility: Visibility::Public,        parent_id: None,
+        is_method: true, // IS a method
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Methods are bivariant even with strictFunctionTypes
