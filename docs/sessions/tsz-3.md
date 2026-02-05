@@ -22,7 +22,17 @@ also need their relative imports updated.
 3. For each file, find its dependents and update their imports
 4. Handle relative imports inside the renamed directory
 
-**Status**: Planning phase
+**Status**: ✅ COMPLETE
+
+**Implementation**:
+- Added `is_directory()` helper to detect directory paths
+- Added `find_files_in_directory()` helper to list all .ts/.tsx files in a directory
+- Refactored `handle_will_rename_files()` to detect directory renames
+- Created `process_file_rename()` helper to handle single file renames
+- When directory renamed: expands to individual file renames with proper path computation
+
+**Value**: Renaming a directory now correctly updates all imports across the project,
+including both imports into the directory and imports between files within the directory.
 
 ## Completed Work
 
