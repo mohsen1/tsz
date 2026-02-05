@@ -25,7 +25,32 @@
 
 **Strategic Shift**: After consulting with Gemini, shifting focus to implementing critical missing TypeScript diagnostic codes that would most improve conformance.
 
-## Task Breakdown (Priority Order per Gemini Redefinition - 2025-02-05 POST-TS2416)
+## Session Redefined (2025-02-05 - POST-TASK #32 COMPLETION)
+
+**Strategic Position**: Task #32 (Graph Isomorphism) core implementation is complete. Moving to "Canonical Suite" completion phase.
+
+### Redefined Priorities
+
+| Priority | Task | Title | Status |
+|:---|:---|:---|:---|
+| **1** | **#35** | **Callable & Intersection Canonicalization** | 📋 **NEXT** |
+| **2** | **#36** | **Judge Integration: Structural Identity Fast-Path** | 📝 Planned |
+| **3** | **#37** | **Deep Structural Simplification** | 📝 Planned |
+| **4** | **#11** | **Refined Narrowing for Discriminated Unions** | 📝 Planned |
+
+**Task #32 Status**: ✅ Core Complete (see `docs/sessions/tsz-1-task32-wip.md`)
+- Canonicalizer implemented with De Bruijn indices
+- Application and Function canonicalization complete
+- Integration API (`are_types_structurally_identical`) added
+- 8/8 tests passing
+
+## Task Breakdown (Priority Order per Gemini Redefinition - 2025-02-05)
+
+### Priority 1: Task #35 - Completing the Canonical Suite 📋 NEXT IMMEDIATE
+**Status**: Ready to start
+**Why**: Complete coverage for objects with methods and proper intersection handling
+
+**Description**: See `docs/sessions/tsz-1-task35-wip.md` for full implementation plan.
 
 ### Priority 1: Index Signature Structural Compatibility ✅ ALREADY IMPLEMENTED
 **Status**: ✅ Complete (Discovered 2025-02-05)
