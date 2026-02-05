@@ -161,14 +161,54 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 self.interner.intersection(c_members)
             }
 
-            TypeKey::Function(_shape_id) => {
-                // For now, preserve function type as-is
-                // TODO: Canonicalize parameter and return types if needed
-                type_id
+            // Generic type application (e.g., Box<string>)
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                // Canonicalize base type
+                let c_base = self.canonicalize(app.base);
+                // Canonicalize all generic arguments
+                let c_args: Vec<TypeId> =
+                    app.args.iter().map(|&arg| self.canonicalize(arg)).collect();
+                self.interner.application(c_base, c_args)
+            }
+
+            TypeKey::Function(shape_id) => {
+                let shape = self.interner.function_shape(shape_id);
+                // Canonicalize this_type if present
+                let c_this_type = shape.this_type.map(|t| self.canonicalize(t));
+                // Canonicalize return type
+                let c_return_type = self.canonicalize(shape.return_type);
+                // Canonicalize parameter types
+                let c_params: Vec<crate::solver::types::ParamInfo> = shape
+                    .params
+                    .iter()
+                    .map(|p| crate::solver::types::ParamInfo {
+                        name: p.name,
+                        type_id: self.canonicalize(p.type_id),
+                        optional: p.optional,
+                        rest: p.rest,
+                    })
+                    .collect();
+                // Type params are just metadata (names/constraints) - preserve as-is
+                let type_params = shape.type_params.clone();
+                let type_predicate = shape.type_predicate.clone();
+
+                let new_shape = crate::solver::types::FunctionShape {
+                    type_params,
+                    params: c_params,
+                    this_type: c_this_type,
+                    return_type: c_return_type,
+                    type_predicate,
+                    is_constructor: shape.is_constructor,
+                    is_method: shape.is_method,
+                };
+
+                self.interner.function(new_shape)
             }
 
             TypeKey::Callable(_shape_id) => {
                 // For now, preserve callable type as-is
+                // TODO: Canonicalize parameter and return types if needed
                 type_id
             }
 
