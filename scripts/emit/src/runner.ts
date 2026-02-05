@@ -30,8 +30,8 @@ const BASELINES_DIR = path.join(TS_DIR, 'tests/baselines/reference');
 const CACHE_DIR = path.join(__dirname, '../.cache');
 
 // Configuration
-const TEST_TIMEOUT_MS = 400;   // 400ms timeout per test (legacy, kept for compatibility)
-const CLI_TIMEOUT_MS = 400;    // 400ms timeout per test
+const TEST_TIMEOUT_MS = 2000;  // 2000ms timeout per test (increased for CLI overhead)
+const CLI_TIMEOUT_MS = 2000;   // 2000ms timeout per test (increased for CLI overhead)
 
 // ANSI colors
 const colors = {
