@@ -106,9 +106,15 @@ QUESTIONS:
 
 ---
 
+<<<<<<< HEAD
 ## Phase 2: Property Access & Assignment Narrowing (HIGH PRIORITY)
 
 **Goal**: Implement narrowing for property existence checks and variable reassignments.
+=======
+## Status Update: SESSION COMPLETE ✅ (2026-02-05)
+
+**All 3 critical bugs have been fixed!**
+>>>>>>> d9f00fc10 (fix(tsz-10): implement discriminant narrowing for optional properties)
 
 ### Task 2.1: Property Access Narrowing
 **File**: `src/solver/narrowing.rs`
@@ -134,6 +140,48 @@ function foo(x: { a: number } | { b: string }) {
 **Status**: ⏸️ DEFERRED (after Task 2.1)
 
 **Description**: Track type changes across variable reassignments.
+
+3. ✅ **Optional Properties** - FIXED
+   - Updated `get_type_at_path` to use `resolve_property_access` (Solver)
+   - Fixed guard extraction to return discriminant base (Checker)
+   - Both changes work together to enable discriminant narrowing for optional properties
+
+### Implementation Details
+
+#### Solver Fix: `src/solver/narrowing.rs`
+
+Changed `get_type_at_path` to use `resolve_property_access` instead of manual property finding:
+- Properly handles optional properties via `optional_property_type`
+- Returns `undefined | T` for optional properties
+- Handles index signatures, mapped types, and other complex cases
+
+#### Checker Fix: `src/checker/control_flow_narrowing.rs`
+
+Fixed `discriminant_property_info` and `discriminant_comparison` to return the base of the property access:
+- Changed return type from `(Atom, bool)` to `(Atom, bool, NodeIndex)`
+- Returns the base node (e.g., `x`) instead of the full access (e.g., `x.type`)
+- This allows the guard to match the target variable correctly
+
+### Test Results
+
+**Working:**
+```typescript
+type Opt = { type?: "stop", value: number } | { type: "go", flag: boolean };
+declare const x: Opt;
+
+if (x.type === "stop") {
+    const v: number = x.value; // ✅ Works! x is narrowed to { type?: "stop", value: number }
+}
+```
+
+**Known Limitation:**
+```typescript
+if (x.type === "stop") {
+    const y: "stop" = x.type; // ❌ Error: Type '"stop" | undefined' is not assignable to type '"stop"'
+}
+```
+
+This is a separate issue - the discriminant property access itself should be narrowed to exclude `undefined` in the true branch. This is tracked separately from TSZ-10.
 
 **Examples**:
 ```typescript

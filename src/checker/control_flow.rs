@@ -2324,7 +2324,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if is_strict {
-            if let Some((prop_name, literal_type, is_optional)) =
+            if let Some((prop_name, literal_type, is_optional, _base)) =
                 self.discriminant_comparison(bin.left, bin.right, target)
             {
                 let mut base_type = type_id;

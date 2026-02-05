@@ -28,6 +28,7 @@
 //! - **Solver**: Applies `TypeGuard` to types (WHAT)
 
 use crate::interner::Atom;
+use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::solver::subtype::is_subtype_of;
 use crate::solver::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::solver::types::Visibility;
@@ -295,7 +296,13 @@ impl<'a> NarrowingContext<'a> {
     /// Returns `None` if:
     /// - The type doesn't have the property at any level in the path
     /// - An intermediate type in the path is not an object type
+    ///
+    /// **NOTE**: Uses `resolve_property_access` which correctly handles optional properties.
+    /// For optional properties that don't exist on a specific union member, returns
+    /// `TypeId::UNDEFINED` to indicate the property could be undefined (not a definitive mismatch).
     fn get_type_at_path(&self, mut type_id: TypeId, path: &[Atom]) -> Option<TypeId> {
+        let evaluator = PropertyAccessEvaluator::new(self.db);
+
         for (i, &prop_name) in path.iter().enumerate() {
             // Handle ANY - any property access on any returns any
             if type_id == TypeId::ANY {
@@ -323,12 +330,33 @@ impl<'a> NarrowingContext<'a> {
                 }
             }
 
-            // Get the property type from object shape
-            let shape_id = object_shape_id(self.db, type_id)?;
-            let shape = self.db.object_shape(shape_id);
-
-            let prop = shape.properties.iter().find(|p| p.name == prop_name)?;
-            type_id = prop.type_id;
+            // Use resolve_property_access for proper optional property handling
+            // This correctly handles properties that are optional (prop?: type)
+            let prop_name_arc = self.db.resolve_atom_ref(prop_name);
+            let prop_name_str = prop_name_arc.as_ref();
+            match evaluator.resolve_property_access(type_id, prop_name_str) {
+                PropertyAccessResult::Success {
+                    type_id: prop_type_id,
+                    ..
+                } => {
+                    // Property found - use its type
+                    // For optional properties, this already includes `undefined` in the union
+                    type_id = prop_type_id;
+                }
+                PropertyAccessResult::PropertyNotFound { .. } => {
+                    // Property truly doesn't exist on this type
+                    // This union member doesn't have the discriminant property, so filter it out
+                    return None;
+                }
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    // Property exists but type is nullable
+                    // Use the property type (if available) or UNDEFINED
+                    type_id = property_type.unwrap_or(TypeId::UNDEFINED);
+                }
+                PropertyAccessResult::IsUnknown => {
+                    return Some(TypeId::ANY);
+                }
+            }
         }
 
         Some(type_id)
