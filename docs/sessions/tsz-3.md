@@ -35,19 +35,42 @@ failures signal Solver's resolution and cycle-detection are fragile.
 
 ---
 
-## Task 2: Truthiness Narrowing (🔄 ACTIVE - QUICK WIN)
+## Task 2: Truthiness Narrowing (🔄 CRITICAL FINDING - BLOCKED)
 
 **Test**: `test_truthiness_false_branch_narrows_to_falsy`
 
-**Why First**: Most isolated task, likely simple fix.
+**Status**: ⚠️ FIX IDENTIFIED BUT BLOCKED BY CIRCULAR EXTENDS
 
-**Expected**: False branch of `if (x)` where `x: string | number | boolean | null | undefined` narrows to falsy values.
+**What I Found** (2026-02-05):
+- Bug in `narrow_to_falsy` at line 1936-1943
+- Code returns primitive type (e.g., `TypeId::STRING`) instead of falsy literal (e.g., `""`)
+- Comment says "TypeScript does NOT narrow" but that's WRONG
 
-**File**: `src/solver/narrowing.rs` - `narrow_by_truthiness`
+**Fix Applied** (commit 360c66e00 - REVERTED):
+```rust
+// CRITICAL FIX: TypeScript DOES narrow primitives to falsy literals
+match resolved {
+    TypeId::STRING => return self.db.literal_string(""),
+    TypeId::NUMBER => return self.db.literal_number(0.0),
+    TypeId::BIGINT => return self.db.literal_bigint("0"),
+    TypeId::BOOLEAN => return self.db.literal_boolean(false),
+    _ => {}
+}
+```
 
-**Hypothesis**: Missing `resolve_type()` or `evaluate()` call.
+**Result**: ✅ Fixes truthiness test BUT ❌ Breaks SAME 5 circular extends tests
 
-**Estimated Complexity**: LOW (30 minutes - 1 hour)
+**Critical Discovery**: BOTH assertion fix AND truthiness fix break the same 5 circular extends tests!
+
+**Implications**:
+- The circular extends tests are FRAGILE - they pass when certain narrowing DON'T happen
+- ANY narrowing that forces type resolution breaks these tests
+- This is NOT about fix correctness - both fixes are logically valid TypeScript semantics
+- The tests themselves may be testing incorrect behavior, OR the solver's circularity detection is fundamentally broken
+
+**File**: `src/solver/narrowing.rs:1936-1943`
+
+**Estimated Complexity**: CRITICAL BLOCKER - must solve circular extends first
 
 ---
 
