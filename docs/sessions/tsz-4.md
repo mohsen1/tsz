@@ -272,12 +272,28 @@ Be specific if it's wrong - tell me exactly what to fix.
 - Same 3 tests still failing (E.A to E.B, E.A to F.A, E.A to string)
 - Override still not being triggered despite fixes
 
-**Remaining Investigation**:
-The enum nominality architecture is correct, but the `enum_assignability_override` function is not being called during assignability checking. This may require:
-1. Tracing the full assignability check path from variable declaration to override
-2. Checking if `enum_assignability_override` is registered correctly in the CompatChecker
-3. Investigating if there's a different code path for the test cases
-4. May need to move on to other priorities (Private Brands, Constructor Accessibility) and return with fresh perspective
+**Remaining Investigation** (Per Gemini Pro 2026-02-05):
+**CRITICAL FINDING**: This is a "wiring problem", not an architecture problem.
+
+**Gemini's Diagnosis**:
+The `enum_assignability_override` logic is correct, but there's an integration gap. The issue is likely one of:
+1. **Type Resolution Problem**: Type annotation `E.B` resolves to primitive value (`number`) instead of `TypeKey::Enum(member_def_id, literal_type)`
+2. **Code Path Difference**: `E.B` (type annotation) uses `get_type_from_type_reference` which may not call `compute_type_of_symbol`
+
+**Key Insight from Gemini**:
+- `E.A` (expression) uses `check_property_access`
+- `E.B` (type annotation) uses `get_type_from_type_reference`
+- If the type reference resolves to the VALUE (e.g., `0`) instead of the NOMINAL type, the override won't trigger
+
+**Next Steps** (from Gemini):
+1. Verify that `get_type_from_type_reference` calls `compute_type_of_symbol` for enum members
+2. Ensure type references return `TypeKey::Enum` wrapper, not primitive values
+3. If type references don't use the nominal wrapper, fix them to do so
+
+**Verification Needed**:
+- What does `E.B` resolve to when used as a type annotation?
+- Does it return `TypeKey::Enum(def_id_of_E.B, Literal(1))` or just `Literal(1)`?
+- If the latter, that's why the override never matches (pattern match on `TypeKey::Enum` fails)
 
 ### Commit: `f1542996b` - feat(tsz-4): implement enum member nominal typing (WIP)
 
