@@ -13,8 +13,11 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '../../..');
 
-// CLI timeout in ms (same as worker timeout)
-const CLI_TIMEOUT_MS = 400;
+// CLI timeout in ms - increased to 2000ms to account for:
+// - Process spawning overhead in Node.js
+// - Type checking overhead before emit
+// - Cold start time for each test file
+const CLI_TIMEOUT_MS = 2000;
 
 interface TranspileOptions {
   target: number;
