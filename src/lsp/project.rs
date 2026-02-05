@@ -27,6 +27,7 @@ use crate::lsp::position::{LineMap, Location, Position, Range};
 use crate::lsp::rename::{TextEdit, WorkspaceEdit};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats};
 use crate::lsp::signature_help::{SignatureHelp, SignatureHelpProvider};
+use crate::lsp::symbol_index::SymbolIndex;
 use crate::parser::ParserState;
 use crate::parser::node::NodeAccess;
 use crate::parser::{NodeIndex, NodeList, node::NodeArena, syntax_kind_ext};
@@ -1017,6 +1018,7 @@ fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> Opt
 pub struct Project {
     pub(crate) files: FxHashMap<String, ProjectFile>,
     pub(crate) dependency_graph: DependencyGraph,
+    pub(crate) symbol_index: SymbolIndex,
     pub(crate) performance: ProjectPerformance,
     pub(crate) strict: bool,
 }
@@ -1027,6 +1029,7 @@ impl Project {
         Self {
             files: FxHashMap::default(),
             dependency_graph: DependencyGraph::new(),
+            symbol_index: SymbolIndex::new(),
             performance: ProjectPerformance::default(),
             strict: false,
         }
@@ -1082,6 +1085,10 @@ impl Project {
     /// Add or replace a file, re-parsing and re-binding its contents.
     pub fn set_file(&mut self, file_name: String, source_text: String) {
         let file = ProjectFile::with_strict(file_name.clone(), source_text, self.strict);
+
+        // Update symbol index with the new file's binder data
+        self.symbol_index.index_file(&file_name, &file.binder);
+
         self.files.insert(file_name.clone(), file);
         // Update dependency graph with imports from this file
         self.update_dependencies(&file_name);
@@ -1107,11 +1114,18 @@ impl Project {
 
         let file = self.files.get_mut(file_name)?;
         file.update_source_with_edits(updated_source, edits);
+
+        // Re-index the file in the symbol index
+        self.symbol_index.update_file(file_name, &file.binder);
+
         Some(())
     }
 
     /// Remove a file from the project.
     pub fn remove_file(&mut self, file_name: &str) -> Option<ProjectFile> {
+        // Remove from symbol index
+        self.symbol_index.remove_file(file_name);
+        // Remove from files map
         self.files.remove(file_name)
     }
 
