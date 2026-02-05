@@ -11,9 +11,9 @@ use anyhow::Context;
 use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
@@ -46,10 +46,7 @@ impl Runner {
             HashMap::new()
         };
 
-        info!(
-            "Loaded {} cached TSC results",
-            cache.len()
-        );
+        info!("Loaded {} cached TSC results", cache.len());
 
         let tsz_binary = args.tsz_binary.clone();
 
@@ -84,6 +81,7 @@ impl Runner {
         let base_path: PathBuf = std::env::current_dir().unwrap_or_default();
 
         let error_code_filter = self.args.error_code;
+        let timeout_secs = self.args.timeout;
 
         stream::iter(test_files)
             .for_each_concurrent(Some(concurrency_limit), |path| {
@@ -101,7 +99,16 @@ impl Runner {
                     let _permit = permit.acquire().await.unwrap();
                     let rel_path = relative_display(&path, &base);
 
-                    match Self::run_test(&path, cache, tsz_binary, verbose, print_test_files).await {
+                    match Self::run_test(
+                        &path,
+                        cache,
+                        tsz_binary,
+                        verbose,
+                        print_test_files,
+                        timeout_secs,
+                    )
+                    .await
+                    {
                         Ok(result) => {
                             // Update stats
                             stats.total.fetch_add(1, Ordering::SeqCst);
@@ -110,27 +117,40 @@ impl Runner {
                                 TestResult::Pass => {
                                     stats.passed.fetch_add(1, Ordering::SeqCst);
                                 }
-                                TestResult::Fail { expected, actual, missing, extra, options } => {
+                                TestResult::Fail {
+                                    expected,
+                                    actual,
+                                    missing,
+                                    extra,
+                                    options,
+                                } => {
                                     stats.failed.fetch_add(1, Ordering::SeqCst);
-                                    
+
                                     // Filter by error code if specified
                                     let should_print = match error_code_filter {
-                                        Some(code) => expected.contains(&code) || actual.contains(&code),
+                                        Some(code) => {
+                                            expected.contains(&code) || actual.contains(&code)
+                                        }
                                         None => true,
                                     };
-                                    
+
                                     if should_print {
                                         println!("FAIL {}", rel_path);
 
                                         if print_test {
-                                            let expected_str: Vec<String> = expected.iter().map(|c| format!("TS{}", c)).collect();
-                                            let actual_str: Vec<String> = actual.iter().map(|c| format!("TS{}", c)).collect();
+                                            let expected_str: Vec<String> = expected
+                                                .iter()
+                                                .map(|c| format!("TS{}", c))
+                                                .collect();
+                                            let actual_str: Vec<String> =
+                                                actual.iter().map(|c| format!("TS{}", c)).collect();
                                             println!("  expected: [{}]", expected_str.join(", "));
                                             println!("  actual:   [{}]", actual_str.join(", "));
-                                            
+
                                             // Print resolved compiler options
                                             if !options.is_empty() {
-                                                let opts_str: Vec<String> = options.iter()
+                                                let opts_str: Vec<String> = options
+                                                    .iter()
                                                     .map(|(k, v)| format!("{}: {}", k, v))
                                                     .collect();
                                                 println!("  options:  {{{}}}", opts_str.join(", "));
@@ -156,7 +176,14 @@ impl Runner {
                                 }
                                 TestResult::Crashed => {
                                     stats.crashed.fetch_add(1, Ordering::SeqCst);
-                                    println!("CRASH {} (CRASHED)", rel_path);
+                                    println!("CRASH {}", rel_path);
+                                }
+                                TestResult::Timeout => {
+                                    stats.timeout.fetch_add(1, Ordering::SeqCst);
+                                    println!(
+                                        "⏱️  TIMEOUT {} (exceeded {}s)",
+                                        rel_path, timeout_secs
+                                    );
                                 }
                             }
                         }
@@ -184,14 +211,17 @@ impl Runner {
             stats.total.load(Ordering::SeqCst),
             stats.pass_rate()
         );
-        println!(
-            "  Skipped: {}",
-            stats.skipped.load(Ordering::SeqCst)
-        );
-        println!(
-            "  Crashed: {}",
-            stats.crashed.load(Ordering::SeqCst)
-        );
+        println!("  Skipped: {}", stats.skipped.load(Ordering::SeqCst));
+        println!("  Crashed: {}", stats.crashed.load(Ordering::SeqCst));
+        let timeout_count = stats.timeout.load(Ordering::SeqCst);
+        if timeout_count > 0 {
+            println!(
+                "  ⏱️  Timeout: {} (exceeded {}s limit)",
+                timeout_count, timeout_secs
+            );
+        } else {
+            println!("  Timeout: 0");
+        }
         println!("  Time: {:.1}s", elapsed.as_secs_f64());
 
         // Print top error codes
@@ -200,10 +230,7 @@ impl Runner {
             println!();
             println!("Top Error Code Mismatches:");
             for (code, missing, extra) in top_errors {
-                println!(
-                    "  TS{}: missing={}, extra={}",
-                    code, missing, extra
-                );
+                println!("  TS{}: missing={}, extra={}", code, missing, extra);
             }
         }
 
@@ -216,6 +243,7 @@ impl Runner {
             failed: AtomicUsize::new(stats.failed.load(Ordering::SeqCst)),
             skipped: AtomicUsize::new(stats.skipped.load(Ordering::SeqCst)),
             crashed: AtomicUsize::new(stats.crashed.load(Ordering::SeqCst)),
+            timeout: AtomicUsize::new(stats.timeout.load(Ordering::SeqCst)),
         })
     }
 
@@ -244,18 +272,18 @@ impl Runner {
                 ext == "ts" || ext == "tsx" || ext == "js" || ext == "jsx"
             }) {
                 let path_str = path.to_string_lossy();
-                
+
                 // Skip fourslash tests (language service tests with special format)
                 if path_str.contains("/fourslash/") || path_str.contains("\\fourslash\\") {
                     continue;
                 }
-                
+
                 // Skip APISample tests - they require /.ts/typescript.d.ts which is a
                 // virtual mount in TSC's test harness pointing to built/local/typescript.d.ts
                 if path_str.contains("APISample") || path_str.contains("APILibCheck") {
                     continue;
                 }
-                
+
                 // Apply filter pattern if specified
                 if let Some(ref filter) = self.args.filter {
                     if !path_str.contains(filter) {
@@ -284,6 +312,7 @@ impl Runner {
         tsz_binary: String,
         _verbose: bool,
         print_test_files: bool,
+        timeout_secs: u64,
     ) -> anyhow::Result<TestResult> {
         // CRITICAL PERFORMANCE OPTIMIZATION:
         // Get metadata FIRST (fast syscall) before reading file content
@@ -323,16 +352,25 @@ impl Runner {
             debug!("Cache hit for {}", path.display());
 
             // Cache hit - run tsz and compare
-            let compile_result =
-                tokio::task::spawn_blocking(move || {
-                    tsz_wrapper::compile_test(
-                        &content,
-                        &parsed.directives.filenames,
-                        &parsed.directives.options,
-                        &tsz_binary,
-                    )
-                })
-                .await??;
+            let compile_future = tokio::task::spawn_blocking(move || {
+                tsz_wrapper::compile_test(
+                    &content,
+                    &parsed.directives.filenames,
+                    &parsed.directives.options,
+                    &tsz_binary,
+                )
+            });
+
+            // Apply timeout if configured (0 = no timeout)
+            let compile_result = if timeout_secs > 0 {
+                match tokio::time::timeout(Duration::from_secs(timeout_secs), compile_future).await
+                {
+                    Ok(result) => result??,
+                    Err(_) => return Ok(TestResult::Timeout),
+                }
+            } else {
+                compile_future.await??
+            };
 
             // Check for crash
             if compile_result.crashed {
@@ -358,10 +396,10 @@ impl Runner {
                 let mut actual = compile_result.error_codes.clone();
                 expected.sort();
                 actual.sort();
-                return Ok(TestResult::Fail { 
-                    expected, 
-                    actual, 
-                    missing, 
+                return Ok(TestResult::Fail {
+                    expected,
+                    actual,
+                    missing,
                     extra,
                     options: compile_result.options,
                 });
