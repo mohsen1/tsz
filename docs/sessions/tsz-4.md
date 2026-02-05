@@ -989,3 +989,31 @@ When assignability check iterates through signatures, every signature comparison
 5. Test with --strictFunctionTypes flag
 
 **Status**: Architecture complete, ready for implementation 🟡
+
+### PropertyInfo.is_method Already Exists! ✅
+
+**Gemini Flash Finding (2026-02-05)**:
+`is_method` field is ALREADY PRESENT in `PropertyInfo` (line 435 of `src/solver/types.rs`).
+
+**Implementation Already Exists**:
+- `lower.rs`: Sets `is_method: true` for METHOD_SIGNATURE and interface methods
+- `subtype_rules/objects.rs`: Uses `is_method` in `check_property_compatibility`
+- `subtype_rules/functions.rs`: Uses `is_method` to toggle variance in `are_parameters_compatible_impl`
+- `subtype.rs`: Has `check_subtype_with_method_variance` utility
+
+**My Task**: VERIFY existing implementation is working correctly
+
+**Action Plan**:
+1. Use `tsz-tracing` skill to verify `strict_function_types` is bypassed for methods
+2. Check if `lower.rs` is correctly setting `is_method` flag
+3. Verify `subtype_rules/functions.rs` is using the flag correctly
+4. Write tests to confirm method bivariance works as expected
+
+**Edge Cases to Handle**:
+- Intersection types: `{ a(): void } & { a: () => void }` - treat as method if any constituent is method
+- Mapped types: Preserve `is_method` flag when iterating
+- `this` types: Ensure bivariance applies to `this` parameter checks
+- `disable_method_bivariance` flag: Check for sound mode override
+- Overloads: Sync `is_method` across CallableShape and PropertyInfo
+
+**Status**: Infrastructure exists, need verification and testing 🟢
