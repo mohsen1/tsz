@@ -800,7 +800,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Collect property assignments from array destructuring patterns.
-    /// Handles: [this.a, this.b] = arr
+    /// Handles: [this.a, this.b] = arr, [x = 1] = []
     fn collect_array_destructuring_assignments(
         &self,
         literal_idx: NodeIndex,
@@ -824,9 +824,23 @@ impl<'a> CheckerState<'a> {
             if let Some(key) = self.property_key_from_access(elem_idx) {
                 self.record_property_assignment(key, assigned, tracked);
             }
-            // Handle nested destructuring
+            // Handle nested destructuring and other patterns
             else if let Some(elem_node) = self.ctx.arena.get(elem_idx) {
-                if elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                if elem_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                    // Handle assignment patterns with defaults: [x = 1] = []
+                    // The left side of the assignment is the target being assigned to
+                    if let Some(bin) = self.ctx.arena.get_binary_expr(elem_node) {
+                        if self.is_assignment_operator(bin.operator_token) {
+                            self.collect_assignment_target(bin.left, assigned, tracked);
+                        }
+                    }
+                } else if elem_node.kind == SyntaxKind::Identifier as u16 {
+                    // Handle simple identifier: [x] = [1]
+                    // This clears narrowing on x because x is being assigned to
+                    if let Some(key) = self.property_key_from_name(elem_idx) {
+                        self.record_property_assignment(key, assigned, tracked);
+                    }
+                } else if elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                     self.collect_destructuring_assignments(elem_idx, assigned, tracked);
                 } else if elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
                     self.collect_array_destructuring_assignments(elem_idx, assigned, tracked);

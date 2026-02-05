@@ -59,10 +59,19 @@ Fix the 3 failing control flow tests to ensure `instanceof` narrowing works corr
 
 ## Next Steps (per Gemini guidance)
 
-1. Search for the 3 failing control flow tests: `cargo nextest run -E 'test(/flow/) or test(/narrowing/)'`
-2. Determine if control flow test failures are caused by solver::infer issues
-3. If related: Fix solver::infer first (foundational layer)
-4. If unrelated: Fix control flow tests independently
+**Priority: Finish the remaining 2 array destructuring tests**
+
+1. Investigate `collect_array_destructuring_assignments` in flow_analysis.rs
+2. Check if it handles AssignmentPattern (default values) correctly
+3. Use tracing: `TSZ_LOG="wasm::checker::flow_analysis=trace" cargo test <test_name>`
+4. Ask Gemini Question 1 before implementing fix
+5. DO NOT work on solver::infer circular extends tests (defer to next session)
+
+**Gemini's Analysis:**
+- The issue is likely that FlowAnalyzer doesn't identify variables as "definitely assigned"
+  when they have default values in destructuring patterns
+- Need to check if `collect_array_destructuring_assignments` recurses into AssignmentPatterns
+- May need to modify how the binder marks these as assigned
 
 ### Gemini's Recommendation
 If fixing the 5 circular extends tests:
