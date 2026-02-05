@@ -1924,6 +1924,20 @@ impl ParserState {
                 let should_add = !seen_extends;
                 seen_extends = true;
                 self.next_token();
+
+                // Check for empty extends list: class C extends { }
+                // TSC emits TS1097 "'extends' list cannot be empty"
+                if self.is_token(SyntaxKind::OpenBraceToken)
+                    || self.is_token(SyntaxKind::ImplementsKeyword)
+                {
+                    self.parse_error_at_current_token(
+                        "'extends' list cannot be empty.",
+                        diagnostic_codes::EXTENDS_LIST_CANNOT_BE_EMPTY,
+                    );
+                    // Don't add an empty clause
+                    continue;
+                }
+
                 let type_ref = self.parse_heritage_type_reference();
 
                 while self.is_token(SyntaxKind::CommaToken) {
