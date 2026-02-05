@@ -3,9 +3,7 @@
 //! These tests verify that TypeKey::Enum wrapper is preserved during type lowering,
 //! ensuring that enum member types maintain their nominal identity.
 
-use crate::binder::BinderState;
-use crate::checker::state::CheckerState;
-use crate::parser::ParserState;
+use crate::solver::compat::CompatChecker;
 use crate::solver::def::DefId;
 use crate::solver::types::{LiteralValue, TypeKey};
 use crate::solver::{TypeId, TypeInterner};
@@ -192,4 +190,89 @@ fn test_same_enum_different_members_different() {
     } else {
         panic!("Both should be TypeKey::Enum");
     }
+}
+
+/// Test that enum members from different enums are NOT assignable (nominal typing).
+#[test]
+fn test_enum_nominal_typing_different_enums() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let enum_a_def = DefId(42);
+    let enum_b_def = DefId(43);
+    let literal_zero = interner.literal_number(0.0);
+
+    // Create EnumA.X and EnumB.Y with same value but different DefIds
+    let enum_a_x = interner.intern(TypeKey::Enum(enum_a_def, literal_zero));
+    let enum_b_y = interner.intern(TypeKey::Enum(enum_b_def, literal_zero));
+
+    // Should NOT be assignable (different DefIds = nominal mismatch)
+    assert!(
+        !checker.is_assignable(enum_a_x, enum_b_y),
+        "EnumA.X should NOT be assignable to EnumB.Y (nominal typing)"
+    );
+}
+
+/// Test that enum members from the SAME enum ARE assignable.
+#[test]
+fn test_enum_nominal_typing_same_enum() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let enum_def = DefId(42);
+    let literal_zero = interner.literal_number(0.0);
+    let literal_one = interner.literal_number(1.0);
+
+    // Create EnumA.X and EnumA.Y
+    let enum_a_x = interner.intern(TypeKey::Enum(enum_def, literal_zero));
+    let enum_a_y = interner.intern(TypeKey::Enum(enum_def, literal_one));
+
+    // Should NOT be assignable (different members of same enum)
+    // In TypeScript, enum member X is not assignable to member Y
+    assert!(
+        !checker.is_assignable(enum_a_x, enum_a_y),
+        "EnumA.X should NOT be assignable to EnumA.Y (different members)"
+    );
+}
+
+/// Test that enum members ARE assignable to number in Solver layer (structural).
+/// Note: The Checker layer implements Rule #7 (numeric enums) with is_numeric_enum
+/// to prevent number <-> enum assignability when appropriate. The Solver layer
+/// defaults to structural checking when it lacks checker context.
+#[test]
+fn test_enum_member_assignable_to_number_structural() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let enum_def = DefId(42);
+    let literal_zero = interner.literal_number(0.0);
+
+    let enum_member = interner.intern(TypeKey::Enum(enum_def, literal_zero));
+
+    // In the Solver layer without is_numeric_enum context,
+    // we fall back to structural checking: the inner literal 0 IS assignable to number
+    assert!(
+        checker.is_assignable(enum_member, TypeId::NUMBER),
+        "Enum member should be assignable to number via structural checking (inner literal 0 is a number)"
+    );
+}
+
+/// Test that number is NOT assignable to enum type in Solver layer.
+/// Note: The Checker layer implements Rule #7 (numeric enums) with is_numeric_enum.
+#[test]
+fn test_number_not_assignable_to_enum_member() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let enum_def = DefId(42);
+    let literal_zero = interner.literal_number(0.0);
+
+    let enum_member = interner.intern(TypeKey::Enum(enum_def, literal_zero));
+
+    // In the Solver layer without is_numeric_enum context,
+    // number is NOT assignable to enum types
+    assert!(
+        !checker.is_assignable(TypeId::NUMBER, enum_member),
+        "Number should NOT be assignable to enum member without numeric enum context"
+    );
 }

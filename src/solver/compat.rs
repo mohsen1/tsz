@@ -3,8 +3,8 @@
 use crate::solver::db::QueryDatabase;
 use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
-use crate::solver::types::{PropertyInfo, TypeId, TypeKey};
-use crate::solver::visitor::{TypeVisitor, is_empty_object_type_db};
+use crate::solver::types::{IntrinsicKind, LiteralValue, PropertyInfo, TypeId, TypeKey};
+use crate::solver::visitor::{TypeVisitor, enum_components, is_empty_object_type_db};
 use crate::solver::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
 
@@ -39,6 +39,48 @@ impl<'a, R: TypeResolver> ShapeExtractor<'a, R> {
         let result = self.visit_type(self.db, type_id);
         self.visiting.remove(&type_id);
         result
+    }
+}
+
+/// Visitor to check if a type is string-like (string, string literal, or template literal).
+struct StringLikeVisitor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for StringLikeVisitor<'a> {
+    type Output = bool;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        kind == IntrinsicKind::String
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        matches!(value, LiteralValue::String(_))
+    }
+
+    fn visit_template_literal(&mut self, _template_id: u32) -> Self::Output {
+        true
+    }
+
+    fn visit_type_parameter(&mut self, info: &crate::solver::types::TypeParamInfo) -> Self::Output {
+        info.constraint
+            .is_some_and(|c| self.visit_type(self.db, c))
+    }
+
+    fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
+        let _symbol_ref = crate::solver::types::SymbolRef(symbol_ref);
+        // Resolve the ref and check the resolved type
+        // This is a simplified check - in practice we'd need the resolver
+        false
+    }
+
+    fn visit_lazy(&mut self, _def_id: u32) -> Self::Output {
+        // We can't resolve Lazy without a resolver, so conservatively return false
+        false
+    }
+
+    fn default_output() -> Self::Output {
+        false
     }
 }
 
@@ -326,6 +368,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     ) -> bool {
         // Fast path checks
         if let Some(result) = self.check_assignable_fast_path(source, target, false) {
+            return result;
+        }
+
+        // Enum nominal typing check (Lawyer layer implementation)
+        // This provides enum member distinction even without checker context
+        if let Some(result) = self.enum_assignability_override(source, target) {
             return result;
         }
 
@@ -839,6 +887,69 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
             (None, None) => None, // Neither has private brand, fall through to normal check
         }
+    }
+
+    /// Enum member assignability override.
+    /// Implements nominal typing for enum members: EnumA.X is NOT assignable to EnumB even if values match.
+    ///
+    /// TypeScript enum rules:
+    /// 1. Different enums with different DefIds are NOT assignable (nominal typing)
+    /// 2. Numeric enums are bidirectionally assignable to number (Rule #7 - Open Numeric Enums)
+    /// 3. String enums are strictly nominal (string literals NOT assignable to string enums)
+    /// 4. Same enum members with different values are NOT assignable (EnumA.X != EnumA.Y)
+    pub fn enum_assignability_override(&self, source: TypeId, target: TypeId) -> Option<bool> {
+        let source_enum = enum_components(self.interner, source);
+        let target_enum = enum_components(self.interner, target);
+
+        match (source_enum, target_enum) {
+            // Case 1: Both are enums (or enum members)
+            (Some((s_def, _)), Some((t_def, _))) => {
+                if s_def != t_def {
+                    // Nominal mismatch: EnumA.X is not assignable to EnumB
+                    return Some(false);
+                }
+                // Same enum: Check if they're the exact same member
+                // If source == target, they're the same member (assignable)
+                // If source != target, they're different members (not assignable)
+                Some(source == target)
+            }
+
+            // Case 2: Target is an enum, source is a primitive
+            (None, Some((t_def, _))) => {
+                // Check if target is a numeric enum
+                if self.subtype.resolver.is_numeric_enum(t_def) {
+                    // Numeric enums allow number assignability (Rule #7)
+                    // Return None to let SubtypeChecker handle it structurally
+                    None
+                } else {
+                    // String enums do NOT allow raw string assignability
+                    // If source is string or string literal, reject
+                    if self.is_string_like(source) {
+                        return Some(false);
+                    }
+                    None
+                }
+            }
+
+            // Case 3: Source is an enum, target is a primitive
+            // Enums are always structurally assignable to their base primitives
+            // (e.g., EnumA.X -> number). Let structural check handle it.
+            (Some(_), None) => None,
+
+            // Case 4: Neither is an enum
+            (None, None) => None,
+        }
+    }
+
+    /// Check if a type is string-like (string, string literal, or template literal).
+    /// Used to reject primitive-to-string-enum assignments.
+    fn is_string_like(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::STRING {
+            return true;
+        }
+        // Use visitor to check for string literals, template literals, etc.
+        let mut visitor = StringLikeVisitor { db: self.interner };
+        visitor.visit_type(self.interner, type_id)
     }
 
     /// Extract the private brand property name from a type if it has one.
