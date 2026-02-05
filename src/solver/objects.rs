@@ -280,13 +280,14 @@ mod tests {
 
         // Create a simple object type { x: number }
         let props = vec![PropertyInfo {
-            name: Atom::from("x"),
+            name: interner.intern_string("x"),
             type_id: TypeId::NUMBER,
             write_type: TypeId::NUMBER,
             optional: false,
             readonly: false,
             is_method: false,
             visibility: Visibility::Public,
+            parent_id: None,
         }];
 
         let obj_type = interner.object(props);
@@ -299,7 +300,7 @@ mod tests {
         ));
         if let PropertyCollectionResult::Properties { properties, .. } = result {
             assert_eq!(properties.len(), 1);
-            assert_eq!(properties[0].name, Atom::from("x"));
+            assert_eq!(properties[0].name, interner.intern_string("x"));
         }
     }
 
@@ -310,24 +311,26 @@ mod tests {
 
         // Create object { x: string }
         let obj1 = interner.object(vec![PropertyInfo {
-            name: Atom::from("x"),
+            name: interner.intern_string("x"),
             type_id: TypeId::STRING,
             write_type: TypeId::STRING,
             optional: false,
             readonly: false,
             is_method: false,
             visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Create object { y: number }
         let obj2 = interner.object(vec![PropertyInfo {
-            name: Atom::from("y"),
+            name: interner.intern_string("y"),
             type_id: TypeId::NUMBER,
             write_type: TypeId::NUMBER,
             optional: false,
             readonly: false,
             is_method: false,
             visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Create intersection obj1 & obj2
@@ -341,8 +344,16 @@ mod tests {
         ));
         if let PropertyCollectionResult::Properties { properties, .. } = result {
             assert_eq!(properties.len(), 2);
-            assert!(properties.iter().any(|p| p.name == Atom::from("x")));
-            assert!(properties.iter().any(|p| p.name == Atom::from("y")));
+            assert!(
+                properties
+                    .iter()
+                    .any(|p| p.name == interner.intern_string("x"))
+            );
+            assert!(
+                properties
+                    .iter()
+                    .any(|p| p.name == interner.intern_string("y"))
+            );
         }
     }
 
@@ -353,13 +364,14 @@ mod tests {
 
         // Create object { x: number }
         let obj = interner.object(vec![PropertyInfo {
-            name: Atom::from("x"),
+            name: interner.intern_string("x"),
             type_id: TypeId::NUMBER,
             write_type: TypeId::NUMBER,
             optional: false,
             readonly: false,
             is_method: false,
             visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Test: obj & any

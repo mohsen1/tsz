@@ -676,6 +676,223 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Check if two types have any overlap (non-empty intersection).
+    ///
+    /// This is used for TS2367: "This condition will always return 'false' since the types 'X' and 'Y' have no overlap."
+    ///
+    /// Returns true if there exists at least one type that is a subtype of both a and b.
+    /// Returns false if a & b would be the `never` type (zero overlap).
+    ///
+    /// # MVP Implementation (Phase 1)
+    ///
+    /// This catches OBVIOUS non-overlaps:
+    /// - Different primitives (string vs number, boolean vs bigint, etc.)
+    /// - Different literals of same primitive ("a" vs "b", 1 vs 2)
+    /// - Object property type mismatches ({ a: string } vs { a: number })
+    ///
+    /// For complex types (unions, intersections, generics), we conservatively return true
+    /// to avoid false positives. Phase 2 will add more sophisticated overlap detection.
+    ///
+    /// # Examples
+    /// - `are_types_overlapping(string, number)` -> false (different primitives)
+    /// - `are_types_overlapping(1, 2)` -> false (different number literals)
+    /// - `are_types_overlapping({ a: string }, { a: number })` -> false (property type mismatch)
+    /// - `are_types_overlapping({ a: 1 }, { b: 2 })` -> true (can have { a: 1, b: 2 })
+    /// - `are_types_overlapping(string, "hello")` -> true (literal is subtype of primitive)
+    pub(crate) fn are_types_overlapping(&self, a: TypeId, b: TypeId) -> bool {
+        // Fast path: identical types overlap (unless never)
+        if a == b {
+            return a != TypeId::NEVER;
+        }
+
+        // Top types: any/unknown overlap with everything except never
+        if a == TypeId::ANY || a == TypeId::UNKNOWN {
+            return b != TypeId::NEVER;
+        }
+        if b == TypeId::ANY || b == TypeId::UNKNOWN {
+            return a != TypeId::NEVER;
+        }
+
+        // Bottom type: never overlaps with nothing
+        if a == TypeId::NEVER || b == TypeId::NEVER {
+            return false;
+        }
+
+        // Resolve Lazy/Ref types before checking
+        let a_resolved = self.resolve_ref_type(a);
+        let b_resolved = self.resolve_ref_type(b);
+
+        // Check if either is subtype of the other (sufficient condition, not necessary)
+        // This catches: literal <: primitive, object <: interface, etc.
+        // Note: check_subtype returns SubtypeResult, but we need &mut self for it
+        // For now, we'll use a simpler approach that doesn't require mutation
+        if self.are_types_in_subtype_relation(a_resolved, b_resolved) {
+            return true;
+        }
+
+        // Check for different primitive types
+        if let (Some(a_kind), Some(b_kind)) = (
+            intrinsic_kind(self.interner, a_resolved),
+            intrinsic_kind(self.interner, b_resolved),
+        ) {
+            // 1. Handle strictNullChecks
+            if !self.strict_null_checks {
+                // If strict null checks is OFF, null/undefined overlap with everything
+                if matches!(a_kind, IntrinsicKind::Null | IntrinsicKind::Undefined)
+                    || matches!(b_kind, IntrinsicKind::Null | IntrinsicKind::Undefined)
+                {
+                    return true;
+                }
+            }
+
+            // 2. Handle Void vs Undefined (always overlap)
+            if (a_kind == IntrinsicKind::Void && b_kind == IntrinsicKind::Undefined)
+                || (a_kind == IntrinsicKind::Undefined && b_kind == IntrinsicKind::Void)
+            {
+                return true;
+            }
+
+            // 3. Compare primitives
+            match (a_kind, b_kind) {
+                (IntrinsicKind::String, IntrinsicKind::String)
+                | (IntrinsicKind::Number, IntrinsicKind::Number)
+                | (IntrinsicKind::Boolean, IntrinsicKind::Boolean)
+                | (IntrinsicKind::Bigint, IntrinsicKind::Bigint)
+                | (IntrinsicKind::Symbol, IntrinsicKind::Symbol) => {
+                    // Same primitive type - check if they're different literals
+                    return self.are_literals_overlapping(a_resolved, b_resolved);
+                }
+                // Distinct primitives do not overlap
+                (IntrinsicKind::String, _)
+                | (IntrinsicKind::Number, _)
+                | (IntrinsicKind::Boolean, _)
+                | (IntrinsicKind::Bigint, _)
+                | (IntrinsicKind::Symbol, _)
+                | (IntrinsicKind::Null, _)
+                | (IntrinsicKind::Undefined, _)
+                | (IntrinsicKind::Void, _) => {
+                    return false;
+                }
+                // Handle Object keyword vs Primitives (Disjoint)
+                (IntrinsicKind::Object, _) | (_, IntrinsicKind::Object) => {
+                    // 'object' (non-primitive) does not overlap with primitives
+                    // Note: It DOES overlap with Object (interface), but that is handled
+                    // by object_shape_id, not intrinsic_kind.
+                    return false;
+                }
+                // Fallback for any new intrinsics added later
+                _ => return true,
+            }
+        }
+
+        // Check for different literal values of the same primitive type
+        if let (Some(a_lit), Some(b_lit)) = (
+            literal_value(self.interner, a_resolved),
+            literal_value(self.interner, b_resolved),
+        ) {
+            // Different literal values never overlap
+            return a_lit == b_lit;
+        }
+
+        // For object types, check if properties overlap
+        // This is a simplified check - we only verify that common properties
+        // have overlapping types. Phase 2 will use PropertyCollector for full checking.
+        if let (Some(a_shape), Some(b_shape)) = (
+            object_shape_id(self.interner, a_resolved),
+            object_shape_id(self.interner, b_resolved),
+        ) {
+            return self.do_object_properties_overlap(a_shape, b_shape);
+        }
+
+        // Conservative: assume overlap for complex types we haven't fully handled yet
+        // (unions, intersections, generics, etc.)
+        // Better to miss some TS2367 errors than to emit them incorrectly
+        true
+    }
+
+    /// Check if one type is a subtype of the other without mutation.
+    ///
+    /// This is a simplified version that checks obvious subtype relationships
+    /// without needing to call the full check_subtype which requires &mut self.
+    fn are_types_in_subtype_relation(&self, a: TypeId, b: TypeId) -> bool {
+        // Check identity first
+        if a == b {
+            return true;
+        }
+
+        // Check for literal-to-primitive relationships
+        if let (Some(a_lit), Some(b_kind)) = (
+            literal_value(self.interner, a),
+            intrinsic_kind(self.interner, b),
+        ) {
+            return match (a_lit, b_kind) {
+                (LiteralValue::String(_), IntrinsicKind::String) => true,
+                (LiteralValue::Number(_), IntrinsicKind::Number) => true,
+                (LiteralValue::BigInt(_), IntrinsicKind::Bigint) => true,
+                (LiteralValue::Boolean(_), IntrinsicKind::Boolean) => true,
+                _ => false,
+            };
+        }
+
+        if let (Some(a_kind), Some(b_lit)) = (
+            intrinsic_kind(self.interner, a),
+            literal_value(self.interner, b),
+        ) {
+            return match (a_kind, b_lit) {
+                (IntrinsicKind::String, LiteralValue::String(_)) => true,
+                (IntrinsicKind::Number, LiteralValue::Number(_)) => true,
+                (IntrinsicKind::Bigint, LiteralValue::BigInt(_)) => true,
+                (IntrinsicKind::Boolean, LiteralValue::Boolean(_)) => true,
+                _ => false,
+            };
+        }
+
+        false
+    }
+
+    /// Check if two literal types have overlapping values.
+    ///
+    /// Returns false if they're different literals of the same primitive type.
+    /// Returns true if they're the same literal or if we can't determine.
+    fn are_literals_overlapping(&self, a: TypeId, b: TypeId) -> bool {
+        if let (Some(a_lit), Some(b_lit)) = (
+            literal_value(self.interner, a),
+            literal_value(self.interner, b),
+        ) {
+            // Different literal values of the same primitive type never overlap
+            a_lit == b_lit
+        } else {
+            // At least one isn't a literal, so they overlap
+            true
+        }
+    }
+
+    /// Check if two object types have overlapping properties.
+    ///
+    /// Returns false if any common property has non-overlapping types.
+    /// Returns true if all common properties have overlapping types.
+    ///
+    /// This is a simplified check - Phase 2 will use PropertyCollector
+    /// for full intersection-type-aware checking.
+    fn do_object_properties_overlap(&self, a_shape: ObjectShapeId, b_shape: ObjectShapeId) -> bool {
+        let a_props = self.interner.object_shape(a_shape);
+        let b_props = self.interner.object_shape(b_shape);
+
+        // Check each common property
+        for a_prop in &a_props.properties {
+            if let Some(b_prop) = b_props.properties.iter().find(|p| p.name == a_prop.name) {
+                // If the common property types don't overlap, the objects don't overlap
+                if !self.are_types_overlapping(a_prop.type_id, b_prop.type_id) {
+                    return false;
+                }
+            }
+        }
+
+        // All common properties have overlapping types
+        // (Note: this allows { a: string } & { b: number } to overlap, which is correct)
+        true
+    }
+
     /// Construct a `RelationCacheKey` for the current checker configuration.
     ///
     /// This packs the Lawyer-layer flags into a compact cache key to ensure that
@@ -2787,3 +3004,7 @@ mod typescript_quirks_tests;
 #[cfg(test)]
 #[path = "tests/type_predicate_tests.rs"]
 mod type_predicate_tests;
+
+#[cfg(test)]
+#[path = "tests/overlap_tests.rs"]
+mod overlap_tests;
