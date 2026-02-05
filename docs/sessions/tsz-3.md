@@ -255,6 +255,35 @@ The parser creates `PROPERTY_ASSIGNMENT` (kind 303) nodes for **both** regular p
 
 **Value**: Shorthand property rename now works correctly, matching TypeScript's behavior where `{ x }` becomes `{ x: y }` when renaming `x` to `y`.
 
+### Cross-File Go to Implementation (2026-02-05)
+**Status**: ✅ COMPLETE
+
+Implemented project-wide Go to Implementation with transitive search support.
+
+**Implementation** (Task #29 - SymbolIndex Heritage Tracking):
+- Added `heritage_clauses: HashMap<String, HashSet<String>>` to track files that extend/implement symbols
+- Added `get_files_with_heritage()` for O(1) candidate lookup
+- Enhanced `index_file()` to scan AST for HeritageClause nodes (extends/implements)
+- Added `extract_heritage_type_name()` helper to handle:
+  - Simple identifiers: `extends A` → "A"
+  - Property access: `implements ns.I` → "I"
+- Updated `remove_file()` to clean up heritage clause entries
+
+**Implementation** (Task #30 - Project::get_implementations):
+- Added `Project::get_implementations()` method in `src/lsp/project_operations.rs`
+- Refactored `GoToImplementationProvider` with new public APIs:
+  - `find_implementations_for_name()`: Search by name, returns (name, location) pairs
+  - `resolve_target_kind_for_name()`: Get TargetKind for a symbol name
+  - Made `resolve_symbol_at_node()` and `determine_target_kind()` public
+- Added `ImplementationResult` struct and made `TargetKind` enum public
+- Implemented **transitive search** using iterative worklist (queue):
+  - If `class B extends A` and `class C extends B`, searching for implementations of `A` returns both `B` and `C`
+  - Cycle detection via processed (file, name) set
+  - Uses SymbolIndex for O(1) candidate filtering
+- Added `Implementations` to `ProjectRequestKind` for performance tracking
+
+**Value**: Users can now find all implementations of interfaces and classes across the entire project, with full transitive support matching TypeScript's behavior.
+
 ## Session Status
 
 **Status**: 🔄 ACTIVE - Working on Cross-File Member Support
@@ -263,18 +292,18 @@ The parser creates `PROPERTY_ASSIGNMENT` (kind 303) nodes for **both** regular p
 - ✅ File Rename (with directory support, dynamic imports, and require calls)
 - ✅ Auto-Import Completions (with prefix matching, additionalTextEdits, O(1) lookup, and transitive re-export support)
 - ✅ Cross-File Go to Definition (for imports: named, default, and aliased)
+- ✅ **Cross-File Go to Implementation (with transitive search)**
 - ✅ JSX Linked Editing
-- ✅ SymbolIndex integration (O(1) auto-import candidate lookup, O(log N) prefix search)
+- ✅ SymbolIndex integration (O(1) auto-import candidate lookup, O(log N) prefix search, heritage clause tracking)
 - ✅ Workspace Symbols (project-wide symbol search via Cmd+T / Ctrl+T)
 - ✅ Transitive Re-exports (auto-import via `export * from './mod'`)
 - ✅ Prefix Matching (partial identifier completion, e.g., "use" → "useEffect")
-
-**Current Work: Cross-File Member Support** (2026-02-05)
-
-**Per Gemini consultation**, the highest priority next step is **Cross-File Member Support** for References, Rename, and Implementation. While top-level symbols work well, the LSP currently struggles with class/interface members across file boundaries.
+- ✅ Shorthand Property Rename (fixed detection for PROPERTY_ASSIGNMENT with name==initializer)
 
 **Completed Tasks**:
-1. ✅ **Enhance SymbolIndex for identifier mentions** - Implemented "Pool Scan" optimization to track all identifier strings in the AST for O(1) candidate filtering
+1. ✅ **Enhance SymbolIndex for identifier mentions** - Pool Scan optimization
+2. ✅ **Cross-File Go to Implementation** - Heritage tracking + transitive search
+3. ✅ **Shorthand Property Rename** - Fixed parser node detection
 
 **Task Status Updates**:
 - ❌ **Task #26 (Type-aware reference filtering)** - ABANDONED per Gemini guidance as too complex for LSP session (requires Checker integration). Will revisit later with Symbol-ID Matching approach (Phase 1).
