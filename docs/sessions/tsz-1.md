@@ -54,29 +54,41 @@ Index signature checking logic is ALREADY FULLY IMPLEMENTED in `src/solver/subty
 
 ---
 
-### Priority 1: Refined Object Overlap Detection (TS2367) 🚀 NEW PRIORITY 1
-**Status**: 📝 NEXT TASK
+### Priority 1: Refined Object Overlap Detection (TS2367) ✅ COMPLETE
+**Status**: ✅ Completed (2025-02-05)
 **Why**: Most immediate "Judge" task - TS2367 was implemented as MVP with Known Gaps
 
 **Description**:
-Complete the TS2367 overlap detection to properly handle object property overlap using PropertyCollector.
+Completed TS2367 overlap detection to properly handle object property overlap using PropertyCollector.
 
-**Current Gap**:
-From Task #17 Known Gaps: "Object property overlap - needs PropertyCollector integration"
-
-**Implementation Goals**:
-1. **Property-Based Overlap**: Use PropertyCollector to extract all properties from both types
+**Implementation Summary**:
+Implemented `do_refined_object_overlap_check` in `src/solver/subtype.rs` (lines 895-987):
+1. **Property-Based Overlap**: Uses PropertyCollector to extract all properties from both types
 2. **Discriminant Detection**: Common property with disjoint literal types = no overlap
    - Example: `{ kind: "a" }` vs `{ kind: "b" }` = zero overlap
-3. **Index Signature Overlap**: Check if properties are compatible with index signatures
-4. **Recursive Overlap**: Handle recursive types using cycle_stack
+3. **Index Signature Handling**: Only checks REQUIRED properties against index signatures
+   - Optional properties can be missing, so they don't conflict
+   - Index signatures never cause disjointness (empty object satisfies all)
+4. **Recursive Overlap**: Handles recursive types using cycle_stack
 
-**Files**: `src/solver/subtype.rs` (function `do_object_properties_overlap`)
+**Critical Bugs Fixed** (Found by Gemini Pro):
+1. **Optional Properties vs Index Signatures**: Only check required properties
+   - Bug: Was checking all properties (including optional) against index signatures
+   - Fix: Added `!p_a.optional` check before comparing with index signature
+   - Example: `{ a?: string }` and `{ [k: string]: number }` DO overlap
 
-**Two-Question Plan**:
-1. Ask Gemini Flash: "How should I handle object overlap detection using PropertyCollector?"
-2. Implement based on guidance
-3. Ask Gemini Pro to review implementation
+2. **Index Signature Overlap**: Removed index signature comparison checks
+   - Bug: Was checking if index signatures overlap with each other
+   - Fix: Removed all index signature overlap checks
+   - Example: `{ [k: string]: string }` and `{ [k: string]: number }` DO overlap
+
+**Files**: `src/solver/subtype.rs`
+
+**Commit**: a496185e6
+
+**Gemini Pro Review**: ✅ "Both fixes are correct and accurately reflect TypeScript's structural type system behavior."
+
+---
 
 ---
 
