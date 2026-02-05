@@ -8,11 +8,13 @@
 # Usage: ./run.sh [options]
 #
 # Options:
-#   --max=N           Maximum tests (default: 500)
-#   --filter=PATTERN  Filter tests by name
-#   --verbose         Detailed output
-#   --js-only         Test JavaScript emit only
-#   --dts-only        Test declaration emit only
+#   --max=N               Maximum tests (default: 500)
+#   --filter=PATTERN      Filter tests by name
+#   --concurrency=N, -jN  Parallel workers (default: CPU count)
+#   --timeout=MS          Per-test timeout in ms (default: 5000)
+#   --verbose             Detailed output
+#   --js-only             Test JavaScript emit only
+#   --dts-only            Test declaration emit only
 #
 # Examples:
 #   ./run.sh                     # Run with defaults
