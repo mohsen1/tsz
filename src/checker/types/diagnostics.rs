@@ -355,6 +355,7 @@ pub mod diagnostic_codes {
     pub const CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION: u32 = 1104; // A 'continue' statement can only be used within an enclosing iteration statement.
     pub const BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION: u32 = 1105; // A 'break' statement can only be used within an enclosing iteration statement.
     pub const JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY: u32 = 1107; // Jump target cannot cross function boundary.
+    pub const RETURN_OUTSIDE_FUNCTION: u32 = 1108; // A 'return' statement can only be used within a function body.
     pub const EXPRESSION_EXPECTED: u32 = 1109;
     pub const TYPE_EXPECTED: u32 = 1110;
     pub const CONTINUE_CAN_ONLY_TARGET_LABEL_OF_ENCLOSING_ITERATION: u32 = 1115; // A 'continue' statement can only target a label of an enclosing iteration statement.
@@ -471,6 +472,7 @@ pub mod diagnostic_codes {
     pub const ARITHMETIC_OPERAND_MUST_BE_NUMBER: u32 = 2356; // An arithmetic operand must be of type 'any', 'number', 'bigint' or an enum type.
     pub const LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: u32 = 2362; // The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
     pub const RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: u32 = 2363; // The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+    pub const INVALID_LEFT_HAND_SIDE_OF_ASSIGNMENT: u32 = 2364; // The left-hand side of an assignment expression must be a variable or a property access.
     pub const OPERATOR_CANNOT_BE_APPLIED_TO_TYPES: u32 = 2365; // Operator '{0}' cannot be applied to types '{1}' and '{2}'.
     pub const OPERATOR_CANNOT_BE_APPLIED_TO_TYPE: u32 = 2469; // The '{0}' operator cannot be applied to type '{1}'.
     pub const FUNCTION_LACKS_RETURN_TYPE: u32 = 2355;

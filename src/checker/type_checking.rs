@@ -875,10 +875,11 @@ impl<'a> CheckerState<'a> {
 
         // TS1108: A 'return' statement can only be used within a function body.
         if self.current_return_type().is_none() {
+            use crate::checker::types::diagnostics::diagnostic_codes;
             self.error_at_node(
                 stmt_idx,
                 "A 'return' statement can only be used within a function body.",
-                1108,
+                diagnostic_codes::RETURN_OUTSIDE_FUNCTION,
             );
             return;
         }
