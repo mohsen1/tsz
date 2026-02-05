@@ -137,6 +137,7 @@ correctness = { level = "deny", priority = -1 }
 # Style - useful warnings
 style = { level = "warn", priority = -1 }
 dbg_macro = "warn"
+print_stderr = "warn"  # Warn on eprintln! - use tracing instead for debugging (will be deny after cleanup)
 empty_structs_with_brackets = "warn"
 get_unwrap = "warn"
 

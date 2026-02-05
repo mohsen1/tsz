@@ -133,27 +133,14 @@ impl<'a> CheckerState<'a> {
 
         // 1. Resolve DefId to SymbolId
         let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
-            eprintln!(
-                "TSZ-4 DEBUG: get_enum_identity: DefId {:?} has no SymbolId",
-                def_id
-            );
             return None;
         };
 
         // 2. FIX: Use get_symbol_globally instead of ctx.binder.get_symbol
         // This handles cross-file symbols and lib.d.ts symbols
         let Some(symbol) = self.get_symbol_globally(sym_id) else {
-            eprintln!(
-                "TSZ-4 DEBUG: get_enum_identity: Symbol {:?} not found globally",
-                sym_id
-            );
             return None;
         };
-
-        eprintln!(
-            "TSZ-4 DEBUG: get_enum_identity: type={:?} sym={:?} flags={:?} parent={:?}",
-            type_id, sym_id, symbol.flags, symbol.parent
-        );
 
         if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
             // TSZ-4 FIX: For enum members, don't rely on symbol.parent (it's u32::MAX).
@@ -171,10 +158,6 @@ impl<'a> CheckerState<'a> {
                                 if let Some(enum_sym_id) =
                                     self.ctx.binder.get_node_symbol(ext.parent)
                                 {
-                                    eprintln!(
-                                        "TSZ-4 DEBUG: ENUM_MEMBER - found parent enum {:?}",
-                                        enum_sym_id
-                                    );
                                     return Some(enum_sym_id);
                                 }
                             }
@@ -184,11 +167,9 @@ impl<'a> CheckerState<'a> {
             }
             // Fallback: try to find the enum that exports this member
             // Check if any enum symbol has this member in its exports
-            eprintln!("TSZ-4 DEBUG: ENUM_MEMBER - using fallback to find parent");
             return self.enum_symbol_from_type(type_id);
         } else if symbol.flags & symbol_flags::ENUM != 0 {
             // For the enum itself, the identity is its own symbol
-            eprintln!("TSZ-4 DEBUG: ENUM - returning self {:?}", sym_id);
             return Some(sym_id);
         }
 
@@ -220,45 +201,21 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<bool> {
-        // TSZ-4: Debug logging to trace enum nominal typing (use eprintln for test visibility)
-        eprintln!(
-            "TSZ-4 DEBUG: enum_assignability_override: source={:?} target={:?}",
-            self.format_type(source),
-            self.format_type(target)
-        );
-
         let source_key = self.ctx.types.lookup(source);
         let target_key = self.ctx.types.lookup(target);
-
-        eprintln!(
-            "TSZ-4 DEBUG: source_key={:?}, target_key={:?}",
-            source_key, target_key
-        );
 
         // 1. Handle Nominal Identity (Enum vs Enum, Member vs Enum, Member vs Member)
         if let (Some(TypeKey::Enum(s_def, s_inner)), Some(TypeKey::Enum(t_def, t_inner))) =
             (source_key, target_key)
         {
-            tracing::debug!(
-                "Both are TypeKey::Enum. s_def={:?}, t_def={:?}",
-                s_def,
-                t_def
-            );
-
             if s_def == t_def {
                 // Exact same entity (same member or same enum type)
                 // Check structural assignability of inner types
-                tracing::debug!("Same DefId - checking structural assignability");
                 return Some(self.check_structural_assignability(s_inner, t_inner, env));
             }
 
             let s_identity = self.get_enum_identity(source);
             let t_identity = self.get_enum_identity(target);
-
-            eprintln!(
-                "TSZ-4 DEBUG: Identities: s_id={:?}, t_id={:?}",
-                s_identity, t_identity
-            );
 
             if let (Some(s_id), Some(t_id)) = (s_identity, t_identity) {
                 if s_id == t_id {

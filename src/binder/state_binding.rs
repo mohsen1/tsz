@@ -428,10 +428,6 @@ impl BinderState {
             // These will be merged with the target module's interface at type resolution time
             if self.in_module_augmentation {
                 if let Some(ref module_spec) = self.current_augmented_module {
-                    eprintln!(
-                        "[BIND-AUG] Tracking: module={}, interface={}, node={:?}",
-                        module_spec, name, idx
-                    );
                     self.module_augmentations
                         .entry(module_spec.clone())
                         .or_default()

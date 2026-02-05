@@ -761,11 +761,6 @@ impl<'a> FlowAnalyzer<'a> {
         _in_worklist: &mut FxHashSet<FlowNodeId>,
         _visited: FxHashSet<FlowNodeId>,
     ) -> TypeId {
-        eprintln!(
-            "DEBUG handle_switch_clause_iterative: ENTERED - flow.node={}, reference={}",
-            flow.node.0, reference.0
-        );
-
         let clause_idx = flow.node;
         let Some(switch_idx) = self.binder.get_switch_for_clause(clause_idx) else {
             return current_type;
@@ -789,17 +784,8 @@ impl<'a> FlowAnalyzer<'a> {
             current_type
         };
 
-        eprintln!(
-            "DEBUG handle_switch_clause_iterative: clause.expression.is_none={}, reference={}",
-            clause.expression.is_none(),
-            reference.0
-        );
-
         let narrowing = NarrowingContext::new(self.interner);
         let clause_type = if clause.expression.is_none() {
-            eprintln!(
-                "DEBUG handle_switch_clause_iterative: calling narrow_by_default_switch_clause"
-            );
             self.narrow_by_default_switch_clause(
                 pre_switch_type,
                 switch_data.expression,
@@ -816,11 +802,6 @@ impl<'a> FlowAnalyzer<'a> {
                 &narrowing,
             )
         };
-
-        eprintln!(
-            "DEBUG handle_switch_clause_iterative: clause_type={}",
-            clause_type.0
-        );
 
         clause_type
     }
@@ -1647,11 +1628,6 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         narrowing: &NarrowingContext,
     ) -> TypeId {
-        eprintln!(
-            "DEBUG narrow_by_default_switch_clause: type_id={}, switch_expr={}, target={}",
-            type_id.0, switch_expr.0, target.0
-        );
-
         let Some(case_block_node) = self.arena.get(case_block) else {
             return type_id;
         };
@@ -1659,6 +1635,43 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         };
 
+        // OPTIMIZATION: For direct switches on the target (switch(x) {...}),
+        // collect all case types first and exclude them in a single O(N) pass.
+        // This avoids O(N²) behavior when there are many case clauses.
+        if self.is_matching_reference(switch_expr, target) {
+            // Collect all case expression types
+            let mut excluded_types: Vec<TypeId> = Vec::new();
+            for &clause_idx in &case_block.statements.nodes {
+                let Some(clause_node) = self.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(clause) = self.arena.get_case_clause(clause_node) else {
+                    continue;
+                };
+                if clause.expression.is_none() {
+                    continue; // Skip default clause
+                }
+
+                // Try to get the type of the case expression
+                // First try literal extraction (fast path for constants)
+                if let Some(lit_type) = self.literal_type_from_node(clause.expression) {
+                    excluded_types.push(lit_type);
+                } else if let Some(node_types) = self.node_types {
+                    // Fall back to computed node types
+                    if let Some(&expr_type) = node_types.get(&clause.expression.0) {
+                        excluded_types.push(expr_type);
+                    }
+                }
+            }
+
+            if !excluded_types.is_empty() {
+                // Use batched narrowing for O(N) instead of O(N²)
+                return narrowing.narrow_excluding_types(type_id, &excluded_types);
+            }
+        }
+
+        // Fall back to sequential narrowing for complex cases
+        // (e.g., switch(x.kind) where we need property-based narrowing)
         let mut narrowed = type_id;
         for &clause_idx in &case_block.statements.nodes {
             let Some(clause_node) = self.arena.get(clause_idx) else {
@@ -1676,10 +1689,6 @@ impl<'a> FlowAnalyzer<'a> {
                 operator_token: SyntaxKind::EqualsEqualsEqualsToken as u16,
                 right: clause.expression,
             };
-            eprintln!(
-                "DEBUG narrow_by_default_switch_clause: calling narrow_by_binary_expr with narrowed={}",
-                narrowed.0
-            );
             narrowed = self.narrow_by_binary_expr(
                 narrowed,
                 &binary,
@@ -1688,16 +1697,8 @@ impl<'a> FlowAnalyzer<'a> {
                 narrowing,
                 FlowNodeId::NONE,
             );
-            eprintln!(
-                "DEBUG narrow_by_default_switch_clause: after narrowing, result={}",
-                narrowed.0
-            );
         }
 
-        eprintln!(
-            "DEBUG narrow_by_default_switch_clause: final result={}",
-            narrowed.0
-        );
         narrowed
     }
 
@@ -1710,10 +1711,6 @@ impl<'a> FlowAnalyzer<'a> {
         is_true_branch: bool,
         antecedent_id: FlowNodeId,
     ) -> TypeId {
-        eprintln!(
-            "DEBUG narrow_type_by_condition: type_id={}, condition={}, target={}, is_true_branch={}, antecedent={}",
-            type_id.0, condition_idx.0, target.0, is_true_branch, antecedent_id.0
-        );
         let mut visited_aliases = Vec::new();
         let result = self.narrow_type_by_condition_inner(
             type_id,
@@ -1735,10 +1732,6 @@ impl<'a> FlowAnalyzer<'a> {
         antecedent_id: FlowNodeId,
         visited_aliases: &mut Vec<SymbolId>,
     ) -> TypeId {
-        eprintln!(
-            "DEBUG narrow_type_by_condition_inner: type_id={}, condition={}, target={}",
-            type_id.0, condition_idx.0, target.0
-        );
         let condition_idx = self.skip_parenthesized(condition_idx);
         let Some(cond_node) = self.arena.get(condition_idx) else {
             return type_id;
@@ -1767,10 +1760,6 @@ impl<'a> FlowAnalyzer<'a> {
             // typeof x === "string", x instanceof Class, "prop" in x, etc.
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 if let Some(bin) = self.arena.get_binary_expr(cond_node) {
-                    eprintln!(
-                        "DEBUG narrow_type_by_condition_inner: operator={}",
-                        bin.operator_token
-                    );
                     // Handle logical operators (&&, ||) with special recursion
                     if let Some(narrowed) = self.narrow_by_logical_expr(
                         type_id,
@@ -1780,10 +1769,6 @@ impl<'a> FlowAnalyzer<'a> {
                         antecedent_id,
                         visited_aliases,
                     ) {
-                        eprintln!(
-                            "DEBUG narrow_type_by_condition_inner: logical_expr returned {}",
-                            narrowed.0
-                        );
                         return narrowed;
                     }
 
@@ -1792,30 +1777,16 @@ impl<'a> FlowAnalyzer<'a> {
                     if let Some((guard, guard_target, _is_optional)) =
                         self.extract_type_guard(condition_idx)
                     {
-                        eprintln!(
-                            "DEBUG narrow_type_by_condition_inner: extracted guard, guard_target={}",
-                            guard_target.0
-                        );
                         // Check if the guard applies to our target reference
                         if self.is_matching_reference(guard_target, target) {
-                            eprintln!(
-                                "DEBUG narrow_type_by_condition_inner: guard matches target, calling narrowing.narrow_type"
-                            );
                             // Delegate to Solver for the calculation (Solver responsibility: RESULT)
                             return narrowing.narrow_type(type_id, &guard, is_true_branch);
-                        } else {
-                            eprintln!(
-                                "DEBUG narrow_type_by_condition_inner: guard does not match target"
-                            );
                         }
                     }
 
                     // CRITICAL: Try bidirectional narrowing for x === y where both are references
                     // This handles cases that don't match traditional type guard patterns
                     // Example: if (x === y) { x } should narrow x based on y's type
-                    eprintln!(
-                        "DEBUG narrow_type_by_condition_inner: no guard extracted, trying narrow_by_binary_expr for bidirectional narrowing"
-                    );
                     let narrowed = self.narrow_by_binary_expr(
                         type_id,
                         bin,
@@ -1823,10 +1794,6 @@ impl<'a> FlowAnalyzer<'a> {
                         is_true_branch,
                         &narrowing,
                         antecedent_id,
-                    );
-                    eprintln!(
-                        "DEBUG narrow_type_by_condition_inner: narrow_by_binary_expr returned {}",
-                        narrowed.0
                     );
                     return narrowed;
                 }
@@ -1839,38 +1806,20 @@ impl<'a> FlowAnalyzer<'a> {
                 if let Some((guard, guard_target, is_optional)) =
                     self.extract_type_guard(condition_idx)
                 {
-                    eprintln!(
-                        "DEBUG narrow_type_by_condition_inner: extracted guard, guard_target={}, is_optional={}",
-                        guard_target.0, is_optional
-                    );
-
                     // CRITICAL: Optional chaining behavior
                     // If call is optional (obj?.method(x)), only narrow the true branch
                     // The false branch might mean the method wasn't called (obj was nullish)
                     if is_optional && !is_true_branch {
-                        eprintln!(
-                            "DEBUG narrow_type_by_condition_inner: optional call on false branch, skipping narrowing"
-                        );
                         return type_id;
                     }
 
                     // Check if the guard applies to our target reference
                     if self.is_matching_reference(guard_target, target) {
-                        eprintln!(
-                            "DEBUG narrow_type_by_condition_inner: guard matches target, calling narrowing.narrow_type"
-                        );
                         // Delegate to Solver for the calculation (Solver responsibility: RESULT)
                         return narrowing.narrow_type(type_id, &guard, is_true_branch);
-                    } else {
-                        eprintln!(
-                            "DEBUG narrow_type_by_condition_inner: guard does not match target"
-                        );
                     }
                 }
 
-                eprintln!(
-                    "DEBUG narrow_type_by_condition_inner: no guard extracted or guard doesn't match, returning type_id"
-                );
                 return type_id;
             }
 

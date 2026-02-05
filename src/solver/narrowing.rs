@@ -669,10 +669,6 @@ impl<'a> NarrowingContext<'a> {
             self.db.union(remaining)
         };
 
-        eprintln!(
-            "DEBUG narrow_by_excluding_discriminant: result={}, remaining_count={}",
-            result.0, remaining_count
-        );
         result
     }
 
@@ -1395,6 +1391,131 @@ impl<'a> NarrowingContext<'a> {
         } else {
             source_type
         }
+    }
+
+    /// Narrow a type by excluding multiple types at once (batched version).
+    ///
+    /// This is an optimized version of `narrow_excluding_type` for cases like
+    /// switch default clauses where we need to exclude many types at once.
+    /// It avoids creating intermediate union types and reduces complexity from O(N²) to O(N).
+    ///
+    /// # Arguments
+    /// * `source_type` - The type to narrow (typically a union)
+    /// * `excluded_types` - Types to exclude from the source
+    ///
+    /// # Returns
+    /// The narrowed type with all excluded types removed
+    pub fn narrow_excluding_types(&self, source_type: TypeId, excluded_types: &[TypeId]) -> TypeId {
+        if excluded_types.is_empty() {
+            return source_type;
+        }
+
+        // For small lists, use sequential narrowing (avoids HashSet overhead)
+        if excluded_types.len() <= 4 {
+            let mut result = source_type;
+            for &excluded in excluded_types {
+                result = self.narrow_excluding_type(result, excluded);
+                if result == TypeId::NEVER {
+                    return TypeId::NEVER;
+                }
+            }
+            return result;
+        }
+
+        // For larger lists, use HashSet for O(1) lookup
+        let excluded_set: rustc_hash::FxHashSet<TypeId> = excluded_types.iter().copied().collect();
+
+        // Handle union source type
+        if let Some(members) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members);
+            let remaining: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&member| {
+                    // Fast path: direct identity check against the set
+                    if excluded_set.contains(&member) {
+                        return None;
+                    }
+
+                    // Handle intersection members
+                    if intersection_list_id(self.db, member).is_some() {
+                        let narrowed = self.narrow_excluding_types(member, excluded_types);
+                        if narrowed == TypeId::NEVER {
+                            return None;
+                        }
+                        return Some(narrowed);
+                    }
+
+                    // Handle type parameters
+                    if let Some(narrowed) =
+                        self.narrow_type_param_excluding_set(member, &excluded_set)
+                    {
+                        if narrowed == TypeId::NEVER {
+                            return None;
+                        }
+                        return Some(narrowed);
+                    }
+
+                    // Slow path: check assignability for complex cases
+                    // This handles cases where the member isn't identical to an excluded type
+                    // but might still be assignable to one (e.g., literal subtypes)
+                    for &excluded in &excluded_set {
+                        if self.is_assignable_to(member, excluded) {
+                            return None;
+                        }
+                    }
+                    Some(member)
+                })
+                .collect();
+
+            if remaining.is_empty() {
+                return TypeId::NEVER;
+            } else if remaining.len() == 1 {
+                return remaining[0];
+            } else {
+                return self.db.union(remaining);
+            }
+        }
+
+        // Handle single type (not a union)
+        if excluded_set.contains(&source_type) {
+            return TypeId::NEVER;
+        }
+
+        // Check assignability for single type
+        for &excluded in &excluded_set {
+            if self.is_assignable_to(source_type, excluded) {
+                return TypeId::NEVER;
+            }
+        }
+
+        source_type
+    }
+
+    /// Helper for narrow_excluding_types with type parameters
+    fn narrow_type_param_excluding_set(
+        &self,
+        source: TypeId,
+        excluded_set: &rustc_hash::FxHashSet<TypeId>,
+    ) -> Option<TypeId> {
+        let info = type_param_info(self.db, source)?;
+
+        let constraint = info.constraint?;
+        if constraint == source || constraint == TypeId::UNKNOWN {
+            return None;
+        }
+
+        // Narrow the constraint by excluding all types in the set
+        let excluded_vec: Vec<TypeId> = excluded_set.iter().copied().collect();
+        let narrowed_constraint = self.narrow_excluding_types(constraint, &excluded_vec);
+
+        if narrowed_constraint == constraint {
+            return None;
+        }
+        if narrowed_constraint == TypeId::NEVER {
+            return Some(TypeId::NEVER);
+        }
+
+        Some(self.db.intersection2(source, narrowed_constraint))
     }
 
     /// Narrow to function types only.

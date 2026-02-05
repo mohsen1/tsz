@@ -1272,10 +1272,6 @@ impl<'a> CheckerState<'a> {
                 let is_cycle = { self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) };
                 if is_cycle {
                     // Cycle detected - return ERROR to prevent infinite loop
-                    eprintln!(
-                        "Warning: typeof resolution cycle detected for symbol {} in {}",
-                        sym_id, self.ctx.file_name
-                    );
                     return TypeId::ERROR;
                 }
 
@@ -1301,10 +1297,6 @@ impl<'a> CheckerState<'a> {
                 // Check for cycle in typeof resolution (scoped borrow)
                 let is_cycle = { self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) };
                 if is_cycle {
-                    eprintln!(
-                        "Warning: typeof resolution cycle detected for symbol {} in application in {}",
-                        sym_id, self.ctx.file_name
-                    );
                     return TypeId::ERROR;
                 }
 

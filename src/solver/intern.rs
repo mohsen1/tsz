@@ -1702,10 +1702,6 @@ impl TypeInterner {
             };
             total = total.saturating_mul(span_count);
             if total > TEMPLATE_LITERAL_EXPANSION_LIMIT {
-                eprintln!(
-                    "Template literal expansion would exceed limit of {} (computed {} combinations)",
-                    TEMPLATE_LITERAL_EXPANSION_LIMIT, total
-                );
                 return true;
             }
         }
@@ -1788,11 +1784,6 @@ impl TypeInterner {
 
             // Safety check: should not exceed limit at this point, but verify
             if combinations.len() > TEMPLATE_LITERAL_EXPANSION_LIMIT {
-                eprintln!(
-                    "Template literal expansion exceeded limit of {} (actual: {} combinations), widening to string",
-                    TEMPLATE_LITERAL_EXPANSION_LIMIT,
-                    combinations.len()
-                );
                 return TypeId::STRING;
             }
         }

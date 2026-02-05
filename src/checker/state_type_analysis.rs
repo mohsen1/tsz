@@ -1581,24 +1581,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(export_sym_id) = export_sym_id {
                     let mut result = self.get_type_of_symbol(export_sym_id);
 
-                    eprintln!(
-                        "[IMPORT-AUG] Import: module={}, export={}, sym_id={:?}, base_type={:?}",
-                        module_name, export_name, export_sym_id, result
-                    );
-
                     // Rule #44: Apply module augmentations to the imported type
                     // If there are augmentations for this module+interface, merge them in
-                    let before = result;
                     result = self.apply_module_augmentations(module_name, export_name, result);
-
-                    if before != result {
-                        eprintln!(
-                            "[IMPORT-AUG] Augmentation applied! {:?} -> {:?}",
-                            before, result
-                        );
-                    } else {
-                        eprintln!("[IMPORT-AUG] No augmentation applied (type unchanged)");
-                    }
 
                     // CRITICAL: Update the symbol type cache with the augmented type
                     // This ensures that when the type annotation uses the symbol (e.g., `let x: Observable<number>`),
