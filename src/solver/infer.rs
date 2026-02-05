@@ -957,6 +957,237 @@ impl<'a> InferenceContext<'a> {
         // This is a placeholder for more sophisticated constraint collection
     }
 
+    /// Perform structural type inference from a source type to a target type.
+    ///
+    /// This is the core algorithm for inferring type parameters from function arguments.
+    /// It walks the structure of both types, collecting constraints for type parameters.
+    ///
+    /// # Arguments
+    /// * `source` - The type from the value argument (e.g., `string` from `identity("hello")`)
+    /// * `target` - The type from the parameter (e.g., `T` from `function identity<T>(x: T)`)
+    /// * `priority` - The inference priority (e.g., `NakedTypeVariable` for direct arguments)
+    ///
+    /// # Type Inference Algorithm
+    ///
+    /// TypeScript uses structural type inference with the following rules:
+    ///
+    /// 1. **Direct Parameter Match**: If target is a type parameter `T` we're inferring,
+    ///    add source as a lower bound candidate for `T`.
+    ///
+    /// 2. **Structural Recursion**: For complex types, recurse into the structure:
+    ///    - Objects: Match properties recursively
+    ///    - Arrays: Match element types
+    ///    - Functions: Match parameters (contravariant) and return types (covariant)
+    ///
+    /// 3. **Variance Handling**:
+    ///    - Covariant positions (properties, arrays, return types): `infer(source, target)`
+    ///    - Contravariant positions (function parameters): `infer(target, source)` (swapped!)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut ctx = InferenceContext::new(&interner);
+    /// let t_var = ctx.fresh_type_param(interner.intern_string("T"), false);
+    ///
+    /// // Inference: identity("hello") should infer T = string
+    /// ctx.infer_from_types(string_type, t_type, InferencePriority::NakedTypeVariable)?;
+    /// ```
+    pub fn infer_from_types(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        // Resolve the types to their actual TypeKeys
+        let source_key = self.interner.lookup(source);
+        let target_key = self.interner.lookup(target);
+
+        // Case 1: Target is a TypeParameter we're inferring
+        if let Some(TypeKey::TypeParameter(ref param_info)) = target_key {
+            if let Some(var) = self.find_type_param(param_info.name) {
+                // Add source as a lower bound candidate for this type parameter
+                self.add_candidate(var, source, priority);
+                return Ok(());
+            }
+        }
+
+        // Case 2: Structural recursion - match based on type structure
+        match (source_key, target_key) {
+            // Object types: recurse into properties
+            (Some(TypeKey::Object(source_shape)), Some(TypeKey::Object(target_shape))) => {
+                self.infer_objects(source_shape, target_shape, priority)?;
+            }
+
+            // Function types: handle variance (parameters are contravariant, return is covariant)
+            (Some(TypeKey::Function(source_func)), Some(TypeKey::Function(target_func))) => {
+                self.infer_functions(source_func, target_func, priority)?;
+            }
+
+            // Array types: recurse into element types
+            (Some(TypeKey::Array(source_elem)), Some(TypeKey::Array(target_elem))) => {
+                self.infer_from_types(source_elem, target_elem, priority)?;
+            }
+
+            // Tuple types: recurse into elements
+            (Some(TypeKey::Tuple(source_elems)), Some(TypeKey::Tuple(target_elems))) => {
+                self.infer_tuples(source_elems, target_elems, priority)?;
+            }
+
+            // Union types: try to infer against each member
+            (Some(TypeKey::Union(source_members)), Some(TypeKey::Union(target_members))) => {
+                self.infer_unions(source_members, target_members, priority)?;
+            }
+
+            // Intersection types
+            (
+                Some(TypeKey::Intersection(source_members)),
+                Some(TypeKey::Intersection(target_members)),
+            ) => {
+                self.infer_intersections(source_members, target_members, priority)?;
+            }
+
+            // TypeApplication: recurse into instantiated type
+            (Some(TypeKey::Application(source_app)), Some(TypeKey::Application(target_app))) => {
+                self.infer_applications(source_app, target_app, priority)?;
+            }
+
+            // If we can't match structurally, that's okay - it might mean the types are incompatible
+            // The Checker will handle this with proper error reporting
+            _ => {
+                // No structural match possible
+                // This is not an error - the Checker will verify assignability separately
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Infer from object types by matching properties
+    fn infer_objects(
+        &mut self,
+        source_shape: ObjectShapeId,
+        target_shape: ObjectShapeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let source_shape = self.interner.object_shape(source_shape);
+        let target_shape = self.interner.object_shape(target_shape);
+
+        // For each property in the target, try to find a matching property in the source
+        for target_prop in target_shape.properties.iter() {
+            if let Some(source_prop) = source_shape
+                .properties
+                .iter()
+                .find(|p| p.name == target_prop.name)
+            {
+                self.infer_from_types(source_prop.type_id, target_prop.type_id, priority)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Infer from function types, handling variance correctly
+    fn infer_functions(
+        &mut self,
+        source_func: FunctionShapeId,
+        target_func: FunctionShapeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let source_sig = self.interner.function_shape(source_func);
+        let target_sig = self.interner.function_shape(target_func);
+
+        // Parameters are contravariant: swap source and target
+        for (source_param, target_param) in source_sig.params.iter().zip(target_sig.params.iter()) {
+            // Note the swapped arguments! This is the key to handling contravariance.
+            self.infer_from_types(target_param.type_id, source_param.type_id, priority)?;
+        }
+
+        // Return type is covariant: normal order
+        self.infer_from_types(source_sig.return_type, target_sig.return_type, priority)?;
+
+        Ok(())
+    }
+
+    /// Infer from tuple types
+    fn infer_tuples(
+        &mut self,
+        source_elems: TupleListId,
+        target_elems: TupleListId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let source_list = self.interner.tuple_list(source_elems);
+        let target_list = self.interner.tuple_list(target_elems);
+
+        for (source_elem, target_elem) in source_list.iter().zip(target_list.iter()) {
+            self.infer_from_types(source_elem.type_id, target_elem.type_id, priority)?;
+        }
+
+        Ok(())
+    }
+
+    /// Infer from union types
+    fn infer_unions(
+        &mut self,
+        source_members: TypeListId,
+        target_members: TypeListId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let source_list = self.interner.type_list(source_members);
+        let target_list = self.interner.type_list(target_members);
+
+        // Try to infer each source member against each target member
+        for source_ty in source_list.iter() {
+            for target_ty in target_list.iter() {
+                self.infer_from_types(*source_ty, *target_ty, priority)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Infer from intersection types
+    fn infer_intersections(
+        &mut self,
+        source_members: TypeListId,
+        target_members: TypeListId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let source_list = self.interner.type_list(source_members);
+        let target_list = self.interner.type_list(target_members);
+
+        // For intersections, we can pick any member that matches
+        for source_ty in source_list.iter() {
+            for target_ty in target_list.iter() {
+                // Don't fail if one member doesn't match
+                let _ = self.infer_from_types(*source_ty, *target_ty, priority);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Infer from TypeApplication (generic type instantiations)
+    fn infer_applications(
+        &mut self,
+        source_app: TypeApplicationId,
+        target_app: TypeApplicationId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let source_info = self.interner.type_application(source_app);
+        let target_info = self.interner.type_application(target_app);
+
+        // The base types must match for inference to work
+        if source_info.base != target_info.base {
+            return Ok(());
+        }
+
+        // Recurse into the type arguments
+        for (source_arg, target_arg) in source_info.args.iter().zip(target_info.args.iter()) {
+            self.infer_from_types(*source_arg, *target_arg, priority)?;
+        }
+
+        Ok(())
+    }
+
     // =========================================================================
     // Bounds Checking and Resolution
     // =========================================================================

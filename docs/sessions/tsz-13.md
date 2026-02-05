@@ -164,3 +164,48 @@ Be specific if it's wrong - tell me exactly what to fix.
 ## Session History
 
 Created 2026-02-05 following completion of tsz-6 (Member Resolution on Generic and Placeholder Types).
+
+## Gemini Guidance Summary (2026-02-05)
+
+### Implementation Approach
+
+**File 1**: `src/solver/infer.rs`
+- Add `pub fn infer_from_types(&mut self, source: TypeId, target: TypeId, priority: InferencePriority) -> Result<(), InferenceError>`
+- Perform structural walk matching source type (argument) to target type (parameter with inference vars)
+- Handle variance: swap arguments for contravariant positions (function parameters)
+- Return Result to allow Checker to handle inference failures
+
+**File 2**: `src/checker/state.rs` (specifically `check_call_expression`)
+1. Get argument types
+2. Select candidate signature
+3. If generic and no explicit type args:
+   - Create `InferenceContext`
+   - Map type params to `InferenceVar`
+   - Call `infer_from_types(arg_type, param_type, InferencePriority::NakedTypeVariable)`
+   - Call `resolve_all_with_constraints()`
+4. Instantiate signature with results
+5. Perform final `is_assignable_to` check
+
+### Key Patterns to Follow
+
+1. **Use `TypeKey` match pattern** (like `subtype.rs:check_subtype_inner`) - exception to visitor rule for binary type relations
+2. **Resolve Lazy/Ref types** with `resolve_lazy_type()` before matching
+3. **Handle contravariance**: For function parameters, call `infer_from_types(target_param, source_arg, priority)` (swapped)
+4. **Track inference variables**: Map type parameters to InferenceVars using name matching
+5. **Use correct priorities**: `NakedTypeVariable` for direct arguments, `ReturnType` for return types
+
+### Edge Cases to Handle
+
+1. **Recursive Types**: Use depth/visited pattern from `subtype.rs`
+2. **Literal Widening**: Already handled by `InferenceCandidate` in `infer.rs`
+3. **Circular Constraints**: `strengthen_constraints` handles this
+4. **Unions/Intersections**: Start with simple structural matching
+
+### Getting Type Parameters from Callable
+
+```rust
+let shape = self.interner.callable_shape(callable_id);
+for sig in &shape.call_signatures {
+    let params = &sig.type_params; // Vec<TypeParamInfo>
+}
+```
