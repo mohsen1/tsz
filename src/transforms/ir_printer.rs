@@ -381,8 +381,40 @@ impl<'a> IRPrinter<'a> {
                     && body.len() == 1
                     && matches!(&body[0], IRNode::ReturnStatement(Some(_)));
 
+                // For simple anonymous returns, check if this appears to be a compact callback
+                // vs a longer prototype method. We use a heuristic: if the source is NOT
+                // explicitly multi-line (has newlines in body), treat it as a callback.
+                let is_likely_callback = is_simple_anonymous_return
+                    && body_source_range.is_some()
+                    && !is_source_single_line
+                    && body_source_range
+                        .and_then(|(start, end)| {
+                            self.source_text.map(|_text| {
+                                let len = (end - start) as usize;
+                                // Check if body range is compact (< 80 chars) despite spanning multiple lines
+                                // This handles cases like: function (val) {\n    return val.x;\n    }
+                                // which is technically multi-line but should be treated as a compact callback
+                                len < 80
+                            })
+                        })
+                        .unwrap_or(false);
+
+                // Determine if we should emit single-line:
+                // - For arrow-to-function conversions: single-line
+                // - For compact callbacks (short bodies, even if multi-line in source): single-line
+                // - For functions that were single-line in source: single-line
+                // - Otherwise: respect original source formatting
+                // - Generated code without source info: use simple anonymous return heuristic
+                let should_emit_single_line = if body_source_range.is_some() {
+                    // We have source range info
+                    *is_expression_body || is_source_single_line || is_likely_callback
+                } else {
+                    // No source range - use heuristic for generated code
+                    *is_expression_body || is_simple_anonymous_return
+                };
+
                 if !has_defaults
-                    && (*is_expression_body || is_source_single_line || is_simple_anonymous_return)
+                    && should_emit_single_line
                     && body.len() == 1
                     && let IRNode::ReturnStatement(Some(expr)) = &body[0]
                 {

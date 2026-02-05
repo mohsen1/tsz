@@ -838,6 +838,12 @@ impl<'a> ES5ClassTransformer<'a> {
                 let is_async = has_async_modifier(self.arena, &method_data.modifiers)
                     && !method_data.asterisk_token;
 
+                // Capture body source range for single-line detection
+                let body_source_range = self
+                    .arena
+                    .get(method_data.body)
+                    .map(|body_node| (body_node.pos as u32, body_node.end as u32));
+
                 let method_body = if is_async {
                     // Async method: use async transformer to build proper generator body
                     let mut async_transformer = AsyncES5Transformer::new(self.arena);
@@ -861,7 +867,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         parameters: params,
                         body: method_body,
                         is_expression_body: false,
-                        body_source_range: None,
+                        body_source_range,
                     }),
                 });
             } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
