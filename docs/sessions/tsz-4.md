@@ -29,7 +29,7 @@
 1. [x] **Infrastructure**: Create `src/checker/tests/strict_null_manual.rs` for regression testing
 2. [x] **Bugfix**: Fix TS18050/TS2531 error code selection for property access on `null`/`undefined` (Verified current behavior matches tsc)
 3. [x] **Feature**: Fix "Weak Type" detection (TS2559) in Lawyer layer
-4. [ ] **Audit**: Verify Object Literal Freshness (Excess Property Checking) logic (Optional)
+4. [ ] **Feature**: Implement Object Literal Freshness (Excess Property Checking) ← **CURRENT TASK**
 
 ## Current Context (2026-02-05)
 
@@ -179,3 +179,48 @@ fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
 2. **Then**: Ask Gemini (Pro) for TS18050/TS2531 fix approach
 3. **Then**: Implement fix and verify with `cargo nextest`
 4. **Later**: Weak type detection and freshness audit
+
+---
+
+## Priority 3: Object Literal Freshness (Excess Property Checking) ← **CURRENT TASK**
+
+**Status**: 🔄 In Progress - Awaiting Gemini Approach Validation
+
+**Problem**: TypeScript's "Freshness" rule rejects object literals with excess properties when assigned to typed variables.
+
+**Example:**
+```typescript
+interface Point { x: number; y: number; }
+const p: Point = { x: 1, y: 2, z: 3 }; // Error: Object literal may only specify known properties
+```
+
+**Why This Matters:**
+Pure structural subtyping would accept this (all required properties exist), but TypeScript's Lawyer layer enforces "freshness" to catch typos and mistakes.
+
+**Planned Approach (to be validated by Gemini):**
+1. Track "fresh" flag on types that originate from object literals
+2. Store freshness state in CheckerContext or TypeId metadata
+3. Lawyer/CompatChecker performs excess property check when source is fresh
+4. Freshness "disappears" after first assignment or widening
+
+**Key Challenge:**
+Freshness state must survive through the Solver layer but disappear after assignment. This requires careful state management.
+
+**Validation Steps:**
+```bash
+# Step 1: Ask Gemini for approach validation (MANDATORY per AGENTS.md)
+./scripts/ask-gemini.mjs --include=src/solver --include=src/checker \
+  "I need to implement Object Literal Freshness (Excess Property Checking).
+Problem: I need to track which types are 'fresh' (object literals) and ensure the Lawyer layer rejects excess properties during assignment.
+My planned approach:
+1. Add a 'fresh' flag to the TypeId or track it in CheckerContext.
+2. Modify the Lawyer/CompatChecker to perform an extra check if the source is fresh.
+Is this the right approach? Where should the 'freshness' state live to survive through the Solver?"
+
+# Step 2: Implement based on Gemini guidance
+# Step 3: Write tests to verify excess property errors
+# Step 4: Ask Gemini Pro to review implementation
+```
+
+**North Star Reference:**
+Section 3.3 - Lawyer Layer, "Excess Property Checking" is one of four pillars
