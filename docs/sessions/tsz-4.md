@@ -1,7 +1,7 @@
 # Session TSZ-4: Nominality & Accessibility (Lawyer Layer)
 
 **Started**: 2026-02-05
-**Status**: 🔄 Active - New Focus
+**Status**: 🔄 Active - In Progress (Enum Member Distinction)
 **Focus**: Implement TypeScript's nominal "escape hatches" (Enums, Private/Protected members) and visibility constraints
 
 ## Previous Session (COMPLETE)
@@ -197,3 +197,28 @@ Be specific if it's wrong - tell me exactly what to fix.
 - `src/solver/lawyer.rs` - Add nominality rules to QUIRKS documentation
 - `src/checker/symbol_resolver.rs` - Extract symbol flags for private/protected
 - `src/checker/tests/` - Manual verification tests
+
+---
+
+## Progress Log (2026-02-05)
+
+### Commit: `c763799da` - feat(tsz-4): add enum nominal assignability fix (WIP)
+
+**What Was Done**:
+1. Implemented `enum_assignability_override` fix to match on `TypeKey::Enum(def_id, inner_type)`
+2. When DefIds match (same enum), check structural assignability of inner types
+3. Created `enum_nominality_tests.rs` with 9 test cases
+
+**Discovery** (from Gemini Pro):
+- **Root Cause**: `enum_object_type` sets all members to `TypeId::NUMBER` or `TypeId::STRING`
+- This loses nominal information needed for enum member distinction
+- **Current Behavior**: `E.A` and `E.B` are both typed as `number`, so `E.A` is assignable to `E.B` (WRONG)
+- **Expected Behavior**: `E.A` should be `TypeKey::Enum(DefId(E), Literal(0))`, `E.B` should be `TypeKey::Enum(DefId(E), Literal(1))`
+
+**Test Results**: 4 passed, 5 failed
+- Failed tests expect TS2322 errors but get 0 (because types are `number`, not `TypeKey::Enum`)
+
+**Next Steps**:
+1. Fix `enum_object_type` in `src/checker/state_type_environment.rs` to create `TypeKey::Enum(DefId, Literal)` for each member
+2. Ask Gemini Pro for POST-implementation review before proceeding
+3. Address Priority 2-4 (Numeric Literal Assignability, Performance Anti-Pattern, Bitwise Enums)
