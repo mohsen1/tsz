@@ -12,6 +12,7 @@
 
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
+use crate::solver::instantiate::TypeSubstitution;
 use crate::solver::types::*;
 use crate::solver::utils;
 use crate::solver::visitor::is_literal_type;
@@ -3010,6 +3011,96 @@ impl<'a> InferenceContext<'a> {
         }
 
         Ok(())
+    }
+
+    /// Fix (resolve) inference variables that have candidates from Round 1.
+    ///
+    /// This is called after processing non-contextual arguments to "fix" type
+    /// variables that have enough information, before processing contextual
+    /// arguments (like lambdas) in Round 2.
+    ///
+    /// The fixing process:
+    /// 1. Finds variables with candidates but no resolved type yet
+    /// 2. Computes their best current type from candidates
+    /// 3. Sets the `resolved` field to prevent Round 2 from overriding
+    ///
+    /// Variables without candidates are NOT fixed (they might get info from Round 2).
+    pub fn fix_current_variables(&mut self) -> Result<(), InferenceError> {
+        let type_params: Vec<_> = self.type_params.clone();
+
+        for (_name, var, _is_const) in type_params.iter() {
+            let root = self.table.find(*var);
+            let info = self.table.probe_value(root);
+
+            // Skip if already resolved
+            if info.resolved.is_some() {
+                continue;
+            }
+
+            // Skip if no candidates yet (might get info from Round 2)
+            if info.candidates.is_empty() {
+                continue;
+            }
+
+            // Compute the current best type from existing candidates
+            // This uses the same logic as compute_constraint_result but doesn't
+            // validate against upper bounds yet (that happens in final resolution)
+            let is_const = self.is_var_const(root);
+            let result = self.resolve_from_candidates(&info.candidates, is_const);
+
+            // Check for occurs (recursive type)
+            if self.occurs_in(root, result) {
+                // Don't fix variables with occurs - let them be resolved later
+                continue;
+            }
+
+            // Fix this variable by setting resolved field
+            // This prevents Round 2 from overriding with lower-priority constraints
+            self.table.union_value(
+                root,
+                InferenceInfo {
+                    resolved: Some(result),
+                    // Keep candidates and upper_bounds for later validation
+                    candidates: info.candidates,
+                    upper_bounds: info.upper_bounds,
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Get the current best substitution for all type parameters.
+    ///
+    /// This returns a TypeSubstitution mapping each type parameter to its
+    /// current best type (either resolved or the best candidate so far).
+    /// Used in Round 2 to provide contextual types to lambda arguments.
+    pub fn get_current_substitution(&mut self) -> TypeSubstitution {
+        let mut subst = TypeSubstitution::new();
+        let type_params: Vec<_> = self.type_params.clone();
+
+        for (name, var, _) in type_params.iter() {
+            let ty = match self.probe(*var) {
+                Some(resolved) => resolved,
+                None => {
+                    // Not resolved yet, try to get best candidate
+                    let root = self.table.find(*var);
+                    let info = self.table.probe_value(root);
+
+                    if !info.candidates.is_empty() {
+                        let is_const = self.is_var_const(root);
+                        self.resolve_from_candidates(&info.candidates, is_const)
+                    } else {
+                        // No info yet, use unknown as placeholder
+                        TypeId::UNKNOWN
+                    }
+                }
+            };
+
+            subst.insert(*name, ty);
+        }
+
+        subst
     }
 }
 
