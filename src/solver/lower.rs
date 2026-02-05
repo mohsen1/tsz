@@ -1131,6 +1131,113 @@ impl<'a> TypeLowering<'a> {
         (self.lower_type(alias.type_node), Vec::new())
     }
 
+    /// Lower a function-like declaration (Method, Constructor, Function) to a TypeId.
+    ///
+    /// This is used for overload compatibility checking where we need the structural type
+    /// of a specific declaration node, which might not be cached in the node_types map.
+    ///
+    /// # Arguments
+    /// * `node_idx` - The declaration node index
+    /// * `return_type_override` - Optional return type to use instead of the annotation.
+    ///   (Useful for implementation signatures where return type is inferred from body)
+    ///
+    /// # Returns
+    /// The TypeId of the function shape, or TypeId::ERROR if lowering fails.
+    pub fn lower_signature_from_declaration(
+        &self,
+        node_idx: NodeIndex,
+        return_type_override: Option<TypeId>,
+    ) -> TypeId {
+        use crate::parser::syntax_kind_ext;
+
+        let Some(node) = self.arena.get(node_idx) else {
+            return TypeId::ERROR;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method) = self.arena.get_method_decl(node) else {
+                    return TypeId::ERROR;
+                };
+
+                let (type_params, (params, this_type, return_type, type_predicate)) = self
+                    .with_type_params(&method.type_parameters, || {
+                        let (params, this_type) = self.lower_params_with_this(&method.parameters);
+
+                        let (return_type, type_predicate) =
+                            if let Some(override_type) = return_type_override {
+                                (override_type, None)
+                            } else {
+                                self.lower_return_type(method.type_annotation)
+                            };
+
+                        (params, this_type, return_type, type_predicate)
+                    });
+
+                self.interner.function(crate::solver::FunctionShape {
+                    type_params,
+                    params,
+                    this_type,
+                    return_type,
+                    type_predicate,
+                    is_constructor: false,
+                    is_method: true, // Methods are bivariant
+                })
+            }
+            k if k == syntax_kind_ext::CONSTRUCTOR => {
+                let Some(ctor) = self.arena.get_constructor(node) else {
+                    return TypeId::ERROR;
+                };
+
+                let (params, this_type) = self.lower_params_with_this(&ctor.parameters);
+
+                // Constructors return the instance type (or void/any implicitly)
+                // For overload checking, we usually compare the function shapes.
+                let return_type = return_type_override.unwrap_or(TypeId::VOID);
+
+                self.interner.function(crate::solver::FunctionShape {
+                    type_params: Vec::new(), // Constructors don't have own type params
+                    params,
+                    this_type,
+                    return_type,
+                    type_predicate: None,
+                    is_constructor: true,
+                    is_method: false,
+                })
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                let Some(func) = self.arena.get_function(node) else {
+                    return TypeId::ERROR;
+                };
+
+                let (type_params, (params, this_type, return_type, type_predicate)) = self
+                    .with_type_params(&func.type_parameters, || {
+                        let (params, this_type) = self.lower_params_with_this(&func.parameters);
+
+                        let (return_type, type_predicate) =
+                            if let Some(override_type) = return_type_override {
+                                (override_type, None)
+                            } else {
+                                self.lower_return_type(func.type_annotation)
+                            };
+
+                        (params, this_type, return_type, type_predicate)
+                    });
+
+                self.interner.function(crate::solver::FunctionShape {
+                    type_params,
+                    params,
+                    this_type,
+                    return_type,
+                    type_predicate,
+                    is_constructor: false,
+                    is_method: false, // Functions are contravariant (strict)
+                })
+            }
+            _ => TypeId::ERROR,
+        }
+    }
+
     fn collect_interface_members(&self, members: &NodeList, parts: &mut InterfaceParts) {
         for &idx in &members.nodes {
             let Some(member) = self.arena.get(idx) else {
