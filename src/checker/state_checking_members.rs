@@ -2138,26 +2138,42 @@ impl<'a> CheckerState<'a> {
 
     /// Check a break statement for validity.
     /// TS1105: A 'break' statement can only be used within an enclosing iteration statement or switch statement.
+    /// TS1107: Jump target cannot cross function boundary.
     pub(crate) fn check_break_statement(&mut self, stmt_idx: NodeIndex) {
         use crate::checker::types::diagnostics::diagnostic_codes;
 
-        // Break is valid if we're inside an iteration statement OR a switch statement
-        if self.ctx.iteration_depth == 0 && self.ctx.switch_depth == 0 {
-            // Check if there's a label - labeled breaks have different rules
-            if let Some(node) = self.ctx.arena.get(stmt_idx)
-                && let Some(jump_data) = self.ctx.arena.get_jump_data(node)
-                && !jump_data.label.is_none()
-            {
-                // For labeled breaks, we'd need to check if the label exists and is accessible
-                // This is more complex (TS1107: Jump target cannot cross function boundary)
-                // For now, just emit the basic error
-                self.error_at_node(
-                    stmt_idx,
-                    "A 'break' statement can only be used within an enclosing iteration statement.",
-                    diagnostic_codes::BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
-                );
-            } else {
-                // Unlabeled break outside of loop/switch
+        // Get the label if any
+        let label_name = self
+            .ctx
+            .arena
+            .get(stmt_idx)
+            .and_then(|node| self.ctx.arena.get_jump_data(node))
+            .and_then(|jump_data| {
+                if jump_data.label.is_none() {
+                    None
+                } else {
+                    self.get_node_text(jump_data.label)
+                }
+            });
+
+        if let Some(label) = label_name {
+            // Labeled break - look up the label
+            if let Some(label_info) = self.find_label(&label) {
+                // Check if the label crosses a function boundary
+                if label_info.function_depth < self.ctx.function_depth {
+                    self.error_at_node(
+                        stmt_idx,
+                        "Jump target cannot cross function boundary.",
+                        diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
+                    );
+                }
+                // Otherwise, labeled break is valid (can target any label, not just iteration)
+            }
+            // Note: If label not found, TSC produces TS2304 "Cannot find name" for the label
+            // which is a semantic error, not a grammar error. The label lookup is done by the binder.
+        } else {
+            // Unlabeled break - must be inside iteration or switch
+            if self.ctx.iteration_depth == 0 && self.ctx.switch_depth == 0 {
                 self.error_at_node(
                     stmt_idx,
                     "A 'break' statement can only be used within an enclosing iteration statement.",
@@ -2169,26 +2185,49 @@ impl<'a> CheckerState<'a> {
 
     /// Check a continue statement for validity.
     /// TS1104: A 'continue' statement can only be used within an enclosing iteration statement.
+    /// TS1107: Jump target cannot cross function boundary.
+    /// TS1116: A 'continue' statement can only jump to a label of an enclosing iteration statement.
     pub(crate) fn check_continue_statement(&mut self, stmt_idx: NodeIndex) {
         use crate::checker::types::diagnostics::diagnostic_codes;
 
-        // Continue is only valid inside an iteration statement (NOT in switch)
-        if self.ctx.iteration_depth == 0 {
-            // Check if there's a label - labeled continues have different rules
-            if let Some(node) = self.ctx.arena.get(stmt_idx)
-                && let Some(jump_data) = self.ctx.arena.get_jump_data(node)
-                && !jump_data.label.is_none()
-            {
-                // For labeled continues, we'd need to check if the label is on an iteration statement
-                // (TS1116: A 'continue' statement can only jump to a label of an enclosing iteration statement)
-                // For now, just emit the basic error
-                self.error_at_node(
-                    stmt_idx,
-                    "A 'continue' statement can only be used within an enclosing iteration statement.",
-                    diagnostic_codes::CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
-                );
-            } else {
-                // Unlabeled continue outside of loop
+        // Get the label if any
+        let label_name = self
+            .ctx
+            .arena
+            .get(stmt_idx)
+            .and_then(|node| self.ctx.arena.get_jump_data(node))
+            .and_then(|jump_data| {
+                if jump_data.label.is_none() {
+                    None
+                } else {
+                    self.get_node_text(jump_data.label)
+                }
+            });
+
+        if let Some(label) = label_name {
+            // Labeled continue - look up the label
+            if let Some(label_info) = self.find_label(&label) {
+                // Check if the label crosses a function boundary
+                if label_info.function_depth < self.ctx.function_depth {
+                    self.error_at_node(
+                        stmt_idx,
+                        "Jump target cannot cross function boundary.",
+                        diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
+                    );
+                } else if !label_info.is_iteration {
+                    // Continue can only jump to iteration labels
+                    self.error_at_node(
+                        stmt_idx,
+                        "A 'continue' statement can only jump to a label of an enclosing iteration statement.",
+                        diagnostic_codes::CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_LABEL_OF_ENCLOSING_ITERATION,
+                    );
+                }
+                // Otherwise, labeled continue to iteration label is valid
+            }
+            // Note: If label not found, TSC produces TS2304 "Cannot find name"
+        } else {
+            // Unlabeled continue - must be inside iteration
+            if self.ctx.iteration_depth == 0 {
                 self.error_at_node(
                     stmt_idx,
                     "A 'continue' statement can only be used within an enclosing iteration statement.",
@@ -2196,6 +2235,15 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    /// Find a label in the label stack by name.
+    fn find_label(&self, name: &str) -> Option<&crate::checker::context::LabelInfo> {
+        self.ctx
+            .label_stack
+            .iter()
+            .rev()
+            .find(|info| info.name == name)
     }
 }
 
@@ -2448,13 +2496,22 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
             self.push_return_type(body_return_type);
             // Save and reset control flow context (function body creates new context)
-            let saved_cf_context = (self.ctx.iteration_depth, self.ctx.switch_depth);
+            let saved_cf_context = (
+                self.ctx.iteration_depth,
+                self.ctx.switch_depth,
+                self.ctx.label_stack.len(),
+            );
             self.ctx.iteration_depth = 0;
             self.ctx.switch_depth = 0;
+            self.ctx.function_depth += 1;
+            // Note: we don't truncate label_stack here - labels remain visible
+            // but function_depth is used to detect crosses over function boundary
             self.check_statement(func.body);
             // Restore control flow context
             self.ctx.iteration_depth = saved_cf_context.0;
             self.ctx.switch_depth = saved_cf_context.1;
+            self.ctx.function_depth -= 1;
+            self.ctx.label_stack.truncate(saved_cf_context.2);
 
             // Check for error 2355: function with return type must return a value
             // Only check if there's an explicit return type annotation
@@ -2755,5 +2812,23 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     fn restore_control_flow_context(&mut self, saved: (u32, u32)) {
         self.ctx.iteration_depth = saved.0;
         self.ctx.switch_depth = saved.1;
+    }
+
+    fn enter_labeled_statement(&mut self, label: String, is_iteration: bool) {
+        self.ctx
+            .label_stack
+            .push(crate::checker::context::LabelInfo {
+                name: label,
+                is_iteration,
+                function_depth: self.ctx.function_depth,
+            });
+    }
+
+    fn leave_labeled_statement(&mut self) {
+        self.ctx.label_stack.pop();
+    }
+
+    fn get_node_text(&self, idx: NodeIndex) -> Option<String> {
+        CheckerState::get_node_text(self, idx)
     }
 }

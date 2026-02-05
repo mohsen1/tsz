@@ -514,13 +514,20 @@ impl<'a> CheckerState<'a> {
             // outer type parameters like T/U in nested generics.
             if !is_function_declaration {
                 // Save and reset control flow context (function body creates new context)
-                let saved_cf_context = (self.ctx.iteration_depth, self.ctx.switch_depth);
+                let saved_cf_context = (
+                    self.ctx.iteration_depth,
+                    self.ctx.switch_depth,
+                    self.ctx.label_stack.len(),
+                );
                 self.ctx.iteration_depth = 0;
                 self.ctx.switch_depth = 0;
+                self.ctx.function_depth += 1;
                 self.check_statement(body);
                 // Restore control flow context
                 self.ctx.iteration_depth = saved_cf_context.0;
                 self.ctx.switch_depth = saved_cf_context.1;
+                self.ctx.function_depth -= 1;
+                self.ctx.label_stack.truncate(saved_cf_context.2);
             }
             self.pop_return_type();
 
