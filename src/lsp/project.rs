@@ -24,7 +24,7 @@ use crate::lsp::dependency_graph::DependencyGraph;
 use crate::lsp::diagnostics::{LspDiagnostic, convert_diagnostic};
 use crate::lsp::hover::{HoverInfo, HoverProvider};
 use crate::lsp::position::{LineMap, Location, Position, Range};
-use crate::lsp::rename::TextEdit;
+use crate::lsp::rename::{TextEdit, WorkspaceEdit};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats};
 use crate::lsp::signature_help::{SignatureHelp, SignatureHelpProvider};
 use crate::parser::ParserState;
@@ -42,6 +42,14 @@ pub(crate) enum ImportKind {
 pub(crate) struct ImportTarget {
     pub(crate) module_specifier: String,
     pub(crate) kind: ImportKind,
+}
+
+/// A file rename request from the LSP client.
+pub struct FileRename {
+    /// The original file path (URI)
+    pub old_uri: String,
+    /// The new file path (URI)
+    pub new_uri: String,
 }
 
 pub(crate) struct NamespaceReexportTarget {
@@ -1074,7 +1082,9 @@ impl Project {
     /// Add or replace a file, re-parsing and re-binding its contents.
     pub fn set_file(&mut self, file_name: String, source_text: String) {
         let file = ProjectFile::with_strict(file_name.clone(), source_text, self.strict);
-        self.files.insert(file_name, file);
+        self.files.insert(file_name.clone(), file);
+        // Update dependency graph with imports from this file
+        self.update_dependencies(&file_name);
     }
 
     /// Update an existing file by applying incremental text edits.
@@ -1105,9 +1115,221 @@ impl Project {
         self.files.remove(file_name)
     }
 
+    /// Extract import paths from a file's AST.
+    ///
+    /// Walks the top-level statements to find ImportDeclaration and
+    /// ExportDeclaration nodes (with module specifiers) and extracts
+    /// their module specifier strings for the DependencyGraph.
+    fn extract_imports(&self, file_name: &str) -> Vec<String> {
+        let mut imports = Vec::new();
+
+        let file = match self.files.get(file_name) {
+            Some(f) => f,
+            None => return imports,
+        };
+
+        let arena = file.arena();
+        let _root = file.root();
+
+        // Walk all nodes to find ImportDeclaration and ExportDeclaration
+        // In the flat NodeArena, we iterate over all nodes
+        for (_idx, node) in arena.nodes.iter().enumerate() {
+            // Get the module specifier node for both imports and exports
+            let specifier_idx = if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                arena.get_import_decl(node).map(|d| d.module_specifier)
+            } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                // Handle: export ... from "module" (re-exports)
+                arena.get_export_decl(node).map(|d| d.module_specifier)
+            } else {
+                None
+            };
+
+            if let Some(specifier_idx) = specifier_idx {
+                if specifier_idx.is_none() {
+                    continue;
+                }
+
+                let specifier_node = match arena.get(specifier_idx) {
+                    Some(n) => n,
+                    None => continue,
+                };
+
+                // Extract the string text
+                let start = specifier_node.pos as usize;
+                let end = specifier_node.end as usize;
+                let source_text = file.source_text();
+
+                if end <= start || end > source_text.len() {
+                    continue;
+                }
+
+                let text = &source_text[start..end];
+
+                // Remove quotes to get just the path
+                let path = if text.starts_with('"') && text.ends_with('"') && text.len() > 1 {
+                    &text[1..text.len() - 1]
+                } else if text.starts_with('\'') && text.ends_with('\'') && text.len() > 1 {
+                    &text[1..text.len() - 1]
+                } else {
+                    continue;
+                };
+
+                imports.push(path.to_string());
+            }
+        }
+
+        imports
+    }
+
+    /// Update the dependency graph for a file.
+    ///
+    /// Extracts imports from the file's AST and updates the DependencyGraph.
+    /// This should be called whenever a file is added or modified.
+    fn update_dependencies(&mut self, file_name: &str) {
+        let imports = self.extract_imports(file_name);
+        self.dependency_graph.update_file(file_name, &imports);
+    }
+
+    /// Handle file rename requests from the LSP client.
+    ///
+    /// When files are renamed or moved, this calculates the TextEdits needed
+    /// to update import statements in all dependent files.
+    ///
+    /// # Arguments
+    /// * `renames` - List of file renames (old path -> new path)
+    ///
+    /// # Returns
+    /// A WorkspaceEdit containing all the TextEdits needed to update imports
+    ///
+    /// # Example
+    /// ```ignore
+    /// // When utils.ts moves to src/utils.ts
+    /// let renames = vec![FileRename {
+    ///     old_uri: "/project/utils.ts".to_string(),
+    ///     new_uri: "/project/src/utils.ts".to_string(),
+    /// }];
+    /// let edits = project.handle_will_rename_files(&renames);
+    /// // Returns edits for all files that import utils.ts
+    /// ```
+    pub fn handle_will_rename_files(&mut self, renames: &[FileRename]) -> WorkspaceEdit {
+        use crate::lsp::file_rename::FileRenameProvider;
+        use crate::lsp::rename::TextEdit;
+        use crate::lsp::utils::calculate_new_relative_path;
+        use std::path::Path;
+
+        let mut result = WorkspaceEdit::new();
+
+        for rename in renames {
+            let old_path = Path::new(&rename.old_uri);
+            let new_path = Path::new(&rename.new_uri);
+
+            // Get all files that import the old file
+            if let Some(dependents) = self.dependency_graph.get_dependents(&rename.old_uri) {
+                for dependent_path in dependents {
+                    // Get the dependent file
+                    let dep_file = match self.files.get(dependent_path) {
+                        Some(f) => f,
+                        None => continue,
+                    };
+
+                    // Create a provider to find import nodes
+                    let provider = FileRenameProvider::new(
+                        dep_file.arena(),
+                        dep_file.line_map(),
+                        dep_file.source_text(),
+                    );
+
+                    // Find all import/export specifiers in this file
+                    let import_locations = provider.find_import_specifier_nodes(dep_file.root());
+
+                    // For each import, check if it needs updating
+                    for import_loc in import_locations {
+                        // CRITICAL: Check if this import actually points to the renamed file
+                        // Without this check, we would rewrite ALL imports in the file
+                        let dependent_path_obj = Path::new(dependent_path);
+                        if !self.is_import_pointing_to_file(
+                            dependent_path_obj,
+                            &import_loc.current_specifier,
+                            &old_path,
+                        ) {
+                            // This import doesn't point to the renamed file, skip it
+                            continue;
+                        }
+
+                        // Calculate the new import path
+                        if let Some(new_specifier) = calculate_new_relative_path(
+                            Path::new(dependent_path),
+                            &old_path,
+                            &new_path,
+                            &import_loc.current_specifier,
+                        ) {
+                            // Create a TextEdit for this import
+                            let text_edit = TextEdit::new(import_loc.range, new_specifier);
+
+                            // Add to the result
+                            result.add_edit(dependent_path.clone(), text_edit);
+                        }
+                    }
+                }
+            }
+
+            // Update the dependency graph to reflect the rename
+            // Remove old dependencies and add new ones
+            self.dependency_graph.remove_file(&rename.old_uri);
+            if let Some(dependents) = self.dependency_graph.get_dependents(&rename.old_uri) {
+                for _dependent in dependents {
+                    // The dependent files now need to point to the new path
+                    // This will be updated when those files are re-checked
+                }
+            }
+        }
+
+        result
+    }
+
     /// Fetch a file by name.
     pub fn file(&self, file_name: &str) -> Option<&ProjectFile> {
         self.files.get(file_name)
+    }
+
+    /// Check if an import specifier points to a specific target file path.
+    ///
+    /// This is a simplified check that handles basic relative path resolution.
+    /// It verifies if the specifier, when joined with the importer's directory,
+    /// resolves to the target file path.
+    ///
+    /// # Arguments
+    /// * `importer` - Path of the file containing the import
+    /// * `specifier` - The import specifier (e.g., "./utils" or "../types")
+    /// * `target` - The target file path we're checking against
+    fn is_import_pointing_to_file(&self, importer: &Path, specifier: &str, target: &Path) -> bool {
+        let importer_dir = match importer.parent() {
+            Some(p) => p,
+            None => return false,
+        };
+
+        // Simple resolution: join dir + specifier
+        let resolved = importer_dir.join(specifier);
+
+        // Check exact match
+        if resolved == target {
+            return true;
+        }
+
+        // Check with extensions (TypeScript resolution logic simplified)
+        // The specifier might not have an extension, so we check stems
+        if let Some(target_stem) = target.file_stem() {
+            if let Some(resolved_stem) = resolved.file_stem() {
+                if target_stem == resolved_stem {
+                    // Check if parent dirs match
+                    if resolved.parent() == target.parent() {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Go to definition within a single file.
