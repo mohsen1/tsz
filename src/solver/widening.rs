@@ -104,6 +104,30 @@ pub fn widen_type(db: &impl crate::solver::TypeDatabase, type_id: TypeId) -> Typ
     }
 }
 
+/// Apply `as const` assertion to a type.
+///
+/// This function transforms a type to its const-asserted form:
+/// - Literals: Preserved as-is
+/// - Arrays: Converted to readonly tuples
+/// - Tuples: Marked readonly, elements recursively const-asserted
+/// - Objects: All properties marked readonly, recursively const-asserted
+/// - Other types: Preserved as-is (any, unknown, primitives, etc.)
+///
+/// # Example
+///
+/// ```rust
+/// use crate::solver::widening::apply_const_assertion;
+///
+/// // [1, 2] as const becomes readonly [1, 2] (tuple)
+/// let array_type = interner.array(interner.literal_number(1));
+/// let const_array = apply_const_assertion(&interner, array_type);
+/// ```
+pub fn apply_const_assertion(db: &dyn crate::solver::TypeDatabase, type_id: TypeId) -> TypeId {
+    use crate::solver::visitor::ConstAssertionVisitor;
+    let mut visitor = ConstAssertionVisitor::new(db);
+    visitor.apply_const_assertion(type_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

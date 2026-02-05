@@ -89,7 +89,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 let literal_type = self.checker.literal_type_from_initializer(idx);
                 if let Some(literal_type) = literal_type {
-                    if self.checker.contextual_literal_type(literal_type).is_some() {
+                    // Preserve literal type if in const assertion OR if contextual typing allows it
+                    if self.checker.ctx.in_const_assertion
+                        || self.checker.contextual_literal_type(literal_type).is_some()
+                    {
                         literal_type
                     } else {
                         TypeId::NUMBER
@@ -101,7 +104,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == SyntaxKind::StringLiteral as u16 => {
                 let literal_type = self.checker.literal_type_from_initializer(idx);
                 if let Some(literal_type) = literal_type {
-                    if self.checker.contextual_literal_type(literal_type).is_some() {
+                    // Preserve literal type if in const assertion OR if contextual typing allows it
+                    if self.checker.ctx.in_const_assertion
+                        || self.checker.contextual_literal_type(literal_type).is_some()
+                    {
                         literal_type
                     } else {
                         TypeId::STRING
@@ -113,7 +119,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Boolean literals - preserve literal type when contextual typing expects it.
             k if k == SyntaxKind::TrueKeyword as u16 => {
                 let literal_type = self.checker.ctx.types.literal_boolean(true);
-                if self.checker.contextual_literal_type(literal_type).is_some() {
+                // Preserve literal type if in const assertion OR if contextual typing allows it
+                if self.checker.ctx.in_const_assertion
+                    || self.checker.contextual_literal_type(literal_type).is_some()
+                {
                     literal_type
                 } else {
                     TypeId::BOOLEAN
@@ -121,7 +130,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
             k if k == SyntaxKind::FalseKeyword as u16 => {
                 let literal_type = self.checker.ctx.types.literal_boolean(false);
-                if self.checker.contextual_literal_type(literal_type).is_some() {
+                // Preserve literal type if in const assertion OR if contextual typing allows it
+                if self.checker.ctx.in_const_assertion
+                    || self.checker.contextual_literal_type(literal_type).is_some()
+                {
                     literal_type
                 } else {
                     TypeId::BOOLEAN
@@ -266,12 +278,34 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 || k == syntax_kind_ext::TYPE_ASSERTION =>
             {
                 if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {
+                    // Check for const assertion BEFORE type-checking the expression
+                    // so we can set the context flag to preserve literal types
+                    let is_const_assertion =
+                        if let Some(type_node) = self.checker.ctx.arena.get(assertion.type_node) {
+                            type_node.kind == crate::scanner::SyntaxKind::ConstKeyword as u16
+                        } else {
+                            false
+                        };
+
+                    // Set the in_const_assertion flag to preserve literal types in nested expressions
+                    let prev_in_const_assertion = self.checker.ctx.in_const_assertion;
+                    if is_const_assertion {
+                        self.checker.ctx.in_const_assertion = true;
+                    }
+
                     // Always type-check the expression for side effects / diagnostics.
                     let expr_type = self.checker.get_type_of_node(assertion.expression);
+
+                    // Restore the previous flag value
+                    self.checker.ctx.in_const_assertion = prev_in_const_assertion;
 
                     // In recovery scenarios we may not have a type node; fall back to the expression type.
                     if assertion.type_node.is_none() {
                         expr_type
+                    } else if is_const_assertion {
+                        // as const: apply const assertion to the expression type
+                        use crate::solver::widening::apply_const_assertion;
+                        apply_const_assertion(self.checker.ctx.types, expr_type)
                     } else {
                         let asserted_type =
                             self.checker.get_type_from_type_node(assertion.type_node);
@@ -315,7 +349,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
                 let literal_type = self.checker.literal_type_from_initializer(idx);
                 if let Some(literal_type) = literal_type {
-                    if self.checker.contextual_literal_type(literal_type).is_some() {
+                    // Preserve literal type if in const assertion OR if contextual typing allows it
+                    if self.checker.ctx.in_const_assertion
+                        || self.checker.contextual_literal_type(literal_type).is_some()
+                    {
                         literal_type
                     } else {
                         TypeId::STRING

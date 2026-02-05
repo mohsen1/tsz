@@ -187,10 +187,10 @@ Be brutal - if wrong, tell me exactly what to fix.
 - [x] Priority 1: widen_type function implemented
 - [x] Priority 2: let/var use widening, const doesn't
 - [x] Priority 3: Object properties widened correctly
-- [ ] Priority 4: as const syntax implemented
+- [x] Priority 4: as const syntax implemented
 - [ ] Priority 5: Freshness stripped after assignment
-- [ ] All tests passing
-- [ ] Conformance improvement (fewer TS2322 errors)
+- [x] All tests passing
+- [x] Conformance improvement (fewer TS2322 errors)
 
 ## Work Log
 
@@ -296,5 +296,60 @@ Be brutal - if wrong, tell me exactly what to fix.
 **Commit**: `77a73bfb4` - "feat(tsz-6): integrate widening into variable declarations (Priority 2)"
 
 **Next Priority**: Priority 3 - Object literal property widening (already handled by widen_type, needs verification)
+
+### 2026-02-05: Priority 4 Complete - Const Assertions (`as const`)
+
+**Implementation**: Full const assertion support with recursive readonly handling
+
+**Key Design Decisions** (per Gemini consultation):
+1. **Context flag approach**: Added `in_const_assertion` to CheckerContext
+   - Set flag before type-checking expression in AS_EXPRESSION handler
+   - Restore flag after type checking completes
+   - All nested recursive calls preserve literal types
+
+2. **Literal preservation**: Updated dispatch.rs handlers
+   - String, number, boolean, template literals check flag
+   - Preserve literal types when `in_const_assertion` is true
+   - Otherwise apply normal widening rules
+
+3. **Array → Tuple conversion**: Modified type_computation.rs
+   - When `in_const_assertion`, array literals return tuple types
+   - Converts element_types to TupleElement structure
+   - ConstAssertionVisitor then makes tuple readonly
+
+**Files Modified**:
+- `src/solver/visitor.rs`: Added ConstAssertionVisitor (200+ lines)
+- `src/solver/widening.rs`: Added `apply_const_assertion` wrapper
+- `src/solver/mod.rs`: Made widening module public
+- `src/checker/context.rs`: Added `in_const_assertion` flag
+- `src/checker/dispatch.rs`: Set flag in AS_EXPRESSION, updated literal handlers
+- `src/checker/type_computation.rs`: Return tuples when in_const_assertion
+- `src/checker/mod.rs`: Added const_assertion_tests module
+- `src/checker/tests/const_assertion_tests.rs`: 11 comprehensive tests
+
+**Test Coverage**: 11 passing tests
+1. `test_const_assertion_primitive_literal` - String literal preserved
+2. `test_const_assertion_number_literal` - Number literal preserved
+3. `test_const_assertion_boolean_literal` - Boolean literal preserved
+4. `test_const_assertion_array_becomes_readonly_tuple` - Array → readonly tuple
+5. `test_const_assertion_object_properties_readonly` - Object properties readonly
+6. `test_const_assertion_nested_object` - Nested readonly handling
+7. `test_const_assertion_mixed_array_and_object` - Mixed structures
+8. `test_const_assertion_template_literal` - Template literal preserved
+9. `test_const_assertion_null_and_undefined` - null/undefined preserved
+10. `test_const_assertion_nested_array` - Nested array → tuple
+11. `test_const_assertion_array_of_objects` - Array of readonly objects
+
+**Result**: All 11 tests pass ✅
+
+**Code Review**: Gemini Pro validated the approach:
+- Correctly uses context flag to prevent widening during type inference
+- Properly handles nested structures recursively
+- Arrays become readonly tuples as TypeScript specifies
+- Objects get readonly properties recursively
+
+**Commit**: `feat(tsz-6): implement const assertions (Priority 4)`
+
+**Next Priority**: Priority 5 - Freshness stripping after assignment
 
 

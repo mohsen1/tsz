@@ -278,6 +278,22 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.tuple(tuple_elements);
         }
 
+        // When in a const assertion context, array literals become tuples (not arrays)
+        // This allows [1, 2, 3] as const to become readonly [1, 2, 3] instead of readonly Array<number>
+        if self.ctx.in_const_assertion {
+            // Convert element_types to tuple_elements
+            let const_tuple_elements: Vec<crate::solver::TupleElement> = element_types
+                .iter()
+                .map(|&type_id| crate::solver::TupleElement {
+                    type_id,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                })
+                .collect();
+            return self.ctx.types.tuple(const_tuple_elements);
+        }
+
         // Use contextual element type when available for better inference
         if let Some(ref helper) = ctx_helper
             && let Some(context_element_type) = helper.get_array_element_type()

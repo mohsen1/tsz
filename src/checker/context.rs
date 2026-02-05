@@ -570,6 +570,10 @@ pub struct CheckerContext<'a> {
     /// When > 0, mutable variables (let/var) lose narrowing in closures.
     pub inside_closure_depth: u32,
 
+    /// When true, we're inside a const assertion (as const) and should preserve literal types.
+    /// This prevents widening of literal types in object/array literals.
+    pub in_const_assertion: bool,
+
     /// Fuel counter for type resolution operations.
     /// Decremented on each type resolution to prevent timeout on pathological types.
     /// When exhausted, type resolution returns ERROR to prevent infinite loops.
@@ -673,6 +677,7 @@ impl<'a> CheckerContext<'a> {
             flow_graph,
             async_depth: 0,
             inside_closure_depth: 0,
+            in_const_assertion: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -760,6 +765,7 @@ impl<'a> CheckerContext<'a> {
             flow_graph,
             async_depth: 0,
             inside_closure_depth: 0,
+            in_const_assertion: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -850,6 +856,7 @@ impl<'a> CheckerContext<'a> {
             flow_graph,
             async_depth: 0,
             inside_closure_depth: 0,
+            in_const_assertion: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -939,6 +946,7 @@ impl<'a> CheckerContext<'a> {
             flow_graph,
             async_depth: 0,
             inside_closure_depth: 0,
+            in_const_assertion: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -1036,6 +1044,7 @@ impl<'a> CheckerContext<'a> {
             flow_graph,
             async_depth: 0,
             inside_closure_depth: 0,
+            in_const_assertion: false,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
