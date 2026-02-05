@@ -197,6 +197,9 @@ pub mod diagnostic_messages {
     // Interface errors
     pub const CANNOT_EXTEND_AN_INTERFACE: &str =
         "Cannot extend an interface '{0}'. Did you mean 'implements'?";
+    /// TS2675: Cannot extend a class with private constructor.
+    pub const CANNOT_EXTEND_CLASS_WITH_PRIVATE_CONSTRUCTOR: &str =
+        "Cannot extend a class '{0}'. Class constructor is marked as private.";
     pub const INTERFACE_INCORRECTLY_EXTENDS: &str =
         "Interface '{0}' incorrectly extends interface '{1}'.";
     pub const TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF: &str =
@@ -476,6 +479,8 @@ pub mod diagnostic_codes {
     pub const PRIVATE_CONSTRUCTOR: u32 = 2673;
     /// TS2674: Constructor of class 'X' is protected and only accessible within the class declaration.
     pub const PROTECTED_CONSTRUCTOR: u32 = 2674;
+    /// TS2675: Cannot extend a class with private constructor.
+    pub const CANNOT_EXTEND_CLASS_WITH_PRIVATE_CONSTRUCTOR: u32 = 2675;
     pub const CANNOT_FIND_NAME_DID_YOU_MEAN_STATIC: u32 = 2662; // Cannot find name 'X'. Did you mean the static member 'C.X'?
     pub const ABSTRACT_PROPERTY_IN_CONSTRUCTOR: u32 = 2715; // Abstract property 'X' in class 'C' cannot be accessed in the constructor.
     pub const PROPERTY_USED_BEFORE_INITIALIZATION: u32 = 2729; // Property '{0}' is used before its initialization.
