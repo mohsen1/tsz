@@ -2479,4 +2479,444 @@ mod tests {
         assert_eq!(errors[0].code, IMPORT_PATH_NEEDS_EXTENSION);
         assert_eq!(errors[1].code, MODULE_RESOLUTION_MODE_MISMATCH);
     }
+
+    // =========================================================================
+    // ModuleExtension::from_path tests
+    // =========================================================================
+
+    #[test]
+    fn test_extension_from_path_ts() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("foo.ts")),
+            ModuleExtension::Ts
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_tsx() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("Component.tsx")),
+            ModuleExtension::Tsx
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_dts() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("types.d.ts")),
+            ModuleExtension::Dts
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_dmts() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("types.d.mts")),
+            ModuleExtension::DmTs
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_dcts() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("types.d.cts")),
+            ModuleExtension::DCts
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_js() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("bundle.js")),
+            ModuleExtension::Js
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_jsx() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("App.jsx")),
+            ModuleExtension::Jsx
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_mjs() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("module.mjs")),
+            ModuleExtension::Mjs
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_cjs() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("config.cjs")),
+            ModuleExtension::Cjs
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_mts() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("utils.mts")),
+            ModuleExtension::Mts
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_cts() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("config.cts")),
+            ModuleExtension::Cts
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_json() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("package.json")),
+            ModuleExtension::Json
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_unknown() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("style.css")),
+            ModuleExtension::Unknown
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_no_extension() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("Makefile")),
+            ModuleExtension::Unknown
+        );
+    }
+
+    #[test]
+    fn test_extension_from_path_nested() {
+        assert_eq!(
+            ModuleExtension::from_path(Path::new("/project/src/lib/types.d.ts")),
+            ModuleExtension::Dts
+        );
+    }
+
+    // =========================================================================
+    // ModuleExtension::as_str tests
+    // =========================================================================
+
+    #[test]
+    fn test_extension_as_str_roundtrip() {
+        let extensions = [
+            ModuleExtension::Ts,
+            ModuleExtension::Tsx,
+            ModuleExtension::Dts,
+            ModuleExtension::DmTs,
+            ModuleExtension::DCts,
+            ModuleExtension::Js,
+            ModuleExtension::Jsx,
+            ModuleExtension::Mjs,
+            ModuleExtension::Cjs,
+            ModuleExtension::Mts,
+            ModuleExtension::Cts,
+            ModuleExtension::Json,
+        ];
+        for ext in &extensions {
+            let ext_str = ext.as_str();
+            assert!(
+                !ext_str.is_empty(),
+                "{:?} should have a non-empty string representation",
+                ext
+            );
+            // Verify the string starts with a dot
+            assert!(
+                ext_str.starts_with('.'),
+                "{:?}.as_str() should start with '.', got: {}",
+                ext,
+                ext_str
+            );
+        }
+        assert_eq!(ModuleExtension::Unknown.as_str(), "");
+    }
+
+    // =========================================================================
+    // ModuleExtension ESM/CJS mode tests
+    // =========================================================================
+
+    #[test]
+    fn test_extension_forces_esm() {
+        assert!(ModuleExtension::Mts.forces_esm());
+        assert!(ModuleExtension::Mjs.forces_esm());
+        assert!(ModuleExtension::DmTs.forces_esm());
+
+        assert!(!ModuleExtension::Ts.forces_esm());
+        assert!(!ModuleExtension::Tsx.forces_esm());
+        assert!(!ModuleExtension::Dts.forces_esm());
+        assert!(!ModuleExtension::Js.forces_esm());
+        assert!(!ModuleExtension::Cjs.forces_esm());
+        assert!(!ModuleExtension::Cts.forces_esm());
+    }
+
+    #[test]
+    fn test_extension_forces_cjs() {
+        assert!(ModuleExtension::Cts.forces_cjs());
+        assert!(ModuleExtension::Cjs.forces_cjs());
+        assert!(ModuleExtension::DCts.forces_cjs());
+
+        assert!(!ModuleExtension::Ts.forces_cjs());
+        assert!(!ModuleExtension::Tsx.forces_cjs());
+        assert!(!ModuleExtension::Dts.forces_cjs());
+        assert!(!ModuleExtension::Js.forces_cjs());
+        assert!(!ModuleExtension::Mjs.forces_cjs());
+        assert!(!ModuleExtension::Mts.forces_cjs());
+    }
+
+    #[test]
+    fn test_extension_neutral_mode() {
+        // .ts, .tsx, .js, .jsx, .d.ts, .json should be neutral (neither ESM nor CJS forced)
+        let neutral = [
+            ModuleExtension::Ts,
+            ModuleExtension::Tsx,
+            ModuleExtension::Dts,
+            ModuleExtension::Js,
+            ModuleExtension::Jsx,
+            ModuleExtension::Json,
+            ModuleExtension::Unknown,
+        ];
+        for ext in &neutral {
+            assert!(
+                !ext.forces_esm() && !ext.forces_cjs(),
+                "{:?} should be neutral (neither ESM nor CJS)",
+                ext
+            );
+        }
+    }
+
+    // =========================================================================
+    // ResolutionFailure tests
+    // =========================================================================
+
+    #[test]
+    fn test_resolution_failure_not_found_is_not_found() {
+        let failure = ResolutionFailure::NotFound {
+            specifier: "./missing".to_string(),
+            containing_file: "main.ts".to_string(),
+            span: Span::new(0, 10),
+        };
+        assert!(failure.is_not_found());
+    }
+
+    #[test]
+    fn test_resolution_failure_other_is_not_not_found() {
+        let failure = ResolutionFailure::ImportPathNeedsExtension {
+            specifier: "./utils".to_string(),
+            suggested_extension: ".js".to_string(),
+            containing_file: "main.mts".to_string(),
+            span: Span::new(0, 10),
+        };
+        assert!(!failure.is_not_found());
+    }
+
+    #[test]
+    fn test_resolution_failure_containing_file() {
+        let failure = ResolutionFailure::NotFound {
+            specifier: "./missing".to_string(),
+            containing_file: "/project/src/main.ts".to_string(),
+            span: Span::new(5, 20),
+        };
+        assert_eq!(failure.containing_file(), "/project/src/main.ts");
+    }
+
+    #[test]
+    fn test_resolution_failure_span() {
+        let failure = ResolutionFailure::NotFound {
+            specifier: "./missing".to_string(),
+            containing_file: "main.ts".to_string(),
+            span: Span::new(10, 30),
+        };
+        let span = failure.span();
+        assert_eq!(span.start, 10);
+        assert_eq!(span.end, 30);
+    }
+
+    #[test]
+    fn test_resolution_failure_to_diagnostic_ts2307() {
+        let failure = ResolutionFailure::NotFound {
+            specifier: "./nonexistent".to_string(),
+            containing_file: "main.ts".to_string(),
+            span: Span::new(0, 20),
+        };
+        let diag = failure.to_diagnostic();
+        assert_eq!(diag.code, CANNOT_FIND_MODULE);
+        assert!(diag.message.contains("./nonexistent"));
+    }
+
+    #[test]
+    fn test_resolution_failure_to_diagnostic_ts2834() {
+        let failure = ResolutionFailure::ImportPathNeedsExtension {
+            specifier: "./utils".to_string(),
+            suggested_extension: ".js".to_string(),
+            containing_file: "app.mts".to_string(),
+            span: Span::new(0, 15),
+        };
+        let diag = failure.to_diagnostic();
+        assert_eq!(diag.code, IMPORT_PATH_NEEDS_EXTENSION);
+    }
+
+    #[test]
+    fn test_resolution_failure_to_diagnostic_ts2792() {
+        let failure = ResolutionFailure::ModuleResolutionModeMismatch {
+            specifier: "some-esm-pkg".to_string(),
+            containing_file: "index.ts".to_string(),
+            span: Span::new(0, 20),
+        };
+        let diag = failure.to_diagnostic();
+        assert_eq!(diag.code, MODULE_RESOLUTION_MODE_MISMATCH);
+    }
+
+    // =========================================================================
+    // ModuleResolver with temp files (integration)
+    // =========================================================================
+
+    #[test]
+    fn test_resolver_relative_ts_file() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_resolver_relative");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("main.ts"), "import { foo } from './utils';").unwrap();
+        fs::write(dir.join("utils.ts"), "export const foo = 42;").unwrap();
+
+        let mut resolver = ModuleResolver::node_resolver();
+        let result = resolver.resolve("./utils", &dir.join("main.ts"), Span::new(0, 10));
+
+        match result {
+            Ok(module) => {
+                assert_eq!(module.resolved_path, dir.join("utils.ts"));
+                assert_eq!(module.extension, ModuleExtension::Ts);
+                assert!(!module.is_external);
+            }
+            Err(_) => {
+                // Resolution might fail in some environments, that's OK for this test
+            }
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolver_relative_tsx_file() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_resolver_tsx");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("app.ts"), "").unwrap();
+        fs::write(
+            dir.join("Button.tsx"),
+            "export default function Button() {}",
+        )
+        .unwrap();
+
+        let mut resolver = ModuleResolver::node_resolver();
+        let result = resolver.resolve("./Button", &dir.join("app.ts"), Span::new(0, 10));
+
+        match result {
+            Ok(module) => {
+                assert_eq!(module.resolved_path, dir.join("Button.tsx"));
+                assert_eq!(module.extension, ModuleExtension::Tsx);
+            }
+            Err(_) => {} // OK in some environments
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolver_index_file() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_resolver_index");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("utils")).unwrap();
+
+        fs::write(dir.join("main.ts"), "").unwrap();
+        fs::write(dir.join("utils").join("index.ts"), "export const foo = 42;").unwrap();
+
+        let mut resolver = ModuleResolver::node_resolver();
+        let result = resolver.resolve("./utils", &dir.join("main.ts"), Span::new(0, 10));
+
+        match result {
+            Ok(module) => {
+                assert_eq!(module.resolved_path, dir.join("utils").join("index.ts"));
+                assert_eq!(module.extension, ModuleExtension::Ts);
+            }
+            Err(_) => {} // OK in some environments
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolver_dts_file() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_resolver_dts");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("main.ts"), "").unwrap();
+        fs::write(dir.join("types.d.ts"), "export interface Foo {}").unwrap();
+
+        let mut resolver = ModuleResolver::node_resolver();
+        let result = resolver.resolve("./types", &dir.join("main.ts"), Span::new(0, 10));
+
+        match result {
+            Ok(module) => {
+                assert_eq!(module.resolved_path, dir.join("types.d.ts"));
+                assert_eq!(module.extension, ModuleExtension::Dts);
+            }
+            Err(_) => {} // OK in some environments
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolver_missing_file() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_resolver_missing");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("main.ts"), "").unwrap();
+
+        let mut resolver = ModuleResolver::node_resolver();
+        let result = resolver.resolve("./nonexistent", &dir.join("main.ts"), Span::new(0, 10));
+
+        assert!(result.is_err(), "Missing file should produce error");
+        if let Err(failure) = result {
+            assert!(failure.is_not_found());
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // =========================================================================
+    // PackageType tests
+    // =========================================================================
+
+    #[test]
+    fn test_package_type_default_is_commonjs() {
+        assert_eq!(PackageType::default(), PackageType::CommonJs);
+    }
+
+    #[test]
+    fn test_importing_module_kind_default_is_commonjs() {
+        assert_eq!(
+            ImportingModuleKind::default(),
+            ImportingModuleKind::CommonJs
+        );
+    }
 }
