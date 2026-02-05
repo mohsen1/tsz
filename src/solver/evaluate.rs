@@ -658,6 +658,48 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Check if a type is "complex" and requires full evaluation for identity.
+    ///
+    /// Complex types are those whose structural identity depends on evaluation context:
+    /// - TypeParameter: Opaque until instantiation
+    /// - Lazy: Requires resolution
+    /// - Conditional: Requires evaluation of extends clause
+    /// - Mapped: Requires evaluation of mapped type
+    /// - IndexAccess: Requires evaluation of T[K]
+    /// - KeyOf: Requires evaluation of keyof
+    /// - Application: Requires expansion of Base<Args>
+    /// - TypeQuery: Requires resolution of typeof
+    /// - TemplateLiteral: Requires evaluation of template parts
+    /// - ReadonlyType: Wraps another type
+    /// - StringIntrinsic: Uppercase, Lowercase, Capitalize, Uncapitalize
+    ///
+    /// These types are NOT safe for simplification because bypassing evaluation
+    /// would produce incorrect results (e.g., treating T[K] as a distinct type from
+    /// the value it evaluates to).
+    fn is_complex_type(&self, type_id: TypeId) -> bool {
+        use crate::solver::types::TypeKey;
+
+        let Some(key) = self.interner.lookup(type_id) else {
+            return false;
+        };
+
+        matches!(
+            key,
+            TypeKey::TypeParameter(_)
+                | TypeKey::Infer(_) // Type parameter for conditional types
+                | TypeKey::Lazy(_)
+                | TypeKey::Conditional(_)
+                | TypeKey::Mapped(_)
+                | TypeKey::IndexAccess(_, _)
+                | TypeKey::KeyOf(_)
+                | TypeKey::Application(_)
+                | TypeKey::TypeQuery(_)
+                | TypeKey::TemplateLiteral(_)
+                | TypeKey::ReadonlyType(_)
+                | TypeKey::StringIntrinsic { .. }
+        )
+    }
+
     /// Evaluate an intersection type by recursively evaluating members and re-interning.
     /// This enables "deferred reduction" where intersections containing meta-types
     /// (e.g., `string & T[K]`) are reduced after the meta-types are evaluated.
@@ -707,26 +749,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Performance: O(N²) where N is the number of members. We skip simplification
     /// if the union has more than 25 members to avoid excessive computation.
     ///
-    /// NOTE: Currently DISABLED due to stack overflow issues with recursive types.
-    /// The SubtypeChecker can still recurse deeply even with bypass_evaluation=true.
-    /// TODO: Re-enable with a non-recursive simplification algorithm.
-    #[allow(dead_code)]
-    fn simplify_union_members(&mut self, _members: &mut Vec<TypeId>) {
-        // Disabled to prevent stack overflow
-        /*
+    /// ## Strategy
+    ///
+    /// 1. **Early exit for large unions** (>25 members) to avoid O(N²) explosion
+    /// 2. **Skip complex types** that require full resolution:
+    ///    - TypeParameter, Lazy, Conditional, Mapped, IndexAccess, KeyOf, Application, TypeQuery
+    ///    - TemplateLiteral, ReadonlyType, String manipulation types
+    /// 3. **Fast-path for any/unknown**: If any member is any, entire union becomes any
+    /// 4. **Identity check**: O(1) TypeId equality before calling O(N) subtype check
+    /// 5. **Depth limit**: max_depth=5 prevents stack overflow on recursive structures
+    ///
+    /// ## Example Reductions
+    ///
+    /// - `"a" | string` → `string` (literal absorbed by primitive)
+    /// - `number | 1 | 2` → `number` (literals absorbed by primitive)
+    /// - `{ a: string } | { a: string; b: number }` → `{ a: string; b: number }`
+    fn simplify_union_members(&mut self, members: &mut Vec<TypeId>) {
         // Performance guard: skip large unions
-        if members.len() > 25 {
+        if members.len() < 2 || members.len() > 25 {
+            return;
+        }
+
+        // Fast-path: if any member is any, entire union becomes any
+        // (But we don't modify members, just skip simplification - the interner will handle it)
+        if members.iter().any(|&id| id.is_any()) {
             return;
         }
 
         // Skip simplification if union contains types that require full resolution
-        let has_complex = members.iter().any(|&id| {
-            matches!(
-                self.interner.lookup(id),
-                Some(TypeKey::TypeParameter(_) | TypeKey::Lazy(_))
-            )
-        });
-        if has_complex {
+        // These types are "complex" because their identity depends on evaluation context
+        if members.iter().any(|&id| self.is_complex_type(id)) {
             return;
         }
 
@@ -734,7 +786,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         use crate::solver::subtype::SubtypeChecker;
         let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
         checker.bypass_evaluation = true;
-        checker.max_depth = 10; // Low limit for simplification to prevent stack overflow
+        checker.max_depth = 5; // Conservative limit to prevent stack overflow
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
         let mut i = 0;
@@ -744,6 +796,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if i == j {
                     continue;
                 }
+
+                // Fast-path: identity check is O(1)
+                if members[i] == members[j] {
+                    continue;
+                }
+
                 // If members[i] <: members[j], members[i] is redundant in the union
                 // Example: "a" | string => "a" is redundant (result: string)
                 if checker.is_subtype_of(members[i], members[j]) {
@@ -757,7 +815,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 i += 1;
             }
         }
-        */
     }
 
     /// Simplify intersection members by removing redundant types using deep subtype checks.
@@ -769,26 +826,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Performance: O(N²) where N is the number of members. We skip simplification
     /// if the intersection has more than 25 members to avoid excessive computation.
     ///
-    /// NOTE: Currently DISABLED due to stack overflow issues with recursive types.
-    /// The SubtypeChecker can still recurse deeply even with bypass_evaluation=true.
-    /// TODO: Re-enable with a non-recursive simplification algorithm.
-    #[allow(dead_code)]
-    fn simplify_intersection_members(&mut self, _members: &mut Vec<TypeId>) {
-        // Disabled to prevent stack overflow
-        /*
+    /// ## Strategy
+    ///
+    /// 1. **Early exit for large intersections** (>25 members) to avoid O(N²) explosion
+    /// 2. **Skip complex types** that require full resolution:
+    ///    - TypeParameter, Lazy, Conditional, Mapped, IndexAccess, KeyOf, Application, TypeQuery
+    ///    - TemplateLiteral, ReadonlyType, String manipulation types
+    /// 3. **Fast-path for any/unknown**: If any member is any, entire intersection becomes any
+    /// 4. **Identity check**: O(1) TypeId equality before calling O(N) subtype check
+    /// 5. **Depth limit**: max_depth=5 prevents stack overflow on recursive structures
+    ///
+    /// ## Example Reductions
+    ///
+    /// - `{ a: string } & { a: string; b: number }` → `{ a: string; b: number }`
+    /// - `{ readonly a: string } & { a: string }` → `{ readonly a: string }`
+    /// - `number & 1` → `1` (literal is more specific)
+    fn simplify_intersection_members(&mut self, members: &mut Vec<TypeId>) {
         // Performance guard: skip large intersections
-        if members.len() > 25 {
+        if members.len() < 2 || members.len() > 25 {
+            return;
+        }
+
+        // Fast-path: if any member is any, entire intersection becomes any
+        if members.iter().any(|&id| id.is_any()) {
             return;
         }
 
         // Skip simplification if intersection contains types that require full resolution
-        let has_complex = members.iter().any(|&id| {
-            matches!(
-                self.interner.lookup(id),
-                Some(TypeKey::TypeParameter(_) | TypeKey::Lazy(_))
-            )
-        });
-        if has_complex {
+        if members.iter().any(|&id| self.is_complex_type(id)) {
             return;
         }
 
@@ -796,7 +861,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         use crate::solver::subtype::SubtypeChecker;
         let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
         checker.bypass_evaluation = true;
-        checker.max_depth = 10; // Low limit for simplification to prevent stack overflow
+        checker.max_depth = 5; // Conservative limit to prevent stack overflow
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
         let mut i = 0;
@@ -806,6 +871,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if i == j {
                     continue;
                 }
+
+                // Fast-path: identity check is O(1)
+                if members[i] == members[j] {
+                    continue;
+                }
+
                 // If members[j] <: members[i], members[i] is redundant in the intersection
                 // Example: { a: string } & { a: string; b: number } => { a: string; b: number }
                 // The supertype is redundant, we keep the more specific type
@@ -820,7 +891,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 i += 1;
             }
         }
-        */
     }
 }
 

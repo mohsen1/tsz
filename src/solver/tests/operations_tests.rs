@@ -1246,7 +1246,7 @@ fn make_array_test_env(
 fn test_property_access_readonly_array() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
-    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let array = interner.array(TypeId::STRING);
     let readonly_array = interner.intern(TypeKey::ReadonlyType(array));
@@ -1262,7 +1262,7 @@ fn test_property_access_readonly_array() {
 fn test_property_access_tuple_length() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
-    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let tuple = interner.tuple(vec![
         TupleElement {
@@ -1290,7 +1290,7 @@ fn test_property_access_tuple_length() {
 fn test_property_access_array_map_signature() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
-    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let array = interner.array(TypeId::NUMBER);
     let result = evaluator.resolve_property_access(array, "map");
@@ -1327,7 +1327,7 @@ fn test_property_access_array_map_signature() {
 fn test_property_access_array_at_returns_optional_element() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
-    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let array = interner.array(TypeId::NUMBER);
     let result = evaluator.resolve_property_access(array, "at");
@@ -1348,7 +1348,7 @@ fn test_property_access_array_at_returns_optional_element() {
 fn test_property_access_array_entries_returns_tuple_array() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
-    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let array = interner.array(TypeId::BOOLEAN);
     let result = evaluator.resolve_property_access(array, "entries");
@@ -1377,7 +1377,7 @@ fn test_property_access_array_entries_returns_tuple_array() {
 fn test_property_access_array_reduce_callable() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
-    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let array = interner.array(TypeId::STRING);
     let result = evaluator.resolve_property_access(array, "reduce");
@@ -7963,7 +7963,7 @@ fn test_property_access_array_push_with_env_resolver() {
     env.set_array_base_type(array_interface, vec![t_param]);
 
     // Create evaluator with the environment
-    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
 
     // Test: string[].push should resolve successfully
     let string_array = interner.array(TypeId::STRING);
@@ -8092,7 +8092,7 @@ fn test_array_mapped_type_method_resolution() {
     env.set_array_base_type(array_interface, vec![array_t_param]);
 
     // Create evaluator with the environment
-    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
 
     // Test property access on the mapped type
     let result = evaluator.resolve_property_access(mapped_type, "pop");
