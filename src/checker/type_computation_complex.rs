@@ -10,6 +10,49 @@ use crate::parser::NodeIndex;
 use crate::solver::types::Visibility;
 use crate::solver::{ContextualTypeContext, TypeId};
 
+/// Check if an AST node is contextually sensitive (requires contextual typing).
+///
+/// A node is contextually sensitive if its type cannot be fully determined
+/// without an expected type from its parent. This includes:
+/// - Arrow functions and function expressions
+/// - Object literals (if ANY property is sensitive)
+/// - Array literals (if ANY element is sensitive)
+/// - Parenthesized expressions (pass through)
+///
+/// This is used for two-pass generic type inference, where contextually
+/// sensitive arguments are deferred to Round 2 after non-contextual
+/// arguments have been processed and type parameters have been partially inferred.
+fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) -> bool {
+    use crate::parser::syntax_kind_ext;
+
+    let Some(node) = state.ctx.arena.get(idx) else {
+        return false;
+    };
+
+    match node.kind {
+        // Functions are the primary sensitive nodes
+        k if k == syntax_kind_ext::ARROW_FUNCTION || k == syntax_kind_ext::FUNCTION_EXPRESSION => {
+            true
+        }
+
+        // Parentheses just pass through sensitivity
+        k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+            if let Some(paren) = state.ctx.arena.get_parenthesized(node) {
+                is_contextually_sensitive(state, paren.expression)
+            } else {
+                false
+            }
+        }
+
+        // TODO: Object and array literals should also be contextually sensitive
+        // but we need to add the getter methods to node_access.rs first
+        k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => false,
+        k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => false,
+
+        _ => false,
+    }
+}
+
 impl<'a> CheckerState<'a> {
     /// Get the type of a `new` expression.
     ///
