@@ -206,13 +206,24 @@ console.log(i.x); // ✅ OK, type is string & number
 
 ## Next Steps (Immediate)
 
-1. **MANDATORY**: Ask Gemini Question 1 (Approach Validation)
-2. Create `MemberCollector` visitor skeleton
-3. Implement union member collection
-4. Implement intersection member collection
-5. Integrate into property resolution
-6. Ask Gemini Question 2 (Pro Review)
-7. Test and iterate
+1. ✅ Ask Gemini Question 1 (Approach Validation) - COMPLETE
+2. ⏸️ Implement `TypeVisitor` for `PropertyAccessEvaluator` - IN PROGRESS
+   - Refactor large `match key` block into visitor methods
+   - Implement `visit_union` and `visit_intersection`
+   - Handle recursive types via `visit_lazy`
+3. ⏸️ Ask Gemini Question 2 (Pro Review) - PENDING
+4. ⏸️ Test and iterate - PENDING
+
+**Current Status**: Analyzing `resolve_property_access_inner` function to understand current implementation before refactoring to visitor pattern.
+
+**Implementation Complexity**: This is a LARGE refactoring that touches the core property resolution logic. The function has 200+ lines with complex match statements handling Object, Array, Union, Intersection, TypeParameter, Application, etc.
+
+**Caution**: Given the scope and complexity, this refactoring should be done incrementally:
+- First: Make `PropertyAccessEvaluator` implement `TypeVisitor` trait
+- Then: Move existing logic into `visit_*` methods one type at a time
+- Finally: Add `visit_union` and `visit_intersection` methods
+
+**Risk**: Breaking existing property access functionality. Need comprehensive testing.
 
 ## Notes
 
