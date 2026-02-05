@@ -400,3 +400,47 @@ This validates the correctness of the Solver layer implementation independent of
 3. Implement TypeLowering changes per Gemini's guidance
 4. Verify integration tests pass
 5. Ask Gemini for POST-implementation review
+
+### Commit: `87bdb3103` - test(tsz-4): add test infrastructure for Priority 2 & 3 (Private Brands & Constructor Accessibility)
+
+**What Was Done**:
+Per Gemini Flash recommendation, created comprehensive test suites for the next two priorities in TSZ-4 while waiting for Gemini API rate limit recovery.
+
+**Test Suite 1: Private Brand Nominality** (`src/checker/tests/private_brands.rs`)
+- 10 tests covering private/protected member nominal typing
+- Validates that classes with private members behave nominally, not structurally
+- Tests cover:
+  * Different classes with same private member shape (should fail TS2322)
+  * Private members preventing structural assignment to object literals
+  * Protected members also creating nominal brands
+  * Subclass compatibility (should pass - brand is inherited)
+  * Public members remaining structural (baseline)
+  * Multiple private members creating stronger brands
+  * Different private member sets being incompatible
+  * Private methods creating brands
+  * Same class compatibility (trivial case)
+
+**Test Suite 2: Constructor Accessibility** (`src/checker/tests/constructor_accessibility.rs`)
+- 11 tests covering private/protected constructor accessibility
+- Validates that restricted constructors cannot be instantiated from invalid scopes
+- Tests cover:
+  * Private constructor instantiation outside class (TS2673)
+  * Protected constructor instantiation outside hierarchy (TS2674)
+  * Private constructor accessible inside class (static factory pattern)
+  * Protected constructor accessible in subclasses
+  * Private constructor failing in subclasses
+  * Protected constructor inaccessible from unrelated classes
+  * Public constructor baseline (no restrictions)
+  * Default constructor being public
+  * Private constructor as type annotation (valid)
+  * Abstract class instantiation restrictions (TS2511)
+
+**Current Status**: All tests failing as expected (functionality not yet implemented)
+- These tests define the exact behavior we need to implement
+- Tests will guide implementation when rate limit resets
+- Test failures provide clear success criteria for each feature
+
+**Next Steps** (when rate limit resets):
+1. Implement Private Brand nominality checks in `src/solver/compat.rs`
+2. Implement Constructor Accessibility checks in `src/solver/compat.rs`
+3. Verify all tests pass
