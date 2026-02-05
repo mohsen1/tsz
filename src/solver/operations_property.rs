@@ -1300,12 +1300,41 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     };
                 }
 
-                // TEMPORARY: Return property as-is without instantiation
-                // The instantiate_type call exceeds recursion depth on Callables
-                // Need to find a better approach for substituting type parameters in Callables
-                eprintln!("[APP-PROP] Returning Callable without instantiation (temporary)");
+                // Task 2.2: Lazy Member Instantiation
+                // Instantiate ONLY the property type, not the entire Callable
+                // This avoids recursion into other 37+ Array methods
+                let substitution =
+                    TypeSubstitution::from_args(self.interner, type_params, &app.args);
+
+                eprintln!("[APP-PROP] Substituting property type...");
+                eprintln!("[APP-PROP]   prop.type_id={:?}", prop.type_id);
+                eprintln!(
+                    "[APP-PROP]   substitution: {} type_params -> {} args",
+                    type_params.len(),
+                    app.args.len()
+                );
+
+                // Use instantiate_type_infer to handle infer vars and avoid depth issues
+                use crate::solver::instantiate::instantiate_type_with_infer;
+                let instantiated_prop_type =
+                    instantiate_type_with_infer(self.interner, prop.type_id, &substitution);
+
+                // Task 2.3: Handle `this` Types
+                // Array methods may return `this` or `this[]` which need to be
+                // substituted with the actual Application type (e.g., `T[]`)
+                let app_type = self.interner.application(app.base, app.args.clone());
+
+                use crate::solver::instantiate::substitute_this_type;
+                let final_type =
+                    substitute_this_type(self.interner, instantiated_prop_type, app_type);
+
+                eprintln!(
+                    "[APP-PROP]   result: {:?} -> {:?} -> {:?}",
+                    prop.type_id, instantiated_prop_type, final_type
+                );
+
                 return PropertyAccessResult::Success {
-                    type_id: prop.type_id,
+                    type_id: final_type,
                     from_index_signature: false,
                 };
             }
