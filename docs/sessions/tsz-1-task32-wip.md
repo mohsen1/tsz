@@ -1,6 +1,6 @@
 # Task #32 Graph Isomorphism - Progress Summary
 
-## Status: Phase 5 Complete - Integration and Tests ✅
+## Status: Phase 6 Complete - Application and Function Canonicalization ✅
 
 ## Completed Work
 
@@ -93,6 +93,40 @@ Created `src/solver/tests/isomorphism_tests.rs` with 8 tests:
 
 **All 8 tests passing** ✅
 
+### Phase 7: Application and Function Canonicalization ✅
+Implemented `TypeKey::Application` and `TypeKey::Function` canonicalization:
+
+**Application (e.g., `Box<string>`):**
+```rust
+TypeKey::Application(app_id) => {
+    let app = self.interner.type_application(app_id);
+    let c_base = self.canonicalize(app.base);
+    let c_args: Vec<TypeId> = app.args.iter().map(|&arg| self.canonicalize(arg)).collect();
+    self.interner.application(c_base, c_args)
+}
+```
+
+**Function (methods):**
+```rust
+TypeKey::Function(shape_id) => {
+    let shape = self.interner.function_shape(shape_id);
+    let c_this_type = shape.this_type.map(|t| self.canonicalize(t));
+    let c_return_type = self.canonicalize(shape.return_type);
+    let c_params: Vec<ParamInfo> = shape.params.iter().map(|p| ParamInfo {
+        name: p.name,
+        type_id: self.canonicalize(p.type_id),
+        optional: p.optional,
+        rest: p.rest,
+    }).collect();
+    // Preserve type_params, type_predicate, is_constructor, is_method
+    self.interner.function(FunctionShape { ... })
+}
+```
+
+**Gemini Pro Review**: Implementation correct. Object properties are sorted by `object_with_index`. Function canonicalization enables proper handling of objects with methods.
+
+**Commit**: Pending
+
 ## Implementation Notes from Gemini Pro
 
 **Key Insights:**
@@ -111,25 +145,17 @@ Created `src/solver/tests/isomorphism_tests.rs` with 8 tests:
 
 The core Canonicalizer is fully implemented and tested. Remaining items for complete integration:
 
-### Recommended: Function Type Canonicalization
-**Critical for objects with methods.** Currently `TypeKey::Function` is preserved as-is, which means objects with methods won't canonicalize correctly.
-
-**Implementation:** Add canonicalization for `TypeKey::Function` similar to how objects are handled:
-```rust
-TypeKey::Function(shape_id) => {
-    let shape = self.interner.function_shape(shape_id);
-    // Canonicalize param types and return type
-    let c_params = ...;
-    let c_return = ...;
-    self.interner.function(c_params, c_return)
-}
-```
-
 ### Optional: Callable Type Canonicalization
 Similar to Function types, callable types need canonicalization for complete support.
 
+### Optional: Intersection Type Sorting
+Currently `TypeKey::Intersection` preserves member order. For full structural identity, intersections should be sorted (except for call signatures where overload order matters).
+
 ### Optional: Integration into Judge/Query Layer
 Add `canonicalize()` method to `DefaultJudge` in `src/solver/judge.rs` to use structural identity as an optimization before bidirectional subtyping.
+
+### Optional: Persistent Cache for Performance
+Currently a new `Canonicalizer` is created for each call, discarding the cache. For production use, the cache could live on `TypeDatabase` or a long-lived `CheckerContext` to avoid re-canonicalizing the same types.
 
 ## Recent Commits
 
