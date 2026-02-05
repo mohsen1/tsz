@@ -1,7 +1,7 @@
 # Session TSZ-10: Advanced Control Flow Analysis (CFA) & Narrowing
 
 **Started**: 2026-02-05
-**Status**: 🔄 ACTIVE
+**Status**: 🔄 ACTIVE (Task 5 IN PROGRESS)
 **Focus**: Implement robust control flow analysis and type narrowing
 
 ## Session Scope
@@ -185,74 +185,71 @@ function foo(x: unknown) {
 
 ### Task 5: Discriminant Union Refinement
 
-**Status**: 🔄 IN PROGRESS - Investigation Complete, Architecture Consultation Needed
+**Status**: ✅ PARTIALLY COMPLETE (Simple aliases working, generic aliases TODO)
 
-**Problem Identified**:
-Type aliases (e.g., `type Shape = Circle | Square`) are stored as `Lazy(DefId)` types.
-Discriminant narrowing fails for type aliases because Lazy types are not being resolved
-during narrowing operations.
+**Completed Work** (2026-02-05):
+1. ✅ Implemented TypeResolver injection into NarrowingContext
+2. ✅ Added blanket impl for `&T` to fix `!Sized` trait object error
+3. ✅ Wired up type_environment from FlowAnalyzer to NarrowingContext
+4. ✅ Simple type aliases now work correctly
 
-**Investigation Findings**:
+**Implementation Details**:
 
-1. **Gatekeeper Issue Found**: `src/checker/flow_analysis.rs:1345`
-   - The `is_narrowable_type` gatekeeper check rejects Lazy types
-   - Lazy(DefId) is not recognized as a union type, so narrowing is skipped
+**Commit**: `78980e5b1` - feat(solver): implement type alias narrowing for discriminated unions
 
-2. **Root Cause**: `src/checker/control_flow.rs`
-   - FlowAnalyzer has `type_environment` field (set via `with_type_environment()`)
-   - But NarrowingContext is created with just `self.interner: &dyn QueryDatabase` (line 1740)
-   - QueryDatabase::evaluate_type uses NoopResolver, so Lazy types aren't resolved
-   - The `type_environment` field exists but is NEVER USED
+**Changes Made**:
+1. **src/solver/subtype.rs** - Added blanket impl `impl<T: TypeResolver + ?Sized> TypeResolver for &T`
+   - Enables `&dyn TypeResolver` (Sized) where `R: TypeResolver` expected
+   - Forwards all methods through the reference
 
-3. **Test Case**:
+2. **src/solver/narrowing.rs** - Enhanced NarrowingContext
+   - Added `resolver: Option<&'a dyn TypeResolver>` field
+   - Added `with_resolver()` builder method
+   - Updated `resolve_type()` to use resolver for Lazy types
+
+3. **src/checker/control_flow.rs** - Wired up type_environment
+   - Modified `narrow_type_by_condition_inner()` to pass resolver
+   - Modified switch clause narrowing to pass resolver
+   - Borrows type_environment when available and passes to NarrowingContext
+
+4. **FlowAnalyzer Creation Sites** - Added `.with_type_environment()` calls:
+   - src/checker/flow_analysis.rs (2 locations)
+   - src/checker/type_checking.rs
+   - src/checker/state_checking_members.rs
+
+**Test Results**:
 ```typescript
+// ✅ WORKING - Simple type aliases
 type Shape = { kind: "circle", radius: number } | { kind: "square", side: number };
-
 function area(shape: Shape) {
   if (shape.kind === "circle") {
-    shape.radius; // ERROR: Property 'radius' does not exist on type 'Shape'
+    shape.radius; // ✅ No error!
+  }
+}
+
+// ❌ NOT WORKING - Generic type aliases
+type Result<T> = { ok: true, value: T } | { ok: false, error: string };
+function check(r: Result<number>) {
+  if (r.ok) {
+    r.value; // ❌ Property 'value' does not exist on type 'Result<number>'
   }
 }
 ```
 
-**Attempted Fix** (Caused Test Failures):
-- Added Lazy type resolution before `is_narrowable_type` check
-- Used EnvResolver with type_environment to resolve Lazy types
-- This broke existing narrowing tests (test_truthiness_false_branch_narrows_to_falsy, etc.)
+**Gemini Architectural Review** (Question 2):
+- **Architecture**: ✅ CORRECT - Follows Solver-First pattern properly
+- **Implementation**: ⚠️ INCOMPLETE - Generic type aliases not fully supported
+- **Critical Missing Feature**: Application type handling for generic aliases
 
-**Required Solution** (Needs Gemini Consultation):
-The FlowAnalyzer needs to actually use the type_environment when creating
-NarrowingContext. Options:
-1. Create wrapper QueryDatabase with TypeResolver using type_environment
-2. Modify NarrowingContext to accept optional TypeResolver parameter
-3. Pre-resolve Lazy types before all narrowing operations
-4. Other architectural approach
+**Remaining Work**:
+Per Gemini's feedback, to support generic type aliases we need to:
+1. Ensure `resolve_type()` properly handles `TypeKey::Application` types
+2. Verify that Application type evaluation uses TypeResolver for instantiation
+3. Add test cases for generic type alias narrowing
 
-**Gemini Question to Ask**:
-"FlowAnalyzer has type_environment field but it's never used. NarrowingContext
-is created with self.interner (QueryDatabase with NoopResolver). How should
-I make FlowAnalyzer use type_environment for Lazy type resolution during
-narrowing? Need specific code changes for src/checker/control_flow.rs"
-
-**Test Cases**:
-```typescript
-// Direct union works:
-function area1(shape: { kind: "circle", radius: number } | { kind: "square", side: number }) {
-  if (shape.kind === "circle") {
-    shape.radius; // ✓ Works
-  }
-}
-
-// Type alias fails:
-type Shape = { kind: "circle", radius: number } | { kind: "square", side: number };
-function area2(shape: Shape) {
-  if (shape.kind === "circle") {
-    shape.radius; // ✗ Property 'radius' does not exist on type 'Shape'
-  }
-}
-```
-  }
-}
+**Note**: The `resolve_type()` method already handles Application types by calling
+`self.db.evaluate_type()`, but this may not be sufficient for proper generic
+instantiation. Further investigation needed.
 ```
 
 **Files to verify**:

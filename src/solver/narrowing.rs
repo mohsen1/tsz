@@ -29,7 +29,7 @@
 
 use crate::interner::Atom;
 use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
-use crate::solver::subtype::is_subtype_of;
+use crate::solver::subtype::{TypeResolver, is_subtype_of};
 use crate::solver::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::solver::types::Visibility;
 use crate::solver::types::*;
@@ -167,17 +167,29 @@ pub struct DiscriminantInfo {
 /// Narrowing context for type guards and control flow analysis.
 pub struct NarrowingContext<'a> {
     db: &'a dyn QueryDatabase,
+    /// Optional TypeResolver for resolving Lazy types (e.g., type aliases).
+    /// When present, this enables proper narrowing of type aliases like `type Shape = Circle | Square`.
+    resolver: Option<&'a dyn TypeResolver>,
 }
 
 impl<'a> NarrowingContext<'a> {
     pub fn new(db: &'a dyn QueryDatabase) -> Self {
-        NarrowingContext { db }
+        NarrowingContext { db, resolver: None }
+    }
+
+    /// Set the TypeResolver for this context.
+    ///
+    /// This enables proper resolution of Lazy types (type aliases) during narrowing.
+    /// The resolver should be borrowed from the Checker's TypeEnvironment.
+    pub fn with_resolver(mut self, resolver: &'a dyn TypeResolver) -> Self {
+        self.resolver = Some(resolver);
+        self
     }
 
     /// Resolve a type to its structural representation.
     ///
     /// Unwraps:
-    /// - Lazy types (evaluates them)
+    /// - Lazy types (evaluates them using resolver if available, otherwise falls back to db)
     /// - Application types (evaluates the generic instantiation)
     ///
     /// This ensures that type aliases, interfaces, and generics are resolved
@@ -190,7 +202,17 @@ impl<'a> NarrowingContext<'a> {
             fuel -= 1;
 
             // 1. Handle Lazy types (DefId-based, not SymbolRef)
-            if let Some(_def_id) = lazy_def_id(self.db, type_id) {
+            // If we have a TypeResolver, try to resolve Lazy types through it first
+            if let Some(def_id) = lazy_def_id(self.db, type_id) {
+                if let Some(resolver) = self.resolver {
+                    if let Some(resolved) =
+                        resolver.resolve_lazy(def_id, self.db.as_type_database())
+                    {
+                        type_id = resolved;
+                        continue;
+                    }
+                }
+                // Fallback to database evaluation if no resolver or resolution failed
                 type_id = self.db.evaluate_type(type_id);
                 continue;
             }

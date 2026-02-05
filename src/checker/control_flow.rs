@@ -784,7 +784,14 @@ impl<'a> FlowAnalyzer<'a> {
             current_type
         };
 
-        let narrowing = NarrowingContext::new(self.interner);
+        // Create narrowing context and wire up TypeEnvironment if available
+        let env_borrow;
+        let narrowing = if let Some(env) = &self.type_environment {
+            env_borrow = env.borrow();
+            NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+        } else {
+            NarrowingContext::new(self.interner)
+        };
         let clause_type = if clause.expression.is_none() {
             self.narrow_by_default_switch_clause(
                 pre_switch_type,
@@ -1737,7 +1744,15 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         };
 
-        let narrowing = NarrowingContext::new(self.interner);
+        // Create narrowing context and wire up TypeEnvironment if available
+        // This enables proper resolution of Lazy types (type aliases) during narrowing
+        let env_borrow;
+        let narrowing = if let Some(env) = &self.type_environment {
+            env_borrow = env.borrow();
+            NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+        } else {
+            NarrowingContext::new(self.interner)
+        };
 
         if cond_node.kind == SyntaxKind::Identifier as u16
             && let Some((sym_id, initializer)) = self.const_condition_initializer(condition_idx)

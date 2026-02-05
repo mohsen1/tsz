@@ -9,6 +9,7 @@ use crate::checker::statements::StatementCheckCallbacks;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::solver::{ContextualTypeContext, TypeId};
+use std::rc::Rc;
 
 impl<'a> CheckerState<'a> {
     /// Check an interface declaration.
@@ -2622,7 +2623,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.ctx.arena,
             self.ctx.binder,
             self.ctx.types,
-        );
+        )
+        .with_type_environment(Rc::clone(&self.ctx.type_environment));
 
         // Create a narrowing context
         let narrowing = crate::solver::NarrowingContext::new(self.ctx.types);
