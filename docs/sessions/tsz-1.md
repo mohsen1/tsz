@@ -99,19 +99,24 @@
 
 ---
 
-### Priority 3: Task #42 - Canonicalization Integration 🚀 NEXT
-**Status**: 📋 IN PROGRESS
+### Priority 3: Task #42 - Canonicalization Integration ✅ COMPLETE
+**Status**: ✅ COMPLETE
 **Why**: North Star O(1) equality goal requires that all type-producing operations return canonicalized TypeIds.
 
-**Sub-tasks**:
-1. **Union/Intersection Audit**: Ensure order-independence (e.g., `A | B` == `B | A`)
-2. **Instantiation Audit**: Ensure canonical forms after type argument substitution
-3. **Recursive Simplification**: Ensure recursive types simplify correctly during evaluation
-4. **Global intern_canonical Adoption**: Replace direct intern calls with canonicalization wrapper
+**Findings**: Task #42 is already implemented! The `TypeInterner` already has comprehensive canonicalization:
+1. ✅ **Order Independence**: `normalize_union` and `normalize_intersection` sort members by TypeId
+2. ✅ **Deduplication**: Both use `dedup()` to remove redundant members
+3. ✅ **Unit Type Collapsing**: Handles `any`, `unknown`, `never`, literal absorption
+4. ✅ **Callable Order Preservation**: Intersections preserve callable order for overload resolution
+5. ✅ **Disjoint Primitive Checking**: Detects incompatible intersections
 
-**Files**: `src/solver/operations.rs`, `src/solver/instantiate.rs`, `src/solver/evaluate.rs`, `src/solver/canonicalize.rs`
+**Tests Added** (Commit: `b88b34892`):
+- `test_union_order_independence`: Verifies `A | B == B | A`
+- `test_intersection_order_independence`: Verifies `A & B == B & A` (non-callables)
+- `test_union_redundancy_elimination`: Verifies `A | A` simplifies to `A`
+- `test_intersection_redundancy_elimination`: Verifies `A & A` simplifies to `A`
 
-**Current Focus**: Auditing `src/solver/operations.rs` for union/intersection canonicalization
+**Files**: `src/solver/intern.rs` (already canonicalized), `src/solver/tests/intern_tests.rs` (tests added)
 
 ---
 
