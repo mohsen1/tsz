@@ -19,6 +19,12 @@ After 6+ hours of investigation, encountered fundamental architectural conflict 
    - ✅ Fixes 1 test
    - ❌ Breaks 5 circular extends tests
 
+2. **Assertion Predicate Fix v2** (commit 137b82c62 - SAFE)
+   - ✅ Verified correct by Gemini review
+   - ✅ Fixes test_asserts_type_predicate_narrows_true_branch
+   - ✅ Does NOT break circular extends tests (isolated to narrow_type bridge)
+   - ✅ Safe to keep (doesn't touch core type algebra)
+
 2. **Truthiness Narrowing Fix** (commit 360c66e00 - REVERTED)
    - ✅ Logically correct TypeScript semantics
    - ✅ Fixes 1 test
