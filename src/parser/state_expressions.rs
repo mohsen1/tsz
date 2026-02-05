@@ -1844,6 +1844,36 @@ impl ParserState {
             }
         }
 
+        // Check for missing binary digits (e.g., 0b, 0B) - TS1177
+        if (token_flags & TokenFlags::BinarySpecifier as u32) != 0 {
+            // Binary literal should be at least 3 chars (0b followed by at least one digit)
+            // If it's just "0b" or "0B", no binary digits were provided
+            if text.len() == 2 {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    "Binary digit expected.",
+                    diagnostic_codes::BINARY_DIGIT_EXPECTED,
+                );
+            }
+        }
+
+        // Check for missing octal digits (e.g., 0o, 0O) - TS1178
+        if (token_flags & TokenFlags::OctalSpecifier as u32) != 0 {
+            // Octal literal should be at least 3 chars (0o followed by at least one digit)
+            // If it's just "0o" or "0O", no octal digits were provided
+            if text.len() == 2 {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    "Octal digit expected.",
+                    diagnostic_codes::OCTAL_DIGIT_EXPECTED,
+                );
+            }
+        }
+
         // Check if this numeric literal has an invalid separator (for TS1351 check)
         let has_invalid_separator =
             (token_flags & TokenFlags::ContainsInvalidSeparator as u32) != 0;
