@@ -662,22 +662,18 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
             }
             // Fallback: Check if object has a 'next' method that returns Promise
             if prop_name.as_ref() == "next" && prop.is_method {
-                // Check if the return type is Promise-like
+                // Check if the return type is Promise-like using Solver helper
                 if let Some(crate::solver::TypeKey::Function(func_id)) =
                     self.ctx.types.lookup(prop.type_id)
                 {
                     let func = self.ctx.types.function_shape(func_id);
-                    // Check if return type is a Promise (has 'then' property)
-                    if let Some(crate::solver::TypeKey::Object(ret_shape_id)) =
-                        self.ctx.types.lookup(func.return_type)
-                    {
-                        let ret_shape = self.ctx.types.object_shape(ret_shape_id);
-                        for ret_prop in &ret_shape.properties {
-                            let ret_prop_name = self.ctx.types.resolve_atom_ref(ret_prop.name);
-                            if ret_prop_name.as_ref() == "then" {
-                                return true;
-                            }
-                        }
+                    // Use Solver helper to check if return type is promise-like
+                    if crate::solver::type_queries::is_promise_like(
+                        self.ctx.types,
+                        self.ctx,
+                        func.return_type,
+                    ) {
+                        return true;
                     }
                 }
             }
@@ -695,21 +691,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
     }
 
     fn is_valid_for_in_target(&self, type_id: TypeId) -> bool {
-        // for-in works with any, object types, and type parameters
-        if type_id == TypeId::ANY {
-            return true;
-        }
-
-        if let Some(type_key) = self.ctx.types.lookup(type_id) {
-            match type_key {
-                crate::solver::TypeKey::Object(_) => return true,
-                crate::solver::TypeKey::Array(_) => return true,
-                crate::solver::TypeKey::TypeParameter(_) => return true,
-                _ => {}
-            }
-        }
-
-        false
+        // Use Solver helper to check if type is valid for for...in loops
+        crate::solver::type_queries::is_valid_for_in_target(self.ctx.types, type_id)
     }
 
     fn check_expression(&mut self, idx: NodeIndex) -> TypeId {
