@@ -789,86 +789,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let result = match classify_for_property_access_resolution(self.ctx.types, type_id) {
-            PropertyAccessResolutionKind::Ref(sym_ref) => {
-                let sym_id = SymbolId(sym_ref.0);
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    // Handle merged class+namespace symbols - return constructor type
-                    if symbol.flags & symbol_flags::CLASS != 0
-                        && symbol.flags & symbol_flags::MODULE != 0
-                        && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
-                        && let Some(class_node) = self.ctx.arena.get(class_idx)
-                        && let Some(class_data) = self.ctx.arena.get_class(class_node)
-                    {
-                        let ctor_type = self.get_class_constructor_type(class_idx, class_data);
-                        if ctor_type == type_id {
-                            self.ctx.leave_recursion();
-                            return type_id;
-                        }
-                        let r = self.resolve_type_for_property_access_inner(ctor_type, visited);
-                        self.ctx.leave_recursion();
-                        return r;
-                    }
-
-                    // Handle aliases to namespaces/modules (e.g., export { Namespace } from './file')
-                    // When accessing Namespace.member, we need to resolve through the alias
-                    if symbol.flags & symbol_flags::ALIAS != 0
-                        && symbol.flags
-                            & (symbol_flags::NAMESPACE_MODULE
-                                | symbol_flags::VALUE_MODULE
-                                | symbol_flags::MODULE)
-                            != 0
-                    {
-                        let mut visited_aliases = Vec::new();
-                        if let Some(target_sym_id) =
-                            self.resolve_alias_symbol(sym_id, &mut visited_aliases)
-                        {
-                            // Get the type of the target namespace/module
-                            let target_type = self.get_type_of_symbol(target_sym_id);
-                            if target_type != type_id {
-                                let r = self
-                                    .resolve_type_for_property_access_inner(target_type, visited);
-                                self.ctx.leave_recursion();
-                                return r;
-                            }
-                        }
-                    }
-
-                    // Handle plain namespace/module references
-                    if symbol.flags
-                        & (symbol_flags::NAMESPACE_MODULE
-                            | symbol_flags::VALUE_MODULE
-                            | symbol_flags::MODULE)
-                        != 0
-                    {
-                        // For namespace references, we want to allow accessing its members
-                        // so we return the type as-is (it will be resolved in resolve_namespace_value_member)
-                        self.ctx.leave_recursion();
-                        return type_id;
-                    }
-
-                    // Enums in value position behave like objects (runtime enum object).
-                    // For numeric enums, this includes a number index signature for reverse mapping.
-                    if symbol.flags & symbol_flags::ENUM != 0
-                        && let Some(enum_object) = self.enum_object_type(sym_id)
-                    {
-                        if enum_object != type_id {
-                            let r =
-                                self.resolve_type_for_property_access_inner(enum_object, visited);
-                            self.ctx.leave_recursion();
-                            return r;
-                        }
-                        self.ctx.leave_recursion();
-                        return enum_object;
-                    }
-                }
-
-                let resolved = self.type_reference_symbol_type(sym_id);
-                if resolved == type_id {
-                    type_id
-                } else {
-                    self.resolve_type_for_property_access_inner(resolved, visited)
-                }
-            }
             PropertyAccessResolutionKind::Lazy(def_id) => {
                 // Resolve lazy type from definition store
                 if let Some(body) = self.ctx.definition_store.get_body(def_id) {
@@ -1116,11 +1036,6 @@ impl<'a> CheckerState<'a> {
                 for arg in args {
                     self.ensure_application_symbols_resolved_inner(arg, visited);
                 }
-            }
-            SymbolResolutionTraversalKind::Ref(sym_ref) => {
-                let sym_id = SymbolId(sym_ref.0);
-                let resolved = self.type_reference_symbol_type(sym_id);
-                self.insert_type_env_symbol(sym_id, resolved);
             }
             SymbolResolutionTraversalKind::Lazy(def_id) => {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {

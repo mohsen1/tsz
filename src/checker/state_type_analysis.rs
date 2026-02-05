@@ -1769,22 +1769,6 @@ impl<'a> CheckerState<'a> {
             // expected type is a type parameter (e.g., K extends keyof T), the literal
             // is preserved and the constraint is checked later during generic inference.
             ContextualLiteralAllowKind::TypeParameter { .. } => true,
-            ContextualLiteralAllowKind::Ref(symbol) => {
-                let resolved = {
-                    let env = self.ctx.type_env.borrow();
-                    env.get(symbol)
-                };
-                if let Some(resolved) = resolved
-                    && resolved != ctx_type
-                {
-                    return self.contextual_type_allows_literal_inner(
-                        resolved,
-                        literal_type,
-                        visited,
-                    );
-                }
-                false
-            }
             ContextualLiteralAllowKind::Application => {
                 let expanded = self.evaluate_application_type(ctx_type);
                 if expanded != ctx_type {
