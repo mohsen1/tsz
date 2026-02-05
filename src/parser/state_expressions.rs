@@ -1799,6 +1799,36 @@ impl ParserState {
             }
         }
 
+        // Check for missing exponent digits (e.g., 1e+, 1e-, 1e) - TS1124
+        // If there's a Scientific flag but the text ends without digits after e/E
+        if (token_flags & TokenFlags::Scientific as u32) != 0 {
+            let bytes = text.as_bytes();
+            let len = bytes.len();
+            // Check if ends with e, E, e+, e-, E+, E- (no digit after exponent)
+            let missing_digit = if len > 0 {
+                let last = bytes[len - 1];
+                last == b'e'
+                    || last == b'E'
+                    || last == b'+'
+                    || last == b'-'
+                    || (len > 1
+                        && (last == b'+' || last == b'-')
+                        && (bytes[len - 2] == b'e' || bytes[len - 2] == b'E'))
+            } else {
+                false
+            };
+            if missing_digit {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                // Find position of the missing digit (at the end)
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    "Digit expected.",
+                    diagnostic_codes::DIGIT_EXPECTED,
+                );
+            }
+        }
+
         // Check if this numeric literal has an invalid separator (for TS1351 check)
         let has_invalid_separator =
             (token_flags & TokenFlags::ContainsInvalidSeparator as u32) != 0;

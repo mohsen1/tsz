@@ -371,6 +371,8 @@ pub mod diagnostic_codes {
     pub const ONLY_SINGLE_VARIABLE_IN_FOR_IN: u32 = 1091; // Only a single variable declaration is allowed in a 'for...in' statement.
     pub const OCTAL_LITERALS_NOT_ALLOWED: u32 = 1121; // Octal literals are not allowed. Use the syntax '{0}'.
     pub const VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY: u32 = 1123; // Variable declaration list cannot be empty.
+    pub const DIGIT_EXPECTED: u32 = 1124; // Digit expected.
+    pub const HEXADECIMAL_DIGIT_EXPECTED: u32 = 1125; // Hexadecimal digit expected.
     pub const KEYWORDS_CANNOT_CONTAIN_ESCAPE_CHARACTERS: u32 = 1260; // Keywords cannot contain escape characters.
     pub const ONLY_SINGLE_VARIABLE_IN_FOR_OF: u32 = 1188; // Only a single variable declaration is allowed in a 'for...of' statement.
     pub const VARIABLE_DECLARATION_EXPECTED: u32 = 1134;
