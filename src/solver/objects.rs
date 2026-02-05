@@ -10,6 +10,24 @@ use rustc_hash::FxHashSet;
 // Import TypeDatabase trait
 use crate::solver::db::TypeDatabase;
 
+/// Result of property collection from intersection types.
+///
+/// This enum represents the possible outcomes when collecting properties
+/// from an intersection type for subtyping checks.
+#[derive(Debug)]
+pub enum PropertyCollectionResult {
+    /// The intersection contains `any`, making all properties effectively `any`.
+    Any,
+    /// The type is not an object type (e.g., primitive, function, etc.).
+    NonObject,
+    /// The type has object properties with optional index signatures.
+    Properties {
+        properties: Vec<PropertyInfo>,
+        string_index: Option<IndexSignature>,
+        number_index: Option<IndexSignature>,
+    },
+}
+
 /// Collect properties from an intersection type, recursively merging all members.
 ///
 /// This function handles:
@@ -26,17 +44,13 @@ use crate::solver::db::TypeDatabase;
 /// * `resolver` - Type resolver for handling Lazy/Ref types
 ///
 /// # Returns
-/// A tuple of (properties, string_index, number_index) representing the merged
-/// properties from all intersection members.
+/// A `PropertyCollectionResult` indicating whether the type is `Any`, a non-object type,
+/// or has object properties with optional index signatures.
 pub fn collect_properties<R>(
     type_id: TypeId,
     interner: &dyn TypeDatabase,
     resolver: &R,
-) -> (
-    Vec<PropertyInfo>,
-    Option<IndexSignature>,
-    Option<IndexSignature>,
-)
+) -> PropertyCollectionResult
 where
     R: TypeResolver,
 {
@@ -47,17 +61,31 @@ where
         string_index: None,
         number_index: None,
         seen: FxHashSet::default(),
+        has_any: false,
     };
     collector.collect(type_id);
+
+    // If we encountered Any, the entire result is Any
+    if collector.has_any {
+        return PropertyCollectionResult::Any;
+    }
+
+    // If no properties were collected, this is a non-object type
+    if collector.properties.is_empty()
+        && collector.string_index.is_none()
+        && collector.number_index.is_none()
+    {
+        return PropertyCollectionResult::NonObject;
+    }
 
     // Sort properties by name to maintain interner invariants
     collector.properties.sort_by_key(|p| p.name.0);
 
-    (
-        collector.properties,
-        collector.string_index,
-        collector.number_index,
-    )
+    PropertyCollectionResult::Properties {
+        properties: collector.properties,
+        string_index: collector.string_index,
+        number_index: collector.number_index,
+    }
 }
 
 /// Helper function to resolve Lazy and Ref types
@@ -97,6 +125,8 @@ struct PropertyCollector<'a, R> {
     number_index: Option<IndexSignature>,
     /// Prevent infinite recursion for circular intersections like: type T = { a: number } & T
     seen: FxHashSet<TypeId>,
+    /// Tracks if Any was encountered in the intersection
+    has_any: bool,
 }
 
 impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
@@ -124,7 +154,8 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             // Any type in intersection makes everything Any
             Some(TypeKey::Intrinsic(IntrinsicKind::Any)) => {
                 // Mark that we have an Any in the intersection
-                // Properties from Any will override everything else
+                self.has_any = true;
+                // Clear all collected properties and indices
                 self.properties.clear();
                 self.string_index = None;
                 self.number_index = None;
@@ -221,10 +252,15 @@ mod tests {
 
         let obj_type = interner.object(props);
 
-        let (collected, _, _) = collect_properties(obj_type, &interner, &resolver);
+        let result = collect_properties(obj_type, &interner, &resolver);
 
-        assert_eq!(collected.len(), 1);
-        assert_eq!(collected[0].name, interner.intern_string("x"));
+        match result {
+            PropertyCollectionResult::Properties { properties, .. } => {
+                assert_eq!(properties.len(), 1);
+                assert_eq!(properties[0].name, interner.intern_string("x"));
+            }
+            _ => panic!("Expected Properties result, got {:?}", result),
+        }
     }
 
     #[test]
@@ -259,18 +295,23 @@ mod tests {
         // Create intersection obj1 & obj2
         let intersection = interner.intersection2(obj1, obj2);
 
-        let (collected, _, _) = collect_properties(intersection, &interner, &resolver);
+        let result = collect_properties(intersection, &interner, &resolver);
 
-        assert_eq!(collected.len(), 2);
-        assert!(
-            collected
-                .iter()
-                .any(|p| p.name == interner.intern_string("x"))
-        );
-        assert!(
-            collected
-                .iter()
-                .any(|p| p.name == interner.intern_string("y"))
-        );
+        match result {
+            PropertyCollectionResult::Properties { properties, .. } => {
+                assert_eq!(properties.len(), 2);
+                assert!(
+                    properties
+                        .iter()
+                        .any(|p| p.name == interner.intern_string("x"))
+                );
+                assert!(
+                    properties
+                        .iter()
+                        .any(|p| p.name == interner.intern_string("y"))
+                );
+            }
+            _ => panic!("Expected Properties result, got {:?}", result),
+        }
     }
 }
