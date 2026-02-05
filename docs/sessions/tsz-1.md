@@ -90,22 +90,44 @@ Implemented `do_refined_object_overlap_check` in `src/solver/subtype.rs` (lines 
 
 ---
 
----
+### Priority 2: Structural Intersection/Union Simplification ⚠️ PARTIAL
+**Status**: ⚠️ Partial Implementation (2025-02-05)
+**Why**: Performance North Star requires O(1) type equality via canonical forms
 
-### Priority 2: Structural Intersection/Union Simplification
-**Status**: 📝 Planned
-**Status**: 📝 Planned
-**Why**: PropertyCollector is now complete (Task #16), enabling proper object overlap detection
+**Implementation Summary**:
+Implemented **literal-based** subtype reduction for union/intersection normalization.
 
-**Description**:
-Complete the missing object property overlap detection from Task #17's "Known Gaps".
+**What Works**:
+- Literal-to-literal checking (prevents "a" <: "b")
+- Literal-to-primitive reduction (`string | "a"` → `string`)
+- Reduction skipped for complex types (TypeParameters, Lazy, Applications)
 
-**Implementation Goals**:
-- Use PropertyCollector to compare properties
-- Detect disjoint property types (e.g., `{a: string}` vs `{a: number}`)
-- Determine if two object types can ever overlap
+**Known Limitations**:
+- **Object reduction DISABLED** due to complexity with generic types
+- 5 circular_extends tests failing - needs investigation
+- Conservative approach prioritizes correctness over optimization
 
-**Files**: `src/solver/subtype.rs` (function `do_object_properties_overlap`)
+**Why Partial**:
+Object reduction proved too complex for the interner layer:
+- Shallow checks are either too restrictive (break valid cases) or too permissive (incorrect reductions)
+- Generic types and type parameters require full resolution
+- Architecture limitation: Interner cannot call evaluate/subtype without infinite recursion
+
+**Design Decisions**:
+1. Skip reduction when any member is TypeParameter, Lazy, or Application
+2. Objects never marked as subtypes in shallow check
+3. Literal reduction only (object reduction deferred to future work)
+
+**Files**: `src/solver/intern.rs`
+
+**Commit**: cae535d63
+
+**Gemini Pro Review**: ✅ "solid, conservative implementation" (before object reduction attempts)
+
+**Next Steps**:
+- Object reduction needs SubtypeChecker layer integration (not Interner)
+- Investigate circular_extends test failures
+- Consider architectural changes to support deeper reduction
 
 ---
 
