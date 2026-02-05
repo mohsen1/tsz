@@ -2278,13 +2278,19 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Handle primitive types
-        // CRITICAL: TypeScript does NOT narrow these primitives in falsy branches
-        if matches!(
-            resolved,
-            TypeId::BOOLEAN | TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT
-        ) {
+        // CRITICAL: TypeScript has different behavior for different primitives
+
+        // boolean is special: it's effectively true | false, so it narrows to false
+        if resolved == TypeId::BOOLEAN {
+            return TypeId::BOOLEAN_FALSE;
+        }
+
+        // TypeScript does NOT narrow these primitives in falsy branches
+        if matches!(resolved, TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT) {
             return resolved;
         }
+
+        // null, undefined, void are always falsy
         if matches!(resolved, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID) {
             return resolved;
         }
