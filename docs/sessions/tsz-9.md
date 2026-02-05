@@ -173,3 +173,54 @@ if polarity {
    - Multiple infer in return types (covariant → union)
    - Mixed polarity cases
 
+
+---
+
+## Gemini Pro Review (Question 2) - ✅ APPROVED ✅
+
+**Verdict**: Implementation plan is CORRECT! Green light to proceed.
+
+### Key Improvements from Gemini Pro
+
+**1. Use Enum (not bool)**
+```rust
+pub enum InferencePolarity {
+    Covariant,
+    Contravariant,
+}
+```
+
+**2. Additional Contravariant Positions**
+- Function parameters ✅ (planned)
+- Constructor parameters ✅ (add)
+- Setters (write_type) ✅ (add)
+- Methods: Treat as contravariant for inference
+
+**3. Recursive Call Updates**
+- `match_infer_function_pattern`: Params = Contravariant, Return = Covariant
+- `match_infer_callable_pattern`: Params = Contravariant, Return = Covariant
+- `match_infer_constructor_pattern`: Params = Contravariant
+- Object/Array/Tuple: Preserve current polarity
+
+**4. Merge Logic Fix**
+```rust
+*existing = match polarity {
+    InferencePolarity::Covariant => self.interner().union2(*existing, ty),
+    InferencePolarity::Contravariant => self.interner().intersection2(*existing, ty),
+};
+```
+
+### Action Plan
+
+1. ✅ Define InferencePolarity enum
+2. ⏳ Update match_infer_pattern signature
+3. ⏳ Update all recursive call sites
+4. ⏳ Fix merge logic at 3 locations
+5. ⏳ Test with examples
+
+### Files to Modify
+
+1. `src/solver/evaluate_rules/infer_pattern.rs` (main changes)
+2. `src/solver/evaluate_rules/conditional.rs` (update call site)
+3. Add tests for contravariant intersection
+
