@@ -109,6 +109,30 @@ pub trait StatementCheckCallbacks {
     ) {
         // Default: no exhaustiveness checking
     }
+
+    /// Check a break statement for validity.
+    /// TS1105: A 'break' statement can only be used within an enclosing iteration statement.
+    fn check_break_statement(&mut self, stmt_idx: NodeIndex);
+
+    /// Check a continue statement for validity.
+    /// TS1104: A 'continue' statement can only be used within an enclosing iteration statement.
+    fn check_continue_statement(&mut self, stmt_idx: NodeIndex);
+
+    /// Enter an iteration statement (for/while/do-while/for-in/for-of).
+    /// Increments iteration_depth for break/continue validation.
+    fn enter_iteration_statement(&mut self);
+
+    /// Leave an iteration statement.
+    /// Decrements iteration_depth.
+    fn leave_iteration_statement(&mut self);
+
+    /// Enter a switch statement.
+    /// Increments switch_depth for break validation.
+    fn enter_switch_statement(&mut self);
+
+    /// Leave a switch statement.
+    /// Decrements switch_depth.
+    fn leave_switch_statement(&mut self);
 }
 
 /// Statement type checker that dispatches to specialized handlers.
@@ -215,7 +239,9 @@ impl StatementChecker {
                 };
                 if let Some((condition, statement)) = loop_data {
                     state.get_type_of_node(condition);
+                    state.enter_iteration_statement();
                     state.check_statement(statement);
+                    state.leave_iteration_statement();
                 }
             }
             syntax_kind_ext::FOR_STATEMENT => {
@@ -249,7 +275,9 @@ impl StatementChecker {
                     if !incrementor.is_none() {
                         state.get_type_of_node(incrementor);
                     }
+                    state.enter_iteration_statement();
                     state.check_statement(statement);
+                    state.leave_iteration_statement();
                 }
             }
             syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
@@ -295,7 +323,9 @@ impl StatementChecker {
                     } else {
                         state.get_type_of_node(initializer);
                     }
+                    state.enter_iteration_statement();
                     state.check_statement(statement);
+                    state.leave_iteration_statement();
                 }
             }
             syntax_kind_ext::SWITCH_STATEMENT => {
@@ -327,6 +357,9 @@ impl StatementChecker {
                         // Track if there's a default clause (for exhaustiveness checking)
                         let mut has_default = false;
 
+                        // Enter switch context for break validation
+                        state.enter_switch_statement();
+
                         for clause_idx in clauses {
                             // Extract clause data
                             let clause_data = {
@@ -354,6 +387,9 @@ impl StatementChecker {
                                 }
                             }
                         }
+
+                        // Leave switch context
+                        state.leave_switch_statement();
 
                         // Check exhaustiveness (Task 12: CFA Diagnostics)
                         state.check_switch_exhaustiveness(
@@ -426,11 +462,14 @@ impl StatementChecker {
             syntax_kind_ext::ENUM_DECLARATION => {
                 state.check_enum_duplicate_members(stmt_idx);
             }
-            syntax_kind_ext::EMPTY_STATEMENT
-            | syntax_kind_ext::DEBUGGER_STATEMENT
-            | syntax_kind_ext::BREAK_STATEMENT
-            | syntax_kind_ext::CONTINUE_STATEMENT => {
+            syntax_kind_ext::EMPTY_STATEMENT | syntax_kind_ext::DEBUGGER_STATEMENT => {
                 // No action needed
+            }
+            syntax_kind_ext::BREAK_STATEMENT => {
+                state.check_break_statement(stmt_idx);
+            }
+            syntax_kind_ext::CONTINUE_STATEMENT => {
+                state.check_continue_statement(stmt_idx);
             }
             syntax_kind_ext::IMPORT_DECLARATION => {
                 state.check_import_declaration(stmt_idx);
