@@ -929,3 +929,37 @@ system makes it difficult to store trait objects or mix generic/non-generic code
 - Option C (switch sessions): TSZ-10 is high priority for discriminant narrowing
 - Database-as-Resolver pattern bypasses Rust generic complexity
 
+
+### 2026-02-05: Gemini Consultation - Implementation Attempt & Compilation Blocker
+
+**Gemini's Architectural Solution** (from Question 1):
+Enhance `NarrowingContext` to support optional `TypeResolver`:
+1. Add `resolver: Option<&'a dyn TypeResolver>` field
+2. Add `with_resolver` builder method
+3. Update `resolve_type` to use resolver for Lazy types
+4. Add `is_subtype` helper method
+
+**Implementation Attempted**:
+Modified `src/solver/narrowing.rs` per Gemini's guidance:
+- Added resolver field to struct
+- Added `with_resolver()` builder method
+- Updated `resolve_type()` to call `resolver.resolve_lazy()`
+- Added `is_subtype()` helper method
+
+**Compilation Blocker**:
+```
+error[E0277]: the size for values of type `dyn subtype::TypeResolver` 
+cannot be known at compilation time
+```
+
+**Root Cause**: Storing `Option<&'a dyn TypeResolver>` requires TypeResolver to be `Sized`,
+but trait objects are not Sized by default.
+
+**Needs Clarification from Gemini**:
+The architectural approach needs adjustment. Options:
+1. Use concrete type instead of trait object (e.g., `Option<&'a TypeEnvironment>`)
+2. Use generics: `NarrowingContext<'a, R: TypeResolver>` when resolver is needed
+3. Different architecture not involving storing resolver in struct
+4. Pre-resolve Lazy types before passing to NarrowingContext
+
+**Next Step**: Ask Gemini follow-up question about how to handle the !Sized trait object issue.
