@@ -530,3 +530,27 @@ The override exists and has the correct logic, but there's a "wiring problem" wh
 4. Investigate if type annotations use a different compatibility checking mechanism than expressions
 
 **Current Status**: Blocked on finding why enum_assignability_override is not invoked
+
+### Commit: `1e80cf6b0` - feat(tsz-4): add debug logging to trace assignability checking
+**What Was Done**:
+Added comprehensive debug logging at multiple levels to trace why `enum_assignability_override` is not being called.
+
+**Logging Added**:
+1. `src/checker/state.rs`: Added logging to `CheckerOverrideProvider.enum_assignability_override`
+2. `src/checker/assignability_checker.rs`: Added logging to `is_assignable_to`
+
+**Critical Finding**: Still no debug output appeared during test run!
+
+This suggests that `is_assignable_to` is NOT being called at all for const declarations with type annotations.
+
+**Deep Investigation Results**:
+- Verified wiring is correct: `CheckerOverrideProvider` is created and passed to `is_assignable_with_overrides`
+- Verified `assignability_checker.rs` line 257 calls `checker.is_assignable_with_overrides(source, target, &overrides)`
+- But ZERO debug output appears at any level
+
+**Hypothesis**:
+Const declarations may use a different code path than variable declarations, OR the test setup doesn't trigger the assignment check pipeline at all.
+
+**Current Status**: Deep debugging needed to find the actual code path for type annotation compatibility checking in const declarations.
+
+**Blocker Level**: CRITICAL - Found architectural issue that prevents enum nominal typing from working. Need to trace the exact code execution path to understand why the Lawyer layer is bypassed.
