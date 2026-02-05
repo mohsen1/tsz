@@ -763,6 +763,12 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
+        // TODO: Check for static [Symbol.hasInstance] method which overrides standard narrowing
+        // TypeScript allows classes to define custom instanceof behavior via:
+        //   static [Symbol.hasInstance](value: any): boolean
+        // This would require evaluating method calls and type predicates, which is
+        // significantly more complex than the standard construct signature approach.
+
         // CRITICAL: Resolve Lazy types for both source and constructor
         // This ensures type aliases are resolved to their actual types
         let resolved_source = self.resolve_type(source_type);
@@ -1011,6 +1017,13 @@ impl<'a> NarrowingContext<'a> {
                     classify_for_instance_type(self.db, type_id),
                     InstanceTypeKind::Callable(_) | InstanceTypeKind::Function(_)
                 )
+            }
+
+            // Type parameters - check their constraint
+            Some(TypeKey::TypeParameter(info)) => {
+                // For instanceof, generics with object constraints are treated as object-like
+                // This allows intersection narrowing for cases like: T & MyClass
+                info.constraint.is_none_or(|c| self.are_object_like(c))
             }
 
             // Intersection of object types
