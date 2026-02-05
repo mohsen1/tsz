@@ -1,7 +1,7 @@
 # Session TSZ-4: Nominality & Accessibility (Lawyer Layer)
 
 **Started**: 2026-02-05
-**Status**: 🔄 Active - Priority 5 (Void Return Exception)
+**Status**: ✅ COMPLETE - All priorities finished
 **Focus**: Implement TypeScript's nominal "escape hatches" and type system quirks in the Lawyer layer (CompatChecker)
 
 **Session Scope**:
@@ -9,19 +9,22 @@
 - ✅ Priority 2: Private Brand Checking (COMPLETE - 31 tests)
 - ✅ Priority 3: Constructor Accessibility (COMPLETE - 13 tests)
 - ✅ Priority 4: Function Bivariance (COMPLETE - 8 tests)
-- 🔄 Priority 5: Void Return Exception (ACTIVE)
-- 📝 Priority 6: Any-Propagation Hardening (PENDING)
+- ✅ Priority 5: Void Return Exception (COMPLETE - 11 tests)
+- ✅ Priority 6: Any-Propagation Hardening (COMPLETE - 10 tests)
+
+**Total Tests**: 94 tests verifying Lawyer Layer compliance with tsc
 
 **Key Insight**: Per Gemini Flash (2026-02-05), "infrastructure exists" doesn't mean it works correctly. Need to verify with tests and tsz-tracing to ensure bivariance logic matches tsc exactly.
 
 **Completed**:
-- Enum Nominality with TypeKey::Enum wrapper
-- Private Brand Checking with recursive Union/Intersection handling
-- Constructor Accessibility for both new expressions and class inheritance
-- Function Bivariance (methods bivariant, properties contravariant in strict mode)
+- Enum Nominality with TypeKey::Enum wrapper (21 tests)
+- Private Brand Checking with recursive Union/Intersection handling (31 tests)
+- Constructor Accessibility for both new expressions and class inheritance (13 tests)
+- Function Bivariance (methods bivariant, properties contravariant in strict mode) (8 tests)
+- Void Return Exception (callback ergonomics) (11 tests)
+- Any-Propagation Hardening (fixed fast path bug) (10 tests)
 
-**In Progress**:
-- Void Return Exception (Priority 5)
+**Session Complete**: 94 tests verifying Lawyer Layer compliance with tsc
 
 ## Previous Session (COMPLETE)
 
@@ -142,38 +145,38 @@ The `// @strictFunctionTypes: true` comment was not being parsed in tests becaus
 3. `functions.rs:110-111` toggles bivariance based on `is_method` + `strict_function_types`
 4. `compat.rs:752` propagates `strict_function_types` to SubtypeChecker
 
-#### Priority 5: Void Return Exception 🔄 ACTIVE
-**Goal**: Implement/verify Lawyer rule where function returning void can be assigned function returning any type T
-- In strict set theory, `() => number` is NOT subtype of `() => void`
-- TypeScript allows this for callback ergonomics
-- Classic "Lawyer" override
+#### Priority 5: Void Return Exception ✅ COMPLETE
+**Status**: Verified implementation and created test suite
+**Files Modified**:
+- `src/checker/tests/void_return_exception.rs` - Created 11 tests
 
-**Example**:
-```typescript
-function takesCallback(cb: () => void) {
-    cb(); // Can call with () => number
-}
-takesCallback(() => 5); // Should be allowed
-```
+**Implementation Verified**:
+- `compat.rs:539` sets `allow_void_return = true` in configure_subtype
+- `functions.rs:check_return_compat` correctly handles void exception
+- Edge cases verified: void vs undefined, Promise<void> strictness
 
-**Questions** (to ask Gemini):
-- Where is the logic that allows `() => T` to be assigned to `() => void`?
-- Is this in Judge or Lawyer layer?
+**Test Results**: 11/11 tests passing ✅
+- () => T assignable to () => void ✓
+- () => undefined NOT assignable to () => void ✓
+- () => Promise<string> NOT assignable to () => Promise<void> ✓
+- Void is not covariant ✓
 
-**Files**:
-- `src/solver/compat.rs` - Check is_assignable_to for void exception
-- `src/solver/subtype_rules/functions.rs` - Verify return type check respects this quirk
+#### Priority 6: Any-Propagation Hardening ✅ COMPLETE
+**Status**: Fixed bug and created test suite
+**Files Modified**:
+- `src/solver/compat.rs` - Fixed check_assignable_fast_path bug (lines 611-614)
+- `src/checker/tests/any_propagation.rs` - Created 10 tests
 
-#### Priority 6: Any-Propagation Hardening 📝 NEW
-**Goal**: Verify `any` behaves as both top and bottom type in Lawyer layer without polluting Judge's logic
-- NORTH_STAR.md Section 3.3 describes `any` as the "black hole"
-- Verify CompatChecker correctly uses `any` to silence structural mismatches
-- Ensure it doesn't suppress errors inappropriately (strict contexts, intrinsics)
+**Bug Fixed**:
+- **Before**: Fast path ignored `strict_any_propagation` setting
+- **After**: Checks `lawyer.allow_any_suppression` before silencing errors
+- This ensures any doesn't bypass safety checks in strict mode
 
-**Key Concerns**:
-- Does `any` correctly suppress structural errors only when appropriate?
-- Are there strict contexts where `any` should NOT silence errors?
-- Does it interact correctly with intrinsic checks?
+**Test Results**: 10/10 tests passing ✅
+- Any assignable to string (Top type) ✓
+- String assignable to any (Bottom type) ✓
+- Any works in nested objects ✓
+- Any works with unions and intersections ✓
 
 **Files**:
 - `src/solver/compat.rs` - Verify any propagation logic
