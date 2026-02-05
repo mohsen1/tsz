@@ -8,6 +8,26 @@
 
 Implement LSP features that improve developer experience without requiring deep Solver/Checker architecture expertise.
 
+## Current Work: File Rename Handling
+
+Implementing `workspace/willRenameFiles` to update import statements when files are renamed.
+
+**Value**: When renaming `utils.ts` to `src/utils.ts`, all `import { ... } from './utils'` statements across the project automatically update.
+
+**Implementation Plan** (from Gemini review):
+- Phase 1: Path utilities (relative path calculation) - IN PROGRESS
+- Phase 2: FileRenameProvider (find import nodes in AST)
+- Phase 3: Orchestration in Project (coordinate with DependencyGraph)
+- Phase 4: Directory renames (handle folder moves)
+
+**Files to Create/Modify**:
+- `src/lsp/file_rename.rs` (new)
+- `src/lsp/utils.rs` (add path utilities)
+- `src/lsp/project.rs` (handle_will_rename_files method)
+- `src/lsp/mod.rs` (exports)
+
+**Status**: Starting Phase 1 - Path utilities
+
 ## Completed Work
 
 ### JSX Linked Editing (2026-02-05)
@@ -23,11 +43,6 @@ When editing an opening JSX tag (e.g., `<div>`), the closing tag (`</div>`) auto
 - Handles nested elements, self-closing tags, fragments correctly
 
 **Reviewed by Gemini**: AST traversal logic correct, no bugs found.
-
-**Next LSP Tasks**:
-- File Rename handling (`workspace/willRenameFiles`)
-- Symbol Index usage tracking for performance
-- "Move to New File" code action
 
 ## Outcome: BLOCKED
 
