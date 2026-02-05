@@ -695,3 +695,48 @@ Do NOT flatten composite types. Use recursive structure to preserve logical oper
 
 **Status**: Priority 2 COMPLETE ✅
 
+
+### Commit: `e1a681ba5` - test(tsz-4): add global type mocks to bypass TS2318 test infrastructure issue 🟡
+
+**Priority 3 Status: Constructor Accessibility - MOSTLY COMPLETE (10/11 tests passing)**
+
+**What Was Done**:
+Per Gemini Flash guidance, applied global type workaround (interface declarations) to bypass TS2318 test infrastructure blocker.
+
+**Test Results**: 10/11 tests PASSING ✅
+- ✅ test_private_constructor_instantiation - External instantiation correctly rejected (TS2673)
+- ✅ test_protected_constructor_instantiation - External protected correctly rejected (TS2674)
+- ✅ test_private_constructor_inside_class - Static factory pattern works
+- ✅ test_protected_constructor_in_subclass - Subclass can call super()
+- ✅ test_private_constructor_type_annotation - Type annotations work
+- ✅ test_public_constructor_no_restrictions - Public has no restrictions
+- ✅ test_default_constructor_is_public - Default constructor is public
+- ✅ test_abstract_class_instantiation - Cannot instantiate abstract (TS2511)
+- ✅ test_abstract_class_subclass_instantiation - Subclass instantiation works
+- ✅ test_protected_constructor_cross_class - Protected rejected outside hierarchy
+- ❌ test_private_constructor_in_subclass - FAILS (different feature)
+
+**Remaining Issue**:
+The failing test (`test_private_constructor_in_subclass`) checks whether you can **EXTEND** a class with a private constructor (during class declaration), not during `new` expression checking. This is a separate feature requiring class inheritance validation.
+
+Test code:
+```typescript
+class A { private constructor() {} }
+class B extends A {  // Should emit TS2673 here
+    constructor() { super(); }
+}
+```
+
+This check needs to happen in class declaration validation, not in `get_type_of_new_expression`.
+
+**Mandatory Gemini Workflow Completed**:
+- ✅ Asked for session redefinition when blocked on test infrastructure
+- ✅ Applied Gemini Flash's workaround recommendation
+- ✅ Verified 10/11 tests passing with workaround
+
+**Next Steps**:
+1. Add class inheritance constructor accessibility check (separate feature)
+2. OR mark Priority 3 as "substantially complete" and move to Priority 4
+3. Fix test infrastructure properly (remove global type mocks)
+
+**Status**: Priority 3 SUBSTANTIALLY COMPLETE 🟡
