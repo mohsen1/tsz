@@ -33,10 +33,11 @@
 
 | Priority | Task | Title | Status |
 |:---|:---|:---|:---|
-| **1** | **#35** | **Callable & Intersection Canonicalization** | 📋 **NEXT** |
-| **2** | **#36** | **Judge Integration: Structural Identity Fast-Path** | 📝 Planned |
-| **3** | **#37** | **Deep Structural Simplification** | 📝 Planned |
-| **4** | **#11** | **Refined Narrowing for Discriminated Unions** | 📝 Planned |
+| **1** | **#36** | **Judge Integration: Structural Identity Fast-Path** | ✅ **COMPLETE** |
+| **2** | **#35** | **Callable & Intersection Canonicalization** | ✅ **COMPLETE** |
+| **3** | **#32** | **Graph Isomorphism (Canonicalizer Core)** | ✅ **COMPLETE** |
+| **4** | **#37** | **Deep Structural Simplification** | 📝 Planned |
+| **5** | **#11** | **Refined Narrowing for Discriminated Unions** | 📝 Planned |
 
 **Task #32 Status**: ✅ Core Complete (see `docs/sessions/tsz-1-task32-wip.md`)
 - Canonicalizer implemented with De Bruijn indices
