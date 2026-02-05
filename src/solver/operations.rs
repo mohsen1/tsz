@@ -930,6 +930,141 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         CallResult::Success(return_type)
     }
 
+    /// Computes contextual types for function parameters after Round 1 inference.
+    ///
+    /// This is used by the Checker to implement two-pass argument checking:
+    /// 1. Checker checks non-contextual arguments (arrays, primitives)
+    /// 2. Checker calls this method to run Round 1 inference on those arguments
+    /// 3. This method returns the current type substitution (with fixed variables)
+    /// 4. Checker uses the substitution to construct contextual types for lambdas
+    /// 5. Checker checks lambdas with those contextual types (Round 2)
+    ///
+    /// # Arguments
+    /// * `func` - The function shape being called
+    /// * `arg_types` - The types of all arguments (both contextual and non-contextual)
+    ///
+    /// # Returns
+    /// A `TypeSubstitution` mapping type parameter placeholder names to their
+    /// inferred types after Round 1 inference. The Checker can use this to
+    /// instantiate parameter types for contextual arguments.
+    pub fn compute_contextual_types(
+        &mut self,
+        func: &FunctionShape,
+        arg_types: &[TypeId],
+    ) -> TypeSubstitution {
+        use crate::solver::types::InferencePriority;
+
+        let mut infer_ctx = InferenceContext::new(self.interner.as_type_database());
+        let mut substitution = TypeSubstitution::new();
+        let mut var_map: FxHashMap<TypeId, crate::solver::infer::InferenceVar> =
+            FxHashMap::default();
+        let mut type_param_vars = Vec::with_capacity(func.type_params.len());
+
+        self.constraint_pairs.borrow_mut().clear();
+        *self.constraint_recursion_depth.borrow_mut() = 0;
+
+        // 1. Create inference variables and placeholders for each type parameter
+        for tp in &func.type_params {
+            let var = infer_ctx.fresh_var();
+            type_param_vars.push(var);
+
+            let placeholder_name = format!("__infer_{}", var.0);
+            let placeholder_atom = self.interner.intern_string(&placeholder_name);
+            infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
+            let placeholder_key = TypeKey::TypeParameter(TypeParamInfo {
+                is_const: tp.is_const,
+                name: placeholder_atom,
+                constraint: tp.constraint,
+                default: None,
+            });
+            let placeholder_id = self.interner.intern(placeholder_key);
+
+            substitution.insert(tp.name, placeholder_id);
+            var_map.insert(placeholder_id, var);
+
+            // Add type parameter constraint as upper bound (if concrete)
+            if let Some(constraint) = tp.constraint {
+                let inst_constraint = instantiate_type(self.interner, constraint, &substitution);
+                let mut visited = FxHashSet::default();
+                if !self.type_contains_placeholder(inst_constraint, &var_map, &mut visited) {
+                    infer_ctx.add_upper_bound(var, inst_constraint);
+                }
+            }
+        }
+
+        // 2. Instantiate parameters with placeholders
+        let instantiated_params: Vec<ParamInfo> = func
+            .params
+            .iter()
+            .map(|p| ParamInfo {
+                name: p.name,
+                type_id: instantiate_type(self.interner, p.type_id, &substitution),
+                optional: p.optional,
+                rest: p.rest,
+            })
+            .collect();
+
+        // 2.5. Seed contextual constraints from return type
+        if let Some(ctx_type) = self.contextual_type {
+            let return_type_with_placeholders =
+                instantiate_type(self.interner, func.return_type, &substitution);
+            self.constrain_types(
+                &mut infer_ctx,
+                &var_map,
+                return_type_with_placeholders,
+                ctx_type,
+                InferencePriority::ReturnType,
+            );
+        }
+
+        // 3. Round 1: Process non-contextual arguments only
+        let rest_tuple_inference =
+            self.rest_tuple_inference_target(&instantiated_params, arg_types, &var_map);
+        let rest_tuple_start = rest_tuple_inference.as_ref().map(|(start, _, _)| *start);
+
+        for (i, &arg_type) in arg_types.iter().enumerate() {
+            if rest_tuple_start.is_some_and(|start| i >= start) {
+                continue;
+            }
+            let Some(target_type) =
+                self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
+            else {
+                break;
+            };
+
+            // Skip contextually sensitive arguments (Checker will handle them in Round 2)
+            if self.is_contextually_sensitive(arg_type) {
+                continue;
+            }
+
+            // Add constraint for non-contextual arguments
+            self.constrain_types(
+                &mut infer_ctx,
+                &var_map,
+                arg_type,
+                target_type,
+                InferencePriority::NakedTypeVariable,
+            );
+        }
+
+        // Process rest tuple in Round 1
+        if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
+            self.constrain_types(
+                &mut infer_ctx,
+                &var_map,
+                tuple_type,
+                target_type,
+                InferencePriority::NakedTypeVariable,
+            );
+        }
+
+        // 4. Fix variables with enough information from Round 1
+        let _ = infer_ctx.fix_current_variables();
+
+        // 5. Return current substitution for Checker to use in Round 2
+        infer_ctx.get_current_substitution()
+    }
+
     fn check_argument_types(
         &mut self,
         params: &[ParamInfo],
