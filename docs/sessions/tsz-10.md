@@ -960,3 +960,62 @@ The architectural approach needs adjustment. Options:
 4. Pre-resolve Lazy types before passing to NarrowingContext
 
 **Next Step**: Ask Gemini follow-up question about how to handle the !Sized trait object issue.
+
+## 2026-02-05 Update (Session Continuation)
+
+### Task 5 Progress: Union Resolution Bug Fix
+
+**Root Cause Identified**: PropertyAccessEvaluator uses NoopResolver which fails to resolve Lazy types (type aliases). This causes discriminant narrowing to fail on type aliases like `Shape`.
+
+**Example Bug**:
+```typescript
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+function test(shape: Shape) {
+  if (shape.kind !== "circle") {
+    // BUG: shape is narrowed to 'never' instead of { kind: "square"; side: number }
+    // Error shows: "Excluding discriminant value 121 from union with 1 members"
+    // But union should have 2 members, not 1!
+  }
+}
+```
+
+**Analysis**: 
+- PropertyAccessEvaluator::new() creates evaluator with NoopResolver
+- NoopResolver.resolve_lazy() always returns None
+- Property access on Lazy types returns ANY instead of resolving the type
+- This breaks discriminant extraction for type aliases
+
+**Gemini Question 1**: Asked for approach validation. Gemini recommended "Database-as-Resolver" pattern:
+1. Make QueryDatabase inherit from TypeResolver  
+2. Implement TypeResolver for TypeInterner and QueryCache (noop defaults)
+3. Remove generic parameter R from PropertyAccessEvaluator
+4. Use db.evaluate_type() for Lazy/Ref resolution
+
+**Work Completed** (commit a356ceaa5):
+- ✅ Made QueryDatabase inherit from TypeResolver
+- ✅ Implemented TypeResolver for TypeInterner (noop implementations)
+- ✅ Implemented TypeResolver for QueryCache (noop implementations)
+- ✅ Updated function signatures (get_iterator_info, is_promise_like, get_async_iterable_element_type)
+
+**Remaining Work** (PropertyAccessEvaluator Refactor):
+- Remove generic parameter R: TypeResolver from PropertyAccessEvaluator
+- Change to accept `&dyn QueryDatabase` instead of `&dyn TypeDatabase + &R`
+- Use db.evaluate_type() for Lazy/Ref resolution in union branch
+- Update get_type_at_path in narrowing.rs
+
+**Challenge**: Rust trait object limitations made this refactor complex. The default trait implementation can't use `self` (requires Self: Sized), but we need to support trait object calls.
+
+**Next Steps**:
+1. Complete PropertyAccessEvaluator refactor with alternative approach
+2. Add override implementations for QueryCache/TypeInterner  
+3. Test discriminant narrowing with type aliases
+4. Ask Gemini Question 2: Implementation review
+
+### Test Files Created
+- `test_simple_discriminant.ts` - Reproduces the union resolution bug
+
+### Key Files Modified
+- `src/solver/db.rs` - QueryDatabase now inherits from TypeResolver
+- `src/checker/state_checking.rs` - Updated PropertyAccessEvaluator::new call
+- `src/solver/operations.rs` - Updated get_iterator_info signature
+- `src/solver/type_queries.rs` - Updated is_promise_like signature
