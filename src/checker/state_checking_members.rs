@@ -2126,6 +2126,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             return;
         };
 
+        // Error 1183: An implementation cannot be declared in ambient contexts
+        // Check if function has 'declare' modifier but also has a body
+        // Point error at the body (opening brace) to match tsc
+        if !func.body.is_none() && self.has_declare_modifier(&func.modifiers) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                func.body,
+                "An implementation cannot be declared in ambient contexts.",
+                diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
+            );
+        }
+
         // Check for missing Promise global type when function is async (TS2318)
         // TSC emits this at the start of the file when Promise is not available
         // Only check for non-generator async functions (async generators use AsyncGenerator, not Promise)
