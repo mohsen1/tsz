@@ -255,3 +255,57 @@ Given the scope, need to ask Gemini about:
 
 **Next Step**: Ask Gemini for safer refactoring strategy.
 
+
+---
+
+## New Strategy: Visitor Pattern Approach (2026-02-05)
+
+### Gemini Recommendation ✅
+
+**Don't add parameter to 20+ functions - use Visitor Pattern instead!**
+
+**Why Visitor Pattern is Better:**
+- Avoids signature churn across many functions
+- Aligns with North Star Rule 2 (Visitor Pattern for type operations)
+- TypeVisitor maintains state during traversal
+- Only need to override specific methods (visit_function, visit_callable, etc.)
+
+### New Implementation Plan
+
+1. **Create InferenceContext struct**
+```rust
+pub struct InferenceContext {
+    pub polarity: InferencePolarity,
+    // Future: other inference flags
+}
+```
+
+2. **Use TypeVisitor from visitor.rs**
+- Visitor maintains polarity state during traversal
+- Flip polarity when entering contravariant positions (function params)
+- Maintain polarity in covariant positions (return types, properties)
+
+3. **Update match_infer_pattern**
+- Accept `InferenceContext` instead of raw `polarity`
+- Use visitor to handle traversal and polarity flipping
+
+4. **Polarity Flip Logic**
+- Covariant (return types, properties): maintain polarity
+- Contravariant (function parameters): flip polarity
+- Invariant (private props): special handling
+
+### Next Step
+
+Follow Two-Question Rule AGAIN for this new approach:
+```bash
+./scripts/ask-gemini.mjs --include=src/solver \
+  "Unpausing TSZ-9 with Visitor Pattern approach.
+Plan: Use TypeVisitor to track polarity during traversal.
+Is this correct? Which visitor methods should I override?"
+```
+
+### Status
+
+Session UNPAUSED with new strategy.
+Implementation stashed - ready to restart with Visitor Pattern.
+
