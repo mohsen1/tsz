@@ -177,48 +177,51 @@ pub enum InferencePriority {
 }
 ```
 
-#### Task 7.1.2: Refactor constrain_types Signatures (HIGH) 🔄 READY TO START
+#### Task 7.1.2: Refactor constrain_types Signatures (HIGH) ⏸️ BLOCKED - Requires Migration Strategy
 **File**: `src/solver/operations.rs`, `src/solver/infer.rs`
 
-**Status**: 🟡 Gemini Question 1 ANSWERED - Ready to implement
+**Status**: ⏸️ AWAITING MIGRATION STRATEGY
 
-**Gemini Pro Guidance Received** (2026-02-05):
+**Discovery**: There is ALREADY an `InferencePriority` enum in `src/solver/infer.rs` with different values:
+```rust
+pub enum InferencePriority {
+    ReturnType,      // Inferred from return type
+    Contextual,      // Contextual typing hint
+    Circular,        // Circular dependency
+    Argument,        // From function argument
+    Literal,         // From literal type
+}
+```
 
-**Call Graph**: `resolve_generic_call_inner` → `constrain_types` → `constrain_types_impl` → [dispatch to helpers]
+**My New Enum** (in `src/solver/types.rs`) has TypeScript-style values:
+```rust
+pub enum InferencePriority {
+    NakedTypeVariable,       // T in <T>(x: T)
+    HomomorphicMappedType,   // Partial<T[]> preserves array
+    // ... etc (matches TypeScript's internal priorities)
+}
+```
 
-**10 Functions to Modify** in operations.rs:
-1. `constrain_types`
-2. `constrain_types_impl`
-3. `constrain_tuple_types`
-4. `constrain_properties`
-5. `constrain_function_to_call_signature`
-6. `constrain_call_signature_to_function`
-7. `constrain_call_signature_to_call_signature` (was missed)
-8. `constrain_matching_signatures`
-9. `constrain_properties_against_index_signatures`
-10. `constrain_index_signatures_to_properties`
+**Gemini Guidance**:
+- **REPLACE** old enum with new TypeScript-style one
+- Old enum is simplified version that doesn't match tsc behavior
+- Must map old semantics to new TypeScript-standard priorities
+- Delete enum from infer.rs, consolidate in types.rs
+- Use bitmask approach (not simple enum) to allow combining flags
 
-**Additional Changes Required**:
-- Update `src/solver/infer.rs` to use `crate::solver::types::InferencePriority`
-- Update `InferenceCandidate` and `add_candidate` in infer.rs
-- Remove old priority enum if it exists in infer.rs
+**Migration Complexity**: HIGH
+- Affects existing inference behavior
+- Old `Argument`, `Literal`, `Contextual` are "sources" not "priorities"
+- Need to map: sources → priority levels
+- Risk: Breaking existing generic inference
 
-**Critical Constraints from Gemini**:
-- **DO NOT** use default parameters - require explicit priority at every call site
-- Must update ALL recursive call sites to pass priority through
-- This is HIGH BLAST RADIUS - affects core inference logic
+**Recommendation**:
+- This is a BREAKING CHANGE to core inference logic
+- Should be done as a separate focused task
+- Requires comprehensive testing to ensure no regressions
+- **SUGGESTION**: Defer to Phase 8 or create dedicated session for priority migration
 
-**Implementation Strategy**:
-1. Add `priority: InferencePriority` parameter to all 10 functions
-2. Update all call sites to pass `InferencePriority::NORMAL` initially
-3. Test to ensure no regression in existing inference behavior
-4. Later (Phase 7b): Implement actual priority-based filtering logic
-
-**Post-Implementation Review** (MANDATORY - Two-Question Rule):
-After completing the refactoring, MUST ask Gemini Pro to review:
-1) Did I miss any functions?
-2) Are all call sites passing priority correctly?
-3) Any type system bugs introduced?
+**Alternative**: Keep old enum for now, implement new priority logic in parallel, migrate gradually?
 
 ---
 
