@@ -2,7 +2,7 @@
 
 **Goal**: Implement the full CFA pipeline from Binder flow nodes to Solver narrowing logic.
 
-**Status**: 🟡 PLANNING (2026-02-05)
+**Status**: 🟡 IN PROGRESS (2026-02-05)
 
 ---
 
