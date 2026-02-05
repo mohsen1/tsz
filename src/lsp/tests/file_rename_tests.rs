@@ -351,3 +351,108 @@ import { helper } from './utils';
     // main.ts should have one edit
     assert!(!edits.changes.is_empty());
 }
+
+#[test]
+fn test_dynamic_import_updates() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "/src/main.ts".to_string(),
+        r#"
+async function loadModule() {
+    const module = await import('./utils/math');
+    return module.add(1, 2);
+}
+"#
+        .to_string(),
+    );
+
+    project.set_file(
+        "/src/utils/math.ts".to_string(),
+        "export function add(a: number, b: number): number { return a + b; }".to_string(),
+    );
+
+    // Rename /src/utils/math.ts to /src/utils/calculations.ts
+    let renames = vec![FileRename {
+        old_uri: "/src/utils/math.ts".to_string(),
+        new_uri: "/src/utils/calculations.ts".to_string(),
+    }];
+
+    let edits = project.handle_will_rename_files(&renames);
+
+    // main.ts should have one edit for the dynamic import
+    assert!(!edits.changes.is_empty());
+}
+
+#[test]
+fn test_require_call_updates() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "/src/main.ts".to_string(),
+        r#"
+const utils = require('./utils/math');
+const result = utils.add(1, 2);
+"#
+        .to_string(),
+    );
+
+    project.set_file(
+        "/src/utils/math.ts".to_string(),
+        "export function add(a: number, b: number): number { return a + b; }".to_string(),
+    );
+
+    // Rename /src/utils/math.ts to /src/utils/calculations.ts
+    let renames = vec![FileRename {
+        old_uri: "/src/utils/math.ts".to_string(),
+        new_uri: "/src/utils/calculations.ts".to_string(),
+    }];
+
+    let edits = project.handle_will_rename_files(&renames);
+
+    // main.ts should have one edit for the require call
+    assert!(!edits.changes.is_empty());
+}
+
+#[test]
+fn test_mixed_imports_and_dynamic() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "/src/main.ts".to_string(),
+        r#"
+import { staticFn } from './utils';
+const utils = require('./utils/math');
+async function load() {
+    const module = await import('./utils/strings');
+}
+"#
+        .to_string(),
+    );
+
+    project.set_file(
+        "/src/utils.ts".to_string(),
+        "export function staticFn() {}".to_string(),
+    );
+
+    project.set_file(
+        "/src/utils/math.ts".to_string(),
+        "export function add() {}".to_string(),
+    );
+
+    project.set_file(
+        "/src/utils/strings.ts".to_string(),
+        "export function capitalize() {}".to_string(),
+    );
+
+    // Rename /src/utils/ directory
+    let renames = vec![FileRename {
+        old_uri: "/src/utils".to_string(),
+        new_uri: "/src/helpers".to_string(),
+    }];
+
+    let edits = project.handle_will_rename_files(&renames);
+
+    // main.ts should have 3 edits (static import, require, dynamic import)
+    assert!(!edits.changes.is_empty());
+}

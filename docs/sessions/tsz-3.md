@@ -1,4 +1,4 @@
-# Session tsz-3: LSP Implementation - File Rename Testing
+# Session tsz-3: LSP Implementation - Dynamic Import Support
 
 **Started**: 2026-02-05
 **Status**: 🔄 ACTIVE
@@ -10,8 +10,34 @@ Implement LSP features that improve developer experience without requiring deep 
 
 ## Completed Work
 
-### File Rename Testing (2026-02-05)
+### File Rename: Dynamic Import Support (2026-02-05)
 **Status**: ✅ COMPLETE
+
+Added support for dynamic imports (`import()`) and `require()` calls to File Rename functionality.
+
+**Implementation** (`src/lsp/file_rename.rs`):
+- Added `try_add_call_expression()` to detect `CallExpression` nodes
+- Added `is_import_keyword()` to detect `import()` expressions (uses `ImportKeyword`)
+- Added `is_require_identifier()` to detect `require()` calls (identifier with text "require")
+- Updated `find_import_specifier_nodes()` to scan for `CALL_EXPRESSION` nodes
+- Reuses logic from `document_links.rs` for consistency
+
+**Implementation** (`src/lsp/project.rs`):
+- Updated `extract_imports()` to handle dynamic imports for DependencyGraph
+- Added `try_extract_dynamic_import()` helper to extract specifiers from call expressions
+- Added `is_import_keyword()` and `is_require_identifier()` helpers (non-Option returning versions)
+
+**Tests Added (3 new tests)**:
+1. `test_dynamic_import_updates` - Verifies `import("./module")` is updated on rename
+2. `test_require_call_updates` - Verifies `require("./module")` is updated on rename
+3. `test_mixed_imports_and_dynamic` - Verifies all import types work together
+
+**Total Tests**: 11 passing, 1 ignored
+
+**Value**: File Rename now handles static imports, re-exports, dynamic imports, and require calls.
+
+### File Rename Testing (2026-02-05)
+**Status**: ✅ COMPLETE - Commit 52e9da990
 
 Wrote comprehensive test suite for File Rename functionality (`src/lsp/tests/file_rename_tests.rs`).
 
@@ -58,6 +84,13 @@ Implemented full `workspace/willRenameFiles` support:
 
 Per Gemini consultation, recommended path is:
 1. ✅ Write tests for File Rename (COMPLETE)
+2. ✅ Add dynamic import support (COMPLETE)
+3. **Implement Auto-Import Completions** (NEXT - the most requested LSP feature)
+
+**Current Focus**: Auto-Import Completions. This involves:
+- Integrating SymbolIndex into completion flow
+- Adding `additionalTextEdits` to insert import statements
+- Providing import suggestions when typing unresolved names
 2. Add dynamic import support (`import("./module")` and `require()`)
 3. Implement Auto-Import Completions (most requested feature)
 

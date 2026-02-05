@@ -6,6 +6,7 @@
 use crate::lsp::position::{LineMap, Range};
 use crate::parser::node::{NodeAccess, NodeArena};
 use crate::parser::{NodeIndex, syntax_kind_ext};
+use crate::scanner::SyntaxKind;
 
 /// Information about an import/export that needs to be updated.
 #[derive(Debug, Clone)]
@@ -54,7 +55,8 @@ impl<'a> FileRenameProvider<'a> {
 
         // In the flat NodeArena structure, we do a simple linear scan of all nodes
         // This is efficient because NodeArena is contiguous in memory
-        for node in self.arena.nodes.iter() {
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            let node_idx = NodeIndex(i as u32);
             // Check if this is an import or export declaration
             if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
                 if let Some(import_decl) = self.arena.get_import_decl(node) {
@@ -64,10 +66,70 @@ impl<'a> FileRenameProvider<'a> {
                 if let Some(export_decl) = self.arena.get_export_decl(node) {
                     self.add_import_location(export_decl.module_specifier, &mut result);
                 }
+            } else if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                // Check for dynamic imports: import("./module") or require("./module")
+                self.try_add_call_expression(node_idx, &mut result);
             }
         }
 
         result
+    }
+
+    /// Try to add an import location from a call expression (dynamic import or require).
+    fn try_add_call_expression(&self, call_idx: NodeIndex, result: &mut Vec<ImportLocation>) {
+        let Some(call_node) = self.arena.get(call_idx) else {
+            return;
+        };
+
+        let Some(call_data) = self.arena.get_call_expr(call_node) else {
+            return;
+        };
+
+        let is_dynamic_import = self.is_import_keyword(call_data.expression);
+        let is_require = self.is_require_identifier(call_data.expression);
+
+        if !is_dynamic_import && !is_require {
+            return;
+        }
+
+        // Get the first argument, which should be the module specifier string
+        let Some(args) = &call_data.arguments else {
+            return;
+        };
+
+        let Some(&first_arg) = args.nodes.first() else {
+            return;
+        };
+
+        self.add_import_location(first_arg, result);
+    }
+
+    /// Check if a node is the `import` keyword (for dynamic import expressions).
+    fn is_import_keyword(&self, node_idx: NodeIndex) -> bool {
+        if node_idx.is_none() {
+            return false;
+        }
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        node.kind == SyntaxKind::ImportKeyword as u16
+    }
+
+    /// Check if a node is a `require` identifier.
+    fn is_require_identifier(&self, node_idx: NodeIndex) -> bool {
+        if node_idx.is_none() {
+            return false;
+        }
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(ident_data) = self.arena.get_identifier(node) else {
+            return false;
+        };
+        ident_data.escaped_text == "require"
     }
 
     /// Add an import location to the result if the specifier is a string literal.
