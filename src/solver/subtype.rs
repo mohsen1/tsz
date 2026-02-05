@@ -848,6 +848,49 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::DepthExceeded;
         }
 
+        // =======================================================================
+        // DEFD-LEVEL CYCLE DETECTION (before evaluation!)
+        // =======================================================================
+        // This catches cycles in recursive type aliases BEFORE they expand,
+        // preventing infinite recursion. For example:
+        // - `type T = Box<T>` produces new TypeId on each evaluation
+        // - Current in_progress check (TypeId-level) fails: T[] ≠ T
+        // - DefId-level check catches: (DefId_T, DefId_T) is same pair
+        //
+        // This implements coinductive semantics: assume subtypes, verify consistency.
+        // =======================================================================
+        let def_pair = if let (Some(s_def), Some(t_def)) = (
+            lazy_def_id(self.interner, source)
+                .or_else(|| enum_components(self.interner, source).map(|(def_id, _)| def_id)),
+            lazy_def_id(self.interner, target)
+                .or_else(|| enum_components(self.interner, target).map(|(def_id, _)| def_id)),
+        ) {
+            Some((s_def, t_def))
+        } else {
+            None
+        };
+
+        // Check for DefId-level cycles BEFORE evaluation
+        let inserted_seen_defs = if let Some((s_def, t_def)) = def_pair {
+            // Check forward pair
+            if self.seen_defs.contains(&(s_def, t_def)) {
+                // We're in a cycle at the DefId level - return CycleDetected
+                // This implements coinductive semantics for recursive types
+                return SubtypeResult::CycleDetected;
+            }
+
+            // Check reversed pair for bivariant cross-recursion
+            if self.seen_defs.contains(&(t_def, s_def)) {
+                return SubtypeResult::CycleDetected;
+            }
+
+            // Mark this DefId pair as being checked BEFORE evaluation
+            self.seen_defs.insert((s_def, t_def));
+            true
+        } else {
+            false
+        };
+
         // Mark as in-progress BEFORE evaluation to catch expansive type cycles
         self.in_progress.insert(pair);
         self.depth += 1;
@@ -882,6 +925,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Remove from in-progress and decrement depth
         self.depth -= 1;
         self.in_progress.remove(&pair);
+
+        // Remove from seen_defs if we inserted (DefId-level cycle cleanup)
+        if inserted_seen_defs {
+            if let Some((s_def, t_def)) = def_pair {
+                self.seen_defs.remove(&(s_def, t_def));
+            }
+        }
 
         // Cache definitive results in the shared QueryCache for cross-checker memoization.
         // Only cache True/False, not non-definitive results (cycle detection artifacts).
