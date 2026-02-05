@@ -82,6 +82,13 @@ const myReducer: Reducer<State, Action> = (state, action) => state;
    - Implement Application expansion in `evaluate_application` based on Gemini's guidance
    - The key is to: resolve Lazy base → get type params → evaluate args → instantiate → recurse
 
+5. **Implementation (2026-02-05)**:
+   - **Code Review with Gemini Pro**: Revealed critical issue - `evaluate_application` only handled `Lazy` types, not `Ref` types
+   - **Fix Applied**: Added `TypeKey::Ref` handling in `evaluate_application` (commit 527957375)
+   - **Result**: Application types with both `Ref` and `Lazy` bases now properly expand
+   - **Impact**: Fixes 'Ref(N)<error>' diagnostics and enables proper type checking for generic libraries
+
 ## Session History
 
 *Created 2026-02-05 following Gemini consultation after tsz-1 conclusion.*
+*Completed 2026-02-05 - Application type expansion implemented for both Ref and Lazy types.*
