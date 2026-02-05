@@ -1717,7 +1717,8 @@ impl ParserState {
         // Parse decorators
         let decorators = self.parse_decorators();
 
-        // After decorators, expect class, abstract class, or function
+        // After decorators, expect class or abstract class
+        // Decorators on other declarations are invalid (TS1206)
         match self.token() {
             SyntaxKind::ClassKeyword => {
                 self.parse_class_declaration_with_decorators(decorators, start_pos)
@@ -1727,23 +1728,69 @@ impl ParserState {
                 self.parse_abstract_class_declaration_with_decorators(decorators, start_pos)
             }
             SyntaxKind::FunctionKeyword => {
-                // For now, just parse the function and ignore decorators
-                // Full decorator support would need function modifications
+                // TS1206: Decorators are not valid on function declarations
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                );
                 self.parse_function_declaration()
             }
             SyntaxKind::EnumKeyword => {
+                // TS1206: Decorators are not valid on enum declarations
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                );
                 self.parse_enum_declaration_with_modifiers(start_pos, decorators)
             }
             SyntaxKind::InterfaceKeyword => {
+                // TS1206: Decorators are not valid on interface declarations
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                );
                 self.parse_interface_declaration_with_modifiers(start_pos, decorators)
             }
             SyntaxKind::TypeKeyword => {
+                // TS1206: Decorators are not valid on type alias declarations
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                );
                 self.parse_type_alias_declaration_with_modifiers(start_pos, decorators)
             }
             SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
+                // TS1206: Decorators are not valid on namespace/module declarations
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                );
                 self.parse_module_declaration_with_modifiers(start_pos, decorators)
             }
             SyntaxKind::VarKeyword | SyntaxKind::LetKeyword | SyntaxKind::ConstKeyword => {
+                // TS1206: Decorators are not valid on variable statements
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                );
                 self.parse_variable_statement_with_modifiers(Some(start_pos), decorators)
             }
             SyntaxKind::ExportKeyword => {
