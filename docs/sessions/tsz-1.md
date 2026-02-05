@@ -1356,6 +1356,36 @@ Completes algebraic normalization suite (Union + Object + Intersection), enablin
 
 ---
 
+## Visibility Interning Investigation (2025-02-05)
+
+**Status**: ✅ Resolved - Bug Report Was Incorrect
+
+**Background**:
+In Task #16.0, a known issue was noted: "Objects that differ only in visibility are incorrectly interned as the same ObjectShapeId."
+
+**Investigation**:
+Wrote two tests to verify the bug:
+1. `test_visibility_interning_distinct_shape_ids` - Objects with Public vs Private visibility
+2. `test_parent_id_interning_distinct_shape_ids` - Objects with different parent_id (declaring classes)
+
+**Results**:
+Both tests PASS. The bug report was incorrect or has already been fixed.
+
+**Why It Works**:
+- `PropertyInfo` derives `Hash` and `Eq`, including both `visibility` and `parent_id` fields
+- `ObjectShape` manually implements `Hash` and `Eq`, explicitly hashing/comparing `properties: Vec<PropertyInfo>`
+- The interner relies on these implementations for deduplication
+
+**Gemini Consultation**:
+Gemini Flash confirmed the bug is resolved. PropertyInfo's derive attributes correctly include visibility and parent_id, and ObjectShape's manual Hash/Eq implementations properly use the properties vector.
+
+**Conclusion**:
+No fix needed. The interning system correctly distinguishes objects based on both visibility and nominal identity (parent_id).
+
+**Commit**: `b6e88c8cc`
+
+---
+
 ### Priority 1: Task #32 (Graph Isomorphism) 📝 NEXT
 **Why**: "Final Boss" of North Star - structural identity for recursive types
 
