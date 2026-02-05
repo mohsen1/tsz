@@ -6,7 +6,35 @@
 
 ## Active Tasks
 
+### Task #16: Robust Optional Property Subtyping & Narrowing
+**Status**: Pending
+**Priority**: High
+**Estimated Impact**: +2-3% conformance
+
+**Description**:
+Fix critical bugs in optional property subtyping and narrowing logic identified in AGENTS.md investigation:
+1. Reversed subtype checks in discriminant narrowing
+2. Missing type resolution for Lazy/Ref/Intersection types
+3. Incorrect logic for `{ prop?: "a" }` cases with undefined
+
+**Gemini Guidance**:
+> "This is a pure Solver task focusing on the 'WHAT' (the logic of the types themselves).
+> Fixes systemic bugs that affect all object-based type operations."
+
+**Implementation Focus**:
+- `src/solver/subtype.rs`: Ensure property checks resolve Lazy/Ref/Intersection types
+- `src/solver/narrowing.rs`: Fix reversed discriminant check
+- Use Visitor pattern for systematic type resolution
+
+**Prerequisites**:
+- Follow Two-Question Rule (ask Gemini BEFORE implementing)
+- Review AGENTS.md investigation findings
+- Understand North Star Rule 2: Use visitor pattern for ALL type operations
+
 ### Task #15: Mapped Types Property Collection
+**Status**: ⚠️ Blocked - Architecture Issue (Deferred)
+**Priority**: Lowered (due to complexity)
+**Estimated Impact**: +0.5-1% conformance
 **Status**: ⚠️ Blocked - Architecture Issue Found
 **Priority**: Medium (lowered due to complexity)
 **Estimated Impact**: +0.5-1% conformance
