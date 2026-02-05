@@ -686,8 +686,10 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
     /// For AsyncGenerator<Y, R, N>, this extracts Y (the yield type).
     /// For async iterables, this unwraps Promise<IteratorResult<T>> to get T.
     fn get_async_iterable_element_type(&self, type_id: TypeId) -> TypeId {
-        // Use the helper function from generators module
-        crate::checker::generators::get_async_iterable_element_type(self.ctx.types, type_id)
+        // Use Solver helper to extract async iterable element type
+        // Phase 5: Moved from generators module to Solver operations
+        use crate::solver::operations::get_async_iterable_element_type;
+        get_async_iterable_element_type(self.ctx.types, self.ctx, type_id)
     }
 
     fn is_valid_for_in_target(&self, type_id: TypeId) -> bool {
