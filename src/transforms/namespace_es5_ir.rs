@@ -55,7 +55,7 @@ use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
-use crate::transforms::class_es5_ir::ES5ClassTransformer;
+use crate::transforms::class_es5_ir::{AstToIr, ES5ClassTransformer};
 use crate::transforms::ir::*;
 
 // =============================================================================
@@ -353,17 +353,24 @@ impl<'a> NamespaceES5Transformer<'a> {
         let func_name = get_identifier_text(self.arena, func_data.name)?;
         let is_exported = has_export_modifier(self.arena, &func_data.modifiers);
 
+        // Convert function to IR (stripping type annotations)
+        let func_decl = IRNode::FunctionDecl {
+            name: func_name.clone(),
+            parameters: convert_function_parameters(self.arena, &func_data.parameters),
+            body: convert_function_body(self.arena, func_data.body),
+        };
+
         if is_exported {
             Some(IRNode::Sequence(vec![
-                IRNode::ASTRef(func_idx),
+                func_decl,
                 IRNode::NamespaceExport {
                     namespace: ns_name.to_string(),
                     name: func_name.clone(),
-                    value: Box::new(IRNode::Identifier(func_name)),
+                    value: Box::new(IRNode::Identifier(func_name.clone())),
                 },
             ]))
         } else {
-            Some(IRNode::ASTRef(func_idx))
+            Some(func_decl)
         }
     }
 
@@ -377,8 +384,16 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
 
         let func_name = get_identifier_text(self.arena, func_data.name)?;
+
+        // Convert function to IR (stripping type annotations)
+        let func_decl = IRNode::FunctionDecl {
+            name: func_name.clone(),
+            parameters: convert_function_parameters(self.arena, &func_data.parameters),
+            body: convert_function_body(self.arena, func_data.body),
+        };
+
         Some(IRNode::Sequence(vec![
-            IRNode::ASTRef(func_idx),
+            func_decl,
             IRNode::NamespaceExport {
                 namespace: ns_name.to_string(),
                 name: func_name.clone(),
@@ -816,18 +831,24 @@ impl<'a> NamespaceTransformContext<'a> {
         let func_name = get_identifier_text(self.arena, func_data.name)?;
         let is_exported = has_export_modifier(self.arena, &func_data.modifiers);
 
+        // Convert function to IR (stripping type annotations)
+        let func_decl = IRNode::FunctionDecl {
+            name: func_name.clone(),
+            parameters: convert_function_parameters(self.arena, &func_data.parameters),
+            body: convert_function_body(self.arena, func_data.body),
+        };
+
         if is_exported {
-            // Return AST ref + namespace export
             Some(IRNode::Sequence(vec![
-                IRNode::ASTRef(func_idx),
+                func_decl,
                 IRNode::NamespaceExport {
                     namespace: ns_name.to_string(),
                     name: func_name.clone(),
-                    value: Box::new(IRNode::Identifier(func_name)),
+                    value: Box::new(IRNode::Identifier(func_name.clone())),
                 },
             ]))
         } else {
-            Some(IRNode::ASTRef(func_idx))
+            Some(func_decl)
         }
     }
 
@@ -845,8 +866,16 @@ impl<'a> NamespaceTransformContext<'a> {
         }
 
         let func_name = get_identifier_text(self.arena, func_data.name)?;
+
+        // Convert function to IR (stripping type annotations)
+        let func_decl = IRNode::FunctionDecl {
+            name: func_name.clone(),
+            parameters: convert_function_parameters(self.arena, &func_data.parameters),
+            body: convert_function_body(self.arena, func_data.body),
+        };
+
         Some(IRNode::Sequence(vec![
-            IRNode::ASTRef(func_idx),
+            func_decl,
             IRNode::NamespaceExport {
                 namespace: ns_name.to_string(),
                 name: func_name.clone(),
@@ -1114,6 +1143,55 @@ fn has_declare_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool
 
 fn has_export_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
     has_modifier(arena, modifiers, SyntaxKind::ExportKeyword as u16)
+}
+
+/// Convert function parameters to IR parameters (without type annotations)
+fn convert_function_parameters(arena: &NodeArena, params: &NodeList) -> Vec<IRParam> {
+    params
+        .nodes
+        .iter()
+        .filter_map(|&p| {
+            let node = arena.get(p)?;
+            let param = arena.get_parameter(node)?;
+            let name = get_identifier_text(arena, param.name)?;
+            let rest = param.dot_dot_dot_token;
+            // Convert default value if present
+            let default_value = if !param.initializer.is_none() {
+                Some(Box::new(
+                    AstToIr::new(arena).convert_expression(param.initializer),
+                ))
+            } else {
+                None
+            };
+            Some(IRParam {
+                name,
+                rest,
+                default_value,
+            })
+        })
+        .collect()
+}
+
+/// Convert function body to IR statements (without type annotations)
+fn convert_function_body(arena: &NodeArena, body_idx: NodeIndex) -> Vec<IRNode> {
+    let Some(body_node) = arena.get(body_idx) else {
+        return vec![];
+    };
+
+    // Handle both Block and syntax_kind_ext::BLOCK
+    if body_node.kind == syntax_kind_ext::BLOCK {
+        if let Some(block) = arena.get_block(body_node) {
+            return block
+                .statements
+                .nodes
+                .iter()
+                .map(|&s| AstToIr::new(arena).convert_statement(s))
+                .collect();
+        }
+    }
+
+    // Fallback for unsupported body types
+    vec![]
 }
 
 /// Collect variable names from a declaration list
