@@ -144,6 +144,9 @@ mod type_law_tests;
 // types_tests: loaded from types.rs
 // union_tests: loaded from subtype.rs
 #[cfg(test)]
+#[path = "tests/isomorphism_tests.rs"]
+mod isomorphism_tests;
+#[cfg(test)]
 #[path = "tests/solver_refactoring_tests.rs"]
 mod solver_refactoring_tests;
 #[cfg(test)]
