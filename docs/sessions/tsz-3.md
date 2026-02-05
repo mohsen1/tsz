@@ -177,80 +177,39 @@ pub enum InferencePriority {
 }
 ```
 
-#### Task 7.1.2: Refactor constrain_types Signatures (HIGH) 🔄 IN PROGRESS
+#### Task 7.1.2: Refactor constrain_types Signatures (HIGH) ✅ STAGE 1 COMPLETE
 **File**: `src/solver/operations.rs`, `src/solver/infer.rs`
 
-**Status**: 🟢 MIGRATION STRATEGY DEFINED - Proceeding with "Bridge and Burn"
+**Status**: ✅ Stage 1 Complete - "Bridge" stage successful (commit `d8e520d25`)
 
-**Discovery**: Conflicting `InferencePriority` enums:
-- **Old** (infer.rs): `ReturnType`, `Contextual`, `Circular`, `Argument`, `Literal`
-  - Describes WHERE type came from (source-based)
-- **New** (types.rs): `NakedTypeVariable`, `HomomorphicMappedType`, etc.
-  - Describes HOW PRIORITIZED the constraint is (structure-based)
+**Stage 1: The Mapping (Bridge)** ✅ COMPLETE
 
-**Gemini Recommendation**: Option 1 - Proceed with breaking migration
-- **Rationale**: Old enum mixes "source" with "priority" - causes unknown leakage
-- **Approach**: "Bridge and Burn" strategy (staged migration)
-- **Decision**: Stay in tsz-3, finish the "Final Boss"
+**Implementation Summary** (following Gemini Pro guidance):
 
-**Migration Strategy: "Bridge and Burn"**
+**src/solver/infer.rs** changes:
+- ✅ Removed local `InferencePriority` enum
+- ✅ Now uses `InferencePriority` from `src/solver/types.rs`
+- ✅ **CRITICAL FIX**: Inverted `filter_candidates_by_priority` from `.max()` to `.min()`
+  - Lower enum values = higher priority (TS standard)
+  - NakedTypeVariable (1) > ReturnType (32) in priority
+- ✅ Updated `add_lower_bound()` to use `NakedTypeVariable` (was `Argument`)
+- ✅ Updated `widen_candidate_types` to check `NakedTypeVariable` (was `Literal`)
 
-**Stage 1: The Mapping (Bridge)**
-Map old "sources" to new "priorities":
-```rust
-InferencePriority::Argument   → InferencePriority::NakedTypeVariable (usually)
-InferencePriority::ReturnType → InferencePriority::ReturnType (direct match)
-InferencePriority::Contextual → InferencePriority::LowPriority (usually)
-InferencePriority::Circular   → InferencePriority::Circular (direct match)
-```
+**src/solver/operations.rs** changes:
+- ✅ Updated all `constrain_types` signatures to use `types::InferencePriority`
+- ✅ Updated call sites with correct priority mappings:
+  - Contextual typing: `ReturnType` (downward inference)
+  - Argument inference: `NakedTypeVariable` (highest priority)
+  - Circular dependencies: `Circular` (prevents infinite loops)
 
-**Stage 2: Signature Refactoring** (CURRENT TASK)
-- Update `constrain_types` and recursive helpers to accept new bitset
-- Update all call sites to use mapped priorities
-- Keep logic identical to old system initially
-- Mechanical change, high blast radius
+**Verification**: Compilation succeeds, basic tests pass.
 
-**Stage 3: The Burn** (Phase 7b)
-- Delete old enum from infer.rs
-- Refine call sites to use correct tsc priorities based on type structure
-- Implement multi-pass priority-gated inference
+**Impact**: This is the "Bridge" - we've migrated to the new priority system while maintaining existing inference behavior through careful mapping.
 
-**Gemini Pro Question 1 ANSWERED** (2026-02-05)
-
-**Critical Mapping Corrections**:
-```rust
-// OLD (incorrect mapping)
-Contextual → LowPriority
-ReturnType → LowPriority
-
-// NEW (correct mapping per Gemini Pro)
-Contextual → ReturnType       // Downward inference into return type
-Literal → NakedTypeVariable   // High priority, handled by is_const
-Argument → NakedTypeVariable  // Direct inference (highest)
-Circular → Circular           // Direct match
-ReturnType → LowPriority      // Fallback priority (lowest)
-```
-
-**CRITICAL BUG FIX**: Must invert sorting logic in `infer.rs`:
-- **Old**: Used `.max()` to find best candidate (Literal > Argument > ReturnType)
-- **New**: Use `.min()` because lower values = higher priority (NakedTypeVariable (1) < ReturnType (32))
-
-**Implementation Plan** (from Gemini Pro):
-
-**Step 1**: Modify `src/solver/infer.rs`
-- Remove local `InferencePriority` enum
-- Import from `crate::solver::types::InferencePriority`
-- Update `InferenceCandidate` struct
-- **CRITICAL**: Change `filter_candidates_by_priority` from `.max()` to `.min()`
-- Update `add_candidate()` signature
-- Update `add_lower_bound()` to use `NakedTypeVariable`
-
-**Step 2**: Modify `src/solver/operations.rs`
-- Update `resolve_generic_call_inner`:
-  - Contextual step: Use `ReturnType` (was `Contextual`)
-  - Argument step: Use `NakedTypeVariable` (was `Argument`)
-- Update `constrain_types` signatures to accept new enum
-- Pass priority through unchanged (no recursive downgrading yet)
+**Remaining Work** (Stage 2 & 3):
+- Stage 2: Implement multi-pass priority-gated constraint collection
+- Stage 3: Add structural detection (HomomorphicMappedType, etc.) for priority adjustment
+- These require deeper architectural changes and will be Phase 7b
 
 **Step 3**: Update `strengthen_constraints` in `infer.rs`
 - Use `Circular` priority for propagated bounds
