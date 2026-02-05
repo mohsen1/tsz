@@ -659,3 +659,53 @@ Gemini explained that LiteralEquality, NullishEquality, and Discriminant guards
 are handled by `narrow_by_binary_expr` fallback which already correctly handles
 inequality operators. Only Typeof needed the fix because it's extracted
 by `extract_type_guard` before reaching the fallback.
+
+**UPDATE**: After further investigation, Gemini clarified that the sense inversion
+SHOULD apply to ALL guards, not just Typeof. The original fix was too narrow.
+
+### 2026-02-05: Universal Sense Inversion Refactoring
+
+**Context**: Gemini's final recommendation from previous session was to apply
+inequality sense inversion to ALL TypeGuards, not just `Typeof`. The original
+fix only handled `Typeof` guards, but discriminant checks like `x.kind !== "circle"`
+also need this inversion.
+
+**Implementation Refactored** (src/checker/control_flow.rs:1782-1792):
+- REMOVED `match &guard` pattern that only handled `Typeof`
+- REPLACED with universal sense inversion that applies to ALL guards
+- Now `!==` and `!=` operators correctly invert sense for:
+  - Typeof guards
+  - Discriminant guards
+  - LiteralEquality guards
+  - NullishEquality guards
+  - Instanceof guards
+
+**Code Change**:
+```rust
+// CRITICAL: Invert sense for inequality operators (!== and !=)
+// This applies to ALL guards, not just typeof
+// For `x !== "string"` or `x.kind !== "circle"`, the true branch should EXCLUDE
+let effective_sense = if bin.operator_token
+    == SyntaxKind::ExclamationEqualsEqualsToken as u16
+    || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16
+{
+    !is_true_branch
+} else {
+    is_true_branch
+};
+```
+
+**NEW BUG DISCOVERED**: While testing discriminant inequality narrowing,
+found that the union type only has 1 member instead of 2. Trace shows:
+```
+Excluding discriminant value 121 from union with 1 members
+Member 123 has property path type 4 which is subtype of excluded 121, excluding
+```
+
+**Investigation**: The type being narrowed (type 123) appears to be a single
+object type rather than the full union. This suggests either:
+1. Type alias `Shape` is not being resolved to the union
+2. Parameter type is incorrectly stored/looked up
+3. Union construction is broken
+
+**Status**: Sense inversion refactor complete. Union resolution bug needs investigation.
