@@ -1,79 +1,83 @@
 # Session TSZ-2: Array Destructuring Type Narrowing
 
 **Started**: 2026-02-05
-**Status**: 🔬 DEEP DEBUGGING - Following Gemini Pro guidance
+**Status**: ✅ COMPLETE
 
 ## Goal
 
 Fix type narrowing invalidation for array destructuring assignments.
 
-## Progress
+## Summary
 
-✅ **Completed**: test_truthiness_false_branch_narrows_to_falsy (boolean narrowing bug)
-⚠️ **Blocked**: 2 array destructuring tests (code looks correct but tests fail)
+Successfully fixed all 3 failing control flow tests:
+1. ✅ test_truthiness_false_branch_narrows_to_falsy (boolean narrowing bug)
+2. ✅ test_array_destructuring_assignment_clears_narrowing
+3. ✅ test_array_destructuring_default_initializer_clears_narrowing
 
-## Gemini Pro Assessment
+## Root Cause Analysis
 
-"This is a classic 'logic looks correct but behavior is wrong' scenario. **Do not abandon this.** Correct control flow analysis is non-negotiable for the 'Match tsc' goal."
+### Bug 1: Boolean Narrowing (Fixed Earlier)
+**Problem**: Boolean type wasn't being narrowed to `false` in falsy branches.
+**Root Cause**: `narrow_to_falsy` treated boolean same as string/number/bigint.
+**Fix**: Added special case in `src/solver/narrowing.rs:2283-2296` to return `BOOLEAN_FALSE`.
 
-**Recommendation**: Continue debugging - likely very close to solution.
+### Bug 2: Array Destructuring Clearing (Fixed This Session)
+**Problem**: `[x] = [1]` didn't clear narrowing on `x`.
+**Root Cause**: `match_destructuring_rhs` tried to narrow to the RHS element type (literal 1), which is incorrect for destructuring.
+**Fix**: Modified `src/checker/control_flow.rs:1344-1385` to return `None` for array patterns, triggering `initial_type` return to clear narrowing.
 
-## Debugging Strategy (from Gemini Pro)
+## Key Insight from Gemini Pro
 
-### Step 1: Verify Flow Node Creation
-Check if ASSIGNMENT flow node is created for destructuring:
-```bash
-TSZ_LOG="wasm::checker::flow_graph_builder=debug" TSZ_LOG_FORMAT=tree \
-  cargo test test_array_destructuring_assignment_clears_narrowing
-```
+"Array destructuring is fundamentally different from direct assignment:
+- Direct assignment: `x = 1` narrows x to literal type 1
+- Array destructuring: `[x] = [1]` CLEARS narrowing to declared type (string | number)
 
-### Step 2: Verify Target Matching
-Add tracing to `assignment_targets_reference_node`:
+The reason: destructuring extracts a value from an array, whereas direct assignment assigns a specific value."
+
+## Implementation Details
+
+### Changed Files
+1. `src/checker/control_flow.rs` - Modified `match_destructuring_rhs` to return `None` for array patterns
+2. `src/checker/control_flow_narrowing.rs` - Removed debug tracing
+
+### Critical Code Change
 ```rust
-tracing::debug!(is_op=?is_op, targets=?targets,
-  "Checking binary assignment target");
-```
-
-### Step 3: Verify Internal Recursion
-Check if `assignment_targets_reference_internal` correctly matches `[x]` against `x`
-
-### Step 4: Analyze Results
-- If `targets_reference` is `false`: Bug in matching logic
-- If `targets_reference` is `true`: Bug in `check_flow` or `get_assigned_type`
-
-## Test Cases
-
-### test_array_destructuring_assignment_clears_narrowing
-```typescript
-let x: string | number;
-if (typeof x === "string") {
-  x;           // narrowed to string
-  [x] = [1];    // should clear narrowing
-  x;           // expected: string | number, actual: string
+// src/checker/control_flow.rs:1344-1385
+k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+    || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+{
+    // CRITICAL FIX: For array destructuring, we should NOT narrow to the RHS element type.
+    // Unlike direct assignment (x = 1 narrows x to literal 1), destructuring extracts
+    // a value from an array, which clears the narrowing to the declared type.
+    //
+    // Example: [x] = [1] should clear x to string | number, not narrow to literal 1.
+    //
+    // By returning None here, we signal that the RHS type should not be used,
+    // which causes get_assigned_type to return None, triggering initial_type return.
+    return None;
 }
 ```
 
-### test_array_destructuring_default_initializer_clears_narrowing
-```typescript
-let x: string | number;
-if (typeof x === "string") {
-  x;             // narrowed to string
-  [x = 1] = [];  // should clear narrowing
-  x;             // expected: string | number, actual: string
-}
+## Test Results
+
+All 3 tests now passing:
+```
+✅ test_truthiness_false_branch_narrows_to_falsy
+✅ test_array_destructuring_assignment_clears_narrowing
+✅ test_array_destructuring_default_initializer_clears_narrowing
 ```
 
-## Code Locations Found
+## Commits
 
-- `src/checker/control_flow.rs:536-575`: Assignment handling in `check_flow`
-- `src/checker/control_flow.rs:1591-1653`: `assignment_targets_reference_node`
-- `src/checker/control_flow_narrowing.rs:138-232`: `assignment_targets_reference_internal`
-- `src/checker/control_flow.rs:1261-1400`: `match_destructuring_rhs`
-- `src/checker/flow_graph_builder.rs:1341-1427`: `handle_expression_for_assignments`
+- `3d907e3a1`: fix(control_flow): array destructuring now clears type narrowing
 
-## Next Actions
+## Notes
 
-1. Add tracing to identify where the logic breaks
-2. Run test with TSZ_LOG to capture execution
-3. Ask Gemini Pro specific question about recursion edge cases
-4. Fix the identified issue
+The investigation revealed that TypeScript's control flow analysis has subtle semantics:
+1. Direct assignment preserves literal types for narrowing
+2. Destructuring clears narrowing to declared type
+3. This distinction is critical for matching tsc behavior exactly
+
+## Next Steps
+
+Session complete. All targeted control flow tests are passing.
