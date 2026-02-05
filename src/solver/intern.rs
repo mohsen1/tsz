@@ -810,6 +810,16 @@ impl TypeInterner {
 
     /// Fast path for unions that already fit in registers.
     pub fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
+        // Fast paths to avoid expensive normalize_union for trivial cases
+        if left == right {
+            return left;
+        }
+        if left == TypeId::NEVER {
+            return right;
+        }
+        if right == TypeId::NEVER {
+            return left;
+        }
         self.union_from_iter([left, right])
     }
 
@@ -1931,6 +1941,38 @@ impl TypeInterner {
     /// Remove redundant types from a union using shallow subtype checks.
     /// If A <: B, then A | B = B (A is redundant).
     fn reduce_union_subtypes(&self, flat: &mut TypeListBuffer) {
+        // OPTIMIZATION: Skip reduction if all types are unit types.
+        // Unit types (literals, enum members, tuples of unit types) are disjoint -
+        // none can be a subtype of another. This avoids O(N²) comparisons for cases
+        // like enumLiteralsSubtypeReduction.ts which has 512 distinct enum-tuple types.
+        //
+        // EXTENDED OPTIMIZATION: Also skip for types that is_subtype_shallow can't compare.
+        // is_subtype_shallow only handles: identical types (dedup already handled),
+        // literal-to-primitive, and top/bottom types. For arrays, tuples, and objects
+        // it always returns false, making the O(N²) loop pointless.
+        if flat.len() > 2 {
+            let all_non_reducible = flat.iter().all(|&ty| {
+                // Unit types (literals, enum members, tuples of unit types) are disjoint
+                if self.is_unit_type(ty) {
+                    return true;
+                }
+                // Arrays, tuples, and objects always return false in is_subtype_shallow
+                matches!(
+                    self.lookup(ty),
+                    Some(
+                        TypeKey::Array(_)
+                            | TypeKey::Tuple(_)
+                            | TypeKey::Object(_)
+                            | TypeKey::ObjectWithIndex(_)
+                            | TypeKey::Enum(_, _)
+                    )
+                )
+            });
+            if all_non_reducible {
+                return;
+            }
+        }
+
         let mut i = 0;
         while i < flat.len() {
             let mut redundant = false;
