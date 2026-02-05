@@ -631,11 +631,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             substitution.insert(tp.name, placeholder_id);
             var_map.insert(placeholder_id, var);
 
-            // Add the type parameter constraint as an upper bound for the inference variable.
-            // This ensures that inferred types like tuples [string, boolean] are validated
-            // against constraints like `T extends any[]` during resolution.
+            // Add the type parameter constraint as an upper bound, but only if the
+            // constraint is concrete (doesn't reference other type params via placeholders).
+            // Constraints like `keyof T` that depend on other type params can't be evaluated
+            // during resolution since T may not be resolved yet. These are validated in the
+            // post-resolution constraint check below.
             if let Some(constraint) = tp.constraint {
-                infer_ctx.add_upper_bound(var, constraint);
+                let inst_constraint = instantiate_type(self.interner, constraint, &substitution);
+                let mut visited = FxHashSet::default();
+                if !self.type_contains_placeholder(inst_constraint, &var_map, &mut visited) {
+                    infer_ctx.add_upper_bound(var, inst_constraint);
+                }
             }
 
             if tp.default.is_some() {
@@ -698,17 +704,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     };
                 }
             } else {
-                // Target type contains placeholders - check against their constraints
+                // Target type contains placeholders - check against their constraints.
+                // Instantiate the constraint with the substitution first, since the raw
+                // constraint references original type params (e.g., `keyof T`), not
+                // placeholders. After instantiation, skip if it still has placeholders
+                // (meaning dependent type params haven't been inferred yet).
                 if let Some(TypeKey::TypeParameter(tp)) = self.interner.lookup(target_type)
                     && let Some(constraint) = tp.constraint
                 {
-                    // Check if argument is assignable to the type parameter's constraint
-                    if !self.checker.is_assignable_to(arg_type, constraint) {
-                        return CallResult::ArgumentTypeMismatch {
-                            index: i,
-                            expected: constraint,
-                            actual: arg_type,
-                        };
+                    let inst_constraint =
+                        instantiate_type(self.interner, constraint, &substitution);
+                    let mut constraint_visited = FxHashSet::default();
+                    if !self.type_contains_placeholder(
+                        inst_constraint,
+                        &var_map,
+                        &mut constraint_visited,
+                    ) {
+                        // Constraint is fully concrete - safe to check now
+                        if !self.checker.is_assignable_to(arg_type, inst_constraint) {
+                            return CallResult::ArgumentTypeMismatch {
+                                index: i,
+                                expected: inst_constraint,
+                                actual: arg_type,
+                            };
+                        }
                     }
                 }
             }

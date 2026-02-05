@@ -1315,12 +1315,24 @@ impl<'a> CheckerState<'a> {
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
                     |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+                // Use DefId resolver so interface member types like `inner: Inner`
+                // produce Lazy(DefId) instead of TypeId::ERROR. Without this, any
+                // type reference to another interface/type alias in an interface body
+                // fails to resolve.
+                let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::def::DefId> {
+                    self.resolve_type_symbol_for_lowering(node_idx)
+                        .map(|sym_id_raw| {
+                            self.ctx
+                                .get_or_create_def_id(crate::binder::SymbolId(sym_id_raw))
+                        })
+                };
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                let lowering = TypeLowering::with_resolvers(
+                let lowering = TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
                     &type_resolver,
+                    &def_id_resolver,
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
@@ -1742,11 +1754,10 @@ impl<'a> CheckerState<'a> {
             ContextualLiteralAllowKind::Members(members) => members.iter().any(|&member| {
                 self.contextual_type_allows_literal_inner(member, literal_type, visited)
             }),
-            ContextualLiteralAllowKind::TypeParameter { constraint } => constraint
-                .map(|constraint| {
-                    self.contextual_type_allows_literal_inner(constraint, literal_type, visited)
-                })
-                .unwrap_or(false),
+            // Type parameters always allow literal types. In TypeScript, when the
+            // expected type is a type parameter (e.g., K extends keyof T), the literal
+            // is preserved and the constraint is checked later during generic inference.
+            ContextualLiteralAllowKind::TypeParameter { .. } => true,
             ContextualLiteralAllowKind::Ref(symbol) => {
                 let resolved = {
                     let env = self.ctx.type_env.borrow();
