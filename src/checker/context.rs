@@ -643,6 +643,7 @@ impl<'a> CheckerContext<'a> {
         compiler_options: CheckerOptions,
     ) -> Self {
         let compiler_options = compiler_options.apply_strict_defaults();
+        types.set_no_unchecked_indexed_access(compiler_options.no_unchecked_indexed_access);
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
