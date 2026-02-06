@@ -2766,6 +2766,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.lib_files.clear();
         options.lib_is_default = false;
     }
+    if args.downlevel_iteration {
+        options.printer.downlevel_iteration = true;
+    }
     if args.target.is_some() && options.lib_is_default && !options.checker.no_lib {
         options.lib_files = resolve_default_lib_files(options.printer.target)?;
     }
