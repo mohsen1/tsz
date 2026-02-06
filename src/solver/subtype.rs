@@ -978,7 +978,58 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     fn visit_index_access(&mut self, _object_type: TypeId, _key_type: TypeId) -> Self::Output {
         SubtypeResult::False
     }
-    fn visit_template_literal(&mut self, _template_id: u32) -> Self::Output {
+    fn visit_template_literal(&mut self, template_id: u32) -> Self::Output {
+        use crate::solver::types::IntrinsicKind;
+        use crate::solver::types::TemplateLiteralId;
+        use crate::solver::types::TemplateSpan;
+        use crate::solver::visitor::{intrinsic_kind, template_literal_id};
+
+        // Template literal <: string is always true
+        if intrinsic_kind(self.checker.interner, self.target) == Some(IntrinsicKind::String) {
+            return SubtypeResult::True;
+        }
+
+        // Template literal <: Template literal
+        // Compare spans: Text must match exactly, Type must satisfy subtype
+        if let Some(t_template_id) = template_literal_id(self.checker.interner, self.target) {
+            let s_id = TemplateLiteralId(template_id);
+
+            // Fast path: same template literal
+            if s_id == t_template_id {
+                return SubtypeResult::True;
+            }
+
+            let s_list = self.checker.interner.template_list(s_id);
+            let t_list = self.checker.interner.template_list(t_template_id);
+
+            // Different number of spans - not compatible
+            if s_list.len() != t_list.len() {
+                return SubtypeResult::False;
+            }
+
+            // Compare each span
+            for (s_span, t_span) in s_list.iter().zip(t_list.iter()) {
+                match (s_span, t_span) {
+                    (TemplateSpan::Text(s_text), TemplateSpan::Text(t_text)) => {
+                        if s_text != t_text {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    (TemplateSpan::Type(s_type), TemplateSpan::Type(t_type)) => {
+                        if !self.checker.check_subtype(*s_type, *t_type).is_true() {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    _ => {
+                        // Mismatched span types (Text vs Type)
+                        return SubtypeResult::False;
+                    }
+                }
+            }
+
+            return SubtypeResult::True;
+        }
+
         SubtypeResult::False
     }
     fn visit_type_query(&mut self, _symbol_ref: u32) -> Self::Output {
@@ -1038,7 +1089,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         SubtypeResult::False
     }
     fn visit_unique_symbol(&mut self, symbol_ref: u32) -> Self::Output {
-        
         use crate::solver::visitor::unique_symbol_ref;
 
         // unique symbol has nominal identity - same symbol ref is subtype
