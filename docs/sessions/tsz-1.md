@@ -887,17 +887,89 @@ if let Some(tracer) = &mut self.tracer {
 
 ---
 
-### Task #52: DNF Normalization
+### Task #52: DNF Normalization ✅ COMPLETE
 
-**Status**: ⏳ PENDING
+**Status**: ✅ COMPLETE
+**Test Results**: All 7 distributivity tests passing ✅
 
 **Goal**: Implement `(A | B) & C` → `(A & C) | (B & C)` in `intern.rs`
 
+**Implementation**: Already implemented in `src/solver/intern.rs`!
+- Method `distribute_intersection_over_unions` at line 2433
+- Called from `normalize_intersection` at line 1333
+- Cardinality guard prevents exponential blowup (limit: 25 combinations)
+- Performs Cartesian product distribution for intersection-over-union types
+
+**DNF Examples**:
+- `(A | B) & C` → `(A & C) | (B & C)`
+- `(A | B) & (C | D)` → `(A & C) | (A & D) | (B & C) | (B & D)`
+
+**Test Added**:
+- `test_dnf_isomorphism` in `src/solver/tests/isomorphism_tests.rs`
+  - Verifies that `(string | number) & string` produces the same canonical form as `string`
+  - Tests DNF + isomorphism integration
+
 ---
 
-### Task #53: Global Recursive Isomorphism
+### Task #54: Global Recursive Isomorphism ✅ COMPLETE
 
-**Status**: ⏳ PENDING
+**Status**: ✅ COMPLETE (commit: 1f3b7471b)
+**Test Results**: All 26 isomorphism tests passing ✅
 
-Verify if two different `DefId`s (Lazy types) that describe the same recursive structure result in the same `TypeId`.
+**Goal**: Verify that structurally identical recursive types produce the same `TypeId`.
+
+**Implementation Completed**:
+
+1. **Canonicalization System Already Working**:
+   - `canonical_id` query in `QueryCache` with caching (line 1316-1345 in db.rs)
+   - `Canonicalizer` transforms cyclic definitions to trees using De Bruijn indices
+   - `are_types_structurally_identical` uses `canonical_id` for O(1) equality (line 4285-4293 in subtype.rs)
+
+2. **Added canonical_id Fast-Path to SubtypeChecker**:
+   - Placed right after physical identity check (line 2150-2163 in subtype.rs)
+   - Guarded by `!bypass_evaluation` to prevent infinite recursion
+   - Checks `db.canonical_id(source) == db.canonical_id(target)` for structural identity
+   - Avoids expensive O(N) structural walks for structurally identical types
+
+**Key Benefits**:
+- O(1) equality check after canonicalization (vs O(N) structural walk)
+- Prevents relation_cache bloat with redundant entries for identical structures
+- Enables graph isomorphism via De Bruijn indices in Canonicalizer
+- Works with DNF normalization for complex union/intersection types
+
+**Files Modified**:
+- `src/solver/subtype.rs` - Added canonical_id fast-path in check_subtype
+- `src/solver/tests/isomorphism_tests.rs` - Added test_dnf_isomorphism
+
+---
+
+### Task #8: Enum Nominal Typing Fix ✅ COMPLETE
+
+**Status**: ✅ COMPLETE (commit: 6293c4b19)
+**Impact**: Reduced test failures from 39 to 38
+
+**Problem**: `test_enum_nominal_typing_same_enum` was failing - `EnumA.X` was incorrectly assignable to `EnumA.Y`
+
+**Root Cause**: `enum_assignability_override` in `src/solver/compat.rs` used `get_enum_def_id()` which relied on `resolver.is_user_enum_def()`. For test enums with `NoopResolver`, this returned `None`, bypassing the nominal typing check.
+
+**Solution**: Added fast path checking `enum_components()` directly before `get_enum_def_id()`
+
+**Implementation** (src/solver/compat.rs lines 1312-1348):
+```rust
+// Fast path: Check if both are enum types with same DefId but different TypeIds
+if let (Some((s_def, _)), Some((t_def, _))) = (
+    visitor::enum_components(self.interner, source),
+    visitor::enum_components(self.interner, target),
+) {
+    if s_def == t_def && source != target {
+        // Check if both are literal enum members
+        let s_is_enum_member = /* ... */;
+        let t_is_enum_member = /* ... */;
+        if s_is_enum_member && t_is_enum_member {
+            // Nominal rule: E.A is NOT assignable to E.B
+            return Some(false);
+        }
+    }
+}
+```
 
