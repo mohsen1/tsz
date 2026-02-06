@@ -835,7 +835,22 @@ Focus on high-impact, low-effort fixes first.
 
 ## Current Session Goal (2025-02-06 - Gemini Consulted)
 
-**Primary Goal: Implement Helper Infrastructure & Exact Spread Matching** ✅ COMPLETED
+**Primary Goal: Implement For-of Downleveling to ES5** 🚧 IN PROGRESS
+
+**Rationale (per Gemini consultation):**
+- For-of is a ubiquitous ES6 feature; implementing it will likely flip hundreds of tests
+- Requires the `__values` helper, further validating the HelperManager infrastructure
+- Complex semantic transformation involving `try/finally` for iterator cleanup
+- Strategic alignment with the "Main Task" (Phase C) of the current pivot
+
+**Status:**
+- ✅ __spreadArray helper (Array Spread) - 31.8% pass rate
+- ✅ __assign helper (Object Spread) - 36.7% pass rate
+- 🚧 For-of downleveling - Next milestone
+
+### Implementation Plan
+
+**Previous Completed Work:**
 
 **Rationale (per Gemini consultation):**
 - The project must match `tsc` behavior exactly (per AGENTS.md)
