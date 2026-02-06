@@ -745,3 +745,50 @@ Fixed cache poisoning issue where CompatChecker was not respecting compiler flag
 - ✅ Gap B: Evaluation Rule Audit (canonical constructors)
 - ✅ Gap C: Cache Soundness Verification (Lawyer flags)
 
+---
+
+## Next Priorities (Per Gemini Consultation 2026-02-06)
+
+### O(1) Equality "Final Boss" Verification
+
+Per Gemini's guidance, the following areas need verification for complete O(1) equality:
+
+1. **Object Property Ordering** ✅ VERIFIED
+   - `intern.rs:2556, 2576, 2590` already sort properties by `Atom`
+   - Test `test_intersection_order_independence` confirms this works
+
+2. **Recursive Type Isomorphism (Global)**
+   - Task #32 (Graph Isomorphism) uses De Bruijn indices
+   - Need to verify if global isomorphism happens during interning
+   - If two different `DefId`s describe same recursive structure, they must have same `TypeId`
+
+3. **Union/Intersection Distributivity & DNF**
+   - TypeScript normalizes types to Distributed Normal Form
+   - Example: `(A | B) & C` → `(A & C) | (B & C)`
+   - Need to verify if interner performs this normalization
+
+### Next Priority: Subtype Failure Diagnostics
+
+**Task**: Integrate `src/solver/diagnostics.rs` with `SubtypeVisitor`
+
+**Current State**:
+- `SubtypeTracer` trait exists for zero-cost diagnostic abstraction
+- `FastTracer` for boolean checks (already used)
+- `DiagnosticTracer` for collecting detailed failures
+- `SubtypeFailureReason` enum for structured failure data
+- `SubtypeVisitor` exists but doesn't use tracer pattern yet
+
+**Goal**:
+When `is_subtype_of` returns `false`, optionally populate a diagnostic trace explaining why (e.g., "Property 'x' is missing", "Type 'string' is not assignable to 'number'").
+
+**Why**:
+Prevents the Checker (tsz-2) from re-implementing discovery logic to figure out why an assignment failed. The Judge must explain its verdict.
+
+### Recommended Action Plan
+
+1. ✅ Verify Object Sorting - Already implemented in `object_with_flags`
+2. ⏳ Diagnostic Integration - Modify `SubtypeVisitor` to support optional `DiagnosticSink`
+3. ⏳ DNF Normalization - Ask Gemini about approach for "Intersection of Union" normalization
+
+**Mandatory**: Before implementing Diagnostic Integration or DNF changes, use `tsz-gemini` skill to validate approach.
+
