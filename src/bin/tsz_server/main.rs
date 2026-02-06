@@ -767,6 +767,31 @@ impl Server {
         })
     }
 
+    /// Convert a DefinitionInfo to a tsserver-compatible JSON value.
+    fn definition_info_to_json(
+        info: &wasm::lsp::definition::DefinitionInfo,
+        file: &str,
+    ) -> serde_json::Value {
+        let mut result = serde_json::json!({
+            "file": file,
+            "start": Self::lsp_to_tsserver_position(&info.location.range.start),
+            "end": Self::lsp_to_tsserver_position(&info.location.range.end),
+            "kind": info.kind,
+            "name": info.name,
+            "containerName": info.container_name,
+            "containerKind": info.container_kind,
+            "isLocal": info.is_local,
+            "isAmbient": info.is_ambient,
+            "unverified": false,
+            "failedAliasResolution": false,
+        });
+        if let Some(ref ctx) = info.context_span {
+            result["contextStart"] = Self::lsp_to_tsserver_position(&ctx.start);
+            result["contextEnd"] = Self::lsp_to_tsserver_position(&ctx.end);
+        }
+        result
+    }
+
     fn find_lib_dir() -> Result<PathBuf> {
         let cwd = std::env::current_dir().context("Failed to get CWD")?;
 
@@ -1420,16 +1445,10 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let locations = provider.get_definition(root, position)?;
-            let body: Vec<serde_json::Value> = locations
+            let infos = provider.get_definition_info(root, position)?;
+            let body: Vec<serde_json::Value> = infos
                 .iter()
-                .map(|loc| {
-                    serde_json::json!({
-                        "file": loc.file_path,
-                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                    })
-                })
+                .map(|info| Self::definition_info_to_json(info, &file))
                 .collect();
             Some(serde_json::json!(body))
         })();
@@ -1448,18 +1467,12 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let locations = provider.get_definition(root, position)?;
+            let infos = provider.get_definition_info(root, position)?;
 
-            // Build definitions array
-            let definitions: Vec<serde_json::Value> = locations
+            // Build definitions array with rich metadata
+            let definitions: Vec<serde_json::Value> = infos
                 .iter()
-                .map(|loc| {
-                    serde_json::json!({
-                        "file": loc.file_path,
-                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                    })
-                })
+                .map(|info| Self::definition_info_to_json(info, &file))
                 .collect();
 
             // Compute the textSpan for the word at the cursor position
