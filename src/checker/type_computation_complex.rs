@@ -263,155 +263,179 @@ impl<'a> CheckerState<'a> {
         // This is critical for classes where we need the Callable with construct signatures
         let constructor_type = self.resolve_ref_type(constructor_type);
 
-        let construct_type = match crate::solver::type_queries::classify_for_new_expression(
-            self.ctx.types,
-            constructor_type,
-        ) {
-            crate::solver::type_queries::NewExpressionTypeKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape.construct_signatures.is_empty() {
-                    // Functions with a prototype property are constructable
-                    // This handles cases like `function Foo() {}` where `Foo.prototype` exists
-                    if self.type_has_prototype_property(constructor_type) {
-                        Some(constructor_type)
-                    } else if !shape.call_signatures.is_empty() {
-                        // TSC behavior: callable types with call signatures but no construct
-                        // signatures are still "constructable" — `new` returns `any`.
-                        // TS2351 is only for types with NO signatures at all (e.g., string).
-                        // In strict mode, TSC emits TS7009 instead.
-                        Some(TypeId::ANY)
+        // Some constructor interfaces are lowered with a synthetic `"new"` property
+        // instead of explicit construct signatures.
+        let synthetic_new_constructor = self.constructor_type_from_new_property(constructor_type);
+        let constructor_type = synthetic_new_constructor.unwrap_or(constructor_type);
+        // Explicit type arguments on `new` (e.g. `new Promise<number>(...)`) need to
+        // apply to synthetic `"new"` member call signatures as well.
+        let constructor_type = if synthetic_new_constructor.is_some() {
+            self.apply_type_arguments_to_callable_type(
+                constructor_type,
+                new_expr.type_arguments.as_ref(),
+            )
+        } else {
+            constructor_type
+        };
+
+        let construct_type = if synthetic_new_constructor.is_some() {
+            // Synthetic `new` members already represent the constructor signature
+            // lowered as a callable property type.
+            Some(constructor_type)
+        } else {
+            match crate::solver::type_queries::classify_for_new_expression(
+                self.ctx.types,
+                constructor_type,
+            ) {
+                crate::solver::type_queries::NewExpressionTypeKind::Callable(shape_id) => {
+                    let shape = self.ctx.types.callable_shape(shape_id);
+                    if shape.construct_signatures.is_empty() {
+                        // Functions with a prototype property are constructable
+                        // This handles cases like `function Foo() {}` where `Foo.prototype` exists
+                        if self.type_has_prototype_property(constructor_type) {
+                            Some(constructor_type)
+                        } else if !shape.call_signatures.is_empty() {
+                            // TSC behavior: callable types with call signatures but no construct
+                            // signatures are still "constructable" — `new` returns `any`.
+                            // TS2351 is only for types with NO signatures at all (e.g., string).
+                            // In strict mode, TSC emits TS7009 instead.
+                            Some(TypeId::ANY)
+                        } else {
+                            None
+                        }
+                    } else {
+                        Some(self.ctx.types.callable(CallableShape {
+                            call_signatures: shape.construct_signatures.clone(),
+                            construct_signatures: Vec::new(),
+                            properties: Vec::new(),
+                            string_index: None,
+                            number_index: None,
+                            symbol: None,
+                        }))
+                    }
+                }
+                crate::solver::type_queries::NewExpressionTypeKind::Function(_) => {
+                    Some(constructor_type)
+                }
+                crate::solver::type_queries::NewExpressionTypeKind::TypeQuery(sym_ref) => {
+                    // Ref to a symbol or TypeQuery (typeof X) - resolve to the symbol's type
+                    use crate::binder::SymbolId;
+                    let symbol_id = SymbolId(sym_ref.0);
+                    if self.ctx.binder.get_symbol(symbol_id).is_some() {
+                        // Get the symbol's actual type which should be a Callable with construct signatures
+                        let symbol_type = self.get_type_of_symbol(symbol_id);
+                        // Check if the symbol's type is constructable
+                        self.get_construct_type_from_type(symbol_type)
                     } else {
                         None
                     }
-                } else {
-                    Some(self.ctx.types.callable(CallableShape {
-                        call_signatures: shape.construct_signatures.clone(),
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        string_index: None,
-                        number_index: None,
-                        symbol: None,
-                    }))
                 }
-            }
-            crate::solver::type_queries::NewExpressionTypeKind::Function(_) => {
-                Some(constructor_type)
-            }
-            crate::solver::type_queries::NewExpressionTypeKind::TypeQuery(sym_ref) => {
-                // Ref to a symbol or TypeQuery (typeof X) - resolve to the symbol's type
-                use crate::binder::SymbolId;
-                let symbol_id = SymbolId(sym_ref.0);
-                if self.ctx.binder.get_symbol(symbol_id).is_some() {
-                    // Get the symbol's actual type which should be a Callable with construct signatures
-                    let symbol_type = self.get_type_of_symbol(symbol_id);
-                    // Check if the symbol's type is constructable
-                    self.get_construct_type_from_type(symbol_type)
-                } else {
-                    None
-                }
-            }
-            crate::solver::type_queries::NewExpressionTypeKind::Intersection(members) => {
-                // For intersection of constructors (mixin pattern), the result is an
-                // intersection of all instance types. Handle this specially.
-                let mut instance_types: Vec<TypeId> = Vec::new();
+                crate::solver::type_queries::NewExpressionTypeKind::Intersection(members) => {
+                    // For intersection of constructors (mixin pattern), the result is an
+                    // intersection of all instance types. Handle this specially.
+                    let mut instance_types: Vec<TypeId> = Vec::new();
 
-                for member in members {
-                    // Evaluate Application types (e.g., Constructor<T>) to get their Callable shape
-                    let evaluated_member = self.evaluate_application_type(member);
-                    // Try to get construct signatures from the evaluated member
-                    let construct_sig_return =
-                        self.get_construct_signature_return_type(evaluated_member);
-                    if let Some(return_type) = construct_sig_return {
-                        instance_types.push(return_type);
+                    for member in members {
+                        // Evaluate Application types (e.g., Constructor<T>) to get their Callable shape
+                        let evaluated_member = self.evaluate_application_type(member);
+                        // Try to get construct signatures from the evaluated member
+                        let construct_sig_return =
+                            self.get_construct_signature_return_type(evaluated_member);
+                        if let Some(return_type) = construct_sig_return {
+                            instance_types.push(return_type);
+                        }
+                    }
+
+                    if instance_types.is_empty() {
+                        // TS2351: This expression is not constructable
+                        self.error_not_constructable_at(constructor_type, idx);
+                        return TypeId::ERROR;
+                    } else if instance_types.len() == 1 {
+                        return instance_types[0];
+                    } else {
+                        // Return intersection of all instance types
+                        return self.ctx.types.intersection(instance_types);
                     }
                 }
+                crate::solver::type_queries::NewExpressionTypeKind::TypeParameter {
+                    constraint,
+                } => {
+                    // For type parameters with constructor constraints (e.g., T extends typeof Base),
+                    // check the constraint for constructor signatures.
+                    // This handles patterns like:
+                    //   function f<T extends typeof Base>(ctor: T) {
+                    //       return new ctor();  // Should work - T has construct signatures from Base
+                    //   }
+                    if let Some(constraint) = constraint {
+                        // Evaluate the constraint to resolve Application types like Constructor<T>
+                        let evaluated_constraint = self.evaluate_application_type(constraint);
 
-                if instance_types.is_empty() {
-                    // TS2351: This expression is not constructable
-                    self.error_not_constructable_at(constructor_type, idx);
-                    return TypeId::ERROR;
-                } else if instance_types.len() == 1 {
-                    return instance_types[0];
-                } else {
-                    // Return intersection of all instance types
-                    return self.ctx.types.intersection(instance_types);
-                }
-            }
-            crate::solver::type_queries::NewExpressionTypeKind::TypeParameter { constraint } => {
-                // For type parameters with constructor constraints (e.g., T extends typeof Base),
-                // check the constraint for constructor signatures.
-                // This handles patterns like:
-                //   function f<T extends typeof Base>(ctor: T) {
-                //       return new ctor();  // Should work - T has construct signatures from Base
-                //   }
-                if let Some(constraint) = constraint {
-                    // Evaluate the constraint to resolve Application types like Constructor<T>
-                    let evaluated_constraint = self.evaluate_application_type(constraint);
+                        // Check if the evaluated constraint is an Intersection - handle it specially
+                        if let Some(members) = crate::solver::type_queries::get_intersection_members(
+                            self.ctx.types,
+                            evaluated_constraint,
+                        ) {
+                            let mut instance_types: Vec<TypeId> = Vec::new();
 
-                    // Check if the evaluated constraint is an Intersection - handle it specially
-                    if let Some(members) = crate::solver::type_queries::get_intersection_members(
-                        self.ctx.types,
-                        evaluated_constraint,
-                    ) {
-                        let mut instance_types: Vec<TypeId> = Vec::new();
+                            for member in members {
+                                // Resolve Refs (type alias references) to their actual types
+                                let resolved_member = self.resolve_type_for_property_access(member);
+                                // Then evaluate any Application types
+                                let evaluated_member =
+                                    self.evaluate_application_type(resolved_member);
+                                let construct_sig_return =
+                                    self.get_construct_signature_return_type(evaluated_member);
+                                if let Some(return_type) = construct_sig_return {
+                                    instance_types.push(return_type);
+                                }
+                            }
 
-                        for member in members {
-                            // Resolve Refs (type alias references) to their actual types
-                            let resolved_member = self.resolve_type_for_property_access(member);
-                            // Then evaluate any Application types
-                            let evaluated_member = self.evaluate_application_type(resolved_member);
-                            let construct_sig_return =
-                                self.get_construct_signature_return_type(evaluated_member);
-                            if let Some(return_type) = construct_sig_return {
-                                instance_types.push(return_type);
+                            if instance_types.is_empty() {
+                                self.error_not_constructable_at(constructor_type, idx);
+                                return TypeId::ERROR;
+                            } else if instance_types.len() == 1 {
+                                return instance_types[0];
+                            } else {
+                                return self.ctx.types.intersection(instance_types);
                             }
                         }
 
-                        if instance_types.is_empty() {
-                            self.error_not_constructable_at(constructor_type, idx);
-                            return TypeId::ERROR;
-                        } else if instance_types.len() == 1 {
-                            return instance_types[0];
+                        // For non-intersection constraints, get the construct type
+                        self.get_construct_type_from_type(evaluated_constraint)
+                    } else {
+                        // No constraint - can't determine if it's a constructor
+                        None
+                    }
+                }
+                crate::solver::type_queries::NewExpressionTypeKind::Union(members) => {
+                    // For union types, check if all members are constructors
+                    // and return the union of their instance types
+                    let mut instance_types: Vec<TypeId> = Vec::new();
+                    let mut all_constructable = true;
+
+                    for member in members {
+                        // Resolve Refs (type alias references) to their actual types
+                        let resolved_member = self.resolve_type_for_property_access(member);
+                        // Then evaluate any Application types
+                        let evaluated_member = self.evaluate_application_type(resolved_member);
+                        let construct_sig_return =
+                            self.get_construct_signature_return_type(evaluated_member);
+                        if let Some(return_type) = construct_sig_return {
+                            instance_types.push(return_type);
                         } else {
-                            return self.ctx.types.intersection(instance_types);
+                            all_constructable = false;
+                            break;
                         }
                     }
 
-                    // For non-intersection constraints, get the construct type
-                    self.get_construct_type_from_type(evaluated_constraint)
-                } else {
-                    // No constraint - can't determine if it's a constructor
-                    None
-                }
-            }
-            crate::solver::type_queries::NewExpressionTypeKind::Union(members) => {
-                // For union types, check if all members are constructors
-                // and return the union of their instance types
-                let mut instance_types: Vec<TypeId> = Vec::new();
-                let mut all_constructable = true;
-
-                for member in members {
-                    // Resolve Refs (type alias references) to their actual types
-                    let resolved_member = self.resolve_type_for_property_access(member);
-                    // Then evaluate any Application types
-                    let evaluated_member = self.evaluate_application_type(resolved_member);
-                    let construct_sig_return =
-                        self.get_construct_signature_return_type(evaluated_member);
-                    if let Some(return_type) = construct_sig_return {
-                        instance_types.push(return_type);
+                    if all_constructable && !instance_types.is_empty() {
+                        Some(self.ctx.types.union(instance_types))
                     } else {
-                        all_constructable = false;
-                        break;
+                        None
                     }
                 }
-
-                if all_constructable && !instance_types.is_empty() {
-                    Some(self.ctx.types.union(instance_types))
-                } else {
-                    None
-                }
+                crate::solver::type_queries::NewExpressionTypeKind::NotConstructable => None,
             }
-            crate::solver::type_queries::NewExpressionTypeKind::NotConstructable => None,
         };
 
         let Some(construct_type) = construct_type else {
@@ -1695,6 +1719,12 @@ impl<'a> CheckerState<'a> {
             let has_type = (flags & crate::binder::symbol_flags::TYPE) != 0;
             let has_value = (flags & crate::binder::symbol_flags::VALUE) != 0;
             let is_type_alias = (flags & crate::binder::symbol_flags::TYPE_ALIAS) != 0;
+            let value_decl = local_symbol
+                .map(|s| s.value_declaration)
+                .unwrap_or(NodeIndex::NONE);
+            let symbol_declarations = local_symbol
+                .map(|s| s.declarations.clone())
+                .unwrap_or_default();
 
             // Check for type-only symbols used as values
             // This includes:
@@ -1709,10 +1739,12 @@ impl<'a> CheckerState<'a> {
             // (e.g., `declare var Promise` in es2015.promise.d.ts). When we find
             // a TYPE-only symbol, check if a VALUE exists elsewhere in libs.
             if is_type_alias || (has_type && !has_value) {
-                // Cross-lib merging: check if a VALUE symbol for this name
-                // exists in a different lib binder before emitting error.
-                if let Some(val_sym_id) = self.find_value_symbol_in_libs(name) {
-                    return self.get_type_of_symbol(val_sym_id);
+                // Cross-lib merging: interface/type may be in one lib while VALUE
+                // declaration is in another. Resolve by declaration node first to
+                // avoid SymbolId collisions across binders.
+                let value_type = self.type_of_value_symbol_by_name(name);
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    return self.check_flow_usage(idx, value_type, sym_id);
                 }
 
                 // Don't emit TS2693 in heritage clause context — the heritage
@@ -1761,15 +1793,77 @@ impl<'a> CheckerState<'a> {
                     let lib_has_type = (lib_flags & crate::binder::symbol_flags::TYPE) != 0;
                     let lib_has_value = (lib_flags & crate::binder::symbol_flags::VALUE) != 0;
                     if lib_has_type && !lib_has_value {
-                        // Cross-lib merging: VALUE may be in a different lib binder
-                        if let Some(val_sym_id) = self.find_value_symbol_in_libs(name) {
-                            return self.get_type_of_symbol(val_sym_id);
+                        // Cross-lib merging: VALUE may be in a different lib binder.
+                        // Resolve by declaration node first to avoid SymbolId collisions.
+                        let value_type = self.type_of_value_symbol_by_name(name);
+                        if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                            return self.check_flow_usage(idx, value_type, sym_id);
                         }
                         self.error_type_only_value_at(name, idx);
                         return TypeId::ERROR;
                     }
                 }
             }
+
+            // Merged interface+value symbols (e.g. `interface Promise<T>` +
+            // `declare var Promise: PromiseConstructor`) must use the VALUE side
+            // in value position. Falling back to interface type here causes
+            // false TS2339/TS2351 on `Promise.resolve` / `new Promise(...)`.
+            if has_type && has_value && (flags & crate::binder::symbol_flags::INTERFACE) != 0 {
+                let mut value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
+                if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
+                    for &decl_idx in &symbol_declarations {
+                        let candidate = self.type_of_value_declaration_for_symbol(sym_id, decl_idx);
+                        if candidate != TypeId::UNKNOWN && candidate != TypeId::ERROR {
+                            value_type = candidate;
+                            break;
+                        }
+                    }
+                }
+                if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
+                    value_type = self.type_of_value_symbol_by_name(name);
+                }
+                // Lib globals often model value-side constructors through a sibling
+                // `*Constructor` interface (Promise -> PromiseConstructor).
+                // Prefer that when available to avoid falling back to the instance interface.
+                if name == "Promise" {
+                    if let Some(constructor_sym_id) =
+                        self.resolve_global_value_symbol("PromiseConstructor")
+                    {
+                        let constructor_type = self.get_type_of_symbol(constructor_sym_id);
+                        if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR
+                        {
+                            value_type = constructor_type;
+                        }
+                    } else if let Some(constructor_type) =
+                        self.resolve_lib_type_by_name("PromiseConstructor")
+                        && constructor_type != TypeId::UNKNOWN
+                        && constructor_type != TypeId::ERROR
+                    {
+                        value_type = constructor_type;
+                    }
+                } else if name == "Error" {
+                    if let Some(constructor_sym_id) =
+                        self.resolve_global_value_symbol("ErrorConstructor")
+                    {
+                        let constructor_type = self.get_type_of_symbol(constructor_sym_id);
+                        if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR
+                        {
+                            value_type = constructor_type;
+                        }
+                    } else if let Some(constructor_type) =
+                        self.resolve_lib_type_by_name("ErrorConstructor")
+                        && constructor_type != TypeId::UNKNOWN
+                        && constructor_type != TypeId::ERROR
+                    {
+                        value_type = constructor_type;
+                    }
+                }
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    return self.check_flow_usage(idx, value_type, sym_id);
+                }
+            }
+
             let declared_type = self.get_type_of_symbol(sym_id);
             // Check for TDZ violations (variable used before declaration in source order)
             // 1. Static block TDZ - variable used in static block before its declaration
@@ -1849,9 +1943,10 @@ impl<'a> CheckerState<'a> {
 
                 // Symbol exists in lib - check if it has VALUE flag (is usable as a value)
                 // This distinguishes ES5 (type-only) from ES2015+ (type and value)
-                if let Some(val_sym_id) = self.find_value_symbol_in_libs(name) {
+                let value_type = self.type_of_value_symbol_by_name(name);
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
                     // Symbol has VALUE flag - it's available as a constructor
-                    return self.get_type_of_symbol(val_sym_id);
+                    return value_type;
                 }
 
                 // Symbol exists but only as TYPE (ES5 case) - emit TS2585
@@ -2013,5 +2108,125 @@ impl<'a> CheckerState<'a> {
                 TypeId::ERROR
             }
         }
+    }
+
+    /// Resolve the value-side type from a symbol's value declaration node.
+    ///
+    /// This is used for merged interface+value globals where value position must
+    /// use the constructor/variable declaration type, not the interface type.
+    fn type_of_value_declaration(&mut self, decl_idx: NodeIndex) -> TypeId {
+        if decl_idx.is_none() {
+            return TypeId::UNKNOWN;
+        }
+
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return TypeId::UNKNOWN;
+        };
+
+        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
+            if !var_decl.type_annotation.is_none() {
+                let annotated = self.get_type_from_type_node(var_decl.type_annotation);
+                return self.resolve_ref_type(annotated);
+            }
+            if !var_decl.initializer.is_none() {
+                return self.get_type_of_node(var_decl.initializer);
+            }
+            return TypeId::ANY;
+        }
+
+        if self.ctx.arena.get_function(node).is_some() {
+            return self.get_type_of_function(decl_idx);
+        }
+
+        if let Some(class_data) = self.ctx.arena.get_class(node) {
+            return self.get_class_constructor_type(decl_idx, class_data);
+        }
+
+        TypeId::UNKNOWN
+    }
+
+    /// Resolve a value declaration type, delegating to the declaration's arena
+    /// when the node does not belong to the current checker arena.
+    fn type_of_value_declaration_for_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+    ) -> TypeId {
+        if decl_idx.is_none() {
+            return TypeId::UNKNOWN;
+        }
+
+        if self.ctx.arena.get(decl_idx).is_some() {
+            return self.type_of_value_declaration(decl_idx);
+        }
+
+        let Some(decl_arena) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
+            return TypeId::UNKNOWN;
+        };
+        if std::ptr::eq(decl_arena.as_ref(), self.ctx.arena) {
+            return self.type_of_value_declaration(decl_idx);
+        }
+
+        let mut checker = CheckerState::with_parent_cache(
+            decl_arena.as_ref(),
+            self.ctx.binder,
+            self.ctx.types,
+            self.ctx.file_name.clone(),
+            self.ctx.compiler_options.clone(),
+            self,
+        );
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
+        checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
+        checker
+            .ctx
+            .symbol_resolution_depth
+            .set(self.ctx.symbol_resolution_depth.get());
+        checker.type_of_value_declaration(decl_idx)
+    }
+
+    /// Resolve a value-side type by global name, preferring value declarations.
+    ///
+    /// This avoids incorrect type resolution when symbol IDs collide across
+    /// binders (current file vs. lib files).
+    fn type_of_value_symbol_by_name(&mut self, name: &str) -> TypeId {
+        if let Some(value_decl) = self.find_value_declaration_in_libs(name) {
+            let value_type = self.type_of_value_declaration(value_decl);
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                return value_type;
+            }
+        }
+
+        if let Some(value_sym_id) = self.find_value_symbol_in_libs(name) {
+            let value_type = self.get_type_of_symbol(value_sym_id);
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                return value_type;
+            }
+        }
+
+        TypeId::UNKNOWN
+    }
+
+    /// If `type_id` is an object type with a synthetic `"new"` member, return that member type.
+    /// This supports constructor-like interfaces that lower construct signatures as properties.
+    fn constructor_type_from_new_property(&self, type_id: TypeId) -> Option<TypeId> {
+        use crate::solver::TypeKey;
+
+        let Some(key) = self.ctx.types.lookup(type_id) else {
+            return None;
+        };
+
+        let shape_id = match key {
+            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => shape_id,
+            _ => return None,
+        };
+
+        let new_atom = self.ctx.types.intern_string("new");
+        let shape = self.ctx.types.object_shape(shape_id);
+        shape
+            .properties
+            .iter()
+            .find(|prop| prop.name == new_atom)
+            .map(|prop| prop.type_id)
     }
 }

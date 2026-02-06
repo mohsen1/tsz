@@ -1078,6 +1078,41 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Find a VALUE declaration node for a name across current + lib binders.
+    ///
+    /// Returning the declaration node avoids relying on cross-binder SymbolId
+    /// identity, which can collide and lead to incorrect value/type selection.
+    pub(crate) fn find_value_declaration_in_libs(&self, name: &str) -> Option<NodeIndex> {
+        let lib_binders = self.get_lib_binders();
+
+        // Check merged/local symbols first.
+        if let Some(val_sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(val_symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(val_sym_id, &lib_binders)
+            && (val_symbol.flags & symbol_flags::VALUE) != 0
+            && !val_symbol.is_type_only
+            && !val_symbol.value_declaration.is_none()
+        {
+            return Some(val_symbol.value_declaration);
+        }
+
+        // Then scan lib binders directly.
+        for lib_binder in &lib_binders {
+            if let Some(val_sym_id) = lib_binder.file_locals.get(name)
+                && let Some(val_symbol) = lib_binder.get_symbol(val_sym_id)
+                && (val_symbol.flags & symbol_flags::VALUE) != 0
+                && !val_symbol.is_type_only
+                && !val_symbol.value_declaration.is_none()
+            {
+                return Some(val_symbol.value_declaration);
+            }
+        }
+
+        None
+    }
+
     // =========================================================================
     // Global Symbol Resolution
     // =========================================================================
