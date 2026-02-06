@@ -819,15 +819,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // Readonly types have specific subtyping rules:
         // - Readonly<T> <: Readonly<U> if T <: U
         // - Readonly<T> is NOT assignable to mutable T (safety)
-        // - T <: Readonly<T> is allowed (can add readonly)
+        // - T <: Readonly<T> is allowed (can add readonly) - handled by target peeling in check_subtype_inner
 
-        // If target is also Readonly, we can peel both and check inner types
+        // Case: Readonly<S> <: Readonly<T>
+        // If target is also Readonly, compare inner types
         if let Some(t_inner) = readonly_inner_type(self.checker.interner, self.target) {
             return self.checker.check_subtype(inner_type, t_inner);
         }
 
-        // If target is NOT Readonly (mutable), Readonly source cannot be assigned
-        // UNLESS target is any/unknown (handled by fast paths in check_subtype_inner)
+        // Case: Readonly<S> <: Mutable<T>
+        // Readonly source cannot be assigned to mutable target for safety reasons.
+        // Exception: target is any/unknown (handled by fast paths in check_subtype_inner).
         SubtypeResult::False
     }
 
@@ -2748,20 +2750,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_subtype(s_inner, t_inner);
         }
 
-        if readonly_inner_type(self.interner, source).is_some()
-            && (array_element_type(self.interner, target).is_some()
-                || tuple_list_id(self.interner, target).is_some())
-        {
-            return SubtypeResult::False;
-        }
-
+        // Readonly target peeling: T <: Readonly<U> if T <: U
+        // A mutable type can always be treated as readonly (readonly is a supertype)
+        // CRITICAL: Only peel if source is NOT Readonly. If source IS Readonly, we must
+        // fall through to the visitor to compare Readonly<S> vs Readonly<T>.
         if let Some(t_inner) = readonly_inner_type(self.interner, target) {
-            if array_element_type(self.interner, source).is_some()
-                || tuple_list_id(self.interner, source).is_some()
-            {
+            if readonly_inner_type(self.interner, source).is_none() {
                 return self.check_subtype(source, t_inner);
             }
         }
+
+        // Readonly source to mutable target case is handled by SubtypeVisitor::visit_readonly_type
+        // which returns False (correctly, because Readonly is not assignable to Mutable)
 
         if let (Some(s_sym), Some(t_sym)) = (
             unique_symbol_ref(self.interner, source),
