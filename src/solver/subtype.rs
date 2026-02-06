@@ -1032,8 +1032,35 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
 
         SubtypeResult::False
     }
-    fn visit_type_query(&mut self, _symbol_ref: u32) -> Self::Output {
-        SubtypeResult::False
+    fn visit_type_query(&mut self, symbol_ref: u32) -> Self::Output {
+        use crate::solver::types::SymbolRef;
+
+        // TypeQuery (typeof X) is a reference to a value symbol.
+        // We need to resolve it to its structural type before comparing.
+        let sym = SymbolRef(symbol_ref);
+
+        // Attempt to resolve the symbol to its structural type.
+        // Prioritize DefId-based resolution (Lazy) over legacy SymbolRef (Ref).
+        let resolved = if let Some(def_id) = self.checker.resolver.symbol_to_def_id(sym) {
+            self.checker
+                .resolver
+                .resolve_lazy(def_id, self.checker.interner)
+        } else {
+            #[allow(deprecated)]
+            self.checker
+                .resolver
+                .resolve_ref(sym, self.checker.interner)
+        }
+        .unwrap_or(self.source);
+
+        // If resolution succeeded and gave us a different type, restart the check.
+        // This recursion is critical for coinductive cycle detection.
+        if resolved != self.source {
+            self.checker.check_subtype(resolved, self.target)
+        } else {
+            // If resolution failed or returned the same ID, we cannot prove subtyping.
+            SubtypeResult::False
+        }
     }
     fn visit_keyof(&mut self, inner_type: TypeId) -> Self::Output {
         use crate::solver::types::IntrinsicKind;
