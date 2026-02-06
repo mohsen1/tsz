@@ -607,6 +607,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.constraint_pairs.borrow_mut().clear();
         *self.constraint_recursion_depth.borrow_mut() = 0;
 
+        // Reusable visited set for type_contains_placeholder checks (avoids per-iteration alloc)
+        let mut placeholder_visited = FxHashSet::default();
+        // Reusable buffer for placeholder names (avoids per-iteration String allocation)
+        let mut placeholder_buf = String::with_capacity(24);
+
         // 1. Create inference variables and placeholders for each type parameter
         for tp in &func.type_params {
             // Allocate an inference variable first, then create a *unique* placeholder type
@@ -618,8 +623,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             // Create a unique placeholder type for this inference variable
             // We use a TypeParameter with a special name to track it during constraint collection
-            let placeholder_name = format!("__infer_{}", var.0);
-            let placeholder_atom = self.interner.intern_string(&placeholder_name);
+            use std::fmt::Write;
+            placeholder_buf.clear();
+            write!(placeholder_buf, "__infer_{}", var.0).unwrap();
+            let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
             let placeholder_key = TypeKey::TypeParameter(TypeParamInfo {
                 is_const: tp.is_const,
@@ -639,8 +646,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // post-resolution constraint check below.
             if let Some(constraint) = tp.constraint {
                 let inst_constraint = instantiate_type(self.interner, constraint, &substitution);
-                let mut visited = FxHashSet::default();
-                if !self.type_contains_placeholder(inst_constraint, &var_map, &mut visited) {
+                placeholder_visited.clear();
+                if !self.type_contains_placeholder(
+                    inst_constraint,
+                    &var_map,
+                    &mut placeholder_visited,
+                ) {
                     infer_ctx.add_upper_bound(var, inst_constraint);
                 }
             }
@@ -729,8 +740,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             }
 
-            let mut visited = FxHashSet::default();
-            if !self.type_contains_placeholder(target_type, &var_map, &mut visited) {
+            placeholder_visited.clear();
+            if !self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited) {
                 // No placeholder in target_type - check assignability directly
                 if !self.checker.is_assignable_to(arg_type, target_type) {
                     return CallResult::ArgumentTypeMismatch {
@@ -746,11 +757,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 {
                     let inst_constraint =
                         instantiate_type(self.interner, constraint, &substitution);
-                    let mut constraint_visited = FxHashSet::default();
+                    placeholder_visited.clear();
                     if !self.type_contains_placeholder(
                         inst_constraint,
                         &var_map,
-                        &mut constraint_visited,
+                        &mut placeholder_visited,
                     ) {
                         // Constraint is fully concrete - safe to check now
                         if !self.checker.is_assignable_to(arg_type, inst_constraint) {
@@ -813,9 +824,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
 
             // Check if target_type contains placeholders BEFORE any re-instantiation
-            let mut visited = FxHashSet::default();
+            placeholder_visited.clear();
             let target_has_placeholders =
-                self.type_contains_placeholder(target_type, &var_map, &mut visited);
+                self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited);
 
             if !target_has_placeholders {
                 // No placeholders in target - direct assignability check
@@ -991,13 +1002,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.constraint_pairs.borrow_mut().clear();
         *self.constraint_recursion_depth.borrow_mut() = 0;
 
+        // Reusable visited set for type_contains_placeholder checks (avoids per-iteration alloc)
+        let mut placeholder_visited = FxHashSet::default();
+        // Reusable buffer for placeholder names (avoids per-iteration String allocation)
+        let mut placeholder_buf = String::with_capacity(24);
+
         // 1. Create inference variables and placeholders for each type parameter
         for tp in &func.type_params {
             let var = infer_ctx.fresh_var();
             type_param_vars.push(var);
 
-            let placeholder_name = format!("__infer_{}", var.0);
-            let placeholder_atom = self.interner.intern_string(&placeholder_name);
+            use std::fmt::Write;
+            placeholder_buf.clear();
+            write!(placeholder_buf, "__infer_{}", var.0).unwrap();
+            let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
             let placeholder_key = TypeKey::TypeParameter(TypeParamInfo {
                 is_const: tp.is_const,
@@ -1018,8 +1036,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Add type parameter constraint as upper bound (if concrete)
             if let Some(constraint) = tp.constraint {
                 let inst_constraint = instantiate_type(self.interner, constraint, &substitution);
-                let mut visited = FxHashSet::default();
-                if !self.type_contains_placeholder(inst_constraint, &var_map, &mut visited) {
+                placeholder_visited.clear();
+                if !self.type_contains_placeholder(
+                    inst_constraint,
+                    &var_map,
+                    &mut placeholder_visited,
+                ) {
                     infer_ctx.add_upper_bound(var, inst_constraint);
                 }
             }
@@ -1931,9 +1953,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                 let mut placeholder_member = None;
                 let mut placeholder_count = 0;
+                let mut member_visited = FxHashSet::default();
                 for &member in t_members.iter() {
-                    let mut visited = FxHashSet::default();
-                    if self.type_contains_placeholder(member, var_map, &mut visited) {
+                    member_visited.clear();
+                    if self.type_contains_placeholder(member, var_map, &mut member_visited) {
                         placeholder_count += 1;
                         if placeholder_count == 1 {
                             placeholder_member = Some(member);
@@ -2085,12 +2108,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     let mut source_subst = TypeSubstitution::new();
                     let mut source_var_map: FxHashMap<TypeId, crate::solver::infer::InferenceVar> =
                         FxHashMap::default();
+                    let mut src_placeholder_visited = FxHashSet::default();
+                    let mut src_placeholder_buf = String::with_capacity(28);
 
                     // Create fresh inference variables for the source function's type parameters
                     for tp in &s_fn.type_params {
                         let var = ctx.fresh_var();
-                        let placeholder_name = format!("__infer_src_{}", var.0);
-                        let placeholder_atom = self.interner.intern_string(&placeholder_name);
+                        use std::fmt::Write;
+                        src_placeholder_buf.clear();
+                        write!(src_placeholder_buf, "__infer_src_{}", var.0).unwrap();
+                        let placeholder_atom = self.interner.intern_string(&src_placeholder_buf);
                         ctx.register_type_param(placeholder_atom, var, tp.is_const);
 
                         let placeholder_key = TypeKey::TypeParameter(TypeParamInfo {
@@ -2107,7 +2134,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         if let Some(constraint) = tp.constraint {
                             let inst_constraint =
                                 instantiate_type(self.interner, constraint, &source_subst);
-                            let mut visited = FxHashSet::default();
+                            src_placeholder_visited.clear();
                             // Create combined var_map for type_contains_placeholder check
                             let combined_for_check: FxHashMap<_, _> = var_map
                                 .iter()
@@ -2117,7 +2144,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             if !self.type_contains_placeholder(
                                 inst_constraint,
                                 &combined_for_check,
-                                &mut visited,
+                                &mut src_placeholder_visited,
                             ) {
                                 ctx.add_upper_bound(var, inst_constraint);
                             }
