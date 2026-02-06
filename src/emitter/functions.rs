@@ -85,14 +85,12 @@ impl<'a> Printer<'a> {
         let body_node = self.arena.get(func.body);
         let is_simple_body = if let Some(body) = body_node {
             if let Some(block) = self.arena.get_block(body) {
-                // Single return statement = simple body
                 let stmt_count = block.statements.nodes.len();
-                let is_simple = if stmt_count == 1 {
+                if stmt_count == 1 {
                     self.is_simple_return_statement(block.statements.nodes[0])
                 } else {
                     false
-                };
-                is_simple
+                }
             } else {
                 false
             }
@@ -107,7 +105,9 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Check if a statement is a simple return statement (for single-line emission)
+    /// Check if a statement is a simple return statement (for single-line emission).
+    /// A return is "simple" if it has an expression AND the expression doesn't
+    /// contain multi-line constructs (like object literals with multiple properties).
     pub(super) fn is_simple_return_statement(&self, stmt_idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(stmt_idx) else {
             return false;
@@ -116,9 +116,29 @@ impl<'a> Printer<'a> {
         if node.kind != syntax_kind_ext::RETURN_STATEMENT {
             return false;
         }
-        // Consider it simple if it has an expression (not just "return;")
         if let Some(ret) = self.arena.get_return_statement(node) {
-            return !ret.expression.is_none();
+            if ret.expression.is_none() {
+                return false;
+            }
+            // Check if the return expression is multi-line in the source
+            if let Some(expr_node) = self.arena.get(ret.expression) {
+                // Object literals with multiple properties are multi-line
+                if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                    if let Some(obj) = self.arena.get_literal_expr(expr_node) {
+                        if obj.elements.nodes.len() > 1 && !self.is_single_line(expr_node) {
+                            return false;
+                        }
+                    }
+                }
+                // Also check source text - if the expression spans multiple lines, not simple
+                if !self.is_single_line(expr_node) {
+                    // For non-object expressions that span multiple lines
+                    if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
         false
     }
