@@ -69,18 +69,36 @@ pub fn compile_test(
 
     // Create tsconfig.json with test options
     let tsconfig_path = dir_path.join("tsconfig.json");
+    let has_js_files = filenames.iter().any(|(name, _)| {
+        let lower = name.to_lowercase();
+        lower.ends_with(".js")
+            || lower.ends_with(".jsx")
+            || lower.ends_with(".mjs")
+            || lower.ends_with(".cjs")
+    });
     let allow_js = options
         .get("allowJs")
         .or_else(|| options.get("allowjs"))
         .map(|v| v == "true")
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || has_js_files;
     let include = if allow_js {
-        serde_json::json!(["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"])
+        serde_json::json!([
+            "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
+        ])
     } else {
         serde_json::json!(["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"])
     };
+    let mut compiler_options = convert_options_to_tsconfig(options);
+    // If we inferred allowJs from file extensions, ensure it's in compilerOptions
+    if allow_js {
+        if let serde_json::Value::Object(ref mut map) = compiler_options {
+            map.entry("allowJs")
+                .or_insert(serde_json::Value::Bool(true));
+        }
+    }
     let tsconfig_content = serde_json::json!({
-        "compilerOptions": convert_options_to_tsconfig(options),
+        "compilerOptions": compiler_options,
         "include": include,
         "exclude": ["node_modules"]
     });
