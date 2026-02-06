@@ -1,77 +1,61 @@
-# Session tsz-3: Object Literal Freshness - Investigation In Progress
+# Session tsz-3: Object Literal Freshness - Architectural Solution
 
 **Started**: 2026-02-06
-**Status**: 🔍 INVESTIGATING (Complex bug, requires deeper analysis)
+**Status**: 🔄 NEW APPROACH - Lawyer/Judge Pattern
 **Predecessor**: Index Access Type Evaluation (Already Implemented)
 
-## Bug Summary
+## Problem Summary
 
-Object literal freshness widening is not working correctly. Variables declared with object literals should have their freshness stripped, but subsequent uses still trigger excess property checks.
+Object literal freshness widening is not working correctly. Initial investigation revealed a cache poisoning issue where `widen_freshness` creates a new TypeId, but `node_types` cache returns the original fresh TypeId.
 
-### Expected Behavior
-```typescript
-let x = { a: 1, b: 2 };  // Freshness stripped
-let y: { a: number } = x;  // Should PASS (x is non-fresh)
-```
+**Previous attempt**: Fixing cache mutations in `check_variable_declaration` - Failed due to complex node caching behavior.
 
-### Actual Behavior
-Error: "Object literal may only specify known properties, and 'b' does not exist"
+## New Approach: Lawyer/Judge Pattern
 
-## Investigation Results
+Gemini suggested moving freshness handling to the **Lawyer** layer (compatibility checker) rather than fighting the cache in the Checker.
 
-### Root Cause Identified
+### Key Insight
 
-Debug output revealed:
-```
-DEBUG: var decl final_type before widen: TypeId(134)  (FRESH)
-DEBUG: var decl final_type after widen: TypeId(114)  (NON-FRESH)
-DEBUG: init_type for assignment check: TypeId(134), is_fresh: true  <-- BUG!
-```
+From `docs/architecture/NORTH_STAR.md`:
+- **Judge** (`src/solver/subtype.rs`): Pure structural subtyping, ignores freshness
+- **Lawyer** (`src/solver/lawyer.rs` or `src/solver/compat.rs`): Handles TypeScript-specific quirks like freshness
 
-The widened type `TypeId(114)` is correctly stored in `symbol_types`, but `get_type_of_node` returns the original fresh type `TypeId(134)`.
+### Architectural Solution
 
-### Cache Poisoning Issue
+1. **Keep FRESH_LITERAL flag** on types in `node_types` cache
+2. **Don't widen** during variable declaration
+3. **Let the Lawyer decide** when freshness matters during assignability checks
 
-The problem is in the `node_types` cache:
-1. When processing `let x = { a: 1, b: 2 }`, the object literal is computed and cached with FRESH type
-2. `widen_freshness` creates a new TypeId with NON-FRESH type
-3. The NON-FRESH type is stored in `symbol_types`
-4. But `node_types` cache already has the FRESH type
-5. When accessing `x` later, the cached FRESH type is returned
+### Implementation Plan
 
-### Attempted Fix
+1. **In `src/solver/compat.rs`** (The Lawyer):
+   - Modify `check_assignability` or excess property check logic
+   - When checking if a FRESH type is assignable, perform excess property check
+   - When checking if a NON-FRESH type is assignable, skip excess property check
 
-Updated `check_variable_declaration` in `src/checker/state_checking.rs` to:
-- Set `node_types[decl_idx]` to widened type
-- Set `node_types[var_decl.name]` to widened type
-- Remove `node_types[initializer]` to invalidate stale cache
+2. **In `src/checker/`**:
+   - Call Lawyer's `is_assignable_to` instead of raw `is_subtype_of`
+   - Pass context flags (direct vs. indirect assignment)
 
-**Result**: Tests still failing. The issue is more complex - there are multiple nodes involved (declaration node, name node, identifier expression nodes) and they may not all be updated correctly.
-
-## Files Examined
-
-- `src/solver/freshness.rs` - `widen_freshness` function
-- `src/checker/state_checking.rs` - `check_variable_declaration`
-- `src/checker/state.rs` - `get_type_of_node`
-- `src/checker/state_type_analysis.rs` - `get_type_of_symbol`
-- `src/checker/type_computation_complex.rs` - `get_type_of_identifier`
-- `src/checker/tests/freshness_stripping_tests.rs` - Test cases
-
-## Failing Tests
-
-All 6 freshness stripping tests fail:
-- `test_fresh_variable_can_be_reassigned_with_non_fresh_source`
-- `test_freshness_preserved_for_const_with_no_type_annotation`
-- `test_freshness_stripped_allows_passing_to_stricter_type`
-- `test_freshness_stripped_in_function_argument`
-- `test_freshness_stripped_in_let_declaration`
-- `test_freshness_stripped_variable_can_be_used_as_source`
+3. **Widening logic**:
+   - Should the Lawyer handle widening?
+   - Or should the Checker request a widened type from the Solver?
 
 ## Next Steps
 
-This bug requires more investigation to understand the exact node caching behavior. The fix may require:
-1. Understanding all the different node types involved (declaration, name, identifier expression)
-2. Ensuring `get_type_of_symbol` is always called for identifier expressions
-3. Making sure the widened type propagates correctly through all caches
+Ask Gemini the Two-Question Rule before implementing:
+1. **Question 1** (Pre-implementation): Validate the Lawyer approach, get specific file/functions to modify
+2. **Question 2** (Post-implementation): Review the implementation for correctness
 
-This is a good candidate for Pro-model Gemini consultation due to the complexity.
+## Files to Investigate
+
+- `src/solver/compat.rs` - Main Lawyer compatibility layer (has `find_excess_property`)
+- `src/solver/subtype.rs` - Judge (pure subtyping)
+- `src/checker/assignability_checker.rs` - Checker's assignability calls
+- `docs/architecture/NORTH_STAR.md` - Section 3.3 on Judge vs Lawyer
+
+## Test Files
+
+- `tests/conformance/expressions/objectLiterals/excessPropertyChecking.ts`
+- `tests/conformance/types/objectLiterals/freshness/`
+- `src/checker/tests/freshness_stripping_tests.rs` (6 failing tests)
