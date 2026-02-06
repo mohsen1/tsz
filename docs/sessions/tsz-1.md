@@ -12,13 +12,13 @@
 
 ### Redefined Priorities (per Gemini consultation)
 
-#### Priority 1: Task #47 - Template Literal & String Intrinsic Canonicalization ⏳ IMMEDIATE
-**Status**: ⏳ PENDING
+#### Priority 1: Task #47 - Template Literal & String Intrinsic Canonicalization ✅ COMPLETE
+**Status**: ✅ COMPLETE (commit: be9cc3f07)
 **File**: `src/solver/canonicalize.rs`
 **Problem**: `Uppercase<T>` and `Uppercase<U>` should be identical if `T` and `U` are identical. Template literals need alpha-equivalence.
 **Action**:
-1. Implement `TypeKey::TemplateLiteral(id)`: Iterate spans, canonicalize `TemplateSpan::Type(id)`
-2. Implement `TypeKey::StringIntrinsic { kind, type_arg }`: Canonicalize `type_arg`
+1. ✅ Implemented `TypeKey::TemplateLiteral(id)`: Iterate spans, canonicalize `TemplateSpan::Type(id)`
+2. ✅ Implemented `TypeKey::StringIntrinsic { kind, type_arg }`: Canonicalize `type_arg`
 
 #### Priority 2: Task #48 - SubtypeChecker Visitor Pattern Refactor (North Star Rule 2)
 **Status**: ⏳ PENDING
