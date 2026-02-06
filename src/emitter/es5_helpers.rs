@@ -15,6 +15,14 @@ enum ArraySegment<'a> {
     Spread(NodeIndex),
 }
 
+/// Segment of an object literal for ES5 spread transformation
+enum ObjectSegment<'a> {
+    /// Non-spread elements: regular and computed properties
+    Elements(&'a [NodeIndex]),
+    /// Spread element: ...obj
+    Spread(NodeIndex),
+}
+
 impl<'a> Printer<'a> {
     /// Emit an array literal with ES5 spread transformation.
     /// Uses TypeScript's __spreadArray helper for exact tsc matching.
@@ -280,29 +288,45 @@ impl<'a> Printer<'a> {
         false
     }
 
-    /// Emit ES5-compatible object literal with computed properties
-    /// Pattern: { [k]: v } → (_a = {}, _a[k] = v, _a)
-    /// Pattern: { a: 1, [k]: v, b: 2 } → (_a = { a: 1 }, _a[k] = v, _a.b = 2, _a)
+    /// Emit ES5-compatible object literal with computed properties and spread
+    /// Uses TypeScript's __assign helper for exact tsc matching.
+    ///
+    /// Spread patterns:
+    /// - { ...a } → __assign({}, a)
+    /// - { a: 1, ...b } → __assign({ a: 1 }, b)
+    /// - { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })
+    /// - { a: 1, ...b, c: 2 } → __assign(__assign({ a: 1 }, b), { c: 2 })
+    ///
+    /// Computed properties (without spread):
+    /// - { [k]: v } → (_a = {}, _a[k] = v, _a)
+    /// - { a: 1, [k]: v } → (_a = { a: 1 }, _a[k] = v, _a)
+    ///
+    /// Mixed computed and spread:
+    /// - { [k]: v, ...a } → __assign((_a = {}, _a[k] = v, _a), a)
     pub(super) fn emit_object_literal_es5(&mut self, elements: &[NodeIndex]) {
         if elements.is_empty() {
             self.write("{}");
             return;
         }
 
-        // Find the index of the first computed property
+        // Check if we have any spread elements
+        let has_spread = elements.iter().any(|&idx| self.is_spread_element(idx));
+
+        if !has_spread {
+            // No spread - use the old computed property logic
+            self.emit_object_literal_without_spread_es5(elements);
+            return;
+        }
+
+        // Has spread - use __assign pattern
+        self.emit_object_literal_with_spread_es5(elements);
+    }
+
+    /// Emit object literal without spread (computed properties only)
+    fn emit_object_literal_without_spread_es5(&mut self, elements: &[NodeIndex]) {
         let first_computed_idx = elements
             .iter()
-            .position(|&idx| {
-                self.is_computed_property_member(idx) || {
-                    self.arena
-                        .get(idx)
-                        .map(|n| {
-                            n.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
-                                || n.kind == syntax_kind_ext::SPREAD_ELEMENT
-                        })
-                        .unwrap_or(false)
-                }
-            })
+            .position(|&idx| self.is_computed_property_member(idx))
             .unwrap_or(elements.len());
 
         if first_computed_idx == elements.len() {
@@ -335,6 +359,227 @@ impl<'a> Printer<'a> {
         self.write(", ");
         self.write(&temp_var);
         self.write(")");
+    }
+
+    /// Emit object literal with spread using __assign pattern
+    fn emit_object_literal_with_spread_es5(&mut self, elements: &[NodeIndex]) {
+        // Split into segments
+        let mut segments: Vec<ObjectSegment> = Vec::new();
+        let mut current_start = 0;
+
+        for (i, &elem_idx) in elements.iter().enumerate() {
+            if self.is_spread_element(elem_idx) {
+                // Add non-spread segment before this spread
+                if current_start < i {
+                    segments.push(ObjectSegment::Elements(&elements[current_start..i]));
+                }
+                // Add the spread element
+                segments.push(ObjectSegment::Spread(elem_idx));
+                current_start = i + 1;
+            }
+        }
+
+        // Add remaining elements after last spread
+        if current_start < elements.len() {
+            segments.push(ObjectSegment::Elements(&elements[current_start..]));
+        }
+
+        // Emit using __assign for exact tsc matching
+        match segments.as_slice() {
+            [] => {
+                // Should not happen due to empty check above
+                self.write("{}");
+            }
+            [ObjectSegment::Elements(elems)] => {
+                // No spreads - emit without __assign
+                // But check if we have computed properties
+                let has_computed = elems
+                    .iter()
+                    .any(|&idx| self.is_computed_property_member(idx));
+                if has_computed {
+                    self.emit_object_literal_without_spread_es5(elems);
+                } else {
+                    self.emit_object_literal_entries_es5(elems);
+                }
+            }
+            [ObjectSegment::Spread(spread_idx)] => {
+                // Only a spread element: { ...a } → __assign({}, a)
+                self.write("__assign({}, ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(")");
+            }
+            [
+                ObjectSegment::Elements(elems),
+                ObjectSegment::Spread(spread_idx),
+            ] => {
+                // Elements then spread: { a: 1, ...b } → __assign({ a: 1 }, b)
+                let has_computed = elems
+                    .iter()
+                    .any(|&idx| self.is_computed_property_member(idx));
+                if has_computed {
+                    // Need temp var for computed properties
+                    let temp_var = self.ctx.destructuring_state.next_temp_var();
+                    self.write("__assign((");
+                    self.write(&temp_var);
+                    self.write(" = ");
+                    self.emit_object_literal_entries_es5(elems);
+                    self.write(", ");
+                    self.write(&temp_var);
+                    self.write("), ");
+                } else {
+                    self.write("__assign(");
+                    self.emit_object_literal_entries_es5(elems);
+                    self.write(", ");
+                }
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                if has_computed {
+                    self.write(")");
+                }
+                self.write(")");
+            }
+            [
+                ObjectSegment::Spread(spread_idx),
+                ObjectSegment::Elements(elems),
+            ] => {
+                // Spread then elements: { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })
+                self.write("__assign(__assign({}, ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write("), ");
+                self.emit_object_literal_entries_es5(elems);
+                self.write(")");
+            }
+            [first, rest @ ..] => {
+                // Complex pattern: use Prefix-Wrap strategy for proper nested __assign
+                // Example: { a: 1, ...b, c: 2, ...d }
+                // Result: __assign(__assign(__assign({ a: 1 }, b), { c: 2 }), d)
+
+                let total_segments = 1 + rest.len();
+                let first_is_spread = matches!(first, ObjectSegment::Spread(_));
+
+                // 1. Emit the necessary number of __assign( calls
+                let num_assigns = if first_is_spread {
+                    total_segments
+                } else {
+                    total_segments - 1
+                };
+
+                for _ in 0..num_assigns {
+                    self.write("__assign(");
+                }
+
+                // 2. Handle the first segment
+                match first {
+                    ObjectSegment::Elements(elems) => {
+                        let has_computed = elems
+                            .iter()
+                            .any(|&idx| self.is_computed_property_member(idx));
+                        if has_computed {
+                            // Use temp var for computed properties
+                            let temp_var = self.ctx.destructuring_state.next_temp_var();
+                            self.write("(");
+                            self.write(&temp_var);
+                            self.write(" = ");
+                            self.emit_object_literal_entries_es5(elems);
+                            for elem in elems.iter() {
+                                if self.is_computed_property_member(*elem) {
+                                    self.write(", ");
+                                    self.emit_property_assignment_es5(*elem, &temp_var);
+                                }
+                            }
+                            self.write(", ");
+                            self.write(&temp_var);
+                            self.write(")");
+                        } else {
+                            self.emit_object_literal_entries_es5(elems);
+                        }
+                    }
+                    ObjectSegment::Spread(spread_idx) => {
+                        self.write("{}, ");
+                        if let Some(spread_node) = self.arena.get(*spread_idx) {
+                            self.emit_spread_expression(spread_node);
+                        }
+                        self.write(")");
+                    }
+                }
+
+                // 3. Handle subsequent segments
+                for segment in rest {
+                    self.write(", ");
+                    match segment {
+                        ObjectSegment::Elements(elems) => {
+                            let has_computed = elems
+                                .iter()
+                                .any(|&idx| self.is_computed_property_member(idx));
+                            if has_computed {
+                                let temp_var = self.ctx.destructuring_state.next_temp_var();
+                                self.write("(");
+                                self.write(&temp_var);
+                                self.write(" = ");
+                                self.emit_object_literal_entries_es5(elems);
+                                for elem in elems.iter() {
+                                    if self.is_computed_property_member(*elem) {
+                                        self.write(", ");
+                                        self.emit_property_assignment_es5(*elem, &temp_var);
+                                    }
+                                }
+                                self.write(", ");
+                                self.write(&temp_var);
+                                self.write(")");
+                            } else if !elems.is_empty() {
+                                self.emit_object_literal_entries_es5(elems);
+                            } else {
+                                self.write("{}");
+                            }
+                        }
+                        ObjectSegment::Spread(spread_idx) => {
+                            if let Some(spread_node) = self.arena.get(*spread_idx) {
+                                self.emit_spread_expression(spread_node);
+                            }
+                        }
+                    }
+                    self.write(")");
+                }
+            }
+        }
+    }
+
+    /// Emit an object segment (elements or spread)
+    fn emit_object_segment(&mut self, segment: &ObjectSegment) {
+        match segment {
+            ObjectSegment::Elements(elems) => {
+                let has_computed = elems
+                    .iter()
+                    .any(|&idx| self.is_computed_property_member(idx));
+                if has_computed {
+                    let temp_var = self.ctx.destructuring_state.next_temp_var();
+                    self.write("(");
+                    self.write(&temp_var);
+                    self.write(" = ");
+                    self.emit_object_literal_entries_es5(elems);
+                    for elem in elems.iter() {
+                        if self.is_computed_property_member(*elem) {
+                            self.write(", ");
+                            self.emit_property_assignment_es5(*elem, &temp_var);
+                        }
+                    }
+                    self.write(", ");
+                    self.write(&temp_var);
+                    self.write(")");
+                } else {
+                    self.emit_object_literal_entries_es5(elems);
+                }
+            }
+            ObjectSegment::Spread(_) => {
+                // Spread handled specially in emit_object_literal_with_spread_es5
+                self.write("{}");
+            }
+        }
     }
 
     /// Emit a property assignment in ES5 computed property transform
