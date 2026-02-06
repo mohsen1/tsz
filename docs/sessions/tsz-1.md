@@ -400,3 +400,34 @@ When a task is marked "ALREADY DONE", it means:
 - Focus on tsz-2 to achieve 100% solver test pass rate
 - Then return to tsz-1 for final verification of O(1) equality goals
 
+---
+
+## Session Update (2026-02-06 - Part 2)
+
+**Completed Work:**
+- ✅ Task #48 (Primitive-Object Intersection Soundness) - COMPLETE (commit: 06405e78c)
+- ✅ Task #49 (Global Canonical Mapping) - Already implemented
+- ✅ Task #50 (Variance for Lazy Types) - Already implemented
+- ⏳ Task A (RelationCacheKey Audit) - PARTIALLY COMPLETE
+
+**Task A: RelationCacheKey Audit Status:**
+- ✅ Expanded `flags` from `u8` to `u16` (commit: 0b75100f1)
+- ✅ Added missing flags to `SubtypeChecker::make_cache_key`:
+  - bit 5: allow_void_return
+  - bit 6: allow_bivariant_rest
+  - bit 7: allow_bivariant_param_count
+- ✅ Updated `assignability_checker.rs` to use `u16` flags
+- ⏳ **REMAINING**: Pass actual flags to `QueryDatabase` trait methods
+  - Current issue: `QueryCache::is_subtype_of` and `is_assignable_to` use hardcoded `0, 0` flags
+  - This requires trait signature change to accept `flags: u16` parameter
+  - Marked with TODO in src/solver/db.rs
+
+**Test Results:**
+- All 3525 solver tests passing
+- 6 pre-existing checker test failures (freshness_stripping_tests) - unrelated to this work
+
+**Remaining Tasks for tsz-1:**
+1. **Task B**: Audit `evaluate.rs` for Canonicalization
+2. **Task C**: Visitor Pattern for Evaluation
+3. **Task A (continued)**: Fix `QueryDatabase` trait to accept flags
+
