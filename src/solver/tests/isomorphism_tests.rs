@@ -242,3 +242,28 @@ fn test_nested_object_identity() {
         &interner, &env, type1, type2
     ));
 }
+
+#[test]
+fn test_dnf_isomorphism() {
+    // Test that DNF normalization produces structurally identical results
+    // (A | B) & C should be identical to (A & C) | (B & C) after DNF
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+
+    // Create types
+    let string = TypeId::STRING;
+    let number = TypeId::NUMBER;
+
+    // Method 1: (string | number) & string → should simplify to string
+    let union_sn = interner.union(vec![string, number]);
+    let method1 = interner.intersection(vec![union_sn, string]);
+
+    // Method 2: Create string directly
+    let method2 = string;
+
+    // After DNF: (string & string) | (number & string) → string | never → string
+    // Both should be structurally identical to string
+    assert!(are_types_structurally_identical(
+        &interner, &env, method1, method2
+    ));
+}
