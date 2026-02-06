@@ -386,27 +386,26 @@ impl<'a> CheckerState<'a> {
             }
             crate::solver::type_queries::NewExpressionTypeKind::Union(members) => {
                 // For union types, check if all members are constructors
-                // and return the union of their instance types
-                let mut instance_types: Vec<TypeId> = Vec::new();
-                let mut all_constructable = true;
+                // and return the union of their callable types (with construct signatures converted to call signatures)
+                let mut callable_types: Vec<TypeId> = Vec::new();
 
                 for member in members {
                     // Resolve Refs (type alias references) to their actual types
                     let resolved_member = self.resolve_type_for_property_access(member);
                     // Then evaluate any Application types
                     let evaluated_member = self.evaluate_application_type(resolved_member);
-                    let construct_sig_return =
-                        self.get_construct_signature_return_type(evaluated_member);
-                    if let Some(return_type) = construct_sig_return {
-                        instance_types.push(return_type);
+                    // Get the callable type (construct signatures converted to call signatures)
+                    let construct_type = self.get_construct_type_from_type(evaluated_member);
+                    if let Some(callable) = construct_type {
+                        callable_types.push(callable);
                     } else {
-                        all_constructable = false;
+                        // If any member isn't constructible, the union isn't constructible
                         break;
                     }
                 }
 
-                if all_constructable && !instance_types.is_empty() {
-                    Some(self.ctx.types.union(instance_types))
+                if !callable_types.is_empty() {
+                    Some(self.ctx.types.union(callable_types))
                 } else {
                     None
                 }
@@ -435,6 +434,13 @@ impl<'a> CheckerState<'a> {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 if shape.call_signatures.len() > 1 {
                     Some(shape.call_signatures.clone())
+                } else {
+                    None
+                }
+            }
+            crate::solver::type_queries::CallSignaturesKind::MultipleSignatures(signatures) => {
+                if signatures.len() > 1 {
+                    Some(signatures)
                 } else {
                     None
                 }
@@ -1386,6 +1392,13 @@ impl<'a> CheckerState<'a> {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 if shape.call_signatures.len() > 1 {
                     Some(shape.call_signatures.clone())
+                } else {
+                    None
+                }
+            }
+            crate::solver::type_queries::CallSignaturesKind::MultipleSignatures(signatures) => {
+                if signatures.len() > 1 {
+                    Some(signatures)
                 } else {
                     None
                 }

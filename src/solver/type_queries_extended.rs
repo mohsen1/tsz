@@ -662,6 +662,8 @@ pub fn classify_for_class_decl(db: &dyn TypeDatabase, type_id: TypeId) -> ClassD
 pub enum CallSignaturesKind {
     /// Callable type with signatures
     Callable(crate::solver::types::CallableShapeId),
+    /// Multiple call signatures (e.g., from union of callables)
+    MultipleSignatures(Vec<crate::solver::CallSignature>),
     /// Other type - no call signatures
     NoSignatures,
 }
@@ -674,6 +676,28 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
 
     match key {
         TypeKey::Callable(shape_id) => CallSignaturesKind::Callable(shape_id),
+        TypeKey::Union(list_id) => {
+            // For unions, collect call signatures from all callable members
+            let members = db.type_list(list_id);
+            let mut call_signatures = Vec::new();
+
+            for &member in members.iter() {
+                match db.lookup(member) {
+                    Some(TypeKey::Callable(shape_id)) => {
+                        let shape = db.callable_shape(shape_id);
+                        // Extend with call signatures from this member
+                        call_signatures.extend(shape.call_signatures.iter().cloned());
+                    }
+                    _ => continue,
+                }
+            }
+
+            if call_signatures.is_empty() {
+                CallSignaturesKind::NoSignatures
+            } else {
+                CallSignaturesKind::MultipleSignatures(call_signatures)
+            }
+        }
         _ => CallSignaturesKind::NoSignatures,
     }
 }

@@ -34,11 +34,27 @@ The tsz-2 session successfully stabilized the Solver unit tests (3524 tests pass
 
 ### Conformance Baseline (2026-02-06)
 
+**500 tests**: 256/500 passed (51.2%)
+- Top errors: TS2339 (48 extra), TS2322 (41 missing, 22 extra), TS2307 (15 extra)
+- Time: 5.8s
+
 **100 tests**: 69/100 passed (69%)
 - Top errors: TS2322 (6 extra), TS2349 (3 extra), TS2307 (3 extra), TS2792 (2 missing)
-- Time: 1.4s
 
 **10 tests**: 10/10 passed (100%)
+
+### Bug Found: Union of Constructor Types (2026-02-06)
+
+**Test**: `abstractClassUnionInstantiation.ts`
+**Issue**: `new cls3()` where `cls3: typeof ConcreteA | typeof ConcreteB` incorrectly reports TS2349
+**Expected**: No error (both classes are concrete)
+**Actual**: "Type '{ new (): ConcreteA } | { new (): ConcreteB }' has no call signatures"
+
+**Root Cause**: When checking if a union type is constructible, the checker doesn't recognize that ALL members having `new` signatures makes the union constructible.
+
+**Files to Investigate**:
+- `src/checker/` - Expression evaluation for `new` expressions
+- How union type checking handles call/construct signatures
 
 ## Next Steps
 
