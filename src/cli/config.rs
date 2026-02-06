@@ -433,6 +433,11 @@ pub fn resolve_compiler_options(
     if let Some(allow_synthetic_default_imports) = options.allow_synthetic_default_imports {
         resolved.allow_synthetic_default_imports = allow_synthetic_default_imports;
         resolved.checker.allow_synthetic_default_imports = allow_synthetic_default_imports;
+    } else if !resolved.allow_synthetic_default_imports {
+        // TypeScript defaults allowSyntheticDefaultImports to true unconditionally.
+        // Only skip if it was already set by esModuleInterop above.
+        resolved.allow_synthetic_default_imports = true;
+        resolved.checker.allow_synthetic_default_imports = true;
     }
 
     if let Some(experimental_decorators) = options.experimental_decorators {

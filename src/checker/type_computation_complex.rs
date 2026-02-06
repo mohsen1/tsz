@@ -1143,6 +1143,9 @@ impl<'a> CheckerState<'a> {
                 // Only emit TS2348 for types that have construct signatures but zero call signatures
                 if self.is_constructor_type(callee_type) {
                     self.error_class_constructor_without_new_at(callee_type, call.expression);
+                } else if self.is_get_accessor_call(call.expression) {
+                    // TS6234: Calling a get accessor as a function
+                    self.error_get_accessor_not_callable_at(call.expression);
                 } else {
                     // For other non-callable types, emit the generic not-callable error
                     self.error_not_callable_at(callee_type, call.expression);
@@ -1286,6 +1289,20 @@ impl<'a> CheckerState<'a> {
             // First try the main binder (fast path for local symbols).
             let local_symbol = self.ctx.binder.get_symbol(sym_id);
             let flags = local_symbol.map(|s| s.flags).unwrap_or(0);
+
+            // TS2662: Bare identifier resolving to a static class member.
+            // Static members must be accessed via `ClassName.member`, not as
+            // bare identifiers.  The binder puts them in the class scope so
+            // they resolve, but the checker must reject unqualified access.
+            if (flags & crate::binder::symbol_flags::STATIC) != 0 {
+                if let Some(ref class_info) = self.ctx.enclosing_class.clone() {
+                    if self.is_static_member(&class_info.member_nodes, name) {
+                        self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
+                        return TypeId::ERROR;
+                    }
+                }
+            }
+
             let has_type = (flags & crate::binder::symbol_flags::TYPE) != 0;
             let has_value = (flags & crate::binder::symbol_flags::VALUE) != 0;
             let is_type_alias = (flags & crate::binder::symbol_flags::TYPE_ALIAS) != 0;

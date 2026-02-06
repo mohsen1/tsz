@@ -448,6 +448,8 @@ impl<'a> CheckerState<'a> {
             return MemberLookup::NotFound;
         };
 
+        let mut accessor_access: Option<MemberAccessLevel> = None;
+
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -514,10 +516,21 @@ impl<'a> CheckerState<'a> {
                         } else {
                             self.member_access_level_from_modifiers(&accessor.modifiers)
                         };
-                        return match access_level {
-                            Some(level) => MemberLookup::Restricted(level),
-                            None => MemberLookup::Public,
-                        };
+                        // Don't return immediately - a getter/setter pair may have
+                        // different visibility. Use the most permissive level (tsc
+                        // allows reads when getter is public even if setter is private).
+                        match access_level {
+                            None => return MemberLookup::Public,
+                            Some(level) => {
+                                accessor_access = Some(match accessor_access {
+                                    // First accessor found
+                                    None => level,
+                                    // Second accessor: use the more permissive level
+                                    Some(MemberAccessLevel::Private) => level,
+                                    Some(prev) => prev,
+                                });
+                            }
+                        }
                     }
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
@@ -553,6 +566,12 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => {}
             }
+        }
+
+        // If we found accessor(s) but didn't early-return Public, return
+        // the most permissive access level across getter/setter pair.
+        if let Some(level) = accessor_access {
+            return MemberLookup::Restricted(level);
         }
 
         MemberLookup::NotFound
@@ -1310,6 +1329,29 @@ impl<'a> CheckerState<'a> {
         if is_static && !prop.initializer.is_none() {
             if let Some(ref mut class_info) = self.ctx.enclosing_class {
                 class_info.in_static_property_initializer = true;
+            }
+        }
+
+        // TS18045: accessor modifier only allowed when targeting ES2015+
+        // Ambient contexts (declare class) are exempt.
+        if self.has_accessor_modifier(&prop.modifiers) {
+            use crate::checker::context::ScriptTarget;
+            let is_es5_or_lower = matches!(
+                self.ctx.compiler_options.target,
+                ScriptTarget::ES3 | ScriptTarget::ES5
+            );
+            let in_ambient = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .map(|c| c.is_declared)
+                .unwrap_or(false);
+            if is_es5_or_lower && !in_ambient {
+                self.error_at_node(
+                    member_idx,
+                    "Properties with the 'accessor' modifier are only available when targeting ECMAScript 2015 and higher.",
+                    diagnostic_codes::ACCESSOR_MODIFIER_ONLY_ES2015_PLUS,
+                );
             }
         }
 

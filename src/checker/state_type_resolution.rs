@@ -1117,10 +1117,32 @@ impl<'a> CheckerState<'a> {
 
         // Note: We use self.error() which already checks emitted_diagnostics for deduplication
         // The key is (start, code), so we won't emit duplicate errors at the same location
-        // Emit the TS2307 error
+        // Use TS2792 when module resolution is "classic" (system/amd/umd modules),
+        // otherwise TS2307.
         use crate::checker::types::diagnostics::{diagnostic_messages, format_message};
-        let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_specifier]);
-        self.error(start, length, message, diagnostic_codes::CANNOT_FIND_MODULE);
+        use crate::common::ModuleKind;
+
+        let use_2792 = matches!(
+            self.ctx.compiler_options.module,
+            ModuleKind::System | ModuleKind::AMD | ModuleKind::UMD
+        );
+
+        if use_2792 {
+            let message = format_message(
+                diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN,
+                &[module_specifier],
+            );
+            self.error(
+                start,
+                length,
+                message,
+                diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN,
+            );
+        } else {
+            let message =
+                format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_specifier]);
+            self.error(start, length, message, diagnostic_codes::CANNOT_FIND_MODULE);
+        }
     }
 
     /// Emit TS1192 error when a module has no default export.

@@ -479,6 +479,10 @@ pub struct CheckerContext<'a> {
     /// Contextual type for expression being checked.
     pub contextual_type: Option<TypeId>,
 
+    /// Whether we are currently evaluating the LHS of a destructuring assignment.
+    /// Used to suppress TS1117 (duplicate property) checks in object patterns.
+    pub in_destructuring_target: bool,
+
     /// Current depth of recursive type instantiation.
     pub instantiation_depth: RefCell<u32>,
 
@@ -732,6 +736,7 @@ impl<'a> CheckerContext<'a> {
             node_resolution_set: FxHashSet::default(),
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
+            in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: Cell::new(0),
@@ -833,6 +838,7 @@ impl<'a> CheckerContext<'a> {
             node_resolution_set: FxHashSet::default(),
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
+            in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: Cell::new(0),
@@ -937,6 +943,7 @@ impl<'a> CheckerContext<'a> {
             node_resolution_set: FxHashSet::default(),
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
+            in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: Cell::new(0),
@@ -1040,6 +1047,7 @@ impl<'a> CheckerContext<'a> {
             node_resolution_set: FxHashSet::default(),
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
+            in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: Cell::new(0),
@@ -1151,6 +1159,7 @@ impl<'a> CheckerContext<'a> {
             node_resolution_set: FxHashSet::default(),
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
+            in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: Cell::new(0),
