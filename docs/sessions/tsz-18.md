@@ -614,7 +614,21 @@ Need to trace where KeyOf type is lowered (in type alias lowering) to ensure Laz
 
 **Goal**: "Stop the Poisoning" - ensure lowering never passes ERROR into meta-type constructors if Lazy placeholder is available.
 
-**Committed**: `63af58402`
+### 2026-02-06: Circular Reference Lazy Handling (In Progress)
+
+**Changes Made** (commit: af19105e5):
+Modified circular reference check to return Lazy(DefId) for named types instead of ERROR.
+
+**Code Location**: state_type_analysis.rs:773-811
+- When User is in `symbol_resolution_set` and `keyof User` is requested
+- Old behavior: Return ERROR → creates KeyOf(Error)
+- New behavior: Return Lazy(User) → creates KeyOf(Lazy(User))
+
+**Status**: Fix implemented but test still fails.
+- KeyOf operand is still TypeId(1) (ERROR)
+- Need to trace where KeyOf type is created to find actual Error source
+
+**Committed**: `af19105e5`
 
 ## Dependencies
 
