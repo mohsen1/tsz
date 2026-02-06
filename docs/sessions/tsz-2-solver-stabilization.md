@@ -218,7 +218,30 @@ This ensures that objects with completely disjoint properties are not considered
 
 ---
 
-## Current Status (5 Failing Tests Remaining)
+## Current Status (8 Failing Tests Remaining)
+
+### Progress: Priority 1 - Object Index Signatures (PARTIAL)
+**Fixed**: 2 of 4 tests
+- ✅ `test_object_with_index_satisfies_named_property_string_index`
+- ✅ `test_object_with_index_satisfies_numeric_property_number_index`
+
+**Implementation**: Added soundness check in `src/solver/subtype_rules/objects.rs`:
+```rust
+pub(crate) fn check_missing_property_against_index_signatures(...) {
+    // Required properties cannot be satisfied by index signatures (soundness)
+    if !target_prop.optional {
+        return SubtypeResult::False;
+    }
+    ...
+}
+```
+
+**Rationale**: Verified with tsc that `{ [k: string]: number }` is NOT assignable to `{ a: number }` (TS2741). This is a soundness issue: index signatures admit `{}` but required properties don't.
+
+**Open Issues**:
+- Breaks 4 generic inference tests that expected index signatures to infer type parameters
+- May need to update those tests or implement special handling for inference context
+- Also causes 4 checker test failures (narrowing-related)
 
 ### Fixed: Generic Inference with Callback Functions (commit 28888e435)
 
