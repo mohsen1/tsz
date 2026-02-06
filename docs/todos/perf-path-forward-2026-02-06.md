@@ -50,6 +50,29 @@ Note: variance remains high on this machine; direction is consistently positive 
 - Keep using `--filter` for fast iteration.
 - For acceptance, run at least 2-3 consecutive filtered runs and use medians before deciding to keep/revert a perf patch.
 
+## Unproven Stash Candidates
+
+The stash `stash@{0}` (`temp-commit-isolation-2026-02-06`) contains additional WIP that was **not** validated with isolated benchmark evidence and was intentionally not committed as proven perf work.
+
+Candidate changes in that stash:
+- `src/checker/state_checking_members.rs`:
+  - adds memoization of class instance `this` type in constructor checking via `cached_instance_this_type`.
+- `src/checker/type_checking_queries.rs`:
+  - reuses cached instance `this` type in `class_member_this_type`.
+- `src/checker/class_checker.rs`:
+  - adds tracing counters/timing around `check_implements_clauses`.
+- `src/checker/class_type.rs`:
+  - adds tracing instrumentation on class type construction methods.
+
+How to inspect later:
+- `git stash show --name-status stash@{0}`
+- `git stash show -p stash@{0}`
+
+Recommendation for future session:
+- Apply one candidate at a time.
+- Re-run `./scripts/bench-vs-tsgo.sh --quick --filter '100 classes'`.
+- Keep only candidates that repeatedly improve median runtime (2-3 runs), then commit separately.
+
 ## Useful Commands
 
 - Targeted class benchmark:
