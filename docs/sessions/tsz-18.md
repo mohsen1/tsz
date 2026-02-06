@@ -596,8 +596,23 @@ The mapped type needs to be evaluated AFTER the source interface is fully resolv
 - Issue is earlier in lowering pipeline: `KeyOf(Error)` is created during lowering instead of `KeyOf(Lazy(User))`
 - The Lazy placeholder doesn't help if the KeyOf type is already created with Error operand
 
-**Next Steps**:
+**Next Steps** (2026-02-06 Gemini Recommendation):
 Need to trace where KeyOf type is lowered (in type alias lowering) to ensure Lazy(DefId) is preserved through the lowering process. The fix needs to be applied at type lowering time, not evaluation time.
+
+**Specific Direction**:
+1. Trace the "Error Leak" in Lowering - find where `KeyOf(Error)` is created
+   - Search for lowering of `SyntaxKind::TypeOperator` (handles `keyof`)
+   - Look for `interner.keyof(TypeId::ERROR)` being called
+2. Ensure `lower_type_node` uses the Lazy placeholder
+   - Check TypeReference arm in lowering
+   - Ensure it calls `get_type_of_symbol` which now returns Lazy
+3. Use tracing to find divergence:
+   ```bash
+   TSZ_LOG="wasm::solver::intern=trace,wasm::solver::lower=trace" cargo run -- test.ts
+   ```
+4. Update `extract_mapped_keys` to handle Lazy types when lowering is fixed
+
+**Goal**: "Stop the Poisoning" - ensure lowering never passes ERROR into meta-type constructors if Lazy placeholder is available.
 
 **Committed**: `63af58402`
 
