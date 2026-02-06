@@ -6,9 +6,9 @@
 
 ## Session Redefined (2025-02-05)
 
-**Strategic Position**: Having completed the **Structural Identity Milestone**, the Judge now possesses a "Canonical Engine" capable of recognizing isomorphic recursive types. The focus shifts to **Performance Optimization** through variance calculation and canonicalization integration.
+**Strategic Position**: Transitioning from **Performance Optimization** to **"Canonical Completeness"** milestone. The Judge now has robust canonicalization machinery (De Bruijn indices, partial intersection merging), but must ensure that EVERY path through the Solver produces canonical results and leverages O(1) equality.
 
-**Key Insight**: The "mechanics" of evaluation are often implemented, but the **structural soundness** and **performance optimization** integration is the Judge's remaining work.
+**Key Insight**: While TypeId equality is O(1) for identical types, we still perform full structural walks for non-identical types on every subtype check. Subtype memoization is the biggest remaining performance win.
 
 ### Coordination Map
 
@@ -147,6 +147,70 @@
 - `test_partial_object_and_callable_merging`: Verifies both objects and callables are merged
 
 **Files**: `src/solver/intern.rs`, `src/solver/tests/intern_tests.rs`
+
+---
+
+## New Milestone: Canonical Completeness
+
+**Goal**: Ensure that no operation in `src/solver/` can ever produce a `TypeId` that is structurally equivalent to another `TypeId` but has a different integer value. This is the prerequisite for the Checker (tsz-2) to rely entirely on `==` for type comparisons.
+
+### Priority 1: Task #44 - Subtype Result Caching 🚧 NEXT
+**Status**: 🚧 IN PROGRESS
+**Why**: Every time the Checker asks `is_subtype_of(A, B)` where `A != B`, we perform a full structural walk. Memoizing these results is the biggest remaining performance win.
+
+**Implementation Plan**:
+1. ✅ Review existing cycle_stack in `src/solver/subtype.rs` for GFP semantics
+2. 🚧 Implement `SubtypeCache` that stores `(TypeId, TypeId) -> SubtypeResult`
+3. ⏳ Add cache lookup before structural walk
+4. ⏳ Add cache storage after successful check
+5. ⏳ Handle cache invalidation for recursive types (coinduction)
+
+**Key Challenge**: The cache must work correctly with coinductive semantics for recursive types. The `cycle_stack` prevents infinite loops, but the cache must distinguish "currently checking" from "already checked".
+
+**Files**: `src/solver/subtype.rs`, `src/solver/types.rs`
+
+---
+
+### Priority 2: Task #45 - Index Access & Keyof Simplification
+**Status**: ⏳ PENDING
+**Why**: `evaluate_index_access` and `evaluate_keyof` must return the most simplified canonical form.
+
+**Examples**:
+- `keyof {a: 1, b: 2}` should return the same TypeId as `"a" | "b"`
+- `T[K]` where `T = {a: string, b: number}` and `K = "a"` should simplify to `string`
+
+**Files**: `src/solver/evaluate.rs`
+
+---
+
+### Priority 3: Task #46 - Instantiation Canonicalization
+**Status**: ⏳ PENDING
+**Why**: When a generic is substituted, the resulting TypeKey must be passed through canonical normalization.
+
+**Example**: `List<string>` becoming `string | string` after substitution should collapse to `string`.
+
+**Files**: `src/solver/instantiate.rs`
+
+---
+
+### Priority 4: Task #47 - Template Literal Canonicalization
+**Status**: ⏳ PENDING
+**Why**: Template literals need normalization for adjacent string constants and `any`/`never` absorption.
+
+**Files**: `src/solver/intern.rs`
+
+---
+
+## Critical Gaps Identified
+
+### Gap A: Double Interning
+Some evaluation functions call `interner.intern()` directly, potentially bypassing canonicalization. Need to audit all calls in `evaluate.rs` and `instantiate.rs`.
+
+### Gap B: Subtype Memoization vs. Coinduction
+No long-lived cache for successful subtype checks. Every check performs a full structural walk unless types are identical.
+
+### Gap C: Literal/Primitive Intersection Soundness
+Need to refine `reduce_intersection_subtypes` to handle primitive-object intersections based on TypeScript's "boxing" rules (e.g., `string & { length: number }` is valid, but `number & { length: number }` is not).
 
 ---
 
