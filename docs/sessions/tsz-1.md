@@ -120,6 +120,36 @@
 
 ---
 
+### Priority 4: Task #43 - Canonical Intersection Merging ✅ COMPLETE
+**Status**: ✅ COMPLETE
+**Why**: Partial merging enables O(1) equality for mixed intersections like `{a} & {b} & prim`.
+
+**Implementation Completed** (Commit: `520309b42`):
+1. ✅ **Partial Merging Strategy**: Replaced all-or-nothing merging with extraction-based approach
+2. ✅ **extract_and_merge_objects()**: Extracts objects from mixed intersections, merges them
+3. ✅ **extract_and_merge_callables()**: Extracts callables from mixed intersections, merges them
+4. ✅ **Canonical Rebuild**: `[sorted non-callables, merged object, merged callable]`
+5. ✅ **Critical Bug Fix**: Removed `narrow_literal_primitive_intersection` which was too aggressive
+6. ✅ **Gemini Pro Review**: Implementation reviewed and approved
+
+**Partial Merging Examples**:
+- `{ a: string } & { b: number } & boolean` → `{ a: string; b: number } & boolean`
+- `func1 & func2 & boolean` → `merged_callable(overloads: [func1, func2]) & boolean`
+- `{a} & {b} & func1 & func2` → `{ a; b } & merged_callable`
+
+**Key Insight**: Previously, merging only worked when ALL members were objects or ALL were callables. Now we extract and merge separately.
+
+**Bug Fixed**: The `narrow_literal_primitive_intersection` function was incorrectly reducing mixed intersections like `"a" & string & { x: 1 }` to just `"a"`, losing the object member. The `reduce_intersection_subtypes()` at the end already handles literal/primitive narrowing correctly via `is_subtype_shallow` checks.
+
+**Tests Added**:
+- `test_partial_object_merging_in_intersection`: Verifies object merging in mixed intersections
+- `test_partial_callable_merging_in_intersection`: Verifies callable merging in mixed intersections
+- `test_partial_object_and_callable_merging`: Verifies both objects and callables are merged
+
+**Files**: `src/solver/intern.rs`, `src/solver/tests/intern_tests.rs`
+
+---
+
 ## Guidance for the Judge
 
 ### The Judge's Responsibility
