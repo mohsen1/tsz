@@ -211,13 +211,46 @@ Found **6 confirmed bugs** where tsz rejects code that tsc accepts:
 
 **Session Status**: Good progress - broke the "already implemented" loop and found actionable bugs. Ready to fix them with more investigation or alternative debugging approach.
 
+### 2026-02-06: Architectural Issue Discovered
+
+**Root Cause Identified**: The mapped type bugs (#1-4) are caused by an architectural issue in the evaluation pipeline:
+
+**Problem Chain**:
+1. When `operations.rs` calls `self.interner.evaluate_mapped(mapped)`, it delegates through `BinderTypeDatabase` to `QueryCache`
+2. `QueryCache` calls the convenience function `evaluate_mapped(interner, mapped)` which creates a `TypeEvaluator::new(interner)` with `NoopResolver`
+3. `NoopResolver.resolve_lazy` returns `None`, so type aliases like `O1` in `keyof O1` don't get resolved
+4. This causes `evaluate_keyof` to return a deferred `KeyOf` instead of the actual union of literal keys
+5. The mapped type evaluation can't extract keys from the deferred `KeyOf`, so it returns the mapped type unevaluated
+
+**Architectural Fix Required** (per Gemini Pro):
+1. Add `?Sized` to `TypeResolver` bounds to allow trait objects
+2. Update `QueryDatabase` trait default implementations to use `TypeEvaluator::with_resolver(self.as_type_database(), self)` instead of convenience functions
+3. Remove delegation overrides in `BinderTypeDatabase` to use trait defaults
+4. Implement `TypeResolver for dyn TypeResolver` (already exists via `impl<T: TypeResolver + ?Sized> TypeResolver for &T`)
+
+**Why This Is Complex**:
+- Requires changing `TypeEvaluator<'a, R: TypeResolver>` to `TypeEvaluator<'a, R: TypeResolver + ?Sized>`
+- Requires updating all `impl` blocks across multiple files
+- Many structs depend on `TypeResolver` bound (e.g., `SubtypeChecker`, `Canonicalizer`, etc.)
+
+**Alternative Simpler Fix**:
+- Override `evaluate_mapped` and `evaluate_keyof` in `BinderTypeDatabase` to create `TypeEvaluator` with proper resolver from `type_env`
+- This avoids changing the entire architecture but requires duplicating some code
+
+**Status**: In progress - architectural fix blocked by complexity. Need to either:
+1. Complete the `?Sized` migration (complex, affects many files)
+2. Implement alternative simpler fix (override methods in `BinderTypeDatabase`)
+3. Focus on template literal bugs #5-6 instead (separate area)
+
 ## Next Steps
 
-1. Create comprehensive test suite for Indexed Access Types
-2. Compare tsz vs tsc results
-3. Identify and categorize bugs
-4. Fix bugs systematically
-5. Repeat for Mapped Types and Template Literals
+1. **Decide on approach**: Complete architectural fix vs simpler workaround vs pivot to template literal bugs
+2. If continuing with keyof fix: Implement chosen approach
+3. Otherwise: Move to template literal bugs #5-6
+4. Create comprehensive test suite for Indexed Access Types
+5. Compare tsz vs tsc results
+6. Identify and categorize bugs
+7. Fix bugs systematically
 
 ## Dependencies
 
