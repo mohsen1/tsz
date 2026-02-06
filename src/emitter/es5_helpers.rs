@@ -446,38 +446,59 @@ impl<'a> Printer<'a> {
         _node: &Node,
         func: &crate::parser::node::FunctionData,
         captures_this: bool,
+        captures_arguments: bool,
     ) {
-        if captures_this {
-            // Wrap in (function (_this) { ... }) to capture this
-            // The LoweringPass now marks individual 'this' references with SubstituteThis directive,
-            // so we don't need to track this_capture_depth during emission
-            self.write("(function (_this) { return ");
+        // Determine capture wrapper: (function (_this, _arguments) { ... })
+        let captures_any = captures_this || captures_arguments;
+        if captures_any {
+            self.write("(function (");
+            if captures_this {
+                self.write("_this");
+            }
+            if captures_this && captures_arguments {
+                self.write(", ");
+            }
+            if captures_arguments {
+                self.write("_arguments");
+            }
+            self.write(") { return ");
         }
 
         if func.is_async {
             let this_expr = if captures_this { "_this" } else { "this" };
             self.emit_async_function_es5(func, "", this_expr);
         } else {
-            self.write("function (");
-            let param_transforms = self.emit_function_parameters_es5(&func.parameters.nodes);
-            self.write(") ");
+            // Check if this is a simple arrow function with no parameters and has capture wrapper
+            // In this case, we don't need the extra "function ()" wrapper
+            let has_no_params = func.parameters.nodes.is_empty();
+            let is_simple_capture = captures_any && has_no_params;
 
-            // If body is not a block (concise arrow), wrap with return
-            let body_node = self.arena.get(func.body);
-            let is_block = body_node
-                .map(|n| n.kind == syntax_kind_ext::BLOCK)
-                .unwrap_or(false);
-            let needs_param_prologue = param_transforms.has_transforms();
+            if !is_simple_capture {
+                self.write("function (");
+                let param_transforms = self.emit_function_parameters_es5(&func.parameters.nodes);
+                self.write(") ");
 
-            if is_block {
-                // Check if it's a simple single-return block
-                if let Some(block_node) = self.arena.get(func.body) {
-                    if let Some(block) = self.arena.get_block(block_node) {
-                        if !needs_param_prologue
-                            && block.statements.nodes.len() == 1
-                            && self.is_simple_return_statement(block.statements.nodes[0])
-                        {
-                            self.emit_single_line_block(func.body);
+                // If body is not a block (concise arrow), wrap with return
+                let body_node = self.arena.get(func.body);
+                let is_block = body_node
+                    .map(|n| n.kind == syntax_kind_ext::BLOCK)
+                    .unwrap_or(false);
+                let needs_param_prologue = param_transforms.has_transforms();
+
+                if is_block {
+                    // Check if it's a simple single-return block
+                    if let Some(block_node) = self.arena.get(func.body) {
+                        if let Some(block) = self.arena.get_block(block_node) {
+                            if !needs_param_prologue
+                                && block.statements.nodes.len() == 1
+                                && self.is_simple_return_statement(block.statements.nodes[0])
+                            {
+                                self.emit_single_line_block(func.body);
+                            } else if needs_param_prologue {
+                                self.emit_block_with_param_prologue(func.body, &param_transforms);
+                            } else {
+                                self.emit(func.body);
+                            }
                         } else if needs_param_prologue {
                             self.emit_block_with_param_prologue(func.body, &param_transforms);
                         } else {
@@ -489,40 +510,48 @@ impl<'a> Printer<'a> {
                         self.emit(func.body);
                     }
                 } else if needs_param_prologue {
-                    self.emit_block_with_param_prologue(func.body, &param_transforms);
-                } else {
+                    self.write("{");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_param_prologue(&param_transforms);
+                    self.write("return ");
                     self.emit(func.body);
+                    self.write(";");
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write("}");
+                } else {
+                    // Concise body: (x) => x + 1  →  function (x) { return x + 1; }
+                    self.write("{ return ");
+                    self.emit(func.body);
+                    self.write("; }");
                 }
-            } else if needs_param_prologue {
-                self.write("{");
-                self.write_line();
-                self.increase_indent();
-                self.emit_param_prologue(&param_transforms);
-                self.write("return ");
-                self.emit(func.body);
-                self.write(";");
-                self.write_line();
-                self.decrease_indent();
-                self.write("}");
             } else {
-                // Concise body: (x) => x + 1  →  function (x) { return x + 1; }
-                self.write("{ return ");
+                // Simple capture case: just emit the body directly
+                // (function (_arguments) { return arguments.length; })
+                // The capture wrapper already added "return " and will add ";"
+                // So just emit the body expression
                 self.emit(func.body);
-                self.write("; }");
             }
         }
 
-        if captures_this {
-            // Close the (function (_this) { ... }) wrapper
-            // Note: We no longer decrement this_capture_depth since directives handle substitution
+        if captures_any {
+            // Close the (function (_this, _arguments) { ... }) wrapper
             self.write("; })");
             self.write("(");
-            // For nested arrow functions, the parent 'this' has already been captured
-            // by the wrapping, so we pass the outer 'this' expression
-            if self.ctx.arrow_state.this_capture_depth > 0 {
-                self.write("_this");
-            } else {
-                self.write("this");
+            // For nested arrow functions, the parent's captured values are passed
+            if captures_this {
+                if self.ctx.arrow_state.this_capture_depth > 0 {
+                    self.write("_this");
+                } else {
+                    self.write("this");
+                }
+            }
+            if captures_this && captures_arguments {
+                self.write(", ");
+            }
+            if captures_arguments {
+                self.write("arguments");
             }
             self.write(")");
         }

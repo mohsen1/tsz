@@ -2,7 +2,7 @@ use super::{ParamTransformPlan, Printer};
 use crate::parser::NodeIndex;
 use crate::parser::node::Node;
 use crate::parser::syntax_kind_ext;
-use crate::syntax::transform_utils::contains_this_reference;
+use crate::syntax::transform_utils::{contains_arguments_reference, contains_this_reference};
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -16,7 +16,8 @@ impl<'a> Printer<'a> {
 
         if self.ctx.target_es5 {
             let captures_this = contains_this_reference(self.arena, _idx);
-            self.emit_arrow_function_es5(node, func, captures_this);
+            let captures_arguments = contains_arguments_reference(self.arena, _idx);
+            self.emit_arrow_function_es5(node, func, captures_this, captures_arguments);
             return;
         }
 

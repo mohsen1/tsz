@@ -147,6 +147,8 @@ pub enum TransformDirective {
         arrow_node: NodeIndex,
         /// Whether this captures 'this' (needs _this = this)
         captures_this: bool,
+        /// Whether this captures 'arguments' (needs _arguments = arguments)
+        captures_arguments: bool,
     },
 
     /// ES5 Async/Await: Transform to __awaiter helper
@@ -235,6 +237,26 @@ pub enum TransformDirective {
     /// }
     /// ```
     SubstituteThis,
+
+    /// Substitute arguments with _arguments (lexical capture for arrow functions)
+    ///
+    /// When an arrow function captures `arguments`, all `arguments` references
+    /// inside it should be substituted with `_arguments` (the capture variable).
+    ///
+    /// ```typescript
+    /// function outer() {
+    ///   return () => arguments.length;
+    /// }
+    /// ```
+    ///
+    /// Becomes:
+    ///
+    /// ```javascript
+    /// function outer() {
+    ///   return function (_arguments) { return _arguments.length; }(arguments);
+    /// }
+    /// ```
+    SubstituteArguments,
 
     /// Module Wrapper: Wrap entire file for AMD/System/UMD
     ModuleWrapper {

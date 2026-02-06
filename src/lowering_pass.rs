@@ -43,7 +43,9 @@ use crate::parser::node::{Node, NodeArena};
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
-use crate::syntax::transform_utils::{contains_this_reference, is_private_identifier};
+use crate::syntax::transform_utils::{
+    contains_arguments_reference, contains_this_reference, is_private_identifier,
+};
 use crate::transform_context::{IdentifierId, ModuleFormat, TransformContext, TransformDirective};
 use std::sync::Arc;
 
@@ -72,6 +74,9 @@ pub struct LoweringPass<'a> {
     /// Depth of arrow functions that capture 'this'
     /// When > 0, 'this' references should be substituted with '_this'
     this_capture_level: u32,
+    /// Depth of arrow functions that capture 'arguments'
+    /// When > 0, 'arguments' references should be substituted with '_arguments'
+    arguments_capture_level: u32,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -86,6 +91,7 @@ impl<'a> LoweringPass<'a> {
             visit_depth: 0,
             declared_names: rustc_hash::FxHashSet::default(),
             this_capture_level: 0,
+            arguments_capture_level: 0,
         }
     }
 
@@ -140,6 +146,17 @@ impl<'a> LoweringPass<'a> {
                 if self.this_capture_level > 0 {
                     self.transforms
                         .insert(idx, TransformDirective::SubstituteThis);
+                }
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                // Check if this is the 'arguments' identifier
+                if self.arguments_capture_level > 0 {
+                    if let Some(text) = self.get_identifier_text_ref(idx) {
+                        if text == "arguments" {
+                            self.transforms
+                                .insert(idx, TransformDirective::SubstituteArguments);
+                        }
+                    }
                 }
             }
             _ => self.visit_children(idx),
@@ -1180,12 +1197,14 @@ impl<'a> LoweringPass<'a> {
 
         if self.ctx.target_es5 {
             let captures_this = contains_this_reference(self.arena, idx);
+            let captures_arguments = contains_arguments_reference(self.arena, idx);
 
             self.transforms.insert(
                 idx,
                 TransformDirective::ES5ArrowFunction {
                     arrow_node: idx,
                     captures_this,
+                    captures_arguments,
                 },
             );
 
@@ -1197,6 +1216,12 @@ impl<'a> LoweringPass<'a> {
             // so that nested 'this' references get substituted
             if captures_this {
                 self.this_capture_level += 1;
+            }
+
+            // If this arrow function captures 'arguments', increment the capture level
+            // so that nested 'arguments' references get substituted
+            if captures_arguments {
+                self.arguments_capture_level += 1;
             }
         }
 
@@ -1213,6 +1238,11 @@ impl<'a> LoweringPass<'a> {
             let captures_this = contains_this_reference(self.arena, idx);
             if captures_this {
                 self.this_capture_level -= 1;
+            }
+
+            let captures_arguments = contains_arguments_reference(self.arena, idx);
+            if captures_arguments {
+                self.arguments_capture_level -= 1;
             }
         }
     }
