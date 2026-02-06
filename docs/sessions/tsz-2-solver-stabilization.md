@@ -268,37 +268,50 @@ The solver stabilization has significantly progressed. Remaining issues are prim
 
 ---
 
-## Remaining Priorities (2026-02-06 after Priority 1 & 2 Complete)
+## Final Priorities (2026-02-06 by Gemini - Only 3 Tests Remaining!)
 
-### 🔴 Priority 1: Narrowing `any` (1 test)
+### 🔴 Priority 1: Narrowing `any` (High Value) - NEXT
 **Test**: `test_narrow_by_typeof_any`
-**Component**: `src/solver/narrowing.rs`
+**File**: `src/solver/narrowing.rs`
 
-**Why This Is #1**: This tests the "Lawyer" layer of the type system (handling `any`). Currently, `typeof any === "string"` likely leaves the type as `any`. It should narrow to `string`. This is critical for code that validates external data (which often comes in as `any`).
+**Why This Is #1**: This is the most critical remaining issue for practical usage. TypeScript developers frequently use `any` as a boundary type (e.g., `JSON.parse()`, API responses) and immediately use `typeof` checks to regain type safety.
 
-**Value**: High. Common pattern in validation code.
+**Current Behavior**: Compiler likely treats `any` as a "black hole" that absorbs the narrowing predicate, leaving it as `any`.
 
-**Approach**: In `narrow()`, explicitly handle `TypeKey::Any` (or `Intrinsic::Any`). If the narrower is a primitive type predicate, allow `any` to be narrowed.
+**Target Behavior**: `typeof any_var === "string"` must narrow `any_var` to `string` within the block.
+
+**Architectural Alignment**: This belongs in the **Lawyer** layer logic within `narrow()`. While the **Judge** (strict set theory) might say "any is everything," the Lawyer knows that explicit runtime checks should override the `any` type.
+
+**Implementation Strategy**:
+1. Modify `Solver::narrow`
+2. Detect if the `type_id` being narrowed is `Any`
+3. If the `narrower` is a specific primitive type (derived from `typeof`), allow the narrowing to proceed
 
 ---
 
-### Priority 2: Keyof Union Narrowing (1 test)
+### 🟠 Priority 2: Keyof Union Distribution (Structural Integrity)
 **Test**: `test_keyof_union_string_index_and_literal_narrows`
-**Component**: `src/solver/narrowing.rs` / `src/solver/operations.rs`
+**File**: `src/solver/evaluate.rs` (or `operations.rs`)
 
-**Why This Is #2**: This is a complex interaction between `keyof`, unions, and index signatures. It's an edge case in structural typing.
+**Why This Is #2**: Tests the correctness of the `keyof` operator when applied to unions. Fundamental to mapped types and advanced generics.
 
-**Value**: Medium. Affects advanced mapped types and complex narrowing.
+**The Rule**: `keyof (A | B) = (keyof A) & (keyof B)`
 
-**Approach**: This likely requires ensuring `keyof (A | B)` correctly distributes as `(keyof A) & (keyof B)`, and that narrowing respects this intersection.
+**The Complexity**: One member has a string index signature (`{ [k: string]: any }`), and the other has literals. The intersection of `string` (from index) and specific literals needs to be handled correctly.
+
+**Risk**: High complexity. Incorrect implementation can break other `keyof` operations.
 
 ---
 
-### Priority 3: Other Solver Tests
-**Tests**: `test_template_literal_with_any`, `test_lower_type_literal_construct_signature`
-**Component**: Various
+### 🟡 Priority 3: Template Literal with Any (Edge Case)
+**Test**: `test_template_literal_with_any`
+**File**: `src/solver/intern.rs` or `src/solver/operations.rs`
 
-**Status**: Remaining issues to investigate.
+**Why This Is #3**: This is a specific edge case in type construction. While correct behavior is needed, it blocks fewer real-world patterns than narrowing or `keyof`.
+
+**The Rule**: `` `prefix-${any}` `` usually collapses to `string` (not `any`, and not a template literal type).
+
+**Value**: Low compared to the others.
 
 ---
 
