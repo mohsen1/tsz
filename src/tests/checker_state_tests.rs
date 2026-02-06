@@ -1266,6 +1266,30 @@ fn test_checker_subtype_unions() {
 }
 
 #[test]
+fn test_checker_assignability_direct_union_member_fast_path() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    let string_or_number = checker.get_union_type(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert!(checker.is_assignable_to(TypeId::STRING, string_or_number));
+    assert!(checker.is_assignable_to_bivariant(TypeId::STRING, string_or_number));
+
+    let regular_key = RelationCacheKey::assignability(TypeId::STRING, string_or_number, 0, 0);
+    let bivariant_key = RelationCacheKey::assignability(TypeId::STRING, string_or_number, 0, 2);
+    let cache = checker.ctx.relation_cache.borrow();
+    assert_eq!(cache.get(&regular_key), Some(&true));
+    assert_eq!(cache.get(&bivariant_key), Some(&true));
+}
+
+#[test]
 fn test_checker_type_identity() {
     let arena = NodeArena::new();
     let binder = BinderState::new();
