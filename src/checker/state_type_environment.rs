@@ -472,15 +472,27 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {
         use crate::solver::TypeEvaluator;
+        use crate::solver::type_queries::get_index_access_types;
 
         self.ensure_application_symbols_resolved(type_id);
 
         // Use type_env (not type_environment) because type_env is updated during
         // type checking with user-defined DefId→TypeId mappings, while
         // type_environment only has the initial lib symbols from build_type_environment().
-        let env = self.ctx.type_env.borrow();
-        let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
-        evaluator.evaluate(type_id)
+        let result = {
+            let env = self.ctx.type_env.borrow();
+            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
+            evaluator.evaluate(type_id)
+        };
+
+        // If the result still contains IndexAccess types, try again with the full
+        // checker context as resolver (which can resolve type parameters etc.)
+        if get_index_access_types(self.ctx.types, result).is_some() {
+            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
+            evaluator.evaluate(type_id)
+        } else {
+            result
+        }
     }
 
     pub(crate) fn resolve_global_interface_type(&mut self, name: &str) -> Option<TypeId> {

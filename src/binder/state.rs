@@ -230,6 +230,10 @@ pub struct BinderState {
     /// When true, get_symbol() should prefer local symbols over lib_binders lookups,
     /// since all lib symbols now have unique IDs in the local arena.
     pub(crate) lib_symbols_merged: bool,
+
+    /// Break targets for control flow analysis.
+    /// When we enter a loop or switch, we push a merge label that break statements jump to.
+    pub(crate) break_targets: Vec<FlowNodeId>,
 }
 
 /// Validation result describing issues found in the symbol table
@@ -306,6 +310,7 @@ impl BinderState {
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules: FxHashSet::default(),
             lib_symbols_merged: false,
+            break_targets: Vec::new(),
         }
     }
 
@@ -347,6 +352,7 @@ impl BinderState {
         self.resolved_identifier_cache.write().unwrap().clear();
         self.shorthand_ambient_modules.clear();
         self.lib_symbols_merged = false;
+        self.break_targets.clear();
     }
 
     /// Set the current file name for debugging purposes.
@@ -458,6 +464,7 @@ impl BinderState {
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules: FxHashSet::default(),
             lib_symbols_merged: false,
+            break_targets: Vec::new(),
         }
     }
 
@@ -561,6 +568,7 @@ impl BinderState {
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules,
             lib_symbols_merged: false,
+            break_targets: Vec::new(),
         }
     }
 
@@ -2182,6 +2190,10 @@ impl BinderState {
                     }
                     self.current_flow = loop_label;
 
+                    // Create post-loop merge point for break targets
+                    let post_loop = self.create_branch_label();
+                    self.break_targets.push(post_loop);
+
                     if node.kind == syntax_kind_ext::DO_STATEMENT {
                         self.bind_node(arena, loop_data.statement);
                         self.bind_expression(arena, loop_data.condition);
@@ -2199,10 +2211,8 @@ impl BinderState {
                             pre_condition_flow,
                             loop_data.condition,
                         );
-                        let merge_label = self.create_branch_label();
-                        self.add_antecedent(merge_label, pre_condition_flow);
-                        self.add_antecedent(merge_label, false_flow);
-                        self.current_flow = merge_label;
+                        self.add_antecedent(post_loop, pre_condition_flow);
+                        self.add_antecedent(post_loop, false_flow);
                     } else {
                         self.bind_expression(arena, loop_data.condition);
 
@@ -2221,12 +2231,13 @@ impl BinderState {
                             pre_condition_flow,
                             loop_data.condition,
                         );
-                        let merge_label = self.create_branch_label();
                         // FIX: Don't add pre_loop_flow as antecedent to merge_label
                         // The exit path must go through false_flow to preserve narrowing
-                        self.add_antecedent(merge_label, false_flow);
-                        self.current_flow = merge_label;
+                        self.add_antecedent(post_loop, false_flow);
                     }
+
+                    self.break_targets.pop();
+                    self.current_flow = post_loop;
                 }
             }
 
@@ -2243,6 +2254,10 @@ impl BinderState {
                         self.add_antecedent(loop_label, self.current_flow);
                     }
                     self.current_flow = loop_label;
+
+                    // Create post-loop merge point for break targets
+                    let post_loop = self.create_branch_label();
+                    self.break_targets.push(post_loop);
 
                     if !loop_data.condition.is_none() {
                         self.bind_expression(arena, loop_data.condition);
@@ -2262,20 +2277,19 @@ impl BinderState {
                             pre_condition_flow,
                             loop_data.condition,
                         );
-                        let merge_label = self.create_branch_label();
                         // FIX: Don't add pre_loop_flow as antecedent to merge_label
                         // The exit path must go through false_flow to preserve narrowing
-                        self.add_antecedent(merge_label, false_flow);
-                        self.current_flow = merge_label;
+                        self.add_antecedent(post_loop, false_flow);
                     } else {
                         self.bind_node(arena, loop_data.statement);
                         self.bind_expression(arena, loop_data.incrementor);
                         self.add_antecedent(loop_label, self.current_flow);
-                        let merge_label = self.create_branch_label();
-                        self.add_antecedent(merge_label, loop_label);
-                        self.add_antecedent(merge_label, self.current_flow);
-                        self.current_flow = merge_label;
+                        self.add_antecedent(post_loop, loop_label);
+                        self.add_antecedent(post_loop, self.current_flow);
                     }
+
+                    self.break_targets.pop();
+                    self.current_flow = post_loop;
                     self.exit_scope(arena);
                 }
             }
@@ -2294,6 +2308,10 @@ impl BinderState {
                     }
                     self.current_flow = loop_label;
 
+                    // Create post-loop merge point for break targets
+                    let post_loop = self.create_branch_label();
+                    self.break_targets.push(post_loop);
+
                     self.bind_expression(arena, for_data.expression);
                     if !for_data.initializer.is_none() {
                         let flow = self.create_flow_assignment(for_data.initializer);
@@ -2301,10 +2319,11 @@ impl BinderState {
                     }
                     self.bind_node(arena, for_data.statement);
                     self.add_antecedent(loop_label, self.current_flow);
-                    let merge_label = self.create_branch_label();
-                    self.add_antecedent(merge_label, loop_label);
-                    self.add_antecedent(merge_label, self.current_flow);
-                    self.current_flow = merge_label;
+                    self.add_antecedent(post_loop, loop_label);
+                    self.add_antecedent(post_loop, self.current_flow);
+
+                    self.break_targets.pop();
+                    self.current_flow = post_loop;
                     self.exit_scope(arena);
                 }
             }
@@ -2401,7 +2420,7 @@ impl BinderState {
                 }
             }
 
-            // Return/throw statements - traverse into the expression
+            // Return/throw statements - traverse into the expression and mark unreachable
             k if k == syntax_kind_ext::RETURN_STATEMENT
                 || k == syntax_kind_ext::THROW_STATEMENT =>
             {
@@ -2410,6 +2429,15 @@ impl BinderState {
                 {
                     self.bind_node(arena, ret.expression);
                 }
+                self.current_flow = self.unreachable_flow;
+            }
+
+            // Break statement - jump to break target and mark unreachable
+            k if k == syntax_kind_ext::BREAK_STATEMENT => {
+                if let Some(&break_target) = self.break_targets.last() {
+                    self.add_antecedent(break_target, self.current_flow);
+                }
+                self.current_flow = self.unreachable_flow;
             }
 
             // Binary expressions - traverse into operands
