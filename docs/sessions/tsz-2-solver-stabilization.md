@@ -296,22 +296,54 @@ Test expectation bug - implementation was already correct.
 
 ---
 
-### 🟡 Priority 1 (NEW): Template Literal with `any` (Quick Win) - NEXT
+### ✅ Priority 1: Template Literal with `any` - COMPLETED (Commit bc0d4d313)
+
 **Test**: `test_template_literal_with_any`
-**File**: `src/solver/intern.rs`
-**Complexity**: Simple
+**Resolution**: Test expectation bug - implementation was already correct
 
-**Why First**: Quick win to clear the board. Localized rule within template literal construction logic.
+**Root Cause**: The test expected `` `prefix-${any}` `` to remain as a `TemplateLiteral` type, but TypeScript correctly collapses this to `string`.
 
-**The Rule**: `` `prefix-${any}` `` → `string` (not `any`, not a template literal type)
+**Fix**: Changed test assertion from checking for `TemplateLiteral` to asserting `TypeId::STRING`
 
-**Implementation Guidance**:
-- File: `src/solver/intern.rs`, function `template_literal`
-- Look at "High-level absorption and widening" section (lines 1015-1030)
-- Check if `any` results in `string` widening
-- Potential issues: Check might be missing specific variant, normalization too late, or bypassed by `evaluate_template_literal`
+**Files Modified**:
+- `src/solver/tests/evaluate_tests.rs` - Updated test to expect `TypeId::STRING`
 
-**Potential Pitfalls**: Ensure `any` → `string` but `never` → `never` (never is contagious in template literals)
+**Why This Was Just a Test Fix**:
+The implementation in `src/solver/intern.rs` (lines 2732-2738) already correctly returns `TypeId::STRING` when `any` is in the template. TypeScript widens `` `prefix-${any}` `` to `string` because `any` can be any value, so the stringified result can be any possible string.
+
+---
+
+### 🔴 Priority 2: Keyof Union Narrowing - IN PROGRESS (Complex Bug)
+**Test**: `test_keyof_union_string_index_and_literal_narrows`
+**File**: `src/solver/evaluate_rules/keyof.rs`
+**Complexity**: Complex - requires investigation of evaluation flow
+
+**The Issue**:
+`keyof ({ [k: string]: number } | { a: number })` should return `"a"` but is returning `string | number`
+
+**Expected Behavior**:
+- `keyof { [k: string]: number }` = `string | number`
+- `keyof { a: number }` = `"a"`
+- `keyof (A | B)` = `(keyof A) & (keyof B)`
+- Result: `(string | number) & "a"` = `"a"`
+
+**Actual Behavior**:
+The evaluation returns `string | number` instead of `"a"`
+
+**Investigation Status**:
+- The `keyof_union` function should call `intersect_keyof_sets` to compute the intersection
+- Debug tracing showed `evaluate_keyof` returns a `Union` type instead of the expected intersection
+- Need to determine if:
+  1. `intersect_keyof_sets` is returning None (fallback issue)
+  2. `intersect_keyof_sets` is called but returns wrong result
+  3. The evaluation is taking a different code path entirely
+
+**Files to Investigate**:
+- `src/solver/evaluate_rules/keyof.rs` - `keyof_union` and `intersect_keyof_sets` functions
+- `src/solver/evaluate.rs` - `evaluate_keyof` and `evaluate` methods
+- `src/solver/intern.rs` - `intersection` method for fallback
+
+---
 
 ---
 
