@@ -61,7 +61,7 @@ Fixed `NarrowingVisitor` to properly handle Lazy/Ref/Application resolution and 
 
 **Result**: All SubtypeVisitor stub methods now follow NORTH_STAR Rule 2 (Visitor pattern for all type operations).
 
-### Task #14: Any Propagation Fix ✅
+### Task #14: Any Propagation Fix ⚠️ (Has Regression)
 **Commit**: `a2bc70b23`
 
 Decoupled any_propagation from strict_function_types to match TypeScript behavior.
@@ -69,17 +69,27 @@ Decoupled any_propagation from strict_function_types to match TypeScript behavio
 **Changes**:
 - Removed conditional logic that tied any_propagation to strict_function_types
 - any_propagation now always uses lawyer.any_propagation_mode() (default: All)
-- This matches TypeScript: any propagates through arrays/objects regardless of strictFunctionTypes
-- Fixed test_any_in_arrays which now passes (previously ignored)
 
-**Result**: All 38 any propagation tests pass (was 37 passed, 1 ignored).
+**Good Result**: test_any_in_arrays now passes (was ignored)
+
+**Regression**: test_function_contravariance_strict_mode now fails
+- Expected: (x: string) => void should NOT be assignable to (x: any) => void
+- Actual: It IS assignable (wrong)
+- Root cause: All mode allows any at any depth, but function parameters need TopLevelOnly in strict mode
+
+**Status**: Need to implement local any_propagation tightening for function parameter checks in subtype.rs (per Gemini Pro guidance).
 
 ## Next Steps
 
-1. **Investigate Test Result Changes**: Need to understand test count changes
+1. **Fix Task #14 Regression**: Implement local any_propagation tightening for function parameters
+   - Keep global change in compat.rs (remove strict_function_types check)
+   - Modify subtype.rs to temporarily set TopLevelOnly mode during strict function parameter checks
+   - This will allow any[] to string[] (good) while maintaining strict function parameter checking
+
+2. **Test Results**:
    - Before Task #14: 8141 passing, 178 failing, 160 ignored
    - After Task #14: 8104 passing (-37), 196 failing (+18), 158 ignored (-2)
-2. **Ask Gemini**: Review what to work on next and understand test changes
+   - Most failures likely due to the any_propagation regression
 
 ## Commits
 
