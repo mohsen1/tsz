@@ -331,7 +331,26 @@ The implementation in `src/solver/intern.rs` (lines 2732-2738) already correctly
 The evaluation returns `string | number` instead of `"a"`
 
 **Investigation Status**:
-- The `keyof_union` function should call `intersect_keyof_sets` to compute the intersection
+- ROOT CAUSE FOUND: `evaluate_union` in `src/solver/evaluate.rs` simplifies unions
+- When `evaluate_keyof` is called with `union = string_index | obj_a`:
+  - `evaluate(union)` is called
+  - `evaluate_union` calls `simplify_union_members`
+  - This incorrectly simplifies `{ a: number } | { [k: string]: number }` to just `{ [k: string]: number }`
+  - Reason: `{ a: number }` is a subtype of `{ [k: string]: number }`, so it's considered "redundant"
+
+**Attempted Fix (FAILED)**:
+- Modified `evaluate_keyof` to NOT call `evaluate()` on Union types
+- This fixed the target test but broke 11 other tests
+- The fix was too broad and prevented needed union evaluation in other contexts
+
+**Required Fix**:
+- Need a more targeted approach that preserves union simplification in general
+- But prevents simplification when the union is being used specifically for `keyof` intersection
+- This may require passing a context flag through the evaluation pipeline
+- OR modifying the union simplification logic to be aware of `keyof` context
+
+**Recommendation**:
+This requires architectural changes to distinguish between "evaluation for general purposes" vs "evaluation for keyof". The current evaluation pipeline doesn't have this distinction.
 - Debug tracing showed `evaluate_keyof` returns a `Union` type instead of the expected intersection
 - Need to determine if:
   1. `intersect_keyof_sets` is returning None (fallback issue)
