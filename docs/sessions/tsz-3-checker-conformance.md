@@ -341,3 +341,54 @@ This is actually GOOD news - it means:
 - The fix will be in type lowering/instantiation, not core type operations
 - More surgical fix, less risk of breaking other things
 
+---
+
+## 2026-02-06 Root Cause Identified: Tuple Instantiation Behavior
+
+### Key Insight from Gemini
+
+When a generic rest parameter `...args: T` is instantiated with a **tuple** `[any]`:
+- TypeScript spreads the tuple into fixed parameters
+- `(...args: [any])` becomes `(args_0: any)` - a FIXED parameter
+
+When instantiated with an **array** `any[]`:
+- It remains a rest parameter
+- `(...args: any[])` stays as a rest parameter
+
+### The Actual Types
+
+**`type a = ExtendedMapper<any, any, [any]>`:**
+```rust
+FunctionShape {
+  params: [
+    { name: "name", type: string, rest: false },
+    { name: "mixed", type: any, rest: false },
+    { name: "args_0", type: any, rest: false }  // FIXED!
+  ]
+}
+```
+
+**`type b = ExtendedMapper<any, any, any[]>`:**
+```rust
+FunctionShape {
+  params: [
+    { name: "name", type: string, rest: false },
+    { name: "mixed", type: any, rest: false },
+    { name: "args", type: any[], rest: true }  // REST!
+  ]
+}
+```
+
+### Why TypeScript Allows This
+
+The "Infinite Expansion Rule": A target with a rest parameter `(a, b, ...args: T[])` can accept any source with 2+ parameters because the rest acts as an infinite supply of `T`-typed parameters.
+
+This is intentional unsoundness for JS patterns where extra arguments are ignored.
+
+### The Bug
+
+Our unit test passes because we manually construct types with correct structure.
+The conformance test fails because somewhere in the instantiation pipeline, the types are not being created correctly OR the subtype check is not recognizing the correct case.
+
+**Next Step**: Add tracing to see what FunctionShapes are actually created during the conformance test.
+
