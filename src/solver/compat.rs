@@ -1304,46 +1304,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
         }
 
-        // BUG FIX: Handle number -> Union enum type (e.g., number -> E where E = E.A | E.B)
-        // Check if source is number and target is a numeric enum TYPE (not a member)
-        let is_source_number = source == TypeId::NUMBER
-            || matches!(
-                self.interner.lookup(source),
-                Some(TypeKey::Literal(LiteralValue::Number(_)))
-            );
-
-        if is_source_number {
-            // Check if target is an enum type (Union of enum members from same parent)
-            if let Some(target_def) = self.get_enum_def_id(target) {
-                // Target is an enum type, check if it's a numeric enum
-                if self.subtype.resolver.is_numeric_enum(target_def) {
-                    // number -> numeric enum TYPE E is allowed
-                    return Some(true);
-                }
-            }
-        }
-
-        // BUG FIX: Handle String Enum -> string when source is a Union enum type
-        // Gap B: String enum opacity - SE (string enum) -> string should be rejected
-        // visitor::enum_components returns None for Unions, so we need to check separately
-        if target == TypeId::STRING {
-            // Check if source is a string enum type (Union of string enum members)
-            if let Some(source_def) = self.get_enum_def_id(source) {
-                // Source is an enum type, check if it's a string enum
-                if !self.subtype.resolver.is_numeric_enum(source_def) {
-                    // Source is a string enum -> string is NOT allowed
-                    return Some(false);
-                }
-            }
-        }
+        // BUG FIX: String enums SHOULD be assignable to string (like numeric enums are to number)
+        // The union of string literal types that makes up a string enum is a subtype of string.
+        // Let Case 3 handle this by falling through to structural checking.
+        // Removed incorrect early return that rejected string enum -> string assignments.
 
         let source_def = self.get_enum_def_id(source);
         let target_def = self.get_enum_def_id(target);
-
-        eprintln!(
-            "DEBUG enum_assignability: source={:?}, target={:?}, source_def={:?}, target_def={:?}",
-            source, target, source_def, target_def
-        );
 
         match (source_def, target_def) {
             // Case 1: Both are enums (or enum members or Union-based enums)
@@ -1437,43 +1404,18 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
 
             // Case 3: Source is an enum, target is a primitive
-            // Gap B: String Enum Opacity - String enum members are NOT assignable to string
-            // BUT: The full enum type (Union of members) SHOULD be assignable to string
+            // String enums (both types and members) are assignable to string via structural checking
             (Some(s_def), None) => {
-                eprintln!(
-                    "DEBUG Case 3: s_def={:?}, target={:?}, source={:?}",
-                    s_def, target, source
-                );
                 // Check if source is a string enum
                 if !self.subtype.resolver.is_numeric_enum(s_def) {
                     // Source is a string enum
                     if target == TypeId::STRING {
-                        // Check if source is an enum TYPE (Union of members) vs a specific member
-                        // If source is the full enum type (Union), allow it
-                        // If source is a specific member (literal), reject it
-                        let is_enum_type =
-                            self.subtype.resolver.is_enum_type(source, self.interner);
-                        eprintln!("DEBUG Case 3: is_enum_type(source)={}", is_enum_type);
-                        if is_enum_type {
-                            // Source is the full enum type (Union S.A | S.B)
-                            // Fall through to structural check which will allow string members
-                            eprintln!("DEBUG Case 3: Returning None (fall through)");
-                            return None;
-                        }
-                        // Source is a specific enum member literal - NOT assignable to string
-                        eprintln!("DEBUG Case 3: Returning Some(false)");
-                        return Some(false);
-                    }
-                    // Check if source is a string literal (direct literal, not enum member)
-                    if let Some(TypeKey::Literal(LiteralValue::String(_))) =
-                        self.interner.lookup(source)
-                    {
-                        // Direct string literal -> string is allowed
+                        // Both enum types (Union of members) and enum members (string literals)
+                        // are assignable to string. Fall through to structural checking.
                         return None;
                     }
                 }
                 // Numeric enums and non-string targets: fall through to structural check
-                eprintln!("DEBUG Case 3: Returning None (fall through)");
                 None
             }
 
