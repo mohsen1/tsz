@@ -1522,7 +1522,7 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let locations = provider.find_references(root, position)?;
+            let (_symbol_id, ref_infos) = provider.find_references_with_symbol(root, position)?;
 
             // Try to get symbol name from the position
             let symbol_name = {
@@ -1536,22 +1536,16 @@ impl Server {
             }
             .unwrap_or_default();
 
-            let refs: Vec<serde_json::Value> = locations
+            let refs: Vec<serde_json::Value> = ref_infos
                 .iter()
-                .map(|loc| {
-                    // Get line text for the reference
-                    let line_text = source_text
-                        .lines()
-                        .nth(loc.range.start.line as usize)
-                        .unwrap_or("")
-                        .to_string();
+                .map(|ref_info| {
                     serde_json::json!({
-                        "file": loc.file_path,
-                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                        "lineText": line_text,
-                        "isWriteAccess": false,
-                        "isDefinition": false,
+                        "file": ref_info.location.file_path,
+                        "start": Self::lsp_to_tsserver_position(&ref_info.location.range.start),
+                        "end": Self::lsp_to_tsserver_position(&ref_info.location.range.end),
+                        "lineText": ref_info.line_text,
+                        "isWriteAccess": ref_info.is_write_access,
+                        "isDefinition": ref_info.is_definition,
                     })
                 })
                 .collect();
