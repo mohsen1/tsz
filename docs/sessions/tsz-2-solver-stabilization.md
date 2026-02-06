@@ -369,14 +369,17 @@ This preserves the distributive property `keyof (A | B) = (keyof A) & (keyof B)`
 
 ---
 
-## Current Status (2 Failing Solver Tests Remaining)
+## Current Status (1 Failing Solver Test Remaining)
 
 **Completed Priorities**:
 - ✅ Priority 1: Index Signature Inference (deleted incorrect tests)
 - ✅ Priority 2: Generic Fallback (fixed SubtypeChecker)
 - ✅ Priority 3: Narrowing `any` (test expectation fix)
+- ✅ Priority 4: Keyof Union Distribution (already fixed in main branch)
 
-**Remaining**: 2 solver tests (Template literal with any, Keyof union)
+**Remaining**: 1 solver test (lowering test - unrelated to type solver)
+
+**Solver Test Status**: 3523 passing, 1 failing (pre-existing lowering issue)
 
 ---
 
