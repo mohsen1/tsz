@@ -709,9 +709,13 @@ impl<'a> CheckerState<'a> {
             return None;
         };
 
-        // Class symbols are constructable - return the type as-is
+        // Class symbols are constructable - convert construct sigs to call sigs
         if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
-            return Some(type_id);
+            // Get the symbol's cached type and convert construct signatures to call signatures
+            if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                return type_queries::construct_to_call_callable(self.ctx.types, cached_type);
+            }
+            return None;
         }
 
         // Interface symbols might have construct signatures
