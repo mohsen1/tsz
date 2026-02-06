@@ -20,17 +20,17 @@
 1. ✅ Implemented `TypeKey::TemplateLiteral(id)`: Iterate spans, canonicalize `TemplateSpan::Type(id)`
 2. ✅ Implemented `TypeKey::StringIntrinsic { kind, type_arg }`: Canonicalize `type_arg`
 
-#### Priority 2: Task #48 - SubtypeChecker Visitor Pattern Refactor (North Star Rule 2)
-**Status**: 🔄 IN PROGRESS
+#### Priority 2: Task #48 - SubtypeChecker Visitor Pattern Refactor (North Star Rule 2) ✅ COMPLETE
+**Status**: ✅ COMPLETE (commits: a318e7642, d82e30d82, 0a6a7cd64)
 **File**: `src/solver/subtype.rs`
 **Problem**: `SubtypeChecker` is a "God Object" (~1000 lines) with massive match blocks. North Star Rule 2 mandates Visitor Pattern for all type operations.
 **Action**:
 1. ✅ Create `SubtypeVisitor` implementing `TypeVisitor` (commit: a318e7642)
 2. ✅ Implement stub methods with double dispatch (commit: d82e30d82)
-3. ⏳ Move remaining logic from `check_subtype_inner` into the visitor
-4. ⏳ Refactor `check_subtype_inner` to use visitor
+3. ✅ Move remaining logic from `check_subtype_inner` into the visitor
+4. ✅ Refactor `check_subtype_inner` to use visitor (commit: 0a6a7cd64)
 
-**Progress** (Task #48.2 Complete):
+**Implementation Summary**:
 - Added `source: TypeId` field to `SubtypeVisitor` struct
 - Implemented `visit_lazy`: resolves Lazy(DefId) and recurses via check_subtype
 - Implemented `visit_ref`: resolves legacy Ref(SymbolRef) and recurses
@@ -38,10 +38,17 @@
 - Implemented `visit_object`/`visit_object_with_index`: double dispatch for objects
 - Implemented `visit_function`/`visit_callable`: double dispatch for callables
 - Implemented `visit_application`/`visit_conditional`/`visit_mapped`: delegation methods
+- Refactored `check_subtype_inner` to dispatch to visitor for structural checking
+- All special-case pre-checks remain in `check_subtype_inner` (apparent shapes, target-is-union, etc.)
 - Critical fixes per Gemini Pro review:
   - Fixed `visit_intersection`: added property merging for object targets
   - Fixed `visit_readonly_type`: Readonly<T> is NOT assignable to mutable T
   - Fixed `visit_enum`: added nominal identity check for enum-to-enum
+
+**Test Results**:
+- All 870 subtype tests pass
+- One new test passes: test_generic_parameter_without_constraint_fallback_to_unknown
+- 4 pre-existing failures remain (tsz-2 tracked issues)
 
 #### Priority 3: Task #49 - Global Canonical Mapping (The O(1) Goal)
 **Status**: ⏳ PENDING
