@@ -32,6 +32,7 @@
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
+use rustc_hash::FxHashMap;
 
 // Re-export from shared utilities to avoid duplication
 pub use crate::syntax::transform_utils::is_private_identifier;
@@ -238,8 +239,7 @@ pub fn collect_private_accessors(
     class_idx: NodeIndex,
     class_name: &str,
 ) -> Vec<PrivateAccessorInfo> {
-    let mut accessors: std::collections::HashMap<String, PrivateAccessorInfo> =
-        std::collections::HashMap::new();
+    let mut accessors: FxHashMap<String, PrivateAccessorInfo> = FxHashMap::default();
 
     let Some(class_node) = arena.get(class_idx) else {
         return Vec::new();

@@ -27,9 +27,9 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 
 use wasm::binder::BinderState;
@@ -64,7 +64,7 @@ struct Args {
 /// LSP Server State
 struct LspServer {
     /// Open documents (uri -> content)
-    documents: HashMap<String, DocumentState>,
+    documents: FxHashMap<String, DocumentState>,
     /// Server capabilities
     capabilities: ServerCapabilities,
     /// Whether the server is initialized
@@ -306,7 +306,7 @@ struct JsonRpcError {
 impl LspServer {
     fn new() -> Self {
         Self {
-            documents: HashMap::new(),
+            documents: FxHashMap::default(),
             capabilities: ServerCapabilities::default(),
             initialized: false,
             shutdown_requested: false,
