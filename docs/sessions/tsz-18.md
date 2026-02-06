@@ -116,7 +116,16 @@ crate::solver::evaluate::evaluate_type(self.interner, mapped_type)
 
 **Committed**: `ce7639908`
 
-**Note**: The fix correctly evaluates the mapped type to an Object with `optional=true` properties (verified with debug output). The remaining test failure suggests a separate caching or type resolution issue that needs further investigation.
+**Note**: The fix correctly evaluates the mapped type to an Object with `optional=true` properties (verified with debug output). However, the specific test `test_ts2322_no_false_positive_user_defined_mapped_type` still fails with a strange asymmetry:
+- `let a: MyPartial<Cfg> = {}` works ✓
+- `let b: MyPartial<Cfg> = { host: "x" }` fails ✗
+
+Both use the same type annotation, so they should behave identically. This suggests a separate issue in:
+1. How the type is cached/retrieved between the two variable declarations
+2. Property lookup on the evaluated mapped type during assignability checking
+3. Potential interaction with excess property checking
+
+**Status**: Blocked on deeper investigation. The fix is correct and beneficial (+1 test), but this specific test requires tracing through the assignability check path to understand why `{ host: "x" }` fails when `{}` works.
 
 ### 2026-02-05: Session Pivoted and Found Bugs!
 
