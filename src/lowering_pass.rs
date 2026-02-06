@@ -69,6 +69,9 @@ pub struct LoweringPass<'a> {
     visit_depth: u32,
     /// Track declared names for namespace/class/enum/function merging detection
     declared_names: rustc_hash::FxHashSet<String>,
+    /// Depth of arrow functions that capture 'this'
+    /// When > 0, 'this' references should be substituted with '_this'
+    this_capture_level: u32,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -82,6 +85,7 @@ impl<'a> LoweringPass<'a> {
             has_export_assignment: false,
             visit_depth: 0,
             declared_names: rustc_hash::FxHashSet::default(),
+            this_capture_level: 0,
         }
     }
 
@@ -131,6 +135,13 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::FOR_IN_STATEMENT => self.visit_for_in_statement(node),
             k if k == syntax_kind_ext::FOR_OF_STATEMENT => self.visit_for_of_statement(node, idx),
+            k if k == SyntaxKind::ThisKeyword as u16 => {
+                // If we're inside a capturing arrow function, substitute 'this' with '_this'
+                if self.this_capture_level > 0 {
+                    self.transforms
+                        .insert(idx, TransformDirective::SubstituteThis);
+                }
+            }
             _ => self.visit_children(idx),
         }
 
@@ -1181,6 +1192,12 @@ impl<'a> LoweringPass<'a> {
             if arrow.is_async {
                 self.mark_async_helpers();
             }
+
+            // If this arrow function captures 'this', increment the capture level
+            // so that nested 'this' references get substituted
+            if captures_this {
+                self.this_capture_level += 1;
+            }
         }
 
         for &param_idx in &arrow.parameters.nodes {
@@ -1189,6 +1206,14 @@ impl<'a> LoweringPass<'a> {
 
         if !arrow.body.is_none() {
             self.visit(arrow.body);
+        }
+
+        // Restore capture level after visiting the arrow function body
+        if self.ctx.target_es5 {
+            let captures_this = contains_this_reference(self.arena, idx);
+            if captures_this {
+                self.this_capture_level -= 1;
+            }
         }
     }
 

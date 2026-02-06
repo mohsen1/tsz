@@ -175,6 +175,7 @@ enum EmitDirective {
         function_node: NodeIndex,
     },
     ES5TemplateLiteral,
+    SubstituteThis,
     ModuleWrapper {
         format: crate::transform_context::ModuleFormat,
         dependencies: Arc<[String]>,
@@ -492,6 +493,7 @@ impl<'a> Printer<'a> {
                 }
             }
             TransformDirective::ES5TemplateLiteral { .. } => EmitDirective::ES5TemplateLiteral,
+            TransformDirective::SubstituteThis => EmitDirective::SubstituteThis,
             TransformDirective::ModuleWrapper {
                 format,
                 dependencies,
@@ -725,6 +727,11 @@ impl<'a> Printer<'a> {
                 if !self.emit_template_literal_es5(node, idx) {
                     self.emit_node_default(node, idx);
                 }
+            }
+
+            EmitDirective::SubstituteThis => {
+                // Substitute 'this' with '_this' for lexical capture
+                self.write("_this");
             }
 
             EmitDirective::ModuleWrapper {
@@ -1042,6 +1049,10 @@ impl<'a> Printer<'a> {
                 }
 
                 self.emit_chained_previous(node, idx, directives, index);
+            }
+            EmitDirective::SubstituteThis => {
+                // Substitute 'this' with '_this' for lexical capture
+                self.write("_this");
             }
             EmitDirective::ModuleWrapper {
                 format,
