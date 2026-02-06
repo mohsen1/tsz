@@ -752,20 +752,23 @@ impl<'a> CheckerState<'a> {
                 && let Some(exports) = base_symbol.exports.as_ref()
                 && let Some(member_sym_id) = exports.get(property_name)
             {
-                let member_type =
-                    if let Some(&cached_member_type) = self.ctx.symbol_types.get(&member_sym_id) {
-                        cached_member_type
-                    } else {
-                        // Resolve the enum symbol once to prefill all member types.
-                        // This keeps subsequent `E.Member` accesses on the fast cache path.
-                        let _ = self.get_type_of_symbol(base_sym_id);
-                        self.ctx
-                            .symbol_types
-                            .get(&member_sym_id)
-                            .copied()
-                            .unwrap_or_else(|| self.get_type_of_symbol(member_sym_id))
-                    };
-                return self.apply_flow_narrowing(idx, member_type);
+                // Check if the member is an enum member or a namespace export
+                let member_symbol = self.ctx.binder.get_symbol(member_sym_id);
+                let is_enum_member = member_symbol
+                    .map(|s| s.flags & symbol_flags::ENUM_MEMBER != 0)
+                    .unwrap_or(false);
+
+                if is_enum_member {
+                    // CRITICAL FIX: Enum members should have the enum type, not the member type.
+                    // When accessing `Direction.Up`, it should have type `Direction`, not type `Up`.
+                    // This allows enum members to be used where the enum type is expected.
+                    let enum_type = self.get_type_of_symbol(base_sym_id);
+                    return self.apply_flow_narrowing(idx, enum_type);
+                } else {
+                    // Namespace exports (functions, variables, etc.) - use their actual type
+                    let member_type = self.get_type_of_symbol(member_sym_id);
+                    return self.apply_flow_narrowing(idx, member_type);
+                }
             }
         }
 
