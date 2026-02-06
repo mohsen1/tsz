@@ -1338,6 +1338,17 @@ impl<'a> CheckerState<'a> {
             None => return declared_type,
         };
 
+        // Fast path: enum objects are immutable namespace-like values.
+        // Control-flow narrowing never changes the type of `E` in expressions like `E.Member`.
+        // Skipping flow graph traversal here removes a large amount of redundant work
+        // in enum-heavy switch files (e.g. enumLiteralsSubtypeReduction.ts).
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && (symbol.flags & crate::binder::symbol_flags::ENUM) != 0
+            && (symbol.flags & crate::binder::symbol_flags::VARIABLE) == 0
+        {
+            return declared_type;
+        }
+
         // Bug #1.2: Check if this is a captured mutable variable
         // Rule #42 only applies to variables captured from outer scope, not local variables
         if self.is_inside_closure()
