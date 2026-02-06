@@ -106,6 +106,48 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Build relation-cache flags for assignability/subtype checks.
+    ///
+    /// Bit assignments must match `RelationCacheKey` docs in `solver/types.rs`.
+    #[inline]
+    fn relation_cache_flags(&self) -> u8 {
+        let mut flags = 0;
+        if self.ctx.strict_null_checks() {
+            flags |= 1 << 0;
+        }
+        if self.ctx.strict_function_types() {
+            flags |= 1 << 1;
+        }
+        if self.ctx.exact_optional_property_types() {
+            flags |= 1 << 2;
+        }
+        if self.ctx.no_unchecked_indexed_access() {
+            flags |= 1 << 3;
+        }
+        if self.ctx.compiler_options.sound_mode {
+            flags |= 1 << 4;
+        }
+        flags
+    }
+
+    /// Encode assignability cache mode.
+    ///
+    /// Layout:
+    /// - bit 0: strict any propagation (Sound Mode)
+    /// - bit 1: bivariant callback mode
+    #[inline]
+    fn assignability_cache_mode(&self, bivariant: bool) -> u8 {
+        let mut mode = if self.ctx.compiler_options.sound_mode {
+            1
+        } else {
+            0
+        };
+        if bivariant {
+            mode |= 1 << 1;
+        }
+        mode
+    }
+
     // =========================================================================
     // Main Assignability Check
     // =========================================================================
@@ -117,6 +159,12 @@ impl<'a> CheckerState<'a> {
     /// Assignability is more permissive than subtyping.
     pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::solver::CompatChecker;
+        use crate::solver::visitor::contains_infer_types;
+
+        // Fast path: identity check
+        if source == target {
+            return true;
+        }
 
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
@@ -130,6 +178,27 @@ impl<'a> CheckerState<'a> {
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
+        // Cache only normalized relation pairs. Raw TypeQuery/Application inputs can
+        // change meaning as symbol environments are populated during checking.
+        let cache_key = if !contains_infer_types(self.ctx.types, source)
+            && !contains_infer_types(self.ctx.types, target)
+        {
+            Some(RelationCacheKey::assignability(
+                source,
+                target,
+                self.relation_cache_flags(),
+                self.assignability_cache_mode(false),
+            ))
+        } else {
+            None
+        };
+
+        if let Some(cache_key) = cache_key
+            && let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key)
+        {
+            return cached;
+        }
+
         let env = self.ctx.type_env.borrow();
         let overrides = CheckerOverrideProvider::new(self, Some(&*env));
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
@@ -142,6 +211,12 @@ impl<'a> CheckerState<'a> {
             result,
             "is_assignable_to"
         );
+        if let Some(cache_key) = cache_key {
+            self.ctx
+                .relation_cache
+                .borrow_mut()
+                .insert(cache_key, result);
+        }
         result
     }
 
@@ -171,6 +246,12 @@ impl<'a> CheckerState<'a> {
     /// which disables strict_function_types for the check.
     pub fn is_assignable_to_bivariant(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::solver::CompatChecker;
+        use crate::solver::visitor::contains_infer_types;
+
+        // Fast path: identity check
+        if source == target {
+            return true;
+        }
 
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
@@ -184,6 +265,27 @@ impl<'a> CheckerState<'a> {
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
+        // Cache only normalized relation pairs. Raw TypeQuery/Application inputs can
+        // change meaning as symbol environments are populated during checking.
+        let cache_key = if !contains_infer_types(self.ctx.types, source)
+            && !contains_infer_types(self.ctx.types, target)
+        {
+            Some(RelationCacheKey::assignability(
+                source,
+                target,
+                self.relation_cache_flags(),
+                self.assignability_cache_mode(true),
+            ))
+        } else {
+            None
+        };
+
+        if let Some(cache_key) = cache_key
+            && let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key)
+        {
+            return cached;
+        }
+
         let env = self.ctx.type_env.borrow();
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
         self.ctx.configure_compat_checker(&mut checker);
@@ -196,6 +298,12 @@ impl<'a> CheckerState<'a> {
             result,
             "is_assignable_to_bivariant"
         );
+        if let Some(cache_key) = cache_key {
+            self.ctx
+                .relation_cache
+                .borrow_mut()
+                .insert(cache_key, result);
+        }
         result
     }
 
