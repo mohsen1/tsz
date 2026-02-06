@@ -202,3 +202,31 @@ Add debug output to verify:
 2. What does `get_array_element_type(target.params.last().type_id)` return?
 3. Is the issue in how generic types are instantiated?
 
+
+## 2026-02-06 Final Investigation Summary
+
+### Confirmed Facts
+1. `allow_bivariant_rest = true` in evaluate_conditional.rs (line 200)
+2. Rest flag IS preserved during tuple instantiation (instantiate.rs line 280)
+3. Function subtype checking logic appears correct (functions.rs lines 305-331)
+4. Unit test confirms rest flag preservation works correctly
+
+### Remaining Hypothesis
+The problem is likely in how the ORIGINAL function type `(...args: T)` is lowered, NOT in instantiation.
+
+When declaring `type F<T extends any[]> = (...args: T) => void`:
+- How is the parameter `args` initially represented?
+- Does it have `rest: true` based on the constraint `T extends any[]`?
+- Or does it only get `rest: true` when T is known to be an array?
+
+### Next Steps (Per Gemini Recommendation)
+1. Investigate type lowering for generic rest parameters
+2. If blocked > 30 min, pivot to Template Literal Types or Intrinsic String Types
+3. Focus: src/checker/type_node.rs or src/solver/lower.rs
+
+### Impact
+Fixing this would unlock dozens of conformance tests related to:
+- Parameters<T>, ConstructorParameters<T>
+- Tail<T>, variadic tuple types
+- Higher-order function patterns
+
