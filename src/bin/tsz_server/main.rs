@@ -3431,8 +3431,7 @@ impl Server {
         // Wrap in Arc to avoid cloning HashMap/HashSet for every file
         let resolved_module_paths_arc: Arc<FxHashMap<(usize, String), usize>> =
             Arc::new(resolved_module_paths);
-        use std::collections::HashSet;
-        let resolved_modules_arc: Arc<HashSet<String>> = Arc::new(resolved_modules);
+        let resolved_modules_arc: Arc<rustc_hash::FxHashSet<String>> = Arc::new(resolved_modules);
 
         // PHASE 4: Type check all files
         let query_cache = wasm::solver::QueryCache::new(&type_interner);

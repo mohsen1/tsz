@@ -1263,7 +1263,9 @@ try {
 - Array indexing mode: works for arrays
 - Iterator protocol mode: works for strings, sets, maps, generators
 
-**Next Task (from Gemini):**
+### 2025-02-06 Session 24: IR/Directive Architectural Mismatch - IN PROGRESS
+
+**Task from Gemini:**
 Fix the IR/Directive Architectural Mismatch in `IRPrinter::ASTRef`.
 
 **Problem:**
@@ -1272,8 +1274,154 @@ Fix the IR/Directive Architectural Mismatch in `IRPrinter::ASTRef`.
 **Impact:**
 Arrow functions inside static class methods (and other nested constructs) are emitted as raw ES6+ source instead of being downleveled.
 
-**Implementation:**
-- File: `src/transforms/ir_printer.rs`
-- Modify `emit_node` (specifically the `IRNode::ASTRef(idx)` arm)
-- Check `transforms.get_directive(idx)` before printing raw source
-- If directive found, delegate to appropriate transformation instead of copying source text
+**Implementation (Partially Complete):**
+1. ✅ Modified IRPrinter::emit_node ASTRef handler to extract directive data
+2. ✅ Added support for ES5ArrowFunction, SubstituteThis, SubstituteArguments directives
+3. ✅ Created emit_arrow_function_es5_with_flags that uses directive flags
+4. ✅ Used recursive emit_node calls for arrow function body
+5. ✅ Added class_alias support for static class members
+6. ✅ Passed transforms from Printer to ClassES5Emitter in declarations.rs, es5_helpers.rs, module_emission.rs
+
+**Current Status:**
+Committed IRPrinter directive-aware changes (commit eb0af2bd2), but manual testing shows arrow functions in static class methods are still being emitted as ES6.
+
+**Root Cause Identified (2025-02-06):**
+
+The problem is NOT with IRPrinter's directive checking - it's with the **IR transformation pipeline itself**:
+
+1. `ClassES5Transformer` (in `class_es5_ir.rs`) converts class bodies to IR **before** IRPrinter processes them
+2. Arrow functions are handled by `convert_arrow_function` (line 2102) which:
+   - Checks if arrow captures `this` using `contains_this_reference`
+   - If it does, wraps in IIFE: `(function (_this) { return func; })(this)`
+   - But for static members, should use class alias pattern instead
+3. The converted arrow functions become `IRNode::FunctionExpr`, NOT `IRNode::ASTRef`
+4. Therefore IRPrinter's directive-aware ASTRef handler is **never reached**
+
+**Test Output (test_arrow_static.js):**
+```javascript
+var Vector = /** @class */ (function () {
+    function Vector() {
+    }
+    Vector.foo = function () {
+        const f = () => this;  // <-- Arrow still ES6!
+        return
+        return f();
+    };
+    return Vector;
+}());
+```
+
+**Two Separate Issues:**
+1. Arrow function `() => this` is emitted as ES6 (not converted)
+2. Extra `return;` statement being emitted (separate bug)
+
+**Investigation Shows:**
+- CLI emit path IS using LoweringPass (line 1708 in driver_resolution.rs)
+- Transforms ARE being passed to ClassES5Emitter (line 1129 in es5_helpers.rs)
+- ClassES5Emitter passes transforms to IRPrinter (line 139 in class_es5.rs)
+- BUT: Arrow functions are converted to IR nodes before IRPrinter sees them
+
+**The Real Problem:**
+`ClassES5Transformer.convert_arrow_function` has its own arrow conversion logic that doesn't use directives. It either:
+- Falls back to `IRNode::ASTRef(idx)` (if `get_function` fails)
+- Or returns `IRNode::FunctionExpr` (if conversion succeeds)
+
+Either way, the directive path in IRPrinter is bypassed.
+
+**Next Step:**
+Ask Gemini for guidance on fixing the architectural mismatch. Options:
+1. Make ClassES5Transformer NOT convert arrow functions (pass through as ASTRef)
+2. Make ClassES5Transformer use directives for arrow conversion
+3. Add class_alias support to ClassES5Transformer's convert_arrow_function
+
+### 2025-02-06 Session 25: Arrow Function ES5 Downleveling in Static Methods - COMPLETED ✅
+
+**Problem:**
+Arrow functions inside static class methods were being emitted as ES6 syntax instead of ES5.
+
+**Root Cause:**
+`ClassES5Transformer` was converting arrow functions using its own analysis instead of using directives from `LoweringPass`.
+
+**Solution Implemented (commit b5ca30f36):**
+
+1. **Made ES5ClassTransformer and AstToIr directive-aware:**
+   - Added `transforms: Option<TransformContext>` field to both structs
+   - Updated `convert_arrow_function` to check directive first before local analysis
+   - Set `current_class_alias` before converting body for `this` substitution
+
+2. **Added `this` substitution for static method context:**
+   - Updated `ThisKeyword` conversion to use `class_alias` when set
+   - Return `IRNode::Identifier(alias)` instead of `IRNode::This` in static methods
+
+3. **Added class alias declaration to static methods:**
+   - Created `get_class_alias_for_static_method()` to check if method needs alias
+   - Added `convert_block_body_with_alias()` to prepend `var _v = this;`
+   - Static methods with this-capturing arrows now declare the alias
+
+**Test Input:**
+```typescript
+class Vector {
+    static foo() {
+        const f = () => this;
+        return f();
+    }
+}
+```
+
+**Output (after):**
+```javascript
+Vector.foo = function () {
+    var _v = this;  // Class alias declared
+    var f = function () { return _v; };  // ES5 with alias
+    return f();
+};
+```
+
+**Files Modified:**
+- `src/transforms/class_es5_ir.rs` - Main implementation
+- `src/transforms/class_es5.rs` - Pass transforms to transformer
+
+**Next Steps:**
+Continue improving emit test pass rate. The IR/Directive architectural mismatch has been resolved for arrow functions in static class methods.
+
+### 2025-02-06 Session 26: Emit Test Failure Triage - COMPLETED ✅
+
+**Test Results:**
+- Current pass rate: **31.8% (56/176)**
+- Failed: 120, Skipped: 24
+
+**Triage Findings:**
+
+**Cluster A: Formatting/Whitespace (~80% of failures)**
+- **Comment placement:** tsc puts comments on same line as code, tsz splits to new line
+  - Example: `var a = [1, '']; // {}[]` (tsc) → two lines (tsz)
+  - Root cause: IR printer's emission logic for comments
+- **Line wrapping:** Minor differences in how long expressions are wrapped
+- **Trailing whitespace/newlines:** Missing newlines at end of file
+
+**Cluster B: Missing Functionality (~10-15% of failures)**
+- **Missing emit helpers:** Some tests fail because helpers aren't being emitted
+- **Complex ES5 transforms:** Some edge cases in for-of, destructuring, etc.
+
+**Core Functionality: WORKING** ✅
+- Classes (IIFE pattern)
+- Arrow functions (ES5 conversion)
+- Spread operators (`__spreadArray`, `__assign`)
+- Async/await (state machine)
+- Enums (IIFE pattern)
+- Template literals (concat pattern)
+- Destructuring
+- CommonJS interop
+
+**Next Priorities (per Gemini guidance):**
+1. **Helper Manager** - Centralized tracking of `__spreadArray`, `__assign`, `__awaiter`, etc.
+   - Impact: Would flip hundreds of tests
+2. **Hygiene/Variable Renaming** - Avoid `_this` collisions
+3. **Directive Prologues** - "use strict" handling
+4. **Formatting improvements** - Comment placement, line wrapping
+
+**Files to Modify for Helper Manager:**
+- `src/emitter/mod.rs` - Add helper tracking
+- `src/emitter/helpers.rs` - Implement HelperManager
+- `src/lowering_pass.rs` - Mark helpers when transformations are used
+

@@ -73,10 +73,10 @@ impl<'a> CheckerState<'a> {
         use crate::checker::types::diagnostics::{
             diagnostic_codes, diagnostic_messages, format_message,
         };
-        use std::collections::HashMap;
+        use rustc_hash::FxHashMap;
 
         // Track property names and their indices (methods are allowed to have overloads)
-        let mut seen_properties: HashMap<String, Vec<NodeIndex>> = HashMap::new();
+        let mut seen_properties: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
 
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -224,7 +224,7 @@ impl<'a> CheckerState<'a> {
         use crate::checker::types::diagnostics::{
             diagnostic_codes, diagnostic_messages, format_message,
         };
-        use std::collections::HashMap;
+        use rustc_hash::FxHashMap;
 
         // Track member names with their info
         struct MemberInfo {
@@ -234,11 +234,11 @@ impl<'a> CheckerState<'a> {
             is_static: Vec<bool>,
         }
 
-        let mut seen_names: HashMap<String, MemberInfo> = HashMap::new();
+        let mut seen_names: FxHashMap<String, MemberInfo> = FxHashMap::default();
 
         // Track accessor occurrences for duplicate detection
         // Key: "get:name" or "set:name" (with "static:" prefix for static members)
-        let mut seen_accessors: HashMap<String, Vec<NodeIndex>> = HashMap::new();
+        let mut seen_accessors: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
 
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {

@@ -12,7 +12,7 @@ use crate::checker::state::CheckerState;
 use crate::checker::types::diagnostics::diagnostic_codes;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 // =============================================================================
 // Accessor Checking Methods
@@ -44,7 +44,7 @@ impl<'a> CheckerState<'a> {
             setter: Option<(NodeIndex, bool)>,
         }
 
-        let mut accessors: HashMap<String, AccessorPair> = HashMap::new();
+        let mut accessors: FxHashMap<String, AccessorPair> = FxHashMap::default();
 
         for &member_idx in members {
             let Some(node) = self.ctx.arena.get(member_idx) else {

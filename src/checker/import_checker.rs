@@ -15,7 +15,7 @@ use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 // =============================================================================
 // Import/Export Checking Methods
@@ -544,7 +544,7 @@ impl<'a> CheckerState<'a> {
             self.check_imported_members(import, module_name);
 
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
-                let mut visited = HashSet::new();
+                let mut visited = FxHashSet::default();
                 for source_module in source_modules {
                     self.check_reexport_chain_for_cycles(source_module, &mut visited);
                 }
@@ -558,7 +558,7 @@ impl<'a> CheckerState<'a> {
             self.check_imported_members(import, module_name);
 
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
-                let mut visited = HashSet::new();
+                let mut visited = FxHashSet::default();
                 for source_module in source_modules {
                     self.check_reexport_chain_for_cycles(source_module, &mut visited);
                 }
@@ -598,7 +598,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_reexport_chain_for_cycles(
         &mut self,
         module_name: &str,
-        visited: &mut HashSet<String>,
+        visited: &mut FxHashSet<String>,
     ) {
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
