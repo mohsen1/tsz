@@ -1,0 +1,18 @@
+[package]
+name = "tsz-binder"
+description = "TypeScript name binder for the tsz compiler"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tsz-common = { workspace = true }
+tsz-scanner = { workspace = true }
+tsz-parser = { workspace = true }
+rustc-hash = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

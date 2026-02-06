@@ -64,19 +64,17 @@ fn get_or_create_lib_file(file_name: String, source_text: String) -> Arc<lib_loa
 #[path = "tests/test_fixtures.rs"]
 pub mod test_fixtures;
 
-// String interning for identifier deduplication (Performance optimization)
-pub mod interner;
-pub use interner::{Atom, Interner, ShardedInterner};
+// Re-export foundation types from tsz-common workspace crate
+pub use tsz_common::interner;
+pub use tsz_common::interner::{Atom, Interner, ShardedInterner};
 #[cfg(test)]
 #[path = "tests/interner_tests.rs"]
 mod interner_tests;
 
-// Common types - Shared constants to break circular dependencies
-pub mod common;
-pub use common::{ModuleKind, NewLineKind, ScriptTarget};
+pub use tsz_common::common;
+pub use tsz_common::common::{ModuleKind, NewLineKind, ScriptTarget};
 
-// Centralized limits and thresholds
-pub mod limits;
+pub use tsz_common::limits;
 
 // Scanner module - token definitions, scanning implementation, and character codes
 pub mod scanner;
@@ -158,7 +156,7 @@ pub mod printer;
 mod printer_tests;
 
 // Span - Source location tracking (byte offsets)
-pub mod span;
+pub use tsz_common::span;
 
 // SourceFile - Owns source text and provides &str references
 pub mod source_file;
@@ -173,13 +171,13 @@ pub mod enums;
 pub mod parallel;
 
 // Comment preservation (Phase 6.3)
-pub mod comments;
+pub use tsz_common::comments;
 #[cfg(test)]
 #[path = "tests/comments_tests.rs"]
 mod comments_tests;
 
 // Source Map generation (Phase 6.2)
-pub mod source_map;
+pub use tsz_common::source_map;
 #[cfg(test)]
 #[path = "tests/source_map_test_utils.rs"]
 mod source_map_test_utils;

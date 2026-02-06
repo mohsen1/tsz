@@ -165,7 +165,7 @@ const COMMON_STRINGS: &[&str] = &[
 ///
 /// # Example
 /// ```
-/// use wasm::interner::Interner;
+/// use tsz_common::interner::Interner;
 /// let mut interner = Interner::new();
 /// let a1 = interner.intern("hello");
 /// let a2 = interner.intern("hello");

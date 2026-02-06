@@ -1,154 +1,72 @@
-[package]
-name = "wasm"
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-description = "TypeScript compiler and type checker with WASM support"
 repository = "https://github.com/mohsenazimi/tsz"
 license = "MIT"
 authors = ["Mohsen Azimi <mohsen@users.noreply.github.com>"]
 
-[lib]
-crate-type = ["cdylib", "rlib"]
+[workspace.dependencies]
+# Internal workspace crates
+tsz-common = { path = "crates/tsz-common" }
+tsz-scanner = { path = "crates/tsz-scanner" }
+tsz-parser = { path = "crates/tsz-parser" }
+tsz-binder = { path = "crates/tsz-binder" }
+tsz-solver = { path = "crates/tsz-solver" }
+tsz-checker = { path = "crates/tsz-checker" }
+tsz-emitter = { path = "crates/tsz-emitter" }
+tsz-lsp = { path = "crates/tsz-lsp" }
 
-[[bin]]
-name = "tsz"
-path = "src/bin/tsz.rs"
-required-features = ["cli"]
-
-[[bin]]
-name = "tsz-lsp"
-path = "src/bin/tsz_lsp.rs"
-required-features = ["cli"]
-
-[[bin]]
-name = "tsz-server"
-path = "src/bin/tsz_server/main.rs"
-required-features = ["cli"]
-
-[features]
-default = ["cli"]
-cli = []
-experimental_salsa = []
-
-[dependencies]
+# External dependencies (shared versions)
 anyhow = "1.0"
+bitflags = "2.6"
 clap = { version = "4.5", features = ["derive"] }
 colored = "2.1"
+console_error_panic_hook = "0.1"
+criterion = "0.5"
+dashmap = "6.1"
+ena = "0.14"
+fixedbitset = "0.4"
 globset = "0.4"
+indexmap = "2.6"
+memchr = "2.7"
 notify = "6.1"
-wasm-bindgen = "0.2"
-console_error_panic_hook = "0.1"  # Better panic messages in WASM
+once_cell = "1.19"
+rayon = "1.10"
+rustc-hash = "2.0"
+salsa = "0.16"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 serde-wasm-bindgen = "0.6"
-rustc-hash = "2.0"  # Fast hashing for integer keys (FxHashMap)
-rayon = "1.10"  # Parallel iteration for multi-file parsing
-memchr = "2.7"  # SIMD byte searching for string escaping
-walkdir = "2.5"
 smallvec = "1.13"
-dashmap = "6.1"  # Lock-free concurrent HashMap for sharded type storage
-fixedbitset = "0.4"  # Efficient bitsets for O(1) inheritance graph operations
-# Phase 7.5: Query-based Structural Solver
-salsa = "0.16"  # Query-based incremental computation (0.16 for query_group API)
-ena = "0.14"  # Union-Find for type unification
-indexmap = "2.6"  # Deterministic iteration for structural keys (preserves insertion order)
-bitflags = "2.6"  # Efficient TypeFlags for fast rejection
-tracing = "0.1"  # Structured tracing for diagnostics
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }  # Tracing subscriber with RUST_LOG support
-tracing-tree = "0.4"  # Human-readable hierarchical trace output for debugging
-once_cell = "1.19"  # Lazy static initialization for lib cache
-
-[dev-dependencies]
-criterion = "0.5"
-once_cell = "1.19"
 tempfile = "3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-tree = "0.4"
+walkdir = "2.5"
+wasm-bindgen = "0.2"
 
-[profile.release]
-# Fast compilation with decent runtime performance (for testing)
-lto = false           # No LTO = much faster compilation
-codegen-units = 16    # Parallel codegen = faster compilation
-strip = false         # Keep symbols for debugging
-
-[profile.dist]
-# Maximum optimization for production binary (use: cargo build --profile dist)
-inherits = "release"
-lto = "fat"           # Full link-time optimization for smaller, faster binary
-codegen-units = 1     # Single codegen unit for better optimization
-strip = "symbols"     # Strip debug symbols to reduce binary size
-
-[profile.dev-fast]
-inherits = "dev"
-opt-level = 2
-debug = true
-
-[profile.test]
-# Thin LTO for faster test binaries (trade-off: slightly slower test compilation)
-lto = "thin"
-
-[profile.bench]
-lto = "thin"
-
-[[bench]]
-name = "scanner_bench"
-harness = false
-
-[[bench]]
-name = "parser_bench"
-harness = false
-
-[[bench]]
-name = "emitter_bench"
-harness = false
-
-[[bench]]
-name = "real_world_bench"
-harness = false
-
-[[bench]]
-name = "solver_bench"
-harness = false
-
-[[bench]]
-name = "cfa_bench"
-harness = false
-
-[[bench]]
-name = "parallel_bench"
-harness = false
-
-[[bench]]
-name = "union_reduction_bench"
-harness = false
-
-[[bench]]
-name = "object_subtype_bench"
-harness = false
-
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false
-
-[lints.rust]
+[workspace.lints.rust]
 unsafe_code = "warn"
 rust_2024_compatibility = { level = "warn", priority = -1 }
 
-[lints.clippy]
+[workspace.lints.clippy]
 # Correctness - these are errors
 correctness = { level = "deny", priority = -1 }
-
 # Style - useful warnings
 style = { level = "warn", priority = -1 }
 dbg_macro = "warn"
-print_stderr = "warn"  # Warn on eprintln! - use tracing instead for debugging (will be deny after cleanup)
+print_stderr = "warn"
 empty_structs_with_brackets = "warn"
 get_unwrap = "warn"
-
 # Performance
 perf = { level = "warn", priority = -1 }
-
 # Complexity
 complexity = { level = "warn", priority = -1 }
-
-# Allow some that may be too noisy for this codebase. Revisit later to clean up code
+# Allow some that may be too noisy for this codebase
 too_many_arguments = "allow"
 type_complexity = "allow"
 collapsible_if = "allow"
@@ -234,3 +152,142 @@ semicolon_if_nothing_returned = "allow"
 clone_on_ref_ptr = "allow"
 needless_pass_by_value = "allow"
 trivially_copy_pass_by_ref = "allow"
+
+[package]
+name = "wasm"
+version.workspace = true
+edition.workspace = true
+description = "TypeScript compiler and type checker with WASM support"
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "tsz"
+path = "src/bin/tsz.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "tsz-lsp"
+path = "src/bin/tsz_lsp.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "tsz-server"
+path = "src/bin/tsz_server/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = []
+experimental_salsa = []
+
+[dependencies]
+tsz-common = { workspace = true }
+tsz-scanner = { workspace = true }
+tsz-parser = { workspace = true }
+tsz-binder = { workspace = true }
+tsz-solver = { workspace = true }
+tsz-checker = { workspace = true }
+tsz-emitter = { workspace = true }
+tsz-lsp = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+globset = { workspace = true }
+notify = { workspace = true }
+wasm-bindgen = { workspace = true }
+console_error_panic_hook = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde-wasm-bindgen = { workspace = true }
+rustc-hash = { workspace = true }
+rayon = { workspace = true }
+memchr = { workspace = true }
+walkdir = { workspace = true }
+smallvec = { workspace = true }
+dashmap = { workspace = true }
+fixedbitset = { workspace = true }
+salsa = { workspace = true }
+ena = { workspace = true }
+indexmap = { workspace = true }
+bitflags = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-tree = { workspace = true }
+once_cell = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+once_cell = { workspace = true }
+tempfile = { workspace = true }
+
+[profile.release]
+# Fast compilation with decent runtime performance (for testing)
+lto = false           # No LTO = much faster compilation
+codegen-units = 16    # Parallel codegen = faster compilation
+strip = false         # Keep symbols for debugging
+
+[profile.dist]
+# Maximum optimization for production binary (use: cargo build --profile dist)
+inherits = "release"
+lto = "fat"           # Full link-time optimization for smaller, faster binary
+codegen-units = 1     # Single codegen unit for better optimization
+strip = "symbols"     # Strip debug symbols to reduce binary size
+
+[profile.dev-fast]
+inherits = "dev"
+opt-level = 2
+debug = true
+
+[profile.test]
+# Thin LTO for faster test binaries (trade-off: slightly slower test compilation)
+lto = "thin"
+
+[profile.bench]
+lto = "thin"
+
+[[bench]]
+name = "scanner_bench"
+harness = false
+
+[[bench]]
+name = "parser_bench"
+harness = false
+
+[[bench]]
+name = "emitter_bench"
+harness = false
+
+[[bench]]
+name = "real_world_bench"
+harness = false
+
+[[bench]]
+name = "solver_bench"
+harness = false
+
+[[bench]]
+name = "cfa_bench"
+harness = false
+
+[[bench]]
+name = "parallel_bench"
+harness = false
+
+[[bench]]
+name = "union_reduction_bench"
+harness = false
+
+[[bench]]
+name = "object_subtype_bench"
+harness = false
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[lints]
+workspace = true

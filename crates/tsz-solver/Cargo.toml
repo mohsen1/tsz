@@ -1,0 +1,27 @@
+[package]
+name = "tsz-solver"
+description = "TypeScript type solver for the tsz compiler"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tsz-common = { workspace = true }
+tsz-scanner = { workspace = true }
+tsz-parser = { workspace = true }
+tsz-binder = { workspace = true }
+rustc-hash = { workspace = true }
+salsa = { workspace = true }
+ena = { workspace = true }
+indexmap = { workspace = true }
+bitflags = { workspace = true }
+tracing = { workspace = true }
+smallvec = { workspace = true }
+fixedbitset = { workspace = true }
+dashmap = { workspace = true }
+serde = { workspace = true }
+
+[lints]
+workspace = true

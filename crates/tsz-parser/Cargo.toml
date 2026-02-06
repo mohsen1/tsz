@@ -1,0 +1,19 @@
+[package]
+name = "tsz-parser"
+description = "TypeScript parser and AST types for the tsz compiler"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tsz-common = { workspace = true }
+tsz-scanner = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+smallvec = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

@@ -4,7 +4,7 @@ Tasks to improve codebase organization, build times, and developer experience.
 
 ## Cargo Workspaces
 
-**Priority**: Medium
+**Priority**: Medium → **IN PROGRESS**
 **Impact**: Build times, test isolation, CI parallelism
 
 Currently the entire compiler is a single crate (`wasm`) with ~620K lines of Rust. Any change to any module recompiles the entire crate for tests (~20s incremental, ~107s clean).
@@ -16,25 +16,43 @@ Currently the entire compiler is a single crate (`wasm`) with ~620K lines of Rus
 - **No-op**: <1s
 - **Single test binary**: all 5000+ tests compile into one binary
 
-### Proposed workspace structure
+### Implemented workspace structure
 
 ```
 tsz/
 ├── Cargo.toml              (workspace root)
 ├── crates/
-│   ├── tsz-common/         (common types, ScriptTarget, ModuleKind, limits, char_codes)
-│   ├── tsz-interner/       (string interning, Atom, Interner, ShardedInterner)
+│   ├── tsz-common/         (interner, common types, span, limits, position, source_map, comments)
 │   ├── tsz-scanner/        (tokenizer, SyntaxKind, ScannerState)
-│   ├── tsz-parser/         (AST, NodeArena, ParserState)
+│   ├── tsz-parser/         (AST, NodeArena, ParserState, syntax utils)
 │   ├── tsz-binder/         (symbol binding, scopes, flow nodes)
 │   ├── tsz-solver/         (type system: interning, subtyping, inference, narrowing)
-│   ├── tsz-checker/        (type checking, diagnostics)
+│   ├── tsz-checker/        (type checking, diagnostics, enums)
 │   ├── tsz-emitter/        (JS code generation, printer, transforms)
-│   ├── tsz-lsp/            (language server protocol features)
-│   ├── tsz-cli/            (CLI driver, config, watch mode)
-│   └── tsz-wasm/           (WASM bindings, wasm_bindgen exports)
+│   └── tsz-lsp/            (language server protocol features)
+├── src/                    (root 'wasm' crate: CLI, WASM bindings, bins)
 ├── conformance-rust/       (existing conformance runner)
 └── benches/                (benchmarks)
+```
+
+### Dependency Graph (Bottom-Up)
+
+```
+Layer 0: tsz-common (interner, common, span, limits, position, source_map, comments)
+    ↑
+Layer 1: tsz-scanner (scanner/)
+    ↑
+Layer 2: tsz-parser (parser/, syntax/)
+    ↑
+Layer 3: tsz-binder (binder/, lib_loader, imports, exports)
+    ↑
+Layer 4: tsz-solver (solver/) + tsz-checker (checker/, enums/)
+    ↑
+Layer 5: tsz-emitter (emitter/, transforms/, declaration_emitter/, emit_context, etc.)
+    ↑
+Layer 6: tsz-lsp (lsp/)
+    ↑
+Root: wasm (cli/, wasm_api/, wasm.rs, bin/, parallel.rs)
 ```
 
 ### Benefits
@@ -45,22 +63,34 @@ tsz/
 - **Clearer dependency graph**: Enforces module boundaries at the crate level (e.g., solver cannot accidentally import LSP code)
 - **Better IDE experience**: rust-analyzer indexes smaller crates faster
 
-### Risks / Blockers
+### Implementation Status
 
-- **Heavy refactoring**: The modules have cross-references through `crate::` paths that would all need updating
-- **Circular dependencies**: checker <-> solver have tight coupling that needs careful interface design
-- **`lib.rs` is a WASM entry point**: The root `lib.rs` (2700 lines) mixes WASM bindings with test registration; needs untangling
-- **`#[path = "tests/..."]` pattern**: Tests are registered in `lib.rs` via path attributes; workspace crates would own their own tests
-- **Build profiles**: Current `[profile.test]` uses thin LTO across the whole crate; workspace may change LTO behavior
+- [x] Workspace skeleton created (root Cargo.toml, crate directories, Cargo.toml files)
+- [x] Shared workspace dependencies and lints configured
+- [x] tsz-common extracted (interner, common, span, limits, position, source_map, comments)
+- [ ] tsz-scanner extracted
+- [ ] tsz-parser extracted
+- [ ] tsz-binder extracted
+- [ ] tsz-solver extracted
+- [ ] tsz-checker extracted
+- [ ] tsz-emitter extracted
+- [ ] tsz-lsp extracted
+- [ ] All tests passing with full extraction
 
-### Effort estimate
+### Implementation approach
 
-Large (multi-day). Should be done incrementally, extracting leaf crates first:
-1. `tsz-common` (trivial, no deps)
-2. `tsz-interner` (depends on nothing)
-3. `tsz-scanner` (depends on common)
-4. `tsz-parser` (depends on scanner, interner)
-5. Work upward from there
+Using **re-exports** for backwards compatibility:
+- Root `lib.rs` uses `pub use tsz_common::interner;` instead of `pub mod interner;`
+- Existing `crate::interner::...` imports in root crate still work via re-export
+- New sub-crates import from `tsz_common::interner` directly
+- Original files removed from `src/` after moving to crate
+
+### Key Cross-Dependency Issues
+
+1. **Position types**: `Position`, `Range`, `LineMap` now in tsz-common, duplicated in `lsp/position.rs` until lsp is extracted
+2. **diagnostics.rs** uses `source_file::SourceFile` and `lsp::position::Range` — both will go in tsz-common
+3. **enums/** depends on both checker and solver — goes in tsz-checker
+4. **declaration_emitter/** depends on checker and solver — stays with tsz-emitter with those as deps
 
 ---
 
@@ -442,23 +472,23 @@ Group native-only code into dedicated modules (e.g., `src/native/`) or use the e
 
 ## Summary Table
 
-| Task | Priority | Effort | Automatable |
-|------|----------|--------|-------------|
-| Cargo workspaces | Medium | Large | No |
-| Visibility tightening (`pub` -> `pub(crate)`) | Medium | Medium | Partially |
-| Reduce `.to_string()` allocations | Medium | Medium | Partially |
-| Test file `#[cfg(test)]` guards | Medium | Low | Yes |
-| Split oversized test files | Medium | Medium | Yes |
-| `#[allow(dead_code)]` audit | Low | Low | Yes |
-| `unsafe` code audit | High | Low | Partially |
-| Diagnostic message dedup | Low-Med | Medium | Partially |
-| Inline string constants | Low | Low | Yes |
-| `.unwrap()` audit (non-test) | Medium | Medium | Partially |
-| `.clone()` hot-path audit | Medium | Medium | No (needs profiling) |
-| Reduce `lib.rs` bloat | Medium | Medium | Mostly |
-| Consolidate test infrastructure | Low-Med | Medium | Mostly |
-| Add `rustfmt.toml` | Low | Low | Yes |
-| Clippy allow-list cleanup | Low | Low | Yes |
-| `tsz_server/main.rs` decomposition | Low-Med | Medium | Mostly |
-| Feature-gated code extraction | Low | Low | Partially |
-| Import organization (nightly fmt) | Low | Low | Yes |
+| Task | Priority | Effort | Status |
+|------|----------|--------|--------|
+| Cargo workspaces | Medium | Large | **In Progress** |
+| Visibility tightening (`pub` -> `pub(crate)`) | Medium | Medium | Todo |
+| Reduce `.to_string()` allocations | Medium | Medium | Todo |
+| Test file `#[cfg(test)]` guards | Medium | Low | Todo |
+| Split oversized test files | Medium | Medium | Todo |
+| `#[allow(dead_code)]` audit | Low | Low | Todo |
+| `unsafe` code audit | High | Low | Todo |
+| Diagnostic message dedup | Low-Med | Medium | Todo |
+| Inline string constants | Low | Low | Todo |
+| `.unwrap()` audit (non-test) | Medium | Medium | Todo |
+| `.clone()` hot-path audit | Medium | Medium | Todo |
+| Reduce `lib.rs` bloat | Medium | Medium | Todo |
+| Consolidate test infrastructure | Low-Med | Medium | Todo |
+| Add `rustfmt.toml` | Low | Low | Todo |
+| Clippy allow-list cleanup | Low | Low | Todo |
+| `tsz_server/main.rs` decomposition | Low-Med | Medium | Todo |
+| Feature-gated code extraction | Low | Low | Todo |
+| Import organization (nightly fmt) | Low | Low | Todo |
