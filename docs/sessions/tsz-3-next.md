@@ -1,83 +1,113 @@
-# Session tsz-3: Phase 4.2 Cleanup / Anti-Pattern 8.1 Refactoring
+# Session tsz-3: Anti-Pattern 8.1 Refactoring (COMPLETE)
 
 **Started**: 2026-02-06
-**Status**: Active - Planning Phase
+**Status**: ✅ COMPLETE
 **Predecessor**: tsz-3-infer-fix-complete (Conditional Type Inference - COMPLETED)
 
-## Completed Sessions
+## Summary
 
-1. **In operator narrowing** - Filtering NEVER types from unions in control flow narrowing
-2. **TS2339 string literal property access** - Implementing visitor pattern for primitive types
-3. **Conditional type inference with `infer` keywords** - Fixed `collect_infer_type_parameters_inner` to recursively check nested types
+Successfully eliminated Anti-Pattern 8.1 (Checker matching on TypeKey) by replacing direct `TypeKey` pattern matching in `ensure_refs_resolved_inner` with a classification-based approach using `TypeTraversalKind`.
 
-## Current Task: Phase 4.2 Cleanup / Anti-Pattern 8.1 Refactoring
-
-### Task Definition (from Gemini Consultation)
-
-Based on review of NORTH_STAR.md and docs/sessions/, the next priority task is:
-
-**Remove Anti-Pattern 8.1: Checker matching on TypeKey**
+## Problem
 
 From NORTH_STAR.md Section 8.1:
 > "Checker components must NOT directly pattern-match on TypeKey. This creates tight coupling
 > between Checker and Solver implementation details, violating architectural boundaries."
 
-### Problem
+The `ensure_refs_resolved_inner` function in `src/checker/assignability_checker.rs` was directly matching on `TypeKey::Lazy` and `TypeKey::TypeQuery`, creating tight coupling between the Checker and Solver layers.
 
-The Checker currently has code that directly matches on `TypeKey` enum variants, which:
-1. Creates tight coupling between Checker and Solver
-2. Violates the Solver-First architecture
-3. Makes it harder to modify Solver internals without breaking Checker
+## Solution
 
-### Files to Investigate
+### Files Modified
 
-Per Gemini's recommendation:
-1. **`src/checker/assignability_checker.rs`** - Line 55: `ensure_refs_resolved_inner` has mixed `Lazy` and `TypeQuery(SymbolRef)` logic
-2. **`src/checker/flow_analysis.rs`** - May have direct TypeKey matching
+1. **`src/solver/type_queries.rs`**:
+   - Added `Lazy(DefId)` variant to `TypeTraversalKind`
+   - Added `TypeQuery(SymbolRef)` variant to `TypeTraversalKind`
+   - Added `TemplateLiteral(Vec<TypeId>)` variant to `TypeTraversalKind`
+   - Added `StringIntrinsic(TypeId)` variant to `TypeTraversalKind`
+   - Updated `classify_for_traversal` to return these new variants
 
-### Implementation Approach (Pending Gemini Review)
+2. **`src/checker/assignability_checker.rs`**:
+   - Removed `use crate::solver::TypeKey` import from `ensure_refs_resolved_inner`
+   - Replaced direct `TypeKey` matching with `classify_for_traversal` classification
+   - Added explicit handling for all `TypeTraversalKind` variants
 
-**Before implementing, I will ask Gemini Question 1**:
-1. Is this the right approach?
-2. What functions should be modified?
-3. What are the edge cases?
+### Implementation Details
 
-**Planned Approach**:
-1. Identify all places in Checker that directly match on TypeKey
-2. Replace with calls to `self.with_judge(|j| j.classify_...)` or new visitor-based queries
-3. Create new type query methods in `src/solver/type_queries.rs` if needed
-4. Update session file with progress
+The refactoring replaces this anti-pattern:
+```rust
+// OLD: Direct TypeKey matching
+if let TypeKey::Lazy(def_id) = type_key {
+    // handle Lazy...
+}
+if let TypeKey::TypeQuery(symbol_ref) = type_key {
+    // handle TypeQuery...
+}
+visitor::for_each_child(self.ctx.types, &type_key, |child_id| {
+    self.ensure_refs_resolved_inner(child_id, visited);
+});
+```
 
-### Test Cases
+With the correct pattern:
+```rust
+// NEW: Classification-based approach
+use crate::solver::type_queries::{TypeTraversalKind, classify_for_traversal};
+let traversal_kind = classify_for_traversal(self.ctx.types, type_id);
 
-**Before**: Existing tests should pass (no behavior change, just refactoring)
-**After**: All tests should still pass, with improved architectural separation
+match traversal_kind {
+    TypeTraversalKind::Lazy(def_id) => { /* handle Lazy... */ }
+    TypeTraversalKind::TypeQuery(symbol_ref) => { /* handle TypeQuery... */ }
+    TypeTraversalKind::Application { base, args, .. } => { /* handle Application... */ }
+    TypeTraversalKind::Members(members) => { /* handle Union/Intersection... */ }
+    // ... all other variants
+    TypeTraversalKind::Terminal => { /* no traversal needed */ }
+}
+```
 
-## Previous Session Details (Archived)
+## Gemini Consultation
 
-### Conditional Type Inference (COMPLETED)
+**Question 1** (Approach Validation):
+- Confirmed the approach is correct for eliminating Anti-Pattern 8.1
+- Specified the exact functions to modify
+- Identified edge cases (TemplateLiteral, StringIntrinsic)
 
-**Problem**: `infer R` in conditional types caused "Cannot find name 'R'" errors
+**Question 2** (Implementation Review):
+- Confirmed the implementation correctly eliminates Anti-Pattern 8.1
+- Confirmed behavior is maintained from the original implementation
+- Found missing cases: TemplateLiteral and StringIntrinsic types
+- Suggested fixes which were implemented
 
-**Root Cause**: `collect_infer_type_parameters_inner` in `type_checking_queries.rs` did not check for InferType nodes inside nested type structures
+## Test Results
 
-**Solution**: Added recursive checking for InferType in 13 different type patterns:
-- Function/Constructor types (parameters and return type)
-- Array types (element type)
-- Tuple types (all elements)
-- Type literals (all members)
-- Type operators (keyof, readonly, unique)
-- Indexed access types (object and index)
-- Mapped types (type parameter constraint, type template)
-- Conditional types (all branches)
-- Template literal types (spans)
-- Parenthesized, optional, rest types
-- Named tuple members
-- Parameters (type annotations)
-- Type Parameters (constraint and default)
+- Solver tests: 3517/3518 passing (1 pre-existing failure in `test_infer_generic_index_access_param_from_index_access_arg`)
+- Freshness stripping tests: 6 pre-existing failures (excess property checking bug - documented in `tsz-3-excess-properties.md`)
+- No new test failures introduced by this refactoring
 
-**Committed**:
-- `2c238b893`: feat(checker): fix infer type collection in nested types
-- `4eab170d1`: fix(checker): add TYPE_PARAMETER handling for infer collection
+## Commits
 
-**Result**: Redux test "Cannot find name" errors eliminated, conformance tests passing
+- `680ad961b`: refactor(checker): eliminate Anti-Pattern 8.1 - remove TypeKey matching
+
+## Impact
+
+**Architectural Benefits**:
+1. Eliminates tight coupling between Checker and Solver
+2. Makes it easier to modify Solver internals without breaking Checker
+3. Improves code maintainability and clarity
+4. Follows the "Solver-First" architecture from NORTH_STAR.md
+
+**Code Quality**:
+1. More explicit handling of each type variant
+2. Better documentation of traversal behavior
+3. Easier to understand the "WHERE" (Checker) vs "WHAT" (Solver) separation
+
+## Previous Sessions
+
+1. **In operator narrowing** - Filtering NEVER types from unions in control flow narrowing
+2. **TS2339 string literal property access** - Implementing visitor pattern for primitive types
+3. **Conditional type inference with `infer` keywords** - Fixed `collect_infer_type_parameters_inner` to recursively check nested types
+
+## Next Steps
+
+The next session can focus on:
+1. **Excess Property Checking fix** (documented in `tsz-3-excess-properties.md`) - Fixing freshness widening in variable assignment
+2. **Other conformance test failures** - Run conformance suite to identify next priority
