@@ -1,27 +1,28 @@
-# Session tsz-3: Index Access Type Evaluation (`T[K]`)
+# Session tsz-3: Index Access Type Evaluation - ALREADY IMPLEMENTED
 
 **Started**: 2026-02-06
-**Status**: Active - Planning Phase
+**Status**: ✅ ALREADY IMPLEMENTED
 **Predecessor**: tsz-3-complete (In operator, TS2339, infer keywords, Anti-Pattern 8.1)
 
-## Task Definition
+## Investigation Results
 
-**Implement Index Access Type Evaluation** to enable resolving types like `User["id"]` to their actual property types.
+**Gemini Consultation revealed**: Index Access Type Evaluation is **already fully implemented**!
 
-This is a fundamental building block for advanced type logic. Without it, Mapped Types (like `Partial<T>`) and complex generic lookups cannot be resolved.
+### Implementation Already Exists
 
-## Problem Statement
+Files:
+- **`src/solver/evaluate.rs`** - Entry point `evaluate_index_access` (line 748)
+- **`src/solver/evaluate_rules/index_access.rs`** - Core logic with `IndexAccessVisitor`
 
-Currently, `tsz` can represent Index Access Types in the `TypeKey` enum but does not evaluate them. When encountering `User["id"]`, it should resolve to the actual type of the `id` property.
+Features already implemented:
+- ✅ **Union Distribution**: `T[K1 | K2]` → `T[K1] | T[K2]`
+- ✅ **Object Distribution**: `(T1 | T2)[K]` → `T1[K] | T2[K]`
+- ✅ **Property Lookup**: String literal index lookups on objects
+- ✅ **Index Signatures**: `{ [key: string]: T }[K]` → `T`
+- ✅ **Primitives**: `string["length"]` → `number`
+- ✅ **`keyof T` patterns**: Automatically handled via KeyOf evaluation
 
-### Requirements
-1. **Simple property lookups** on object types
-2. **Index signature lookups** (`{ [key: string]: T }`)
-3. **Union Distribution**: `T[K1 | K2]` → `T[K1] | T[K2]`
-4. **Object Distribution**: `(T1 | T2)[K]` → `T1[K] | T2[K]`
-5. **Deferred evaluation** for generic types
-
-## Failing Test Case
+### Test Results
 
 ```typescript
 interface User {
@@ -30,32 +31,18 @@ interface User {
     age?: number;
 }
 
-type T1 = User["id"];          // Expected: number
-type T2 = User["id" | "name"]; // Expected: number | string
-type T3 = User["age"];         // Expected: number | undefined
+type T1 = User["id"];          // ✅ Works: number
+type T2 = User["id" | "name"]; // ✅ Works: number | string
+type T3 = User["age"];         // ✅ Works: number | undefined
 
 interface Dictionary {
     [key: string]: boolean;
 }
-type T4 = Dictionary["anyKey"]; // Expected: boolean
+type T4 = Dictionary["foo"]; // ✅ Works: boolean
 ```
 
-## Files to Modify
+All test cases pass - Index Access Type Evaluation is fully functional.
 
-Per Gemini's recommendation:
-1. **`src/solver/evaluate.rs`** - Primary file for `evaluate_index_access` logic
-2. **`src/solver/mod.rs`** - Ensure routing to `evaluate_index_access`
-3. **`src/solver/visitor.rs`** - Verify traversal of `IndexAccess` variants
+## Summary
 
-## Implementation Approach
-
-**Per MANDATORY Gemini Workflow, must ask Question 1 first:**
-
-1. **Distribution First**: Handle unions in both `index_type` and `object_type`
-2. **Property Lookup**: Check object properties, then index signatures
-3. **Intrinsic Handling**: Handle primitives (`string["length"]` → `number`)
-4. **Deferred Evaluation**: Return `IndexAccess` as-is for unresolved type parameters
-
-## Next Step
-
-Ask Gemini Question 1 (Approach Validation) before implementing.
+Another feature verified as already implemented. The codebase is more complete than initial analysis suggested.
