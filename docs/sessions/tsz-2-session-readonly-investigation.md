@@ -164,3 +164,37 @@ For interface readonly properties:
 - ❌ test_readonly_method_signature_assignment_2540 - FAIL (interface readonly method)
 
 Overall: 8273 tests passing, 39 failing, 158 ignored
+
+## Latest Attempt (2026-02-06 Final)
+
+### Tried: Preserve Lazy types in get_type_of_identifier
+Added case in type_computation_complex.rs:
+
+```rust
+Some(crate::solver::TypeKey::Lazy(_)) => declared_type,
+```
+
+**Result:** Stack overflow (infinite recursion)
+
+**Root Cause:** Preserving Lazy type creates unresolvable cycle:
+1. Return `Lazy(DefId)` from `get_type_of_identifier`
+2. Later code tries to resolve it via `evaluate_type` or `property_is_readonly`
+3. Resolution tries to access properties
+4. Property access tries to get type again
+5. Returns same `Lazy(DefId)` → infinite loop
+
+### The Trilemma:
+Three conflicting constraints:
+1. **Can't preserve Lazy** → causes infinite recursion
+2. **Can't resolve Lazy** → definition not available during type checking
+3. **Can't use flow_type** → loses readonly flags from interface
+
+### Conclusion:
+This task is blocked on fundamental architectural work requiring:
+- Cycle detection in property access resolution path
+- OR separation of "symbol's declared type" from "type for current usage"
+- OR tracking type modifiers separately from structural types
+
+### Recommendation:
+Move to different task with better ROI (e.g., Task #18 index signatures).
+This requires deeper architectural changes that should be planned carefully.
