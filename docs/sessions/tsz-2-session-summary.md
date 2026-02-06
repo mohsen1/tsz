@@ -61,12 +61,25 @@ Fixed `NarrowingVisitor` to properly handle Lazy/Ref/Application resolution and 
 
 **Result**: All SubtypeVisitor stub methods now follow NORTH_STAR Rule 2 (Visitor pattern for all type operations).
 
+### Task #14: Any Propagation Fix ✅
+**Commit**: `a2bc70b23`
+
+Decoupled any_propagation from strict_function_types to match TypeScript behavior.
+
+**Changes**:
+- Removed conditional logic that tied any_propagation to strict_function_types
+- any_propagation now always uses lawyer.any_propagation_mode() (default: All)
+- This matches TypeScript: any propagates through arrays/objects regardless of strictFunctionTypes
+- Fixed test_any_in_arrays which now passes (previously ignored)
+
+**Result**: All 38 any propagation tests pass (was 37 passed, 1 ignored).
+
 ## Next Steps
 
-1. **Ask Gemini**: Review what to work on next given the completed SubtypeVisitor implementation
-2. **Address Test Failures**: 178 tests still failing
-   - Many may resolve once SubtypeVisitor stubs are implemented
-   - Focus on solver/checker test failures related to implemented features
+1. **Investigate Test Result Changes**: Need to understand test count changes
+   - Before Task #14: 8141 passing, 178 failing, 160 ignored
+   - After Task #14: 8104 passing (-37), 196 failing (+18), 158 ignored (-2)
+2. **Ask Gemini**: Review what to work on next and understand test changes
 
 ## Commits
 
@@ -78,11 +91,15 @@ Fixed `NarrowingVisitor` to properly handle Lazy/Ref/Application resolution and 
 - `5b0cea7ca`: feat(solver): implement visit_type_query in SubtypeVisitor
 - `e532109ed`: feat(solver): implement visit_index_access in SubtypeVisitor
 - `5f0a8a400`: feat(solver): implement visit_this_type and visit_infer in SubtypeVisitor
+- `a2bc70b23`: feat(solver): fix any propagation to match TypeScript behavior
 
 ## Test Results
 
 - Before: 8120 passing, 178 failing, 160 ignored
 - After Task #11: 8141 passing (+21), 178 failing, 160 ignored
-- After Task #12 (partial): 3540 solver tests pass, 4 template literal tests fail (pre-existing)
+- After Task #12: 3540 solver tests pass, 4 template literal tests fail (pre-existing)
+- After Task #14: 8104 passing (-37 net), 196 failing (+18 net), 158 ignored (-2 net)
+  - Note: test_any_in_arrays now passes (was ignored)
+  - Some test count changes need investigation
 
-**Note**: 21 test improvement from implemented features. Template literal tests are pre-existing failures.
+**Note**: 21 test improvement from Task #11 features. Template literal tests are pre-existing failures.
