@@ -38,8 +38,8 @@ pub fn inline_param_jsdocs(
     root: NodeIndex,
     decl: NodeIndex,
     source_text: &str,
-) -> HashMap<String, String> {
-    let mut result = HashMap::new();
+) -> FxHashMap<String, String> {
+    let mut result = FxHashMap::default();
 
     let Some(root_node) = arena.get(root) else {
         return result;

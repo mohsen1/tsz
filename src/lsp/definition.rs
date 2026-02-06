@@ -635,7 +635,11 @@ impl<'a> GoToDefinition<'a> {
                 let kind = self.get_declaration_kind(decl_idx, symbol.flags);
                 let name = symbol.escaped_name.clone();
                 let (container_name, container_kind) = self.get_container_info(symbol_id);
-                let is_local = !self.is_top_level_declaration(decl_idx);
+                let is_local = if kind == "parameter" {
+                    false
+                } else {
+                    !self.is_top_level_declaration(decl_idx)
+                };
                 let is_ambient = self.is_ambient_declaration(decl_idx);
 
                 Some(DefinitionInfo {
@@ -978,6 +982,13 @@ impl<'a> GoToDefinition<'a> {
     fn get_declaration_kind(&self, decl_idx: NodeIndex, flags: u32) -> String {
         use crate::parser::flags::node_flags;
 
+        // Check if the declaration node is a parameter
+        if let Some(decl_node) = self.arena.get(decl_idx) {
+            if decl_node.kind == syntax_kind_ext::PARAMETER {
+                return "parameter".to_string();
+            }
+        }
+
         // For block-scoped variables, check if const
         if flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
             // Walk up to VariableDeclarationList to check CONST flag
@@ -994,6 +1005,16 @@ impl<'a> GoToDefinition<'a> {
                 }
             }
             return "let".to_string();
+        }
+
+        // For function-scoped variables, also check for parameter
+        if flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
+            // Check if this specific declaration is a parameter
+            if let Some(node) = self.arena.get(decl_idx) {
+                if node.kind == syntax_kind_ext::PARAMETER {
+                    return "parameter".to_string();
+                }
+            }
         }
 
         self.symbol_flags_to_kind_string(flags)
@@ -1046,16 +1067,91 @@ impl<'a> GoToDefinition<'a> {
             None => return (String::new(), String::new()),
         };
 
-        if symbol.parent.is_none() {
-            return (String::new(), String::new());
+        // First try symbol.parent (set by binder for enums, lib types)
+        if !symbol.parent.is_none() {
+            if let Some(parent_symbol) = self.binder.symbols.get(symbol.parent) {
+                let parent_kind = self.symbol_flags_to_kind_string(parent_symbol.flags);
+                return (parent_symbol.escaped_name.clone(), parent_kind);
+            }
         }
 
-        if let Some(parent_symbol) = self.binder.symbols.get(symbol.parent) {
-            let parent_kind = self.symbol_flags_to_kind_string(parent_symbol.flags);
-            (parent_symbol.escaped_name.clone(), parent_kind)
-        } else {
-            (String::new(), String::new())
+        // Fallback: walk AST from first declaration to find containing class/interface/enum
+        if let Some(&decl_idx) = symbol.declarations.first() {
+            return self.get_container_from_ast(decl_idx);
         }
+
+        (String::new(), String::new())
+    }
+
+    /// Get identifier text from a NodeIndex using source_text.
+    fn get_node_text(&self, idx: NodeIndex) -> String {
+        if idx.is_none() {
+            return String::new();
+        }
+        if let Some(node) = self.arena.get(idx) {
+            let pos = node.pos as usize;
+            let end = node.end as usize;
+            if pos < end && end <= self.source_text.len() {
+                return self.source_text[pos..end].to_string();
+            }
+        }
+        String::new()
+    }
+
+    /// Walk up the AST from a declaration node to find the containing class/interface/enum.
+    fn get_container_from_ast(&self, decl_idx: NodeIndex) -> (String, String) {
+        let mut current = decl_idx;
+        for _ in 0..20 {
+            if let Some(ext) = self.arena.get_extended(current) {
+                let parent = ext.parent;
+                if parent.is_none() {
+                    break;
+                }
+                if let Some(parent_node) = self.arena.get(parent) {
+                    match parent_node.kind {
+                        k if k == syntax_kind_ext::CLASS_DECLARATION
+                            || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                        {
+                            let name = self
+                                .arena
+                                .get_class(parent_node)
+                                .map(|c| self.get_node_text(c.name))
+                                .unwrap_or_default();
+                            return (name, "class".to_string());
+                        }
+                        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                            let name = self
+                                .arena
+                                .get_interface(parent_node)
+                                .map(|i| self.get_node_text(i.name))
+                                .unwrap_or_default();
+                            return (name, "interface".to_string());
+                        }
+                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                            let name = self
+                                .arena
+                                .get_enum(parent_node)
+                                .map(|e| self.get_node_text(e.name))
+                                .unwrap_or_default();
+                            return (name, "enum".to_string());
+                        }
+                        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                            let name = self
+                                .arena
+                                .get_module(parent_node)
+                                .map(|m| self.get_node_text(m.name))
+                                .unwrap_or_default();
+                            return (name, "module".to_string());
+                        }
+                        _ => {}
+                    }
+                }
+                current = parent;
+            } else {
+                break;
+            }
+        }
+        (String::new(), String::new())
     }
 
     /// Check if a declaration is ambient (has `declare` modifier).
