@@ -648,7 +648,54 @@ impl<'a> GoToDefinition<'a> {
             | syntax_kind_ext::INTERFACE_DECLARATION
             | syntax_kind_ext::TYPE_ALIAS_DECLARATION
             | syntax_kind_ext::ENUM_DECLARATION
-            | syntax_kind_ext::MODULE_DECLARATION => clean(decl_node.pos, decl_node.end),
+            | syntax_kind_ext::MODULE_DECLARATION => {
+                // Check for modifiers (declare, export, async, abstract, etc.)
+                // that extend the span before the declaration keyword.
+                let modifiers = match decl_node.kind {
+                    syntax_kind_ext::FUNCTION_DECLARATION => self
+                        .arena
+                        .get_function(decl_node)
+                        .and_then(|f| f.modifiers.as_ref()),
+                    syntax_kind_ext::CLASS_DECLARATION => self
+                        .arena
+                        .get_class(decl_node)
+                        .and_then(|c| c.modifiers.as_ref()),
+                    syntax_kind_ext::INTERFACE_DECLARATION => self
+                        .arena
+                        .get_interface(decl_node)
+                        .and_then(|i| i.modifiers.as_ref()),
+                    syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                        .arena
+                        .get_type_alias(decl_node)
+                        .and_then(|t| t.modifiers.as_ref()),
+                    syntax_kind_ext::ENUM_DECLARATION => self
+                        .arena
+                        .get_enum(decl_node)
+                        .and_then(|e| e.modifiers.as_ref()),
+                    syntax_kind_ext::MODULE_DECLARATION => self
+                        .arena
+                        .get_module(decl_node)
+                        .and_then(|m| m.modifiers.as_ref()),
+                    _ => None,
+                };
+
+                // Find the earliest modifier position to include keywords like `declare`, `export`
+                let start_pos = if let Some(mods) = modifiers {
+                    let mut earliest = decl_node.pos;
+                    for &mod_idx in &mods.nodes {
+                        if let Some(mod_node) = self.arena.get(mod_idx) {
+                            if mod_node.pos < earliest {
+                                earliest = mod_node.pos;
+                            }
+                        }
+                    }
+                    earliest
+                } else {
+                    decl_node.pos
+                };
+
+                clean(start_pos, decl_node.end)
+            }
             _ => (decl_node.pos, decl_node.end),
         }
     }
