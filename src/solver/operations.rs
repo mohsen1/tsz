@@ -657,8 +657,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .map(|p| {
                 let instantiated = instantiate_type(self.interner, p.type_id, &substitution);
                 if let Some(name_atom) = p.name {
+                    let param_name = self.interner.resolve_atom(name_atom);
                     debug!(
-                        param_name = %self.interner.resolve_atom(name_atom).as_str(),
+                        param_name = %param_name.as_str(),
                         original_type_id = p.type_id.0,
                         original_type_key = ?self.interner.lookup(p.type_id),
                         instantiated_type_id = instantiated.0,
