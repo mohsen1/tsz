@@ -42,7 +42,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use wasm::binder::BinderState;
+use wasm::binder::{BinderState, SymbolId};
 use wasm::checker::context::{CheckerOptions, LibContext};
 use wasm::checker::module_resolution::build_module_resolution_maps;
 use wasm::checker::state::CheckerState;
@@ -2259,18 +2259,46 @@ impl Server {
                 .unwrap_or(0) as usize;
             let trigger_length = end_offset.saturating_sub(start_offset);
 
-            // Get rename locations from references
+            // Get rename locations from references with symbol info
             let find_refs =
                 FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let locations = find_refs.find_references(root, position);
-            let file_locs: Vec<serde_json::Value> = locations
-                .unwrap_or_default()
+            let (symbol_id, ref_infos) = find_refs
+                .find_references_with_symbol(root, position)
+                .unwrap_or((SymbolId::NONE, Vec::new()));
+
+            // Get definition info for context spans
+            let def_provider =
+                GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
+            let def_infos = if !symbol_id.is_none() {
+                def_provider.definition_infos_from_symbol(symbol_id)
+            } else {
+                None
+            };
+
+            let file_locs: Vec<serde_json::Value> = ref_infos
                 .iter()
-                .map(|loc| {
-                    serde_json::json!({
-                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                    })
+                .map(|ref_info| {
+                    let mut loc = serde_json::json!({
+                        "start": Self::lsp_to_tsserver_position(&ref_info.location.range.start),
+                        "end": Self::lsp_to_tsserver_position(&ref_info.location.range.end),
+                    });
+                    // Add contextSpan for definition locations
+                    if ref_info.is_definition {
+                        if let Some(ref defs) = def_infos {
+                            for def in defs {
+                                if def.location.range == ref_info.location.range {
+                                    if let Some(ref ctx) = def.context_span {
+                                        loc["contextStart"] =
+                                            Self::lsp_to_tsserver_position(&ctx.start);
+                                        loc["contextEnd"] =
+                                            Self::lsp_to_tsserver_position(&ctx.end);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    loc
                 })
                 .collect();
             Some(serde_json::json!({
