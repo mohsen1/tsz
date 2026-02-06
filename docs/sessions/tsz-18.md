@@ -287,47 +287,49 @@ TypeKey::Lazy(def_id) => {
 
 **Status**: ✅ MAJOR PROGRESS - Architectural fix implemented and working!
 
-### 2026-02-06: Mapped Type Modifiers Investigation (In Progress)
+### 2026-02-06: Mapped Type Modifiers FIXED! +17 Tests ✅
 
 **Pivot**: Following Gemini recommendation, shifted focus to mapped type modifiers (Bugs #2-3) as "easier wins"
 
-**Test Cases Created**:
-```typescript
-interface ReadonlyObj {
-    readonly x: number;
-    readonly y: string;
-}
-type Mutable = { -readonly [K in keyof ReadonlyObj]: ReadonlyObj[K] };
-let m: Mutable = { x: 1, y: "hello" }; // tsz errors but tsc accepts
+**Root Cause**: Manual `TypeKey` matching in `get_property_modifiers_for_key()` didn't handle Lazy (Interfaces) types properly.
 
-interface OptionalObj {
-    a?: number;
-    b?: string;
+**Solution**: Per Gemini recommendation, replaced manual matching with `collect_properties()` utility from `src/solver/objects.rs`. This handles:
+- Lazy types (Interfaces/Classes) via resolver
+- Ref types
+- Intersection flattening
+- TypeParameter constraints
+
+**Code Changes** (`src/solver/evaluate_rules/mapped.rs`):
+```rust
+// Before: Manual TypeKey matching (40+ lines of complex logic)
+// After: Use collect_properties utility
+fn get_property_modifiers_for_key(...) -> (bool, bool) {
+    match collect_properties(source_obj, self.interner(), self.resolver()) {
+        PropertyCollectionResult::Properties { properties, .. } => {
+            for prop in properties {
+                if prop.name == key_name {
+                    return (prop.optional, prop.readonly);
+                }
+            }
+        }
+        PropertyCollectionResult::Any => (false, false),
+        PropertyCollectionResult::NonObject => {}
+    }
+    (false, false)
 }
-type RequiredObj = { [K in keyof OptionalObj]-?: OptionalObj[K] };
-let r: RequiredObj = { a: 1, b: "hello" }; // tsz errors but tsc accepts
 ```
 
-**Fix Attempted**:
-1. Added `Lazy` type resolution to `resolve_type_for_property_lookup()`
-   - Uses `resolver.resolve_lazy(def_id, ...)` to get actual Object type
-   - Should return the Object with property modifiers (readonly, optional)
-2. Fixed tuple mapping modifier logic (lines 751-758)
-   - Was treating modifiers non-orthogonally (Add ? → readonly + optional)
-   - Changed to handle optional and readonly independently
+**Also Fixed**: Tuple mapping modifier logic - was treating optional and readonly non-orthogonally.
 
-**Current Status**: Tests still failing. The architecture is correct but the resolver is not returning the expected types.
+**Impact**:
+- ✅ **+17 tests fixed** (8255 → 8272 passing, 40 failing)
+- ✅ Mapped type modifiers (-readonly, -?) now work correctly
+- ✅ Reduced code complexity from ~70 lines to ~20 lines
+- ✅ Follows North Star Rules (use utilities, don't manually inspect types)
 
-**Hypothesis**: The `resolver.resolve_lazy(def_id, ...)` returns `None` for interfaces, meaning the interface type isn't registered in the type_env yet when the mapped type is evaluated.
+**Committed**: `63b85da3a`
 
-**Next Steps**:
-1. Debug why `resolver.resolve_lazy` returns None for interface types
-2. Check if interfaces are being registered in type_env before type evaluation
-3. Consider alternative approach: use `evaluate()` to get the structure, then extract modifiers
-
-**Test Results**: 8255 passing, 45 failing (unchanged)
-
-**Committed**: Partial fix (not working yet)
+**Status**: ✅ BUGS #2-3 FIXED! Moving to remaining bugs.
 
 ### 2026-02-06: Indexed Access Investigation (In Progress)
 
