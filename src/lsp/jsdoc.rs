@@ -3,20 +3,118 @@
 //! Provides shared extraction and parsing for hover and signature help.
 
 use crate::comments::{get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment};
-use crate::parser::node::NodeArena;
+use crate::parser::node::{NodeAccess, NodeArena};
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use rustc_hash::FxHashMap;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct JsdocTag {
+    pub name: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ParsedJsdoc {
     pub summary: Option<String>,
     pub params: FxHashMap<String, String>,
+    pub tags: Vec<JsdocTag>,
 }
 
 impl ParsedJsdoc {
     pub fn is_empty(&self) -> bool {
-        self.summary.is_none() && self.params.is_empty()
+        self.summary.is_none() && self.params.is_empty() && self.tags.is_empty()
     }
+}
+
+/// Extract inline JSDoc comments for parameters of a function/method/constructor declaration.
+/// Returns a map from parameter name to JSDoc content.
+///
+/// This handles TypeScript's inline parameter JSDoc like:
+/// ```ts
+/// function foo(/** comment about a */ a: string, /** comment about b */ b: number)
+/// ```
+pub fn inline_param_jsdocs(
+    arena: &NodeArena,
+    root: NodeIndex,
+    decl: NodeIndex,
+    source_text: &str,
+) -> FxHashMap<String, String> {
+    let mut result = FxHashMap::default();
+
+    let Some(root_node) = arena.get(root) else {
+        return result;
+    };
+    let Some(sf_data) = arena.get_source_file(root_node) else {
+        return result;
+    };
+    let comments = &sf_data.comments;
+
+    // Get the parameter list from the declaration
+    let Some(node) = arena.get(decl) else {
+        return result;
+    };
+    let param_indices: Vec<NodeIndex> = if let Some(func) = arena.get_function(node) {
+        func.parameters.nodes.clone()
+    } else if let Some(method) = arena.get_method_decl(node) {
+        method.parameters.nodes.clone()
+    } else if let Some(ctor) = arena.get_constructor(node) {
+        ctor.parameters.nodes.clone()
+    } else {
+        return result;
+    };
+
+    for param_idx in param_indices {
+        let Some(param_node) = arena.get(param_idx) else {
+            continue;
+        };
+
+        // Get the parameter name
+        let param_name = if let Some(param_data) = arena.get_parameter(param_node) {
+            arena
+                .get_identifier_text(param_data.name)
+                .map(|s| s.to_string())
+        } else {
+            None
+        };
+        let Some(param_name) = param_name else {
+            continue;
+        };
+
+        let param_pos = param_node.pos;
+
+        // Check for inline JSDoc comment at the parameter's position
+        if let Some(comment) = comments
+            .iter()
+            .find(|c| c.pos <= param_pos && param_pos < c.end)
+        {
+            if is_jsdoc_comment(comment, source_text) {
+                let content = get_jsdoc_content(comment, source_text);
+                if !content.is_empty() {
+                    result.insert(param_name, content);
+                    continue;
+                }
+            }
+        }
+
+        // Check for leading JSDoc comment immediately before parameter
+        let leading = get_leading_comments_from_cache(comments, param_pos, source_text);
+        if let Some(comment) = leading.last() {
+            let end = comment.end as usize;
+            let check = param_pos as usize;
+            if end <= check {
+                let gap = &source_text[end..check];
+                if gap.chars().all(|c| c.is_whitespace()) && is_jsdoc_comment(comment, source_text)
+                {
+                    let content = get_jsdoc_content(comment, source_text);
+                    if !content.is_empty() {
+                        result.insert(param_name, content);
+                    }
+                }
+            }
+        }
+    }
+
+    result
 }
 
 /// Extract the nearest JSDoc comment preceding a node.
@@ -95,7 +193,9 @@ pub fn jsdoc_for_node(
 pub fn parse_jsdoc(doc: &str) -> ParsedJsdoc {
     let mut summary_lines = Vec::new();
     let mut params = FxHashMap::default();
+    let mut tags = Vec::new();
     let mut current_param: Option<String> = None;
+    let mut current_tag: Option<(String, String)> = None;
     let mut current_desc = String::new();
     let mut in_tags = false;
 
@@ -110,6 +210,7 @@ pub fn parse_jsdoc(doc: &str) -> ParsedJsdoc {
 
         if trimmed.starts_with('@') {
             in_tags = true;
+            // Flush current param
             if let Some(name) = current_param.take() {
                 let desc = current_desc.trim().to_string();
                 if !desc.is_empty() {
@@ -117,10 +218,30 @@ pub fn parse_jsdoc(doc: &str) -> ParsedJsdoc {
                 }
                 current_desc.clear();
             }
+            // Flush current non-param tag
+            if let Some((tag_name, tag_text)) = current_tag.take() {
+                tags.push(JsdocTag {
+                    name: tag_name,
+                    text: tag_text.trim().to_string(),
+                });
+            }
 
             if let Some((name, desc)) = parse_param_tag(trimmed) {
                 current_param = Some(name);
                 current_desc = desc;
+            } else {
+                // Parse other tags like @returns, @mytag, etc.
+                let tag_content = &trimmed[1..]; // skip '@'
+                let (tag_name, tag_text) =
+                    if let Some(space_pos) = tag_content.find(char::is_whitespace) {
+                        (
+                            tag_content[..space_pos].to_string(),
+                            tag_content[space_pos..].trim().to_string(),
+                        )
+                    } else {
+                        (tag_content.to_string(), String::new())
+                    };
+                current_tag = Some((tag_name, tag_text));
             }
             continue;
         }
@@ -130,6 +251,11 @@ pub fn parse_jsdoc(doc: &str) -> ParsedJsdoc {
                 current_desc.push(' ');
             }
             current_desc.push_str(trimmed);
+        } else if let Some((_, ref mut text)) = current_tag {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(trimmed);
         } else if !in_tags {
             summary_lines.push(trimmed.to_string());
         }
@@ -141,6 +267,12 @@ pub fn parse_jsdoc(doc: &str) -> ParsedJsdoc {
             params.insert(name, desc);
         }
     }
+    if let Some((tag_name, tag_text)) = current_tag {
+        tags.push(JsdocTag {
+            name: tag_name,
+            text: tag_text.trim().to_string(),
+        });
+    }
 
     let summary = summary_lines.join("\n").trim().to_string();
 
@@ -151,6 +283,7 @@ pub fn parse_jsdoc(doc: &str) -> ParsedJsdoc {
             Some(summary)
         },
         params,
+        tags,
     }
 }
 

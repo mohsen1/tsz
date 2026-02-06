@@ -42,7 +42,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use wasm::binder::BinderState;
+use wasm::binder::{BinderState, SymbolId};
 use wasm::checker::context::{CheckerOptions, LibContext};
 use wasm::checker::module_resolution::build_module_resolution_maps;
 use wasm::checker::state::CheckerState;
@@ -767,6 +767,31 @@ impl Server {
         })
     }
 
+    /// Convert a DefinitionInfo to a tsserver-compatible JSON value.
+    fn definition_info_to_json(
+        info: &wasm::lsp::definition::DefinitionInfo,
+        file: &str,
+    ) -> serde_json::Value {
+        let mut result = serde_json::json!({
+            "file": file,
+            "start": Self::lsp_to_tsserver_position(&info.location.range.start),
+            "end": Self::lsp_to_tsserver_position(&info.location.range.end),
+            "kind": info.kind,
+            "name": info.name,
+            "containerName": info.container_name,
+            "containerKind": info.container_kind,
+            "isLocal": info.is_local,
+            "isAmbient": info.is_ambient,
+            "unverified": false,
+            "failedAliasResolution": false,
+        });
+        if let Some(ref ctx) = info.context_span {
+            result["contextStart"] = Self::lsp_to_tsserver_position(&ctx.start);
+            result["contextEnd"] = Self::lsp_to_tsserver_position(&ctx.end);
+        }
+        result
+    }
+
     fn find_lib_dir() -> Result<PathBuf> {
         let cwd = std::env::current_dir().context("Failed to get CWD")?;
 
@@ -1420,16 +1445,10 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let locations = provider.get_definition(root, position)?;
-            let body: Vec<serde_json::Value> = locations
+            let infos = provider.get_definition_info(root, position)?;
+            let body: Vec<serde_json::Value> = infos
                 .iter()
-                .map(|loc| {
-                    serde_json::json!({
-                        "file": loc.file_path,
-                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                    })
-                })
+                .map(|info| Self::definition_info_to_json(info, &file))
                 .collect();
             Some(serde_json::json!(body))
         })();
@@ -1448,18 +1467,12 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let locations = provider.get_definition(root, position)?;
+            let infos = provider.get_definition_info(root, position)?;
 
-            // Build definitions array
-            let definitions: Vec<serde_json::Value> = locations
+            // Build definitions array with rich metadata
+            let definitions: Vec<serde_json::Value> = infos
                 .iter()
-                .map(|loc| {
-                    serde_json::json!({
-                        "file": loc.file_path,
-                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                    })
-                })
+                .map(|info| Self::definition_info_to_json(info, &file))
                 .collect();
 
             // Compute the textSpan for the word at the cursor position
@@ -1509,7 +1522,7 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let locations = provider.find_references(root, position)?;
+            let (_symbol_id, ref_infos) = provider.find_references_with_symbol(root, position)?;
 
             // Try to get symbol name from the position
             let symbol_name = {
@@ -1523,22 +1536,16 @@ impl Server {
             }
             .unwrap_or_default();
 
-            let refs: Vec<serde_json::Value> = locations
+            let refs: Vec<serde_json::Value> = ref_infos
                 .iter()
-                .map(|loc| {
-                    // Get line text for the reference
-                    let line_text = source_text
-                        .lines()
-                        .nth(loc.range.start.line as usize)
-                        .unwrap_or("")
-                        .to_string();
+                .map(|ref_info| {
                     serde_json::json!({
-                        "file": loc.file_path,
-                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                        "lineText": line_text,
-                        "isWriteAccess": false,
-                        "isDefinition": false,
+                        "file": ref_info.location.file_path,
+                        "start": Self::lsp_to_tsserver_position(&ref_info.location.range.start),
+                        "end": Self::lsp_to_tsserver_position(&ref_info.location.range.end),
+                        "lineText": ref_info.line_text,
+                        "isWriteAccess": ref_info.is_write_access,
+                        "isDefinition": ref_info.is_definition,
                     })
                 })
                 .collect();
@@ -1585,8 +1592,6 @@ impl Server {
                     });
                     if let Some(ref modifiers) = item.kind_modifiers {
                         entry["kindModifiers"] = serde_json::json!(modifiers);
-                    } else if let Some(ref detail) = item.detail {
-                        entry["kindModifiers"] = serde_json::json!(detail);
                     } else {
                         entry["kindModifiers"] = serde_json::json!("");
                     }
@@ -1654,15 +1659,15 @@ impl Server {
                     let kind = item
                         .map(|i| Self::completion_kind_to_str(i.kind))
                         .unwrap_or("property");
-                    let display_parts = if let Some(i) = item {
-                        if let Some(ref detail) = i.detail {
-                            serde_json::json!([{"text": detail, "kind": "text"}])
-                        } else {
-                            serde_json::json!([{"text": &name, "kind": "text"}])
-                        }
-                    } else {
-                        serde_json::json!([{"text": &name, "kind": "text"}])
-                    };
+                    let kind_modifiers =
+                        item.and_then(|i| i.kind_modifiers.as_deref()).unwrap_or("");
+                    let display_parts = Self::build_completion_display_parts(
+                        item,
+                        &name,
+                        &arena,
+                        &binder,
+                        &source_text,
+                    );
                     let documentation = item
                         .and_then(|i| i.documentation.as_ref())
                         .map(|doc| serde_json::json!([{"text": doc, "kind": "text"}]))
@@ -1670,7 +1675,7 @@ impl Server {
                     serde_json::json!({
                         "name": name,
                         "kind": kind,
-                        "kindModifiers": "",
+                        "kindModifiers": kind_modifiers,
                         "displayParts": display_parts,
                         "documentation": documentation,
                         "tags": [],
@@ -1682,6 +1687,332 @@ impl Server {
             Some(serde_json::json!(details))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    /// Build rich displayParts for a completion entry, matching TypeScript's format.
+    /// Generates structured parts like: class ClassName, var name: Type, function name(...), etc.
+    fn build_completion_display_parts(
+        item: Option<&wasm::lsp::completions::CompletionItem>,
+        name: &str,
+        arena: &wasm::parser::node::NodeArena,
+        binder: &wasm::binder::BinderState,
+        source_text: &str,
+    ) -> serde_json::Value {
+        use wasm::lsp::completions::CompletionItemKind;
+
+        let Some(item) = item else {
+            return serde_json::json!([{"text": name, "kind": "text"}]);
+        };
+
+        let mut parts: Vec<serde_json::Value> = Vec::new();
+
+        match item.kind {
+            CompletionItemKind::Class => {
+                parts.push(serde_json::json!({"text": "class", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "className"}));
+            }
+            CompletionItemKind::Interface => {
+                parts.push(serde_json::json!({"text": "interface", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "interfaceName"}));
+            }
+            CompletionItemKind::Enum => {
+                parts.push(serde_json::json!({"text": "enum", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "enumName"}));
+            }
+            CompletionItemKind::Module => {
+                parts.push(serde_json::json!({"text": "namespace", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "moduleName"}));
+            }
+            CompletionItemKind::TypeAlias => {
+                parts.push(serde_json::json!({"text": "type", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "aliasName"}));
+            }
+            CompletionItemKind::TypeParameter => {
+                parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": "type parameter", "kind": "text"}));
+                parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "typeParameterName"}));
+            }
+            CompletionItemKind::Function => {
+                parts.push(serde_json::json!({"text": "function", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "functionName"}));
+                Self::append_function_signature_from_source(
+                    &mut parts,
+                    name,
+                    binder,
+                    arena,
+                    source_text,
+                );
+            }
+            CompletionItemKind::Method => {
+                parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": "method", "kind": "text"}));
+                parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "methodName"}));
+            }
+            CompletionItemKind::Property => {
+                parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": "property", "kind": "text"}));
+                parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "propertyName"}));
+                Self::append_type_annotation_from_source(
+                    &mut parts,
+                    name,
+                    binder,
+                    arena,
+                    source_text,
+                );
+            }
+            CompletionItemKind::Variable | CompletionItemKind::Parameter => {
+                if item.kind == CompletionItemKind::Parameter {
+                    parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                    parts.push(serde_json::json!({"text": "parameter", "kind": "text"}));
+                    parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": name, "kind": "parameterName"}));
+                } else {
+                    let keyword =
+                        Self::get_var_keyword_from_source(name, binder, arena, source_text)
+                            .unwrap_or_else(|| {
+                                if let Some(ref detail) = item.detail {
+                                    match detail.as_str() {
+                                        "var" => "var",
+                                        _ => "let",
+                                    }
+                                } else {
+                                    "var"
+                                }
+                            });
+                    parts.push(serde_json::json!({"text": keyword, "kind": "keyword"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": name, "kind": "localName"}));
+                }
+                Self::append_type_annotation_from_source(
+                    &mut parts,
+                    name,
+                    binder,
+                    arena,
+                    source_text,
+                );
+            }
+            CompletionItemKind::Keyword => {
+                parts.push(serde_json::json!({"text": name, "kind": "keyword"}));
+            }
+            CompletionItemKind::Constructor => {
+                parts.push(serde_json::json!({"text": "constructor", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "className"}));
+            }
+        }
+
+        serde_json::json!(parts)
+    }
+
+    /// Determine var/let/const from the declaration source text.
+    fn get_var_keyword_from_source(
+        name: &str,
+        binder: &wasm::binder::BinderState,
+        arena: &wasm::parser::node::NodeArena,
+        source_text: &str,
+    ) -> Option<&'static str> {
+        use wasm::parser::syntax_kind_ext;
+
+        let symbol_id = binder.file_locals.get(name)?;
+        let sym = binder.symbols.get(symbol_id)?;
+        let decl = if !sym.value_declaration.is_none() {
+            sym.value_declaration
+        } else {
+            *sym.declarations.first()?
+        };
+        let node = arena.get(decl)?;
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        // Walk up to VariableStatement to find the keyword
+        let ext = arena.get_extended(decl)?;
+        let parent = ext.parent;
+        let parent_node = arena.get(parent)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return None;
+        }
+        let gp_ext = arena.get_extended(parent)?;
+        let gp = gp_ext.parent;
+        let gp_node = arena.get(gp)?;
+        if gp_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return None;
+        }
+        // Read the first keyword from the statement text
+        let start = gp_node.pos as usize;
+        let end = gp_node.end.min(source_text.len() as u32) as usize;
+        if start >= end {
+            return None;
+        }
+        let stmt_text = source_text[start..end].trim_start();
+        if stmt_text.starts_with("const ") || stmt_text.starts_with("const\t") {
+            Some("const")
+        } else if stmt_text.starts_with("let ") || stmt_text.starts_with("let\t") {
+            Some("let")
+        } else if stmt_text.starts_with("var ") || stmt_text.starts_with("var\t") {
+            Some("var")
+        } else {
+            None
+        }
+    }
+
+    /// Extract function signature from source text and append as displayParts.
+    fn append_function_signature_from_source(
+        parts: &mut Vec<serde_json::Value>,
+        name: &str,
+        binder: &wasm::binder::BinderState,
+        arena: &wasm::parser::node::NodeArena,
+        source_text: &str,
+    ) {
+        let decl_text = binder.file_locals.get(name).and_then(|sid| {
+            let sym = binder.symbols.get(sid)?;
+            let decl = if !sym.value_declaration.is_none() {
+                sym.value_declaration
+            } else {
+                *sym.declarations.first()?
+            };
+            let node = arena.get(decl)?;
+            let start = node.pos as usize;
+            let end = node.end.min(source_text.len() as u32) as usize;
+            if start < end {
+                Some(&source_text[start..end])
+            } else {
+                None
+            }
+        });
+
+        if let Some(text) = decl_text {
+            if let Some(open) = text.find('(') {
+                let mut depth = 0;
+                let mut close = None;
+                for (i, ch) in text[open..].char_indices() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close = Some(open + i);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(close_pos) = close {
+                    let params_text = &text[open + 1..close_pos];
+                    parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                    let params: Vec<&str> = if params_text.trim().is_empty() {
+                        vec![]
+                    } else {
+                        params_text.split(',').collect()
+                    };
+                    for (i, param) in params.iter().enumerate() {
+                        if i > 0 {
+                            parts.push(serde_json::json!({"text": ",", "kind": "punctuation"}));
+                            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                        }
+                        let param = param.trim();
+                        if let Some(colon_pos) = param.find(':') {
+                            let pname = param[..colon_pos].trim();
+                            let ptype = param[colon_pos + 1..].trim();
+                            parts.push(serde_json::json!({"text": pname, "kind": "parameterName"}));
+                            parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                            parts.push(serde_json::json!({"text": ptype, "kind": "keyword"}));
+                        } else {
+                            parts.push(serde_json::json!({"text": param, "kind": "parameterName"}));
+                        }
+                    }
+                    parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+
+                    let after_close = text[close_pos + 1..].trim_start();
+                    if let Some(rest) = after_close.strip_prefix(':') {
+                        let ret_type = rest.trim_start();
+                        let ret_type = ret_type
+                            .split(|c: char| c == '{' || c == '\n')
+                            .next()
+                            .unwrap_or("")
+                            .trim();
+                        if !ret_type.is_empty() {
+                            parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                            parts.push(serde_json::json!({"text": ret_type, "kind": "keyword"}));
+                        }
+                    } else {
+                        parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                        parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                        parts.push(serde_json::json!({"text": "void", "kind": "keyword"}));
+                    }
+                    return;
+                }
+            }
+        }
+
+        // Fallback: empty parens
+        parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+        parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+        parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+        parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+        parts.push(serde_json::json!({"text": "void", "kind": "keyword"}));
+    }
+
+    /// Extract type annotation from source text and append as displayParts.
+    fn append_type_annotation_from_source(
+        parts: &mut Vec<serde_json::Value>,
+        name: &str,
+        binder: &wasm::binder::BinderState,
+        arena: &wasm::parser::node::NodeArena,
+        source_text: &str,
+    ) {
+        let decl_text = binder.file_locals.get(name).and_then(|sid| {
+            let sym = binder.symbols.get(sid)?;
+            let decl = if !sym.value_declaration.is_none() {
+                sym.value_declaration
+            } else {
+                *sym.declarations.first()?
+            };
+            let node = arena.get(decl)?;
+            let start = node.pos as usize;
+            let end = node.end.min(source_text.len() as u32) as usize;
+            if start < end {
+                Some(&source_text[start..end])
+            } else {
+                None
+            }
+        });
+
+        if let Some(text) = decl_text {
+            // Find the name, then look for : after it
+            if let Some(name_pos) = text.find(name) {
+                let after_name = &text[name_pos + name.len()..];
+                let after_name = after_name.trim_start();
+                if let Some(rest) = after_name.strip_prefix(':') {
+                    let type_text = rest.trim_start();
+                    let type_text = type_text
+                        .split(|c: char| c == '=' || c == ';' || c == '\n')
+                        .next()
+                        .unwrap_or("")
+                        .trim();
+                    if !type_text.is_empty() {
+                        parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                        parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                        parts.push(serde_json::json!({"text": type_text, "kind": "keyword"}));
+                    }
+                }
+            }
+        }
     }
 
     fn handle_signature_help(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
@@ -1710,19 +2041,25 @@ impl Server {
                         .iter()
                         .map(|p| {
                             let display_parts = Self::tokenize_param_label(&p.label);
-                            let mut param = serde_json::json!({
-                                "name": p.name,
-                                "displayParts": display_parts,
-                                "isOptional": p.is_optional,
-                                "isRest": p.is_rest,
-                            });
+                            // Build param JSON with correct field order:
+                            // name, documentation, displayParts, isOptional, isRest
+                            let mut map = serde_json::Map::new();
+                            map.insert("name".to_string(), serde_json::json!(p.name));
                             if let Some(ref doc) = p.documentation {
-                                param["documentation"] =
-                                    serde_json::json!([{"text": doc, "kind": "text"}]);
+                                map.insert(
+                                    "documentation".to_string(),
+                                    serde_json::json!([{"text": doc, "kind": "text"}]),
+                                );
                             } else {
-                                param["documentation"] = serde_json::json!([]);
+                                map.insert("documentation".to_string(), serde_json::json!([]));
                             }
-                            param
+                            map.insert(
+                                "displayParts".to_string(),
+                                serde_json::json!(display_parts),
+                            );
+                            map.insert("isOptional".to_string(), serde_json::json!(p.is_optional));
+                            map.insert("isRest".to_string(), serde_json::json!(p.is_rest));
+                            serde_json::Value::Object(map)
                         })
                         .collect();
                     let name_kind = if sig.is_constructor {
@@ -1744,28 +2081,39 @@ impl Server {
                     });
                     if let Some(ref doc) = sig.documentation {
                         item["documentation"] = serde_json::json!([{"text": doc, "kind": "text"}]);
-                    } else {
-                        item["documentation"] = serde_json::json!([]);
                     }
-                    // Build tags from parameter documentation
-                    let tags: Vec<serde_json::Value> = sig
-                        .parameters
-                        .iter()
-                        .filter_map(|p| {
-                            let doc = p.documentation.as_ref()?;
-                            if doc.is_empty() {
-                                return None;
+                    // Omit "documentation" when empty (TypeScript omits it)
+                    // Build tags: param tags from parameter documentation + non-param tags
+                    let mut tags: Vec<serde_json::Value> = Vec::new();
+                    // Add @param tags from parameter documentation
+                    for p in &sig.parameters {
+                        if let Some(ref doc) = p.documentation {
+                            if !doc.is_empty() {
+                                tags.push(serde_json::json!({
+                                    "name": "param",
+                                    "text": [
+                                        {"text": &p.name, "kind": "parameterName"},
+                                        {"text": " ", "kind": "space"},
+                                        {"text": doc, "kind": "text"}
+                                    ]
+                                }));
                             }
-                            Some(serde_json::json!({
-                                "name": "param",
-                                "text": [
-                                    {"text": &p.name, "kind": "parameterName"},
-                                    {"text": " ", "kind": "space"},
-                                    {"text": doc, "kind": "text"}
-                                ]
-                            }))
-                        })
-                        .collect();
+                        }
+                    }
+                    // Add non-param tags (e.g. @returns, @mytag)
+                    for tag in &sig.tags {
+                        if tag.text.is_empty() {
+                            tags.push(serde_json::json!({
+                                "name": &tag.name,
+                                "text": []
+                            }));
+                        } else {
+                            tags.push(serde_json::json!({
+                                "name": &tag.name,
+                                "text": [{"text": &tag.text, "kind": "text"}]
+                            }));
+                        }
+                    }
                     item["tags"] = serde_json::json!(tags);
                     item
                 })
@@ -2246,18 +2594,46 @@ impl Server {
                 .unwrap_or(0) as usize;
             let trigger_length = end_offset.saturating_sub(start_offset);
 
-            // Get rename locations from references
+            // Get rename locations from references with symbol info
             let find_refs =
                 FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let locations = find_refs.find_references(root, position);
-            let file_locs: Vec<serde_json::Value> = locations
-                .unwrap_or_default()
+            let (symbol_id, ref_infos) = find_refs
+                .find_references_with_symbol(root, position)
+                .unwrap_or((SymbolId::NONE, Vec::new()));
+
+            // Get definition info for context spans
+            let def_provider =
+                GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
+            let def_infos = if !symbol_id.is_none() {
+                def_provider.definition_infos_from_symbol(symbol_id)
+            } else {
+                None
+            };
+
+            let file_locs: Vec<serde_json::Value> = ref_infos
                 .iter()
-                .map(|loc| {
-                    serde_json::json!({
-                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                    })
+                .map(|ref_info| {
+                    let mut loc = serde_json::json!({
+                        "start": Self::lsp_to_tsserver_position(&ref_info.location.range.start),
+                        "end": Self::lsp_to_tsserver_position(&ref_info.location.range.end),
+                    });
+                    // Add contextSpan for definition locations
+                    if ref_info.is_definition {
+                        if let Some(ref defs) = def_infos {
+                            for def in defs {
+                                if def.location.range == ref_info.location.range {
+                                    if let Some(ref ctx) = def.context_span {
+                                        loc["contextStart"] =
+                                            Self::lsp_to_tsserver_position(&ctx.start);
+                                        loc["contextEnd"] =
+                                            Self::lsp_to_tsserver_position(&ctx.end);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    loc
                 })
                 .collect();
             Some(serde_json::json!({
@@ -2368,54 +2744,374 @@ impl Server {
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
-            let provider =
+
+            // Get references with the resolved symbol
+            let ref_provider =
                 FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let locations = provider.find_references(root, position)?;
-            let symbol_name = {
-                let ref_offset = line_map.position_to_offset(position, &source_text)?;
-                let node_idx = wasm::lsp::utils::find_node_at_offset(&arena, ref_offset);
-                if !node_idx.is_none() {
-                    arena.get_identifier_text(node_idx).map(|s| s.to_string())
+            let (symbol_id, ref_infos) =
+                ref_provider.find_references_with_symbol(root, position)?;
+
+            // Get definition metadata using GoToDefinition helpers
+            let def_provider =
+                GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
+            let def_infos = def_provider.definition_infos_from_symbol(symbol_id);
+
+            // Get symbol info for display
+            let symbol = binder.symbols.get(symbol_id)?;
+            let kind_str = def_provider.symbol_flags_to_kind_string(symbol.flags);
+            let symbol_name = symbol.escaped_name.clone();
+
+            // Use HoverProvider to get the display string with type info
+            let interner = TypeInterner::new();
+            let hover_provider = HoverProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                &interner,
+                &source_text,
+                file.clone(),
+            );
+            let mut type_cache = None;
+            let hover_info = hover_provider.get_hover(root, position, &mut type_cache);
+            let display_string = hover_info
+                .as_ref()
+                .map(|h| h.display_string.clone())
+                .unwrap_or_default();
+
+            // Build definition object using first definition info
+            let definition = if let Some(ref defs) = def_infos {
+                if let Some(first_def) = defs.first() {
+                    let def_start =
+                        line_map.position_to_offset(first_def.location.range.start, &source_text);
+                    let def_end =
+                        line_map.position_to_offset(first_def.location.range.end, &source_text);
+
+                    // Use display_string from HoverProvider if available for proper type info
+                    let name = if !display_string.is_empty() {
+                        display_string.clone()
+                    } else {
+                        format!("{} {}", first_def.kind, first_def.name)
+                    };
+                    let display_parts = if !display_string.is_empty() {
+                        Self::parse_display_string_to_parts(
+                            &display_string,
+                            &first_def.kind,
+                            &first_def.name,
+                        )
+                    } else {
+                        Self::build_simple_display_parts(&first_def.kind, &first_def.name)
+                    };
+
+                    let mut def_json = serde_json::json!({
+                        "containerKind": "",
+                        "containerName": "",
+                        "kind": first_def.kind,
+                        "name": name,
+                        "displayParts": display_parts,
+                        "fileName": file,
+                        "textSpan": {
+                            "start": def_start.unwrap_or(0),
+                            "length": def_end.unwrap_or(0).saturating_sub(def_start.unwrap_or(0)),
+                        },
+                    });
+                    if let Some(ref ctx) = first_def.context_span {
+                        let ctx_start = line_map.position_to_offset(ctx.start, &source_text);
+                        let ctx_end = line_map.position_to_offset(ctx.end, &source_text);
+                        let ctx_start_off = ctx_start.unwrap_or(0);
+                        let ctx_end_off = ctx_end.unwrap_or(0);
+                        let def_start_off = def_start.unwrap_or(0);
+                        let def_end_off = def_end.unwrap_or(0);
+                        // Skip contextSpan when it matches textSpan (e.g., catch clause vars)
+                        if ctx_start_off != def_start_off || ctx_end_off != def_end_off {
+                            def_json["contextSpan"] = serde_json::json!({
+                                "start": ctx_start_off,
+                                "length": ctx_end_off.saturating_sub(ctx_start_off),
+                            });
+                        }
+                    }
+                    def_json
                 } else {
-                    None
+                    Self::build_fallback_definition(&file, &kind_str, &symbol_name)
                 }
-            }
-            .unwrap_or_default();
-            let refs: Vec<serde_json::Value> = locations
+            } else {
+                Self::build_fallback_definition(&file, &kind_str, &symbol_name)
+            };
+
+            // Build references array with byte-offset textSpans
+            // Compute cursor offset for isDefinition check - TypeScript only sets
+            // isDefinition=true when the cursor is ON the definition reference
+            let cursor_offset = line_map
+                .position_to_offset(position, &source_text)
+                .unwrap_or(0);
+
+            let references: Vec<serde_json::Value> = ref_infos
                 .iter()
-                .map(|loc| {
-                    let line_text = source_text
-                        .lines()
-                        .nth(loc.range.start.line as usize)
-                        .unwrap_or("")
-                        .to_string();
-                    serde_json::json!({
-                        "file": loc.file_path,
-                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                        "lineText": line_text,
-                        "isWriteAccess": false,
-                        "isDefinition": false,
-                    })
+                .map(|ref_info| {
+                    let start =
+                        line_map.position_to_offset(ref_info.location.range.start, &source_text);
+                    let end =
+                        line_map.position_to_offset(ref_info.location.range.end, &source_text);
+                    let start_off = start.unwrap_or(0);
+                    let end_off = end.unwrap_or(0);
+
+                    // isDefinition is only true when: (1) the reference IS a definition,
+                    // AND (2) the cursor is at that reference's position
+                    let is_definition = ref_info.is_definition
+                        && cursor_offset >= start_off
+                        && cursor_offset < end_off;
+
+                    let mut ref_json = serde_json::json!({
+                        "fileName": ref_info.location.file_path,
+                        "textSpan": {
+                            "start": start_off,
+                            "length": end_off.saturating_sub(start_off),
+                        },
+                        "isWriteAccess": ref_info.is_write_access,
+                        "isDefinition": is_definition,
+                    });
+
+                    // Add contextSpan for definition references
+                    // Skip when contextSpan matches textSpan (e.g., catch clause variables)
+                    if ref_info.is_definition {
+                        if let Some(ref defs) = def_infos {
+                            for def in defs {
+                                if def.location.range == ref_info.location.range {
+                                    if let Some(ref ctx) = def.context_span {
+                                        let ctx_start =
+                                            line_map.position_to_offset(ctx.start, &source_text);
+                                        let ctx_end =
+                                            line_map.position_to_offset(ctx.end, &source_text);
+                                        let ctx_start_off = ctx_start.unwrap_or(0);
+                                        let ctx_end_off = ctx_end.unwrap_or(0);
+                                        // Only add contextSpan if it differs from the textSpan
+                                        if ctx_start_off != start_off || ctx_end_off != end_off {
+                                            ref_json["contextSpan"] = serde_json::json!({
+                                                "start": ctx_start_off,
+                                                "length": ctx_end_off.saturating_sub(ctx_start_off),
+                                            });
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ref_json
                 })
                 .collect();
-            Some(serde_json::json!({
-                "refs": refs,
-                "symbolName": symbol_name,
-                "symbolStartOffset": offset,
-                "symbolDisplayString": symbol_name,
-            }))
+
+            // Return as ReferencedSymbol array (single entry for single-file)
+            Some(serde_json::json!([{
+                "definition": definition,
+                "references": references,
+            }]))
         })();
-        self.stub_response(
-            seq,
-            request,
-            Some(result.unwrap_or(serde_json::json!({
-                "refs": [],
-                "symbolName": "",
-                "symbolStartOffset": 0,
-                "symbolDisplayString": ""
-            }))),
-        )
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    fn build_fallback_definition(file: &str, kind: &str, name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "containerKind": "",
+            "containerName": "",
+            "kind": kind,
+            "name": format!("{} {}", kind, name),
+            "displayParts": Self::build_simple_display_parts(kind, name),
+            "fileName": file,
+            "textSpan": { "start": 0, "length": 0 },
+        })
+    }
+
+    fn build_simple_display_parts(kind: &str, name: &str) -> Vec<serde_json::Value> {
+        let mut parts = vec![];
+        if !kind.is_empty() {
+            parts.push(serde_json::json!({ "text": kind, "kind": "keyword" }));
+            parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+        }
+        let name_kind = Self::symbol_kind_to_display_part_kind(kind);
+        parts.push(serde_json::json!({ "text": name, "kind": name_kind }));
+        parts
+    }
+
+    fn symbol_kind_to_display_part_kind(kind: &str) -> &'static str {
+        match kind {
+            "class" => "className",
+            "function" => "functionName",
+            "interface" => "interfaceName",
+            "enum" => "enumName",
+            "enum member" => "enumMemberName",
+            "module" | "namespace" => "moduleName",
+            "type" => "aliasName",
+            "method" => "methodName",
+            "property" => "propertyName",
+            _ => "localName",
+        }
+    }
+
+    /// Parse a display string (e.g. "const x: number") into structured displayParts.
+    /// This handles common patterns from the HoverProvider.
+    fn parse_display_string_to_parts(
+        display_string: &str,
+        kind: &str,
+        name: &str,
+    ) -> Vec<serde_json::Value> {
+        let name_kind = Self::symbol_kind_to_display_part_kind(kind);
+
+        // Handle prefixed forms like "(local var) x: type" or "(parameter) x: type"
+        let s = display_string;
+
+        // Check for parenthesized prefix like "(local var)" or "(parameter)"
+        if let Some(rest) = s.strip_prefix('(') {
+            if let Some(paren_end) = rest.find(')') {
+                let prefix = &rest[..paren_end];
+                let after_paren = rest[paren_end + 1..].trim_start();
+
+                let mut parts = vec![];
+                parts.push(serde_json::json!({ "text": "(", "kind": "punctuation" }));
+
+                // Split prefix words
+                let prefix_words: Vec<&str> = prefix.split_whitespace().collect();
+                for (i, word) in prefix_words.iter().enumerate() {
+                    if i > 0 {
+                        parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+                    }
+                    parts.push(serde_json::json!({ "text": *word, "kind": "keyword" }));
+                }
+                parts.push(serde_json::json!({ "text": ")", "kind": "punctuation" }));
+                parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+
+                // Parse the rest: "name: type" or "name(sig): type"
+                Self::parse_name_and_type(after_paren, name_kind, &mut parts);
+                return parts;
+            }
+        }
+
+        // Handle "keyword name: type" or "keyword name" patterns
+        let keywords = [
+            "const",
+            "let",
+            "var",
+            "function",
+            "class",
+            "interface",
+            "enum",
+            "type",
+            "namespace",
+        ];
+        for kw in &keywords {
+            if let Some(rest) = s.strip_prefix(kw) {
+                if rest.starts_with(' ') {
+                    let mut parts = vec![];
+                    parts.push(serde_json::json!({ "text": *kw, "kind": "keyword" }));
+                    parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+                    let rest = rest.trim_start();
+                    Self::parse_name_and_type(rest, name_kind, &mut parts);
+                    return parts;
+                }
+            }
+        }
+
+        // Fallback: just use the display_string as-is
+        Self::build_simple_display_parts(kind, name)
+    }
+
+    /// Parse "name: type" or "name(params): type" or just "name" from a string.
+    fn parse_name_and_type(s: &str, name_kind: &str, parts: &mut Vec<serde_json::Value>) {
+        // Find where the name ends - it could be followed by ':', '(', '<', '=', or end of string
+        let name_end = s
+            .find(|c: char| c == ':' || c == '(' || c == '<' || c == '=')
+            .unwrap_or(s.len());
+        let name_part = s[..name_end].trim_end();
+
+        if !name_part.is_empty() {
+            // Check if name contains '.' for qualified names like "Foo.bar"
+            if let Some(dot_pos) = name_part.rfind('.') {
+                let container = &name_part[..dot_pos];
+                let member = &name_part[dot_pos + 1..];
+                parts.push(serde_json::json!({ "text": container, "kind": "className" }));
+                parts.push(serde_json::json!({ "text": ".", "kind": "punctuation" }));
+                parts.push(serde_json::json!({ "text": member, "kind": name_kind }));
+            } else {
+                parts.push(serde_json::json!({ "text": name_part, "kind": name_kind }));
+            }
+        }
+
+        let remaining = &s[name_end..];
+        if remaining.is_empty() {
+            return;
+        }
+
+        // Handle signature parts like "(params): type" or "= type" or ": type"
+        if remaining.starts_with('(') {
+            // Function signature - add everything as-is for now with punctuation
+            Self::parse_signature(remaining, parts);
+        } else if let Some(rest) = remaining.strip_prefix(": ") {
+            parts.push(serde_json::json!({ "text": ":", "kind": "punctuation" }));
+            parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+            Self::parse_type_string(rest, parts);
+        } else if let Some(rest) = remaining.strip_prefix(":") {
+            parts.push(serde_json::json!({ "text": ":", "kind": "punctuation" }));
+            parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+            Self::parse_type_string(rest.trim_start(), parts);
+        } else if let Some(rest) = remaining.strip_prefix(" = ") {
+            parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+            parts.push(serde_json::json!({ "text": "=", "kind": "operator" }));
+            parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+            Self::parse_type_string(rest, parts);
+        }
+    }
+
+    /// Parse a type string into display parts.
+    fn parse_type_string(type_str: &str, parts: &mut Vec<serde_json::Value>) {
+        let type_str = type_str.trim();
+        if type_str.is_empty() {
+            return;
+        }
+
+        // Check for TypeScript keyword types
+        let keyword_types = [
+            "any",
+            "boolean",
+            "bigint",
+            "never",
+            "null",
+            "number",
+            "object",
+            "string",
+            "symbol",
+            "undefined",
+            "unknown",
+            "void",
+            "true",
+            "false",
+        ];
+        if keyword_types.contains(&type_str) {
+            parts.push(serde_json::json!({ "text": type_str, "kind": "keyword" }));
+            return;
+        }
+
+        // Check for numeric literal
+        if type_str.parse::<f64>().is_ok() {
+            parts.push(serde_json::json!({ "text": type_str, "kind": "stringLiteral" }));
+            return;
+        }
+
+        // Check for string literal (starts and ends with quotes)
+        if (type_str.starts_with('"') && type_str.ends_with('"'))
+            || (type_str.starts_with('\'') && type_str.ends_with('\''))
+        {
+            parts.push(serde_json::json!({ "text": type_str, "kind": "stringLiteral" }));
+            return;
+        }
+
+        // Default: treat as text (could be a complex type, interface name, etc.)
+        parts.push(serde_json::json!({ "text": type_str, "kind": "text" }));
+    }
+
+    /// Parse a function signature like "(x: number): string" into parts.
+    fn parse_signature(sig: &str, parts: &mut Vec<serde_json::Value>) {
+        // For now, add the whole signature as text parts
+        // This handles the common case of function signatures
+        parts.push(serde_json::json!({ "text": sig, "kind": "text" }));
     }
 
     fn handle_navto(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {

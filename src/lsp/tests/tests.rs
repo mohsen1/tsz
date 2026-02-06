@@ -236,3 +236,202 @@ fn test_lsp_diagnostic_conversion() {
         Some(crate::lsp::diagnostics::DiagnosticSeverity::Error)
     );
 }
+
+#[test]
+fn test_definition_info_parameter_kind() {
+    // Parameters should have kind "parameter", not "var"
+    let source = "function foo(x: number) { return x; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = position::LineMap::build(source);
+
+    let goto_def =
+        definition::GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on 'x' in "return x" (line 0, col 33)
+    let infos = goto_def.get_definition_info(root, Position::new(0, 33));
+    assert!(infos.is_some(), "Should find definition info for parameter");
+    let infos = infos.unwrap();
+    assert_eq!(infos.len(), 1);
+    assert_eq!(
+        infos[0].kind, "parameter",
+        "Parameter should have kind 'parameter'"
+    );
+}
+
+#[test]
+fn test_definition_info_parameter_is_not_local() {
+    // Parameters should have isLocal: false (matching TypeScript behavior)
+    let source = "function foo(x: number) { return x; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = position::LineMap::build(source);
+
+    let goto_def =
+        definition::GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on 'x' in "return x" (line 0, col 33)
+    let infos = goto_def.get_definition_info(root, Position::new(0, 33));
+    assert!(infos.is_some(), "Should find definition info for parameter");
+    let infos = infos.unwrap();
+    assert_eq!(
+        infos[0].is_local, false,
+        "Parameter should have is_local = false"
+    );
+}
+
+#[test]
+fn test_definition_info_class_member_container_name() {
+    // Class members should have containerName set to the class name
+    let source = "class MyClass {\n  myMethod() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = position::LineMap::build(source);
+
+    let goto_def =
+        definition::GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on 'myMethod' (line 1, col 2)
+    let infos = goto_def.get_definition_info(root, Position::new(1, 2));
+    assert!(
+        infos.is_some(),
+        "Should find definition info for class method"
+    );
+    let infos = infos.unwrap();
+    assert_eq!(infos.len(), 1);
+    assert_eq!(
+        infos[0].container_name, "MyClass",
+        "Class method containerName should be 'MyClass'"
+    );
+    assert_eq!(
+        infos[0].container_kind, "class",
+        "Class method containerKind should be 'class'"
+    );
+    assert_eq!(
+        infos[0].is_local, true,
+        "Class member should have is_local = true"
+    );
+}
+
+#[test]
+fn test_definition_info_enum_member_container_name() {
+    // Enum members referenced via Color.Red should have containerName
+    let source = "enum Color {\n  Red = 0,\n  Green = 1\n}\nconst c = Color.Red;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = position::LineMap::build(source);
+
+    let goto_def =
+        definition::GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Verify the enum itself resolves (Color on line 4)
+    let infos = goto_def.get_definition_info(root, Position::new(4, 10));
+    assert!(
+        infos.is_some(),
+        "Should find definition info for enum name reference"
+    );
+}
+
+#[test]
+fn test_definition_info_top_level_not_local() {
+    // Top-level declarations should have is_local = false
+    let source = "const topLevel = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = position::LineMap::build(source);
+
+    let goto_def =
+        definition::GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on 'topLevel' (line 0, col 6)
+    let infos = goto_def.get_definition_info(root, Position::new(0, 6));
+    assert!(
+        infos.is_some(),
+        "Should find definition info for top-level const"
+    );
+    let infos = infos.unwrap();
+    assert_eq!(
+        infos[0].is_local, false,
+        "Top-level declaration should have is_local = false"
+    );
+}
+
+#[test]
+fn test_definition_info_local_var_is_local() {
+    // Variables inside function bodies should have is_local = true
+    let source = "function foo() {\n  const local = 1;\n  return local;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = position::LineMap::build(source);
+
+    let goto_def =
+        definition::GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on 'local' in "return local" (line 2, col 9)
+    let infos = goto_def.get_definition_info(root, Position::new(2, 9));
+    assert!(
+        infos.is_some(),
+        "Should find definition info for local variable"
+    );
+    let infos = infos.unwrap();
+    assert_eq!(
+        infos[0].is_local, true,
+        "Function-scoped variable should have is_local = true"
+    );
+}
+
+#[test]
+fn test_definition_info_enum_context_span_excludes_semicolon() {
+    // Enum contextSpan should end at } not include trailing ;
+    let source = "enum E { A, B };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = position::LineMap::build(source);
+
+    let goto_def =
+        definition::GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on 'E' (line 0, col 5)
+    let infos = goto_def.get_definition_info(root, Position::new(0, 5));
+    assert!(infos.is_some(), "Should find definition info for enum");
+    let infos = infos.unwrap();
+    assert_eq!(infos.len(), 1);
+    // The context span should cover "enum E { A, B }" (ending at }) not "enum E { A, B };"
+    let ctx = infos[0].context_span.as_ref().unwrap();
+    let ctx_end_offset = line_map.position_to_offset(ctx.end, source).unwrap();
+    let ctx_start_offset = line_map.position_to_offset(ctx.start, source).unwrap();
+    let ctx_text = &source[ctx_start_offset as usize..ctx_end_offset as usize];
+    assert!(
+        ctx_text.ends_with('}'),
+        "Enum contextSpan should end with '}}', got: {:?}",
+        ctx_text
+    );
+}

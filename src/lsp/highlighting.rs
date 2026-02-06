@@ -184,6 +184,20 @@ impl<'a> DocumentHighlightProvider<'a> {
             SyntaxKind::BreakKeyword | SyntaxKind::ContinueKeyword => {
                 self.highlight_break_continue(node_idx, offset)
             }
+            SyntaxKind::AsyncKeyword | SyntaxKind::AwaitKeyword => {
+                self.highlight_async_await(node_idx, offset)
+            }
+            SyntaxKind::ConstructorKeyword => self.highlight_constructor(node_idx, offset),
+            SyntaxKind::PublicKeyword
+            | SyntaxKind::PrivateKeyword
+            | SyntaxKind::ProtectedKeyword
+            | SyntaxKind::StaticKeyword
+            | SyntaxKind::AbstractKeyword
+            | SyntaxKind::ReadonlyKeyword
+            | SyntaxKind::DeclareKeyword
+            | SyntaxKind::ExportKeyword
+            | SyntaxKind::OverrideKeyword
+            | SyntaxKind::ConstKeyword => self.highlight_modifier(node_idx, offset, kw),
             _ => None,
         }
     }
@@ -218,6 +232,20 @@ impl<'a> DocumentHighlightProvider<'a> {
             "return" => Some(SyntaxKind::ReturnKeyword),
             "break" => Some(SyntaxKind::BreakKeyword),
             "continue" => Some(SyntaxKind::ContinueKeyword),
+            // Modifier keywords
+            "async" => Some(SyntaxKind::AsyncKeyword),
+            "await" => Some(SyntaxKind::AwaitKeyword),
+            "constructor" => Some(SyntaxKind::ConstructorKeyword),
+            "public" => Some(SyntaxKind::PublicKeyword),
+            "private" => Some(SyntaxKind::PrivateKeyword),
+            "protected" => Some(SyntaxKind::ProtectedKeyword),
+            "static" => Some(SyntaxKind::StaticKeyword),
+            "abstract" => Some(SyntaxKind::AbstractKeyword),
+            "readonly" => Some(SyntaxKind::ReadonlyKeyword),
+            "declare" => Some(SyntaxKind::DeclareKeyword),
+            "export" => Some(SyntaxKind::ExportKeyword),
+            "override" => Some(SyntaxKind::OverrideKeyword),
+            "const" => Some(SyntaxKind::ConstKeyword),
             _ => None,
         }
     }
@@ -817,6 +845,111 @@ impl<'a> DocumentHighlightProvider<'a> {
             self.keyword_range(word_start as u32, kw_len),
         ));
         Some(highlights)
+    }
+
+    /// Highlight async/await keywords within the enclosing function.
+    fn highlight_async_await(
+        &self,
+        node_idx: NodeIndex,
+        _offset: u32,
+    ) -> Option<Vec<DocumentHighlight>> {
+        // Find the enclosing function declaration/expression/arrow
+        let func_idx = self.find_enclosing_function(node_idx)?;
+        let func_node = self.arena.get(func_idx)?;
+        let func_start = func_node.pos as usize;
+        let func_end = func_node.end as usize;
+
+        let mut highlights = Vec::new();
+
+        // Find all `async` and `await` keywords in the function range
+        let src = &self.source_text[func_start..func_end];
+        for keyword in &["async", "await"] {
+            let kw_len = keyword.len();
+            let mut search_from = 0;
+            while search_from + kw_len <= src.len() {
+                if let Some(pos) = src[search_from..].find(keyword) {
+                    let abs_pos = func_start + search_from + pos;
+                    // Check word boundaries
+                    let at_word_start = abs_pos == 0
+                        || !self.source_text.as_bytes()[abs_pos - 1].is_ascii_alphanumeric()
+                            && self.source_text.as_bytes()[abs_pos - 1] != b'_';
+                    let at_word_end = abs_pos + kw_len >= self.source_text.len()
+                        || !self.source_text.as_bytes()[abs_pos + kw_len].is_ascii_alphanumeric()
+                            && self.source_text.as_bytes()[abs_pos + kw_len] != b'_';
+                    if at_word_start && at_word_end {
+                        highlights.push(DocumentHighlight::text(
+                            self.keyword_range(abs_pos as u32, kw_len as u32),
+                        ));
+                    }
+                    search_from += pos + 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if highlights.is_empty() {
+            None
+        } else {
+            Some(highlights)
+        }
+    }
+
+    /// Highlight the constructor keyword.
+    fn highlight_constructor(
+        &self,
+        _node_idx: NodeIndex,
+        offset: u32,
+    ) -> Option<Vec<DocumentHighlight>> {
+        let word_start = self.find_word_start(offset as usize);
+        let mut highlights = Vec::new();
+        highlights.push(DocumentHighlight::text(
+            self.keyword_range(word_start as u32, "constructor".len() as u32),
+        ));
+        Some(highlights)
+    }
+
+    /// Highlight a modifier keyword (public, private, static, etc.)
+    /// by finding all siblings with the same modifier in the parent context.
+    fn highlight_modifier(
+        &self,
+        _node_idx: NodeIndex,
+        offset: u32,
+        _keyword: SyntaxKind,
+    ) -> Option<Vec<DocumentHighlight>> {
+        let word_start = self.find_word_start(offset as usize);
+        let word_end = self.find_word_end(offset as usize);
+        let word = &self.source_text[word_start..word_end];
+        let kw_len = word.len() as u32;
+
+        // For now, just highlight the current keyword occurrence
+        let mut highlights = Vec::new();
+        highlights.push(DocumentHighlight::text(
+            self.keyword_range(word_start as u32, kw_len),
+        ));
+        Some(highlights)
+    }
+
+    /// Find the enclosing function (declaration, expression, or arrow) for async/await.
+    fn find_enclosing_function(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = node_idx;
+        for _ in 0..50 {
+            let node = self.arena.get(current)?;
+            match node.kind {
+                syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::METHOD_DECLARATION => return Some(current),
+                syntax_kind_ext::SOURCE_FILE => return None,
+                _ => {}
+            }
+            let ext = self.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+        None
     }
 
     /// Find a keyword string within a byte range of the source text.
