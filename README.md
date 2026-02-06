@@ -44,8 +44,8 @@ to ensure correct code generation.
 <!-- EMIT_START -->
 
 ```
-JavaScript:  [███░░░░░░░░░░░░░░░░░] 19.4% (1,259 / 6,500 tests)
-Declaration: [░░░░░░░░░░░░░░░░░░░░] 0.0% (0 / 12 tests)
+JavaScript:  [████████░░░░░░░░░░░░] 24.5% (2559/10451 tests)
+Declaration: [██████░░░░░░░░░░░░░░] 22.7% (186/819 tests)
 ```
 
 <a id="footnote-1">1</a>: "Zang" is the Persian word for "rust".
