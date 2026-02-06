@@ -85,6 +85,39 @@ Created 2026-02-05 following completion of tsz-15, tsz-16, tsz-17 which all foun
 
 ## Progress
 
+### 2026-02-06: Mapped Type Instantiation Bug Fixed!
+
+**Bug Found**: Generic mapped types were not being evaluated after instantiation.
+
+**Symptoms**:
+```typescript
+type MyPartial<T> = { [K in keyof T]?: T[K] };
+interface Cfg { host: string; port: number }
+let b: MyPartial<Cfg> = { host: "x" };  // ERROR - should work!
+```
+
+**Root Cause**:
+When `MyPartial<Cfg>` was instantiated, the code created a `MappedType` but returned it without evaluation. The SubtypeChecker expects structural types (Object), not meta-types (Mapped), so the check failed.
+
+**Fix** (`src/solver/instantiate.rs` lines 560-567):
+```rust
+// Before: returned MappedType unevaluated
+self.interner.mapped(instantiated)
+
+// After: evaluate to Object type
+let mapped_type = self.interner.mapped(instantiated);
+crate::solver::evaluate::evaluate_type(self.interner, mapped_type)
+```
+
+**Impact**:
+- ✅ +1 test fixed (8249 -> 8250 passing)
+- ✅ Aligns with IndexAccess and KeyOf behavior (eager evaluation)
+- ⚠️ Specific test still failing - investigation ongoing
+
+**Committed**: `ce7639908`
+
+**Note**: The fix correctly evaluates the mapped type to an Object with `optional=true` properties (verified with debug output). The remaining test failure suggests a separate caching or type resolution issue that needs further investigation.
+
 ### 2026-02-05: Session Pivoted and Found Bugs!
 
 **Phase 1: Attempted Conformance Tests**
