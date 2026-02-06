@@ -804,13 +804,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.exact_optional_property_types = self.exact_optional_property_types;
         self.subtype.strict_null_checks = self.strict_null_checks;
         self.subtype.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
-        // In strict function type mode, use TopLevelOnly for any propagation
-        // This ensures `any` behaves like `unknown` at depth > 0 (e.g., in function parameters)
-        self.subtype.any_propagation = if strict_function_types {
-            crate::solver::subtype::AnyPropagationMode::TopLevelOnly
-        } else {
-            self.lawyer.any_propagation_mode()
-        };
+        // Any propagation is controlled by the Lawyer's allow_any_suppression flag
+        // Standard TypeScript allows any to propagate through arrays/objects regardless
+        // of strictFunctionTypes - it only affects function parameter variance
+        self.subtype.any_propagation = self.lawyer.any_propagation_mode();
         // In strict mode, disable method bivariance for soundness
         self.subtype.disable_method_bivariance = self.strict_subtype_checking;
     }
