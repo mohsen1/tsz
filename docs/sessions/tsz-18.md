@@ -384,7 +384,16 @@ This is why key remapping fails! When the conditional `K extends "age" ? never :
 
 **Complexity**: This requires understanding how type aliases are lowered to mapped types in the binder, which is outside the solver component.
 
-**Recommendation for next session**: Consider switching to a simpler bug in the 40 failing tests that doesn't require cross-component investigation.
+**Pivot to Indexed Access on Classes**:
+Following Gemini recommendation, switched to investigating indexed access on classes (`C["foo"]`).
+
+**New Finding**: The SOLVER correctly evaluates `C["foo"]` to `number` (test without assignment passes).
+**Issue**: The CHECKER rejects the assignment `let x: FooType = 3` where `type FooType = C["foo"]`.
+**Error**: "Type 'number' is not assignable to type 'FooType'"
+
+**Hypothesis**: This might be a checker-side issue with how nominal types are compared, or an issue with how the type is cached/retrieved.
+
+**Test Status**: 8272 passing, 40 failing (unchanged)
 
 ### 2026-02-06: Indexed Access Investigation (In Progress)
 
