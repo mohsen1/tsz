@@ -767,28 +767,45 @@ Per Gemini's guidance, the following areas need verification for complete O(1) e
    - Example: `(A | B) & C` → `(A & C) | (B & C)`
    - Need to verify if interner performs this normalization
 
-### Next Priority: Subtype Failure Diagnostics
+### Task #51: Diagnostic Integration - BLOCKED
 
-**Task**: Integrate `src/solver/diagnostics.rs` with `SubtypeVisitor`
+**Status**: ⚠️ BLOCKED - Requires extensive refactoring
 
-**Current State**:
-- `SubtypeTracer` trait exists for zero-cost diagnostic abstraction
-- `FastTracer` for boolean checks (already used)
-- `DiagnosticTracer` for collecting detailed failures
-- `SubtypeFailureReason` enum for structured failure data
-- `SubtypeVisitor` exists but doesn't use tracer pattern yet
+**Initial Approach**:
+Add `T: SubtypeTracer = FastTracer` generic parameter to `SubtypeChecker`.
 
-**Goal**:
-When `is_subtype_of` returns `false`, optionally populate a diagnostic trace explaining why (e.g., "Property 'x' is missing", "Type 'string' is not assignable to 'number'").
+**Challenge Discovered**:
+The `SubtypeChecker` has methods defined across 7+ files in `src/solver/subtype_rules/`:
+- `intrinsics.rs`: `check_intrinsic_subtype`, `is_boxed_primitive_subtype`
+- `tuples.rs`: `check_tuple_subtype`, `check_tuple_to_array_subtype`
+- `unions.rs`: `check_type_parameter_subtype`
+- `functions.rs`, `objects.rs`, `literals.rs`, `generics.rs`, `conditionals.rs`
 
-**Why**:
-Prevents the Checker (tsz-2) from re-implementing discovery logic to figure out why an assignment failed. The Judge must explain its verdict.
+All these `impl` blocks would need to be updated with the `T` parameter, touching ~10,000+ lines of code.
 
-### Recommended Action Plan
+**Alternative Approaches**:
+1. Use a trait object (`Box<dyn SubtypeTracer>`) - but this adds overhead
+2. Store tracer in a thread-local or global - breaks encapsulation
+3. Use composition instead of inheritance - major refactor
+4. Add the generic parameter but use macro to reduce boilerplate
 
-1. ✅ Verify Object Sorting - Already implemented in `object_with_flags`
-2. ⏳ Diagnostic Integration - Modify `SubtypeVisitor` to support optional `DiagnosticSink`
-3. ⏳ DNF Normalization - Ask Gemini about approach for "Intersection of Union" normalization
+**Recommendation**: Ask Gemini for the simplest approach that doesn't require touching 10+ files.
 
-**Mandatory**: Before implementing Diagnostic Integration or DNF changes, use `tsz-gemini` skill to validate approach.
+---
+
+### Task #52: DNF Normalization - NEXT PRIORITY
+
+**Status**: ⏳ READY TO START
+
+**Goal**: Implement `(A | B) & C` → `(A & C) | (B & C)` in `intern.rs`
+
+This is simpler than Task #51 and can be done independently.
+
+---
+
+### Task #53: Global Recursive Isomorphism
+
+**Status**: ⏳ PENDING
+
+Verify if two different `DefId`s (Lazy types) that describe the same recursive structure result in the same `TypeId`.
 
