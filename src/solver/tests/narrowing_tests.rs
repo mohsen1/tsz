@@ -438,8 +438,10 @@ fn test_narrow_by_typeof_template_literal() {
 fn test_narrow_by_typeof_any() {
     let interner = TypeInterner::new();
 
+    // TypeScript allows narrowing 'any' based on typeof checks
+    // When typeof x === "string", x is narrowed to string within that block
     let narrowed = narrow_by_typeof(&interner, TypeId::ANY, "string");
-    assert_eq!(narrowed, TypeId::ANY);
+    assert_eq!(narrowed, TypeId::STRING);
 }
 
 #[test]
