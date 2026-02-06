@@ -5495,6 +5495,81 @@ fn test_function_fixed_to_rest_extra_param_accepts_undefined() {
 }
 
 #[test]
+fn test_rest_any_three_fixed_to_two_fixed_plus_rest() {
+    // This matches the failing conformance test: aliasOfGenericFunctionWithRestBehavedSameAsUnaliased.ts
+    // type a3 = (name: string, mixed: any, args_0: any) => any
+    // type b3 = (name: string, mixed: any, ...args: any[]) => any
+    // type test3 = a3 extends b3 ? "y" : "n"  // tsc: "y", tsz should be: "y"
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.allow_bivariant_rest = true;
+
+    let rest_any = interner.array(TypeId::ANY);
+
+    // Source: (name: string, mixed: any, args_0: any) => any
+    let source = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("name")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("mixed")),
+                type_id: TypeId::ANY,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("args_0")),
+                type_id: TypeId::ANY,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Target: (name: string, mixed: any, ...args: any[]) => any
+    let target = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("name")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("mixed")),
+                type_id: TypeId::ANY,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("args")),
+                type_id: rest_any,
+                optional: false,
+                rest: true,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
 fn test_function_fixed_to_rest_extra_param_rejects_undefined() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
