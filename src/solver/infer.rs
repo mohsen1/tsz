@@ -32,7 +32,7 @@ pub struct InferenceVar(pub u32);
 // See: src/solver/types.rs for the new priority levels
 
 /// A candidate type for an inference variable.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InferenceCandidate {
     pub type_id: TypeId,
     pub priority: InferencePriority,
@@ -75,18 +75,23 @@ impl UnifyValue for InferenceInfo {
     fn unify_values(a: &Self, b: &Self) -> Result<Self, Self::Error> {
         let mut merged = a.clone();
 
-        // Deduplicate candidates to prevent exponential growth in constraint lists
-        // This improves performance for complex generic type inference
-        for candidate in &b.candidates {
-            if !merged.candidates.contains(candidate) {
-                merged.candidates.push(candidate.clone());
+        // Deduplicate candidates using HashSet for O(1) lookups instead of O(n) Vec::contains
+        if !b.candidates.is_empty() {
+            let existing: FxHashSet<_> = merged.candidates.iter().cloned().collect();
+            for candidate in &b.candidates {
+                if !existing.contains(candidate) {
+                    merged.candidates.push(candidate.clone());
+                }
             }
         }
 
-        // Deduplicate upper bounds
-        for bound in &b.upper_bounds {
-            if !merged.upper_bounds.contains(bound) {
-                merged.upper_bounds.push(*bound);
+        // Deduplicate upper bounds using HashSet for O(1) lookups
+        if !b.upper_bounds.is_empty() {
+            let existing: FxHashSet<_> = merged.upper_bounds.iter().copied().collect();
+            for &bound in &b.upper_bounds {
+                if !existing.contains(&bound) {
+                    merged.upper_bounds.push(bound);
+                }
             }
         }
 
