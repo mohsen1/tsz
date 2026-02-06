@@ -361,3 +361,27 @@ When a task is marked "ALREADY DONE", it means:
 ### The "Lawyer vs Judge" Distinction
 - **Lawyer** (tsz-4): How types behave in specific situations (quirks, nominality)
 - **Judge** (tsz-1): Mathematical correctness and canonical identity
+
+---
+
+## Session Update (2026-02-06)
+
+**Completed Work:**
+- ✅ Task #48 (SubtypeChecker Visitor Pattern Refactor) - COMPLETE
+- ✅ Task #49 (Global Canonical Mapping) - COMPLETE  
+- ✅ Task #50 (Variance for Lazy Types) - Already implemented in variance.rs
+
+**Recent Commit (b14456417):**
+- Added union handling to `is_subtype_shallow` in `src/solver/intern.rs`
+- Allows literals to be recognized as subtypes of unions containing their primitive type
+- Improves intersection normalization for cases like `(string | number) & "a" → "a"`
+
+**Remaining Work:**
+- The solver has 3522 passing tests with only 2 failures
+- These failures are tracked in tsz-2 session
+- Task #46 (Instantiation Canonicalization) and Task #47 (Template Literal Canonicalization) need verification
+
+**Next Steps:**
+- Focus on tsz-2 to achieve 100% solver test pass rate
+- Then return to tsz-1 for final verification of O(1) equality goals
+
