@@ -36,8 +36,8 @@ Fixed `NarrowingVisitor` to properly handle Lazy/Ref/Application resolution and 
 **Identified Stubs**:
 - `visit_index_access` - IndexAccess type subtyping (S[I] <: T[J])
 - `visit_template_literal` - Template literal subtypes
-- `visit_keyof` - Keyof type subtyping (contravariant)
-- `visit_unique_symbol` - Unique symbol nominal identity
+- `visit_keyof` - Keyof type subtyping (contravariant) ✅
+- `visit_unique_symbol` - Unique symbol nominal identity ✅
 - `visit_type_query` - TypeQuery (typeof) subtypes
 - `visit_this_type` - This type substitution
 - `visit_infer` - Infer type handling
@@ -50,7 +50,11 @@ Fixed `NarrowingVisitor` to properly handle Lazy/Ref/Application resolution and 
   - Template literals are always subtypes of string
   - Unique symbols have nominal identity
 
-**Status**: Partially implemented but hit file modification issues during session. Need to complete visit_this_type and visit_infer.
+**Completed**:
+- ✅ `visit_unique_symbol` (Commit `24ac2eae3`) - nominal identity checking
+- ✅ `visit_keyof` (Commit `ed7e454e8`) - contravariant logic with TypeParameter handling
+
+**Status**: 2 of 7 stubs complete. Need to complete visit_index_access, visit_template_literal, visit_type_query, visit_this_type, visit_infer.
 
 ## Next Steps
 
@@ -67,10 +71,13 @@ Fixed `NarrowingVisitor` to properly handle Lazy/Ref/Application resolution and 
 
 - `766cc1360`: feat(solver): add IndexAccess case for generic type inference
 - `ec3a0f9ec`: feat(solver): fix NarrowingVisitor for complex types
+- `24ac2eae3`: feat(solver): implement visit_unique_symbol in SubtypeVisitor
+- `ed7e454e8`: feat(solver): fix visit_keyof to handle type parameters correctly
 
 ## Test Results
 
 - Before: 8120 passing, 178 failing, 160 ignored
-- After: 8141 passing (+21), 178 failing, 160 ignored
+- After Task #11: 8141 passing (+21), 178 failing, 160 ignored
+- After Task #12 (partial): 3540 solver tests pass, 4 template literal tests fail (pre-existing)
 
-**Note**: 21 test improvement from implemented features.
+**Note**: 21 test improvement from implemented features. Template literal tests are pre-existing failures.
