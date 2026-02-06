@@ -102,6 +102,36 @@ The Checker was manually handling `TypeQuery` resolution for constructor express
 - Successfully moved constructor resolution logic from Checker to Solver
 - Follows "Solver-First" principle from NORTH_STAR.md
 - Cleaner, more maintainable code
+- Reduced ~230 lines of code while improving correctness
+
+**Commit**: d44a93ddd
+
+---
+
+### Next Priority: Rest Parameter & Variadic Tuple Subtyping
+
+**Issue**: Function type with fixed parameters NOT assignable to function with rest parameter
+
+**Test**: `aliasOfGenericFunctionWithRestBehavedSameAsUnaliased.ts`
+
+**Problem**:
+```typescript
+type a3 = (name: string, mixed: any, args_0: any) => any
+type b3 = (name: string, mixed: any, ...args: any[]) => any
+type test3 = a3 extends b3 ? "y" : "n"  // tsc: "y", tsz: "n"
+```
+
+**Investigation Plan** (per Gemini guidance):
+1. Reproduce with tracing: `TSZ_LOG="wasm::solver::subtype=trace"`
+2. Focus on **Lawyer layer** (`src/solver/lawyer.rs`) - not Checker
+3. Check **Variadic Tuple Subtyping** - rest params may be represented as tuples
+4. Audit `any` propagation rules during function parameter comparison
+5. Use Two-Question Rule before implementing fix
+
+**Files**:
+- `src/solver/subtype_rules/functions.rs` - function subtyping logic
+- `src/solver/lawyer.rs` - any propagation rules
+- `src/solver/subtype.rs` - tuple assignability
 
 ## Next Steps
 
