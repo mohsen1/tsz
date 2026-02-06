@@ -1112,6 +1112,10 @@ impl<'a> SignatureHelpProvider<'a> {
                     &mut candidates,
                     &mut fallback,
                 );
+                // For new expressions, only use docs from explicit constructors
+                // (collected above), not from the class declaration itself.
+                // TypeScript does not propagate class-level JSDoc to implicit constructors.
+                continue;
             }
             let doc = jsdoc_for_node(self.arena, root, decl, self.source_text);
             let mut parsed = if doc.is_empty() {
