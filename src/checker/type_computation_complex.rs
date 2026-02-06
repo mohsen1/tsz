@@ -1466,20 +1466,24 @@ impl<'a> CheckerState<'a> {
             // This handles TS2454 errors and applies flow-based narrowing
             let flow_type = self.check_flow_usage(idx, declared_type, sym_id);
 
-            // FIX: If flow analysis returns ANY but the declared type is a valid non-ANY, non-ERROR type,
-            // and the declared type is an ObjectWithIndex (has index signatures), use the declared type.
+            // FIX: Preserve readonly and other type modifiers from declared_type.
+            // When declared_type has modifiers like ReadonlyType, we must preserve them
+            // even if flow analysis infers a different type from the initializer.
             // IMPORTANT: Only apply this fix when there's NO contextual type to avoid interfering
             // with variance checking and assignability analysis.
-            let result_type = if flow_type == TypeId::ANY
+            let result_type = if self.ctx.contextual_type.is_none()
                 && declared_type != TypeId::ANY
                 && declared_type != TypeId::ERROR
-                && self.ctx.contextual_type.is_none()
-            // CRITICAL: Only when no contextual type
             {
-                // Only preserve declared_type for ObjectWithIndex types (interfaces with index signatures)
-                // This avoids interfering with function types or other variance checking
+                // Check if declared_type has ReadonlyType modifier - if so, preserve it
                 match self.ctx.types.lookup(declared_type) {
-                    Some(crate::solver::TypeKey::ObjectWithIndex(_)) => declared_type,
+                    Some(crate::solver::TypeKey::ReadonlyType(_)) => declared_type,
+                    Some(crate::solver::TypeKey::ObjectWithIndex(_))
+                        if flow_type == TypeId::ANY =>
+                    {
+                        // Original fix: Only preserve ObjectWithIndex when flow_type is ANY
+                        declared_type
+                    }
                     _ => flow_type,
                 }
             } else {

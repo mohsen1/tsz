@@ -4946,6 +4946,7 @@ config["name"] = "error";
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
@@ -4956,6 +4957,7 @@ config["name"] = "error";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
 
     checker.check_source_file(root);
 
@@ -4985,6 +4987,7 @@ xs[0] = 3;
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
@@ -4995,6 +4998,7 @@ xs[0] = 3;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
 
     checker.check_source_file(root);
 
@@ -5027,6 +5031,7 @@ svc.run = () => {};
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
@@ -5037,6 +5042,7 @@ svc.run = () => {};
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
 
     checker.check_source_file(root);
 
@@ -5069,6 +5075,7 @@ map["a"] = 2;
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
@@ -5079,6 +5086,7 @@ map["a"] = 2;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
 
     checker.check_source_file(root);
 

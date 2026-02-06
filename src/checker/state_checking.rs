@@ -1108,6 +1108,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if an assignment target is a readonly property.
     /// Reports error TS2540 if trying to assign to a readonly property.
+    #[tracing::instrument(skip(self), fields(target_idx = target_idx.0))]
     pub(crate) fn check_readonly_assignment(
         &mut self,
         target_idx: NodeIndex,
