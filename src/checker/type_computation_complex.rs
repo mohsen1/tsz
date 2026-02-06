@@ -4,7 +4,6 @@
 //! containing complex type computation methods for new expressions,
 //! call expressions, constructability, union/keyof types, and identifiers.
 
-use crate::binder::SymbolId;
 use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
 use crate::solver::types::Visibility;
@@ -137,7 +136,7 @@ impl<'a> CheckerState<'a> {
         use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::diagnostic_codes;
 
-        use crate::solver::{CallEvaluator, CallResult, CallableShape, CompatChecker};
+        use crate::solver::{CallEvaluator, CallResult, CompatChecker};
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -263,162 +262,7 @@ impl<'a> CheckerState<'a> {
         // This is critical for classes where we need the Callable with construct signatures
         let constructor_type = self.resolve_ref_type(constructor_type);
 
-        let construct_type = match crate::solver::type_queries::classify_for_new_expression(
-            self.ctx.types,
-            constructor_type,
-        ) {
-            crate::solver::type_queries::NewExpressionTypeKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape.construct_signatures.is_empty() {
-                    // Functions with a prototype property are constructable
-                    // This handles cases like `function Foo() {}` where `Foo.prototype` exists
-                    if self.type_has_prototype_property(constructor_type) {
-                        Some(constructor_type)
-                    } else if !shape.call_signatures.is_empty() {
-                        // TSC behavior: callable types with call signatures but no construct
-                        // signatures are still "constructable" — `new` returns `any`.
-                        // TS2351 is only for types with NO signatures at all (e.g., string).
-                        // In strict mode, TSC emits TS7009 instead.
-                        Some(TypeId::ANY)
-                    } else {
-                        None
-                    }
-                } else {
-                    Some(self.ctx.types.callable(CallableShape {
-                        call_signatures: shape.construct_signatures.clone(),
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        string_index: None,
-                        number_index: None,
-                        symbol: None,
-                    }))
-                }
-            }
-            crate::solver::type_queries::NewExpressionTypeKind::Function(_) => {
-                Some(constructor_type)
-            }
-            crate::solver::type_queries::NewExpressionTypeKind::TypeQuery(sym_ref) => {
-                // Ref to a symbol or TypeQuery (typeof X) - resolve to the symbol's type
-                use crate::binder::SymbolId;
-                let symbol_id = SymbolId(sym_ref.0);
-                if self.ctx.binder.get_symbol(symbol_id).is_some() {
-                    // Get the symbol's actual type which should be a Callable with construct signatures
-                    let symbol_type = self.get_type_of_symbol(symbol_id);
-                    // Check if the symbol's type is constructable
-                    self.get_construct_type_from_type(symbol_type)
-                } else {
-                    None
-                }
-            }
-            crate::solver::type_queries::NewExpressionTypeKind::Intersection(members) => {
-                // For intersection of constructors (mixin pattern), the result is an
-                // intersection of all instance types. Handle this specially.
-                let mut instance_types: Vec<TypeId> = Vec::new();
-
-                for member in members {
-                    // Evaluate Application types (e.g., Constructor<T>) to get their Callable shape
-                    let evaluated_member = self.evaluate_application_type(member);
-                    // Try to get construct signatures from the evaluated member
-                    let construct_sig_return =
-                        self.get_construct_signature_return_type(evaluated_member);
-                    if let Some(return_type) = construct_sig_return {
-                        instance_types.push(return_type);
-                    }
-                }
-
-                if instance_types.is_empty() {
-                    // TS2351: This expression is not constructable
-                    self.error_not_constructable_at(constructor_type, idx);
-                    return TypeId::ERROR;
-                } else if instance_types.len() == 1 {
-                    return instance_types[0];
-                } else {
-                    // Return intersection of all instance types
-                    return self.ctx.types.intersection(instance_types);
-                }
-            }
-            crate::solver::type_queries::NewExpressionTypeKind::TypeParameter { constraint } => {
-                // For type parameters with constructor constraints (e.g., T extends typeof Base),
-                // check the constraint for constructor signatures.
-                // This handles patterns like:
-                //   function f<T extends typeof Base>(ctor: T) {
-                //       return new ctor();  // Should work - T has construct signatures from Base
-                //   }
-                if let Some(constraint) = constraint {
-                    // Evaluate the constraint to resolve Application types like Constructor<T>
-                    let evaluated_constraint = self.evaluate_application_type(constraint);
-
-                    // Check if the evaluated constraint is an Intersection - handle it specially
-                    if let Some(members) = crate::solver::type_queries::get_intersection_members(
-                        self.ctx.types,
-                        evaluated_constraint,
-                    ) {
-                        let mut instance_types: Vec<TypeId> = Vec::new();
-
-                        for member in members {
-                            // Resolve Refs (type alias references) to their actual types
-                            let resolved_member = self.resolve_type_for_property_access(member);
-                            // Then evaluate any Application types
-                            let evaluated_member = self.evaluate_application_type(resolved_member);
-                            let construct_sig_return =
-                                self.get_construct_signature_return_type(evaluated_member);
-                            if let Some(return_type) = construct_sig_return {
-                                instance_types.push(return_type);
-                            }
-                        }
-
-                        if instance_types.is_empty() {
-                            self.error_not_constructable_at(constructor_type, idx);
-                            return TypeId::ERROR;
-                        } else if instance_types.len() == 1 {
-                            return instance_types[0];
-                        } else {
-                            return self.ctx.types.intersection(instance_types);
-                        }
-                    }
-
-                    // For non-intersection constraints, get the construct type
-                    self.get_construct_type_from_type(evaluated_constraint)
-                } else {
-                    // No constraint - can't determine if it's a constructor
-                    None
-                }
-            }
-            crate::solver::type_queries::NewExpressionTypeKind::Union(members) => {
-                // For union types, check if all members are constructors
-                // and return the union of their callable types (with construct signatures converted to call signatures)
-                let mut callable_types: Vec<TypeId> = Vec::new();
-
-                for member in members {
-                    // Resolve Refs (type alias references) to their actual types
-                    let resolved_member = self.resolve_type_for_property_access(member);
-                    // Then evaluate any Application types
-                    let evaluated_member = self.evaluate_application_type(resolved_member);
-                    // Get the callable type (construct signatures converted to call signatures)
-                    let construct_type = self.get_construct_type_from_type(evaluated_member);
-                    if let Some(callable) = construct_type {
-                        callable_types.push(callable);
-                    } else {
-                        // If any member isn't constructible, the union isn't constructible
-                        break;
-                    }
-                }
-
-                if !callable_types.is_empty() {
-                    Some(self.ctx.types.union(callable_types))
-                } else {
-                    None
-                }
-            }
-            crate::solver::type_queries::NewExpressionTypeKind::NotConstructable => None,
-        };
-
-        let Some(construct_type) = construct_type else {
-            // TS2351: This expression is not constructable
-            self.error_not_constructable_at(constructor_type, idx);
-            return TypeId::ERROR;
-        };
-
+        // Collect arguments
         let args = new_expr
             .arguments
             .as_ref()
@@ -426,59 +270,36 @@ impl<'a> CheckerState<'a> {
             .map(|n| n.as_slice())
             .unwrap_or(&[]);
 
-        let overload_signatures = match crate::solver::type_queries::classify_for_call_signatures(
-            self.ctx.types,
-            construct_type,
-        ) {
-            crate::solver::type_queries::CallSignaturesKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape.call_signatures.len() > 1 {
-                    Some(shape.call_signatures.clone())
-                } else {
-                    None
-                }
-            }
-            crate::solver::type_queries::CallSignaturesKind::MultipleSignatures(signatures) => {
-                if signatures.len() > 1 {
-                    Some(signatures)
-                } else {
-                    None
-                }
-            }
-            crate::solver::type_queries::CallSignaturesKind::NoSignatures => None,
-        };
-
-        if let Some(signatures) = overload_signatures.as_deref()
-            && let Some(return_type) =
-                self.resolve_overloaded_call_with_signatures(args, signatures, false)
-        {
-            return return_type;
-        }
-
-        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, construct_type);
-        let check_excess_properties = overload_signatures.is_none();
+        // Prepare argument types with contextual typing
+        // Note: We use a generic context helper here because we delegate the specific
+        // signature selection to the solver.
+        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, constructor_type);
+        let check_excess_properties = true; // Default to true, solver handles specifics
         let arg_types = self.collect_call_argument_types_with_context(
             args,
             |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
             check_excess_properties,
         );
 
-        self.ensure_application_symbols_resolved(construct_type);
+        self.ensure_application_symbols_resolved(constructor_type);
         for &arg_type in &arg_types {
             self.ensure_application_symbols_resolved(arg_type);
         }
+
+        // Delegate to Solver for constructor resolution
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
             self.ctx.configure_compat_checker(&mut checker);
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
-            evaluator.resolve_call(construct_type, &arg_types)
+            // NEW: Call resolve_new instead of resolve_call
+            evaluator.resolve_new(constructor_type, &arg_types)
         };
 
         match result {
             CallResult::Success(return_type) => return_type,
             CallResult::NotCallable { .. } => {
-                self.error_not_callable_at(constructor_type, new_expr.expression);
+                self.error_not_constructable_at(constructor_type, idx);
                 TypeId::ERROR
             }
             CallResult::ArgumentCountMismatch {
@@ -635,290 +456,6 @@ impl<'a> CheckerState<'a> {
             }
             LazyTypeKind::NotLazy => type_id,
             _ => type_id, // Handle deprecated variants for compatibility
-        }
-    }
-
-    pub(crate) fn get_construct_type_from_type(&self, type_id: TypeId) -> Option<TypeId> {
-        use crate::solver::type_queries::{
-            ConstructableTypeKind, classify_for_constructability, construct_to_call_callable,
-        };
-
-        // Recursion depth check to prevent stack overflow from recursive
-        // constructability checks (e.g. D<D<T>> patterns, symbol→type→symbol cycles)
-        if !self.ctx.enter_recursion() {
-            return None;
-        }
-
-        let result = match classify_for_constructability(self.ctx.types, type_id) {
-            ConstructableTypeKind::CallableWithConstruct => {
-                // Return a callable with construct signatures as call signatures
-                construct_to_call_callable(self.ctx.types, type_id)
-            }
-            ConstructableTypeKind::CallableMaybePrototype => {
-                // Functions with a prototype property are constructable
-                if self.type_has_prototype_property(type_id) {
-                    Some(type_id)
-                } else {
-                    None
-                }
-            }
-            ConstructableTypeKind::Function => Some(type_id),
-            ConstructableTypeKind::SymbolRef(sym_ref) => {
-                self.check_symbol_constructability(type_id, SymbolId(sym_ref.0), false)
-            }
-            ConstructableTypeKind::TypeQueryRef(sym_ref) => {
-                self.check_symbol_constructability(type_id, SymbolId(sym_ref.0), true)
-            }
-            ConstructableTypeKind::TypeParameterWithConstraint(constraint) => {
-                self.get_construct_type_from_type(constraint)
-            }
-            ConstructableTypeKind::TypeParameterNoConstraint => None,
-            ConstructableTypeKind::Intersection(members) => {
-                // All members must be constructable
-                if members
-                    .iter()
-                    .all(|&member| self.get_construct_type_from_type(member).is_some())
-                {
-                    Some(type_id)
-                } else {
-                    None
-                }
-            }
-            ConstructableTypeKind::Application => Some(type_id),
-            ConstructableTypeKind::Object => Some(type_id),
-            ConstructableTypeKind::NotConstructable => None,
-        };
-
-        self.ctx.leave_recursion();
-        result
-    }
-
-    /// Check if a symbol reference is constructable.
-    ///
-    /// This handles both Ref and TypeQuery cases which have similar logic
-    /// for checking symbol flags (class, interface) and cached types.
-    pub(crate) fn check_symbol_constructability(
-        &self,
-        type_id: TypeId,
-        symbol_id: SymbolId,
-        is_type_query: bool,
-    ) -> Option<TypeId> {
-        use crate::solver::type_queries;
-
-        let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) else {
-            return None;
-        };
-
-        // Class symbols are constructable - convert construct sigs to call sigs
-        if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
-            // Get the symbol's cached type and convert construct signatures to call signatures
-            if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
-                return type_queries::construct_to_call_callable(self.ctx.types, cached_type);
-            }
-            return None;
-        }
-
-        // Interface symbols might have construct signatures
-        if (symbol.flags & crate::binder::symbol_flags::INTERFACE) != 0 {
-            if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
-                // Check if the cached type has construct signatures
-                if crate::solver::type_queries::has_construct_signatures(
-                    self.ctx.types,
-                    cached_type,
-                ) {
-                    return Some(type_id);
-                }
-                // For Ref (not TypeQuery), also check if it's an object type
-                if !is_type_query && type_queries::is_object_type(self.ctx.types, cached_type) {
-                    return Some(type_id);
-                }
-            }
-            // Return the type for further checking by the caller
-            return Some(type_id);
-        }
-
-        // For other symbols (variables, parameters, type aliases), check their cached type
-        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
-            if self.get_construct_type_from_type(cached_type).is_some() {
-                return Some(type_id);
-            }
-        }
-
-        None
-    }
-
-    /// Get the return type of a construct signature from a type.
-    ///
-    /// This handles various type representations:
-    /// - Direct Callable with construct signatures
-    /// - Ref to class symbols (typeof Class)
-    /// - TypeQuery (typeof expressions)
-    ///
-    /// Returns None if the type doesn't have construct signatures.
-    pub(crate) fn get_construct_signature_return_type(&self, type_id: TypeId) -> Option<TypeId> {
-        use crate::binder::SymbolId;
-        use crate::solver::SymbolRef;
-        use crate::solver::type_queries::{
-            ConstructSignatureKind, classify_for_construct_signature,
-        };
-        use crate::solver::types::TypeKey;
-
-        match classify_for_construct_signature(self.ctx.types, type_id) {
-            ConstructSignatureKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                shape
-                    .construct_signatures
-                    .first()
-                    .map(|sig| sig.return_type)
-            }
-            ConstructSignatureKind::Lazy(def_id) => {
-                // Phase 4.2: Lazy type - resolve DefId to SymbolId
-                // This handles cases like `typeof M1` where M1 is a class
-                if let Some(symbol_id) = self.ctx.def_to_symbol_id(def_id) {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
-                        // Check if this is a class symbol
-                        if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
-                            // For class symbols, the instance type is what we want
-                            // The construct signature returns the instance type
-                            // We create a Lazy type to this symbol as the instance type
-                            return Some(self.ctx.types.intern(TypeKey::Lazy(def_id)));
-                        }
-                        // Check interfaces and other symbols for cached types with construct signatures
-                        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
-                            // Recursively check the cached type
-                            // Avoid infinite loops by checking if it's the same as the input
-                            if cached_type != type_id {
-                                return self.get_construct_signature_return_type(cached_type);
-                            }
-                        }
-                    }
-                }
-                None
-            }
-            #[allow(deprecated)]
-            ConstructSignatureKind::Ref(sym_ref) => {
-                // Ref to a symbol - get the symbol's type which should be a Callable
-                // This handles cases like `typeof M1` where M1 is a class
-                let symbol_id = SymbolId(sym_ref.0);
-                if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
-                    // Check if this is a class symbol
-                    if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
-                        // For class symbols, the instance type is what we want
-                        // The construct signature returns the instance type
-                        // We create a Ref to this symbol as the instance type
-                        return Some(self.ctx.types.reference(SymbolRef(sym_ref.0)));
-                    }
-                    // Check interfaces and other symbols for cached types with construct signatures
-                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
-                        // Recursively check the cached type
-                        // Avoid infinite loops by checking if it's the same as the input
-                        if cached_type != type_id {
-                            return self.get_construct_signature_return_type(cached_type);
-                        }
-                    }
-                }
-                None
-            }
-            ConstructSignatureKind::TypeQuery(sym_ref) => {
-                // TypeQuery is `typeof ClassName` - the return type is an instance of the class
-                let symbol_id = SymbolId(sym_ref.0);
-                if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
-                    if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
-                        // Return a Ref to the class as the instance type
-                        return Some(self.ctx.types.reference(SymbolRef(sym_ref.0)));
-                    }
-                    // Check other symbols for cached types with construct signatures
-                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
-                        // Recursively check the cached type
-                        // Avoid infinite loops by checking if it's the same as the input
-                        if cached_type != type_id {
-                            return self.get_construct_signature_return_type(cached_type);
-                        }
-                    }
-                }
-                None
-            }
-            // Handle Application types (e.g., Constructor<T>)
-            // Evaluate the application and check the result for construct signatures
-            ConstructSignatureKind::Application(app_id) => {
-                // We need to evaluate the application type to get its resolved form
-                // Since evaluate_application_type is on CheckerState (mutable), we
-                // check if the base type is a type alias that resolves to a Callable
-                let app = self.ctx.types.type_application(app_id);
-                // Check if base is a Lazy type to a type alias with a Callable body
-                if let Some(def_id) =
-                    crate::solver::type_queries::get_lazy_if_def(self.ctx.types, app.base)
-                {
-                    let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
-                        return None;
-                    };
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        // For type aliases, get the cached resolved type
-                        if let Some(&cached_type) = self.ctx.symbol_types.get(&sym_id) {
-                            // Recursively check the resolved type
-                            return self.get_construct_signature_return_type(cached_type);
-                        }
-                        // Check if symbol is a class
-                        if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
-                            return Some(
-                                self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id)),
-                            );
-                        }
-                    }
-                }
-                // Check if base directly has construct signatures
-                self.get_construct_signature_return_type(app.base)
-            }
-            // Handle Union types - ALL members must be constructable
-            ConstructSignatureKind::Union(members) => {
-                let mut instance_types: Vec<TypeId> = Vec::new();
-
-                for member in members {
-                    if let Some(return_type) = self.get_construct_signature_return_type(member) {
-                        instance_types.push(return_type);
-                    } else {
-                        // If any member is not constructable, the whole union is not
-                        return None;
-                    }
-                }
-
-                if instance_types.is_empty() {
-                    None
-                } else {
-                    // Return union of all instance types
-                    Some(self.ctx.types.union(instance_types))
-                }
-            }
-            // Handle Intersection types - ANY member being constructable is sufficient
-            ConstructSignatureKind::Intersection(members) => {
-                for member in members {
-                    if let Some(return_type) = self.get_construct_signature_return_type(member) {
-                        return Some(return_type);
-                    }
-                }
-                None
-            }
-            // Handle TypeParameter - check constraint for construct signatures
-            ConstructSignatureKind::TypeParameter { constraint } => {
-                if let Some(constraint) = constraint {
-                    self.get_construct_signature_return_type(constraint)
-                } else {
-                    None
-                }
-            }
-            // Handle Function types - check if it's actually a Callable
-            // (Function types in TypeScript can have construct signatures via
-            // overloading, but TypeKey::Function is for simple functions)
-            ConstructSignatureKind::Function(shape_id) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                // If it's marked as a constructor, use its return type
-                if shape.is_constructor {
-                    Some(shape.return_type)
-                } else {
-                    None
-                }
-            }
-            ConstructSignatureKind::NoConstruct => None,
         }
     }
 

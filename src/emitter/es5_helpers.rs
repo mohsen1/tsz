@@ -550,6 +550,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit an object segment (elements or spread)
+    #[allow(dead_code)]
     fn emit_object_segment(&mut self, segment: &ObjectSegment) {
         match segment {
             ObjectSegment::Elements(elems) => {
