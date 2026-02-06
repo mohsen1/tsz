@@ -538,7 +538,17 @@ The issue is NOT generic conditional evaluation, but specifically:
 - `src/solver/evaluate_rules/mapped.rs` - key remapping logic
 - How the conditional type is instantiated for each key during iteration
 
-**Status**: Identified specific issue - key remapping conditional evaluation
+**Status**: Added detailed tracing to `remap_key_type_for_mapped` for debugging (committed: 3f7cb08a3)
+
+**Next Investigation Phase**:
+- Phase 1: Verify Substitution Integrity - Check if `K` is being replaced with literal keys
+- Phase 2: Fix Conditional Literal Preservation if needed
+- Phase 3: Verify `never` filtering works correctly
+
+**Tools Ready**:
+- Detailed tracing added to `remap_key_type_for_mapped`
+- Can see: param_name, key_type, substitution result, evaluation result
+- Next: Run test with tracing to see actual values
 
 ## Dependencies
 
