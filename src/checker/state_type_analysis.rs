@@ -1296,8 +1296,16 @@ impl<'a> CheckerState<'a> {
             if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
                 // Create an object type that includes both enum members and namespace exports
                 let merged_type = self.merge_namespace_exports_into_object(sym_id, enum_type);
+                // Register DefId <-> SymbolId mapping for enum type resolution
+                self.ctx
+                    .register_resolved_type(sym_id, merged_type, Vec::new());
                 return (merged_type, Vec::new());
             }
+
+            // Register DefId <-> SymbolId mapping for enum type resolution
+            // This enables get_enum_def_id to distinguish user enums from intrinsic types
+            self.ctx
+                .register_resolved_type(sym_id, enum_type, Vec::new());
 
             return (enum_type, Vec::new());
         }

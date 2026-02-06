@@ -2323,4 +2323,62 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
         // we can't provide one. This shouldn't happen in well-formed code.
         None
     }
+
+    fn is_user_enum_def(&self, def_id: crate::solver::DefId) -> bool {
+        use crate::binder::symbol_flags;
+
+        eprintln!("DEBUG is_user_enum_def: def_id={:?}", def_id);
+
+        // Convert DefId to SymbolId
+        let sym_id = match self.def_to_symbol_id(def_id) {
+            Some(id) => id,
+            None => {
+                eprintln!("DEBUG is_user_enum_def: def_to_symbol_id returned None");
+                return false;
+            }
+        };
+
+        eprintln!("DEBUG is_user_enum_def: sym_id={:?}", sym_id);
+
+        // Get the symbol
+        let symbol = match self.binder.get_symbol(sym_id) {
+            Some(s) => s,
+            None => {
+                eprintln!("DEBUG is_user_enum_def: get_symbol returned None");
+                return false;
+            }
+        };
+
+        eprintln!("DEBUG is_user_enum_def: symbol.flags={}", symbol.flags);
+
+        // Check if this is a user-defined enum or enum member
+        if (symbol.flags & symbol_flags::ENUM) != 0 {
+            // This is an enum type - check it's not an intrinsic
+            let result = (symbol.flags & symbol_flags::ENUM_MEMBER) == 0;
+            eprintln!("DEBUG is_user_enum_def: ENUM type, result={}", result);
+            return result;
+        }
+
+        if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+            // This is an enum member - check if the parent is a user-defined enum
+            let parent_sym_id = symbol.parent;
+            eprintln!(
+                "DEBUG is_user_enum_def: ENUM_MEMBER, parent_sym_id={:?}",
+                parent_sym_id
+            );
+            if let Some(parent_symbol) = self.binder.get_symbol(parent_sym_id) {
+                // Parent is a user enum if it has ENUM flag but not ENUM_MEMBER
+                let result = (parent_symbol.flags & symbol_flags::ENUM) != 0
+                    && (parent_symbol.flags & symbol_flags::ENUM_MEMBER) == 0;
+                eprintln!(
+                    "DEBUG is_user_enum_def: parent flags={}, result={}",
+                    parent_symbol.flags, result
+                );
+                return result;
+            }
+        }
+
+        eprintln!("DEBUG is_user_enum_def: not an enum, returning false");
+        false
+    }
 }

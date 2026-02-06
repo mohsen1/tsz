@@ -239,9 +239,10 @@ impl<'a> CheckerState<'a> {
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
-        let env = self.ctx.type_env.borrow();
-        let overrides = CheckerOverrideProvider::new(self, Some(&*env));
-        let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+        // Use CheckerContext as the resolver instead of TypeEnvironment
+        // This enables access to symbol information for enum type detection
+        let overrides = CheckerOverrideProvider::new(self, None);
+        let mut checker = CompatChecker::with_resolver(self.ctx.types, &self.ctx);
         self.ctx.configure_compat_checker(&mut checker);
 
         let result = checker.is_assignable_with_overrides(source, target, &overrides);
