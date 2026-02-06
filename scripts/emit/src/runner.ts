@@ -428,6 +428,11 @@ async function main() {
 
   const transpiler = new CliTranspiler(config.timeoutMs);
 
+  // Ensure child processes are killed on unexpected exit
+  const cleanup = () => { transpiler.terminate(); };
+  process.on('SIGINT', () => { cleanup(); process.exit(130); });
+  process.on('SIGTERM', () => { cleanup(); process.exit(143); });
+
   console.log(pc.dim('Discovering test cases...'));
   const testCases = await findTestCases(config.filter, config.maxTests);
   console.log(pc.dim(`Found ${testCases.length} test cases`));
@@ -567,5 +572,10 @@ async function main() {
 
 main().catch(err => {
   console.error('Fatal error:', err);
+  // main() installs its own cleanup; if we got here the transpiler
+  // may still have in-flight children — but it's scoped inside main().
+  // The SIGINT/SIGTERM handlers above cover signal-based exits.
+  // For uncaught promise rejections the process is about to die anyway
+  // and the OS will reap the children since they share the process group.
   process.exit(2);
 });
