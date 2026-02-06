@@ -1,7 +1,7 @@
 # TSZ-4 Session Log
 
 **Session ID**: tsz-4
-**Last Updated**: 2025-02-05
+**Last Updated**: 2025-02-06
 **Focus**: Emitter - JavaScript and Declaration Emit
 
 ## Status: ACTIVE
@@ -10,12 +10,20 @@
 
 The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declaration files. This session focuses on passing all emit tests in `scripts/emit/`.
 
-## Current State (2025-02-05)
+## Current State (2025-02-06)
 
-**Test Results**: `./scripts/emit/run.sh --max=100`
-- JavaScript Emit: **24.9%** pass rate (110/442 tests passed, 332 failed, 10,911 skipped)
+**Test Results**: `./scripts/emit/run.sh` (all tests)
+- JavaScript Emit: **18.6%** pass rate (1941/10418 tests passed, 8477 failed, 935 skipped)
 - Declaration Emit: Working (Separate DeclarationEmitter class)
-- Overall: Completed declaration merging phase!
+
+**Key Failure Patterns Identified:**
+1. **Single-line block formatting** - Function expressions with simple bodies emitted multi-line
+   - Example: `(function a() { })()` should be `(function a() { })()` not broken across lines
+2. **Comment stripping** - Some comments being removed from output
+3. **Hygiene issues** - Destructuring parameter numbering inconsistent
+
+**Session Goal (2025-02-06):**
+Investigate and fix emit formatting issues to improve pass rate from 18.6% toward higher percentages.
 
 **Recent Work (Session 15):**
 - Namespace/class/function/enum merging - **COMPLETED** (commit 22483fdef)
