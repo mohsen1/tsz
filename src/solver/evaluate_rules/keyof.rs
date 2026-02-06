@@ -151,10 +151,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let key_types: Vec<TypeId> = shape
                         .properties
                         .iter()
-                        .map(|p| {
-                            self.interner()
-                                .intern(TypeKey::Literal(LiteralValue::String(p.name)))
-                        })
+                        .map(|p| self.interner().literal_string_atom(p.name))
                         .collect();
                     self.interner().union(key_types)
                 }
@@ -355,10 +352,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 result_keys.push(TypeId::STRING);
             } else if let Some(common) = common_literals {
                 for atom in common {
-                    result_keys.push(
-                        self.interner()
-                            .intern(TypeKey::Literal(LiteralValue::String(atom))),
-                    );
+                    result_keys.push(self.interner().literal_string_atom(atom));
                 }
             }
         }
