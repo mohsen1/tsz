@@ -658,6 +658,7 @@ fn compile_inner(
         tsconfig_path.as_deref(),
         config.as_ref(),
         out_dir.as_deref(),
+        &resolved,
     )?;
     let mut file_paths = discover_ts_files(&discovery)?;
 
@@ -1520,6 +1521,7 @@ fn build_discovery_options(
     tsconfig_path: Option<&Path>,
     config: Option<&TsConfig>,
     out_dir: Option<&Path>,
+    resolved: &ResolvedCompilerOptions,
 ) -> Result<FileDiscoveryOptions> {
     let follow_links = env_flag("TSZ_FOLLOW_SYMLINKS");
     if !args.files.is_empty() {
@@ -1530,6 +1532,7 @@ fn build_discovery_options(
             exclude: None,
             out_dir: out_dir.map(Path::to_path_buf),
             follow_links,
+            allow_js: resolved.allow_js,
         });
     }
 
@@ -1542,6 +1545,7 @@ fn build_discovery_options(
 
     let mut options = FileDiscoveryOptions::from_tsconfig(tsconfig_path, config, out_dir);
     options.follow_links = follow_links;
+    options.allow_js = resolved.allow_js;
     Ok(options)
 }
 
@@ -2758,6 +2762,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.no_check {
         options.no_check = true;
+    }
+    if args.allow_js {
+        options.allow_js = true;
     }
     if let Some(version) = args.types_versions_compiler_version.as_ref() {
         options.types_versions_compiler_version = Some(version.clone());

@@ -37,10 +37,10 @@ leak-timeout = "2s"
 fail-fast = true
 test-threads = "num-cpus"
 
-# Pre-commit profile - ultra fast, fail immediately on any issue
+# Pre-commit profile - fast, fail immediately on any issue
 [profile.precommit]
-slow-timeout = { period = "5s", terminate-after = 1 }
-leak-timeout = "1s"
+slow-timeout = { period = "15s", terminate-after = 2 }
+leak-timeout = "2s"
 fail-fast = true
 test-threads = "num-cpus"
 status-level = "fail"

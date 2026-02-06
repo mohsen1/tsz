@@ -403,19 +403,32 @@ mod tests {
 
     #[test]
     fn test_summary_generation() {
-        set_debug_enabled(true);
-
+        // Directly populate events to avoid race with the global AtomicBool
+        // toggle that other parallel tests may flip.
         let mut debugger = ModuleResolutionDebugger::new();
         debugger.set_current_file("test.ts");
 
-        debugger.record_declaration("foo", SymbolId(1), symbol_flags::FUNCTION, 1, false);
-        debugger.record_lookup("bar", vec!["scope1".into()], None);
+        debugger
+            .declaration_events
+            .push(super::SymbolDeclarationEvent {
+                name: "foo".to_string(),
+                symbol_id: SymbolId(1),
+                flags_description: "FUNCTION".to_string(),
+                file_name: "test.ts".to_string(),
+                declaration_count: 1,
+                is_merge: false,
+            });
+        debugger.lookup_events.push(super::SymbolLookupEvent {
+            name: "bar".to_string(),
+            scope_path: vec!["scope1".into()],
+            found: false,
+            symbol_id: None,
+            found_in_file: None,
+        });
 
         let summary = debugger.get_summary();
         assert!(summary.contains("Module Resolution Debug Summary"));
         assert!(summary.contains("Total declarations: 1"));
         assert!(summary.contains("Failed Lookups:"));
-
-        set_debug_enabled(false);
     }
 }

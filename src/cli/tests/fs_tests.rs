@@ -61,6 +61,7 @@ fn discover_files_defaults_exclude_common_dirs() {
         exclude: None,
         out_dir: Some(PathBuf::from("dist")),
         follow_links: false,
+        allow_js: false,
     };
 
     let files = discover_ts_files(&options).expect("should discover files");
@@ -86,6 +87,7 @@ fn discover_files_with_include_exclude() {
         exclude: Some(vec!["**/*.spec.ts".to_string(), "src/nested".to_string()]),
         out_dir: None,
         follow_links: false,
+        allow_js: false,
     };
 
     let files = discover_ts_files(&options).expect("should discover files");
@@ -109,6 +111,7 @@ fn discover_files_includes_explicit_files() {
         exclude: Some(vec!["src/**".to_string()]),
         out_dir: None,
         follow_links: false,
+        allow_js: false,
     };
 
     let files = discover_ts_files(&options).expect("should discover files");
@@ -128,6 +131,7 @@ fn discover_files_missing_explicit_file_errors() {
         exclude: None,
         out_dir: None,
         follow_links: false,
+        allow_js: false,
     };
 
     let err = discover_ts_files(&options).expect_err("missing file should error");
@@ -154,6 +158,7 @@ fn discover_files_follow_links_when_enabled() {
         exclude: None,
         out_dir: None,
         follow_links: false,
+        allow_js: false,
     };
 
     let files = discover_ts_files(&options).expect("discover without links");
