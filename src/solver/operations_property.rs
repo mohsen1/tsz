@@ -131,6 +131,13 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
                 type_id: TypeId::ANY,
                 from_index_signature: false,
             }),
+            IntrinsicKind::Never => {
+                // Property access on never returns never (code is unreachable)
+                Some(PropertyAccessResult::Success {
+                    type_id: TypeId::NEVER,
+                    from_index_signature: false,
+                })
+            }
             IntrinsicKind::Unknown => Some(PropertyAccessResult::IsUnknown),
             IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
                 let cause = if kind == IntrinsicKind::Void || kind == IntrinsicKind::Undefined {
@@ -142,6 +149,39 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
                     property_type: None,
                     cause,
                 })
+            }
+            // Handle primitive intrinsic types by delegating to their boxed interfaces
+            IntrinsicKind::String => {
+                let prop_name = self.current_prop_name.borrow();
+                let prop_atom = self.current_prop_atom.borrow();
+                match (prop_name.as_deref(), prop_atom.as_ref()) {
+                    (Some(name), Some(&atom)) => Some(self.resolve_string_property(name, atom)),
+                    _ => None,
+                }
+            }
+            IntrinsicKind::Number => {
+                let prop_name = self.current_prop_name.borrow();
+                let prop_atom = self.current_prop_atom.borrow();
+                match (prop_name.as_deref(), prop_atom.as_ref()) {
+                    (Some(name), Some(&atom)) => Some(self.resolve_number_property(name, atom)),
+                    _ => None,
+                }
+            }
+            IntrinsicKind::Boolean => {
+                let prop_name = self.current_prop_name.borrow();
+                let prop_atom = self.current_prop_atom.borrow();
+                match (prop_name.as_deref(), prop_atom.as_ref()) {
+                    (Some(name), Some(&atom)) => Some(self.resolve_boolean_property(name, atom)),
+                    _ => None,
+                }
+            }
+            IntrinsicKind::Bigint => {
+                let prop_name = self.current_prop_name.borrow();
+                let prop_atom = self.current_prop_atom.borrow();
+                match (prop_name.as_deref(), prop_atom.as_ref()) {
+                    (Some(name), Some(&atom)) => Some(self.resolve_bigint_property(name, atom)),
+                    _ => None,
+                }
             }
             // Symbol intrinsic is handled separately (has special properties)
             IntrinsicKind::Symbol => {
@@ -155,15 +195,33 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
                     _ => None,
                 }
             }
-            // Other intrinsics (String, Number, Boolean, Bigint, Object)
-            // will be handled in later milestones - fall back to old match for now
+            // Other intrinsics (Object, etc.) fall back to None
             _ => None,
         }
     }
 
-    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
-        // Literals will be handled in later milestones
-        None
+    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        use crate::solver::types::LiteralValue;
+
+        let prop_name = self.current_prop_name.borrow();
+        let prop_atom_opt = self.current_prop_atom.borrow();
+
+        let prop_name = match prop_name.as_deref() {
+            Some(name) => name,
+            None => return None,
+        };
+        let prop_atom = match prop_atom_opt.as_ref() {
+            Some(&atom) => atom,
+            None => self.interner().intern_string(prop_name),
+        };
+
+        // Handle primitive literals by delegating to their boxed interface types
+        match value {
+            LiteralValue::String(_) => Some(self.resolve_string_property(prop_name, prop_atom)),
+            LiteralValue::Number(_) => Some(self.resolve_number_property(prop_name, prop_atom)),
+            LiteralValue::Boolean(_) => Some(self.resolve_boolean_property(prop_name, prop_atom)),
+            LiteralValue::BigInt(_) => Some(self.resolve_bigint_property(prop_name, prop_atom)),
+        }
     }
 
     fn visit_object(&mut self, shape_id: u32) -> Self::Output {
@@ -335,6 +393,46 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         // Reconstruct obj_type for resolve_array_property
         let obj_type = self.interner().intern(TypeKey::Tuple(TupleListId(list_id)));
         Some(self.resolve_array_property(obj_type, prop_name, prop_atom))
+    }
+
+    fn visit_template_literal(&mut self, _template_id: u32) -> Self::Output {
+        // Template literals are string-like for property access
+        // They support the same properties as the String interface
+        let prop_name = self.current_prop_name.borrow();
+        let prop_atom_opt = self.current_prop_atom.borrow();
+
+        let prop_name = match prop_name.as_deref() {
+            Some(name) => name,
+            None => return None,
+        };
+        let prop_atom = match prop_atom_opt.as_ref() {
+            Some(&atom) => atom,
+            None => self.interner().intern_string(prop_name),
+        };
+
+        Some(self.resolve_string_property(prop_name, prop_atom))
+    }
+
+    fn visit_string_intrinsic(
+        &mut self,
+        _kind: crate::solver::types::StringIntrinsicKind,
+        _type_arg: TypeId,
+    ) -> Self::Output {
+        // String intrinsics (Uppercase<T>, Lowercase<T>, Capitalize<T>, etc.)
+        // are string-like for property access
+        let prop_name = self.current_prop_name.borrow();
+        let prop_atom_opt = self.current_prop_atom.borrow();
+
+        let prop_name = match prop_name.as_deref() {
+            Some(name) => name,
+            None => return None,
+        };
+        let prop_atom = match prop_atom_opt.as_ref() {
+            Some(&atom) => atom,
+            None => self.interner().intern_string(prop_name),
+        };
+
+        Some(self.resolve_string_property(prop_name, prop_atom))
     }
 
     fn default_output() -> Self::Output {
