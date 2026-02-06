@@ -739,19 +739,30 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn ensure_application_symbols_resolved(&mut self, type_id: TypeId) {
         use rustc_hash::FxHashSet;
 
+        if self.ctx.application_symbols_resolved.contains(&type_id) {
+            return;
+        }
+        if !self.ctx.application_symbols_resolution_set.insert(type_id) {
+            return;
+        }
+
         let mut visited: FxHashSet<TypeId> = FxHashSet::default();
-        self.ensure_application_symbols_resolved_inner(type_id, &mut visited);
+        let fully_resolved = self.ensure_application_symbols_resolved_inner(type_id, &mut visited);
+        self.ctx.application_symbols_resolution_set.remove(&type_id);
+        if fully_resolved {
+            self.ctx.application_symbols_resolved.extend(visited);
+        }
     }
 
     pub(crate) fn insert_type_env_symbol(
         &mut self,
         sym_id: crate::binder::SymbolId,
         resolved: TypeId,
-    ) {
+    ) -> bool {
         use crate::solver::SymbolRef;
 
         if resolved == TypeId::ANY || resolved == TypeId::ERROR {
-            return;
+            return true;
         }
 
         // CRITICAL FIX: Only skip registering Lazy types if they point to THEMSELVES.
@@ -761,28 +772,66 @@ impl<'a> CheckerState<'a> {
             crate::solver::type_queries::get_lazy_def_id(self.ctx.types, resolved)
         {
             if Some(target_def_id) == current_def_id {
-                return; // Skip self-recursive alias (A -> A)
+                return true; // Skip self-recursive alias (A -> A)
             }
         }
 
-        let type_params = self.get_type_params_for_symbol(sym_id);
+        let symbol_ref = SymbolRef(sym_id.0);
+        let def_id = self.ctx.symbol_to_def.borrow().get(&sym_id).copied();
+
+        // Reuse cached params already in the environment when available.
+        let mut cached_env_params: Option<Vec<crate::solver::TypeParamInfo>> = None;
+        let mut symbol_already_registered = false;
+        let mut def_already_registered = def_id.is_none();
+        if let Ok(env) = self.ctx.type_env.try_borrow() {
+            symbol_already_registered = env.contains(symbol_ref);
+            cached_env_params = env.get_params(symbol_ref).cloned();
+            if let Some(def_id) = def_id {
+                def_already_registered = env.contains_def(def_id);
+            }
+        }
+        let had_env_params = cached_env_params.is_some();
+        let type_params = if let Some(params) = cached_env_params {
+            params
+        } else if let Some(def_id) = def_id {
+            self.ctx
+                .get_def_type_params(def_id)
+                .unwrap_or_else(|| self.get_type_params_for_symbol(sym_id))
+        } else {
+            self.get_type_params_for_symbol(sym_id)
+        };
+
+        if let Some(def_id) = def_id
+            && !type_params.is_empty()
+        {
+            self.ctx.insert_def_type_params(def_id, type_params.clone());
+        }
+
+        // Already fully registered with params (or not generic), nothing to do.
+        if symbol_already_registered
+            && def_already_registered
+            && (had_env_params || type_params.is_empty())
+        {
+            return true;
+        }
+
         // Use try_borrow_mut to avoid panic if type_env is already borrowed.
         // This can happen during recursive type resolution.
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-            // Get the DefId if one exists (Phase 4.3 migration)
-            let def_id = self.ctx.symbol_to_def.borrow().get(&sym_id).copied();
-
             if type_params.is_empty() {
-                env.insert(SymbolRef(sym_id.0), resolved);
+                env.insert(symbol_ref, resolved);
                 if let Some(def_id) = def_id {
                     env.insert_def(def_id, resolved);
                 }
             } else {
-                env.insert_with_params(SymbolRef(sym_id.0), resolved, type_params.clone());
+                env.insert_with_params(symbol_ref, resolved, type_params.clone());
                 if let Some(def_id) = def_id {
                     env.insert_def_with_params(def_id, resolved, type_params);
                 }
             }
+            true
+        } else {
+            false
         }
     }
 
@@ -790,79 +839,100 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
-    ) {
+    ) -> bool {
         use crate::solver::type_queries::{
             SymbolResolutionTraversalKind, classify_for_symbol_resolution_traversal,
         };
 
         if !visited.insert(type_id) {
-            return;
+            return true;
         }
 
         match classify_for_symbol_resolution_traversal(self.ctx.types, type_id) {
             SymbolResolutionTraversalKind::Application { base, args, .. } => {
+                let mut fully_resolved = true;
+
                 // If the base is a Lazy or Enum type, resolve the symbol
                 if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) {
                     let resolved = self.type_reference_symbol_type(sym_id);
-                    self.insert_type_env_symbol(sym_id, resolved);
+                    fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
                 }
 
                 // Recursively process base and args
-                self.ensure_application_symbols_resolved_inner(base, visited);
+                fully_resolved &= self.ensure_application_symbols_resolved_inner(base, visited);
                 for arg in args {
-                    self.ensure_application_symbols_resolved_inner(arg, visited);
+                    fully_resolved &= self.ensure_application_symbols_resolved_inner(arg, visited);
                 }
+                fully_resolved
             }
             SymbolResolutionTraversalKind::Lazy(def_id) => {
+                let mut fully_resolved = true;
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                     // Use get_type_of_symbol (not type_reference_symbol_type) because
                     // type_reference_symbol_type returns Lazy(DefId) for interfaces/classes,
                     // which insert_type_env_symbol rejects as a self-recursive alias.
                     // We need the concrete structural type for TypeEnvironment resolution.
                     let resolved = self.get_type_of_symbol(sym_id);
-                    self.insert_type_env_symbol(sym_id, resolved);
+                    fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
                 }
+                fully_resolved
             }
             SymbolResolutionTraversalKind::TypeParameter {
                 constraint,
                 default,
             } => {
+                let mut fully_resolved = true;
                 if let Some(constraint) = constraint {
-                    self.ensure_application_symbols_resolved_inner(constraint, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(constraint, visited);
                 }
                 if let Some(default) = default {
-                    self.ensure_application_symbols_resolved_inner(default, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(default, visited);
                 }
+                fully_resolved
             }
             SymbolResolutionTraversalKind::Members(members) => {
+                let mut fully_resolved = true;
                 for member in members {
-                    self.ensure_application_symbols_resolved_inner(member, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(member, visited);
                 }
+                fully_resolved
             }
             SymbolResolutionTraversalKind::Function(shape_id) => {
+                let mut fully_resolved = true;
                 let shape = self.ctx.types.function_shape(shape_id);
                 for type_param in shape.type_params.iter() {
                     if let Some(constraint) = type_param.constraint {
-                        self.ensure_application_symbols_resolved_inner(constraint, visited);
+                        fully_resolved &=
+                            self.ensure_application_symbols_resolved_inner(constraint, visited);
                     }
                     if let Some(default) = type_param.default {
-                        self.ensure_application_symbols_resolved_inner(default, visited);
+                        fully_resolved &=
+                            self.ensure_application_symbols_resolved_inner(default, visited);
                     }
                 }
                 for param in shape.params.iter() {
-                    self.ensure_application_symbols_resolved_inner(param.type_id, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(param.type_id, visited);
                 }
                 if let Some(this_type) = shape.this_type {
-                    self.ensure_application_symbols_resolved_inner(this_type, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(this_type, visited);
                 }
-                self.ensure_application_symbols_resolved_inner(shape.return_type, visited);
+                fully_resolved &=
+                    self.ensure_application_symbols_resolved_inner(shape.return_type, visited);
                 if let Some(predicate) = &shape.type_predicate
                     && let Some(pred_type_id) = predicate.type_id
                 {
-                    self.ensure_application_symbols_resolved_inner(pred_type_id, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(pred_type_id, visited);
                 }
+                fully_resolved
             }
             SymbolResolutionTraversalKind::Callable(shape_id) => {
+                let mut fully_resolved = true;
                 let shape = self.ctx.types.callable_shape(shape_id);
                 for sig in shape
                     .call_signatures
@@ -871,76 +941,105 @@ impl<'a> CheckerState<'a> {
                 {
                     for type_param in sig.type_params.iter() {
                         if let Some(constraint) = type_param.constraint {
-                            self.ensure_application_symbols_resolved_inner(constraint, visited);
+                            fully_resolved &=
+                                self.ensure_application_symbols_resolved_inner(constraint, visited);
                         }
                         if let Some(default) = type_param.default {
-                            self.ensure_application_symbols_resolved_inner(default, visited);
+                            fully_resolved &=
+                                self.ensure_application_symbols_resolved_inner(default, visited);
                         }
                     }
                     for param in sig.params.iter() {
-                        self.ensure_application_symbols_resolved_inner(param.type_id, visited);
+                        fully_resolved &=
+                            self.ensure_application_symbols_resolved_inner(param.type_id, visited);
                     }
                     if let Some(this_type) = sig.this_type {
-                        self.ensure_application_symbols_resolved_inner(this_type, visited);
+                        fully_resolved &=
+                            self.ensure_application_symbols_resolved_inner(this_type, visited);
                     }
-                    self.ensure_application_symbols_resolved_inner(sig.return_type, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(sig.return_type, visited);
                     if let Some(predicate) = &sig.type_predicate
                         && let Some(pred_type_id) = predicate.type_id
                     {
-                        self.ensure_application_symbols_resolved_inner(pred_type_id, visited);
+                        fully_resolved &=
+                            self.ensure_application_symbols_resolved_inner(pred_type_id, visited);
                     }
                 }
                 for prop in shape.properties.iter() {
-                    self.ensure_application_symbols_resolved_inner(prop.type_id, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(prop.type_id, visited);
                 }
+                fully_resolved
             }
             SymbolResolutionTraversalKind::Object(shape_id) => {
+                let mut fully_resolved = true;
                 let shape = self.ctx.types.object_shape(shape_id);
                 for prop in shape.properties.iter() {
-                    self.ensure_application_symbols_resolved_inner(prop.type_id, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(prop.type_id, visited);
                 }
                 if let Some(ref idx) = shape.string_index {
-                    self.ensure_application_symbols_resolved_inner(idx.value_type, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(idx.value_type, visited);
                 }
                 if let Some(ref idx) = shape.number_index {
-                    self.ensure_application_symbols_resolved_inner(idx.value_type, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(idx.value_type, visited);
                 }
+                fully_resolved
             }
             SymbolResolutionTraversalKind::Array(elem) => {
-                self.ensure_application_symbols_resolved_inner(elem, visited);
+                self.ensure_application_symbols_resolved_inner(elem, visited)
             }
             SymbolResolutionTraversalKind::Tuple(elems_id) => {
+                let mut fully_resolved = true;
                 let elems = self.ctx.types.tuple_list(elems_id);
                 for elem in elems.iter() {
-                    self.ensure_application_symbols_resolved_inner(elem.type_id, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(elem.type_id, visited);
                 }
+                fully_resolved
             }
             SymbolResolutionTraversalKind::Conditional(cond_id) => {
+                let mut fully_resolved = true;
                 let cond = self.ctx.types.conditional_type(cond_id);
-                self.ensure_application_symbols_resolved_inner(cond.check_type, visited);
-                self.ensure_application_symbols_resolved_inner(cond.extends_type, visited);
-                self.ensure_application_symbols_resolved_inner(cond.true_type, visited);
-                self.ensure_application_symbols_resolved_inner(cond.false_type, visited);
+                fully_resolved &=
+                    self.ensure_application_symbols_resolved_inner(cond.check_type, visited);
+                fully_resolved &=
+                    self.ensure_application_symbols_resolved_inner(cond.extends_type, visited);
+                fully_resolved &=
+                    self.ensure_application_symbols_resolved_inner(cond.true_type, visited);
+                fully_resolved &=
+                    self.ensure_application_symbols_resolved_inner(cond.false_type, visited);
+                fully_resolved
             }
             SymbolResolutionTraversalKind::Mapped(mapped_id) => {
+                let mut fully_resolved = true;
                 let mapped = self.ctx.types.mapped_type(mapped_id);
-                self.ensure_application_symbols_resolved_inner(mapped.constraint, visited);
-                self.ensure_application_symbols_resolved_inner(mapped.template, visited);
+                fully_resolved &=
+                    self.ensure_application_symbols_resolved_inner(mapped.constraint, visited);
+                fully_resolved &=
+                    self.ensure_application_symbols_resolved_inner(mapped.template, visited);
                 if let Some(name_type) = mapped.name_type {
-                    self.ensure_application_symbols_resolved_inner(name_type, visited);
+                    fully_resolved &=
+                        self.ensure_application_symbols_resolved_inner(name_type, visited);
                 }
+                fully_resolved
             }
             SymbolResolutionTraversalKind::Readonly(inner) => {
-                self.ensure_application_symbols_resolved_inner(inner, visited);
+                self.ensure_application_symbols_resolved_inner(inner, visited)
             }
             SymbolResolutionTraversalKind::IndexAccess { object, index } => {
-                self.ensure_application_symbols_resolved_inner(object, visited);
-                self.ensure_application_symbols_resolved_inner(index, visited);
+                let mut fully_resolved = true;
+                fully_resolved &= self.ensure_application_symbols_resolved_inner(object, visited);
+                fully_resolved &= self.ensure_application_symbols_resolved_inner(index, visited);
+                fully_resolved
             }
             SymbolResolutionTraversalKind::KeyOf(inner) => {
-                self.ensure_application_symbols_resolved_inner(inner, visited);
+                self.ensure_application_symbols_resolved_inner(inner, visited)
             }
-            SymbolResolutionTraversalKind::Terminal => {}
+            SymbolResolutionTraversalKind::Terminal => true,
         }
     }
 
@@ -1108,6 +1207,37 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         }
 
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        if let Some(cached) = self.ctx.get_def_type_params(def_id) {
+            self.ctx.leave_recursion();
+            return cached;
+        }
+        if self.ctx.def_no_type_params.borrow().contains(&def_id) {
+            self.ctx.leave_recursion();
+            return Vec::new();
+        }
+
+        // Use get_symbol_globally to find symbols in lib files and other files.
+        // Extract needed data to avoid holding a borrow during deeper operations.
+        let (flags, value_decl, declarations) = match self.get_symbol_globally(sym_id) {
+            Some(symbol) => (
+                symbol.flags,
+                symbol.value_declaration,
+                symbol.declarations.clone(),
+            ),
+            None => {
+                self.ctx.leave_recursion();
+                return Vec::new();
+            }
+        };
+
+        // Fast path: only class/interface/type alias symbols can declare type parameters.
+        if flags & (symbol_flags::TYPE_ALIAS | symbol_flags::CLASS | symbol_flags::INTERFACE) == 0 {
+            self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+            self.ctx.leave_recursion();
+            return Vec::new();
+        }
+
         if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id)
             && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
         {
@@ -1132,23 +1262,16 @@ impl<'a> CheckerState<'a> {
                     .or_insert(cached_ty);
             }
 
+            if !result.is_empty() {
+                self.ctx.insert_def_type_params(def_id, result.clone());
+                self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
+            } else {
+                self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+            }
+
             self.ctx.leave_recursion();
             return result;
         }
-
-        // Use get_symbol_globally to find symbols in lib files and other files
-        // Extract needed data to avoid holding borrow
-        let (flags, value_decl, declarations) = match self.get_symbol_globally(sym_id) {
-            Some(symbol) => (
-                symbol.flags,
-                symbol.value_declaration,
-                symbol.declarations.clone(),
-            ),
-            None => {
-                self.ctx.leave_recursion();
-                return Vec::new();
-            }
-        };
 
         // Type alias - get type parameters from declaration
         if flags & symbol_flags::TYPE_ALIAS != 0 {
@@ -1163,6 +1286,12 @@ impl<'a> CheckerState<'a> {
             {
                 let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
                 self.pop_type_parameters(updates);
+                if !params.is_empty() {
+                    self.ctx.insert_def_type_params(def_id, params.clone());
+                    self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
+                } else {
+                    self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+                }
                 self.ctx.leave_recursion();
                 return params;
             }
@@ -1181,6 +1310,12 @@ impl<'a> CheckerState<'a> {
             {
                 let (params, updates) = self.push_type_parameters(&class.type_parameters);
                 self.pop_type_parameters(updates);
+                if !params.is_empty() {
+                    self.ctx.insert_def_type_params(def_id, params.clone());
+                    self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
+                } else {
+                    self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+                }
                 self.ctx.leave_recursion();
                 return params;
             }
@@ -1199,11 +1334,18 @@ impl<'a> CheckerState<'a> {
             {
                 let (params, updates) = self.push_type_parameters(&iface.type_parameters);
                 self.pop_type_parameters(updates);
+                if !params.is_empty() {
+                    self.ctx.insert_def_type_params(def_id, params.clone());
+                    self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
+                } else {
+                    self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+                }
                 self.ctx.leave_recursion();
                 return params;
             }
         }
 
+        self.ctx.def_no_type_params.borrow_mut().insert(def_id);
         self.ctx.leave_recursion();
         Vec::new()
     }

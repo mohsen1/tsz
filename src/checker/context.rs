@@ -166,6 +166,8 @@ pub struct EnclosingClassInfo {
     pub in_static_property_initializer: bool,
     /// Whether we're in a static method context.
     pub in_static_method: bool,
+    /// Cached instance `this` type for members of this class.
+    pub cached_instance_this_type: Option<TypeId>,
 }
 
 /// Info about a label in scope for break/continue validation.
@@ -411,6 +413,13 @@ pub struct CheckerContext<'a> {
     pub flow_analysis_cache:
         RefCell<FxHashMap<(crate::binder::FlowNodeId, crate::binder::SymbolId, TypeId), TypeId>>,
 
+    /// TypeIds whose application/lazy symbol references are fully resolved in `type_env`.
+    /// This avoids repeated deep traversals in assignability hot paths.
+    pub application_symbols_resolved: FxHashSet<TypeId>,
+
+    /// Recursion guard for application symbol resolution traversal.
+    pub application_symbols_resolution_set: FxHashSet<TypeId>,
+
     /// Maps class instance TypeIds to their class declaration NodeIndex.
     /// Used by `get_class_decl_from_type` to correctly identify the class
     /// for derived classes that have no private/protected members (and thus no brand).
@@ -509,6 +518,10 @@ pub struct CheckerContext<'a> {
     /// the type parameters needed for generic substitution.
     /// Wrapped in RefCell to allow mutation through shared references.
     pub def_type_params: RefCell<FxHashMap<DefId, Vec<crate::solver::TypeParamInfo>>>,
+
+    /// DefIds known to have no type parameters.
+    /// This avoids repeated cross-arena lookups for non-generic symbols.
+    pub def_no_type_params: RefCell<FxHashSet<DefId>>,
 
     /// Abstract constructor types (TypeIds) produced for abstract classes.
     pub abstract_constructor_types: FxHashSet<TypeId>,
@@ -690,6 +703,8 @@ impl<'a> CheckerContext<'a> {
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
+            application_symbols_resolved: FxHashSet::default(),
+            application_symbols_resolution_set: FxHashSet::default(),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
@@ -721,6 +736,7 @@ impl<'a> CheckerContext<'a> {
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_to_symbol: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
+            def_no_type_params: RefCell::new(FxHashSet::default()),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
@@ -786,6 +802,8 @@ impl<'a> CheckerContext<'a> {
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
+            application_symbols_resolved: FxHashSet::default(),
+            application_symbols_resolution_set: FxHashSet::default(),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
@@ -817,6 +835,7 @@ impl<'a> CheckerContext<'a> {
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_to_symbol: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
+            def_no_type_params: RefCell::new(FxHashSet::default()),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
@@ -885,6 +904,8 @@ impl<'a> CheckerContext<'a> {
             element_access_type_cache: cache.element_access_type_cache,
             element_access_type_set: cache.element_access_type_set,
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
+            application_symbols_resolved: FxHashSet::default(),
+            application_symbols_resolution_set: FxHashSet::default(),
             class_instance_type_to_decl: cache.class_instance_type_to_decl,
             class_instance_type_cache: cache.class_instance_type_cache,
             symbol_dependencies: cache.symbol_dependencies,
@@ -915,6 +936,7 @@ impl<'a> CheckerContext<'a> {
             definition_store: DefinitionStore::new(),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
+            def_no_type_params: RefCell::new(FxHashSet::default()),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
@@ -983,6 +1005,8 @@ impl<'a> CheckerContext<'a> {
             element_access_type_cache: cache.element_access_type_cache,
             element_access_type_set: cache.element_access_type_set,
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
+            application_symbols_resolved: FxHashSet::default(),
+            application_symbols_resolution_set: FxHashSet::default(),
             class_instance_type_to_decl: cache.class_instance_type_to_decl,
             class_instance_type_cache: cache.class_instance_type_cache,
             symbol_dependencies: cache.symbol_dependencies,
@@ -1013,6 +1037,7 @@ impl<'a> CheckerContext<'a> {
             definition_store: DefinitionStore::new(),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
+            def_no_type_params: RefCell::new(FxHashSet::default()),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
@@ -1089,6 +1114,8 @@ impl<'a> CheckerContext<'a> {
             element_access_type_cache: parent.element_access_type_cache.clone(),
             element_access_type_set: parent.element_access_type_set.clone(),
             flow_analysis_cache: parent.flow_analysis_cache.clone(),
+            application_symbols_resolved: FxHashSet::default(),
+            application_symbols_resolution_set: FxHashSet::default(),
             class_instance_type_to_decl: parent.class_instance_type_to_decl.clone(),
             class_instance_type_cache: parent.class_instance_type_cache.clone(),
             symbol_dependencies: parent.symbol_dependencies.clone(),
@@ -1119,6 +1146,7 @@ impl<'a> CheckerContext<'a> {
             definition_store: DefinitionStore::new(),
             symbol_to_def: parent.symbol_to_def.clone(),
             def_type_params: parent.def_type_params.clone(),
+            def_no_type_params: parent.def_no_type_params.clone(),
             abstract_constructor_types: parent.abstract_constructor_types.clone(),
             protected_constructor_types: parent.protected_constructor_types.clone(),
             private_constructor_types: parent.private_constructor_types.clone(),

@@ -92,6 +92,10 @@ impl<'a> CheckerState<'a> {
             self.ctx.compiler_options.allow_unreachable_code =
                 self.resolve_allow_unreachable_code_from_source(&sf.text);
 
+            // `type_env` is rebuilt per file, so drop per-file symbol-resolution memoization.
+            self.ctx.application_symbols_resolved.clear();
+            self.ctx.application_symbols_resolution_set.clear();
+
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
             // Without this, TypeKey::Ref(Error) returns ERROR, causing TS2339 false positives
@@ -1934,6 +1938,7 @@ impl<'a> CheckerState<'a> {
                 is_declared,
                 in_static_property_initializer: false,
                 in_static_method: false,
+                cached_instance_this_type: None,
             });
         }
 
@@ -2002,6 +2007,7 @@ impl<'a> CheckerState<'a> {
             is_declared: false,
             in_static_property_initializer: false,
             in_static_method: false,
+            cached_instance_this_type: None,
         });
 
         for &member_idx in &class.members.nodes {
