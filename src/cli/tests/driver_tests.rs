@@ -3338,15 +3338,16 @@ fn compile_missing_file_in_include_pattern_returns_error() {
     let args = default_args();
     let result = compile(&args, base);
 
+    // Should return Ok with TS18003 diagnostic (not a fatal error)
+    let compilation = result.expect("Should return Ok with diagnostics, not a fatal error");
     assert!(
-        result.is_err(),
-        "Should return error when no input files found"
-    );
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("no input files") || err.contains("no files"),
-        "Error should mention no input files: {}",
-        err
+        compilation.diagnostics.iter().any(|d| d.code == 18003),
+        "Should contain TS18003 diagnostic when no input files found, got: {:?}",
+        compilation
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
     );
 }
 

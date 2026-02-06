@@ -708,7 +708,43 @@ fn compile_inner(
         file_paths = merged.into_iter().collect();
     }
     if file_paths.is_empty() {
-        bail!("no input files found");
+        // Emit TS18003: No inputs were found in config file.
+        let config_name = tsconfig_path
+            .as_deref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "tsconfig.json".to_string());
+        let include_str = discovery
+            .include
+            .as_ref()
+            .filter(|v| !v.is_empty())
+            .map(|v| {
+                v.iter()
+                    .map(|s| format!("\"{}\"", s))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+        let exclude_str = discovery
+            .exclude
+            .as_ref()
+            .filter(|v| !v.is_empty())
+            .map(|v| {
+                v.iter()
+                    .map(|s| format!("\"{}\"", s))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+        let message = format!(
+            "No inputs were found in config file '{}'. Specified 'include' paths were '[{}]' and 'exclude' paths were '[{}]'.",
+            config_name, include_str, exclude_str
+        );
+        return Ok(CompilationResult {
+            diagnostics: vec![Diagnostic::error(config_name, 0, 0, message, 18003)],
+            emitted_files: Vec::new(),
+            files_read: Vec::new(),
+            file_infos: Vec::new(),
+        });
     }
 
     let changed_set = changed_paths.map(|paths| {
