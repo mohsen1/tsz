@@ -767,7 +767,57 @@ Per Gemini's guidance, the following areas need verification for complete O(1) e
    - Example: `(A | B) & C` → `(A & C) | (B & C)`
    - Need to verify if interner performs this normalization
 
-### Task #51: Diagnostic Integration - ✅ COMPLETE (commit: TBD)
+---
+
+### Task #52: Structural Subtyping Consolidation (Visitor Completion) ⏳ IN PROGRESS
+
+**Status**: ⏳ STARTED (commit: TBD)
+**Recommendation from Gemini (2026-02-06)**
+
+**Goal**: Move all remaining structural logic from `check_subtype_inner` into `SubtypeVisitor` per North Star Rule 2.
+
+**Problem**: Currently `check_subtype_inner` has ~300 lines of manual type-key matching (lines 2178-2865) that violates North Star Rule 2 ("Use visitor pattern for ALL type operations"). Logic is duplicated between the checker's main loop and the visitor.
+
+**Implementation Plan**:
+1. **High-level pre-checks** to keep in `check_subtype_inner`:
+   - Strict null checks
+   - Apparent primitive shape for type (primitive to object conversions)
+   - Cycle detection setup (already before this point)
+
+2. **Structural checks** to move into `SubtypeVisitor`:
+   - Union source/target logic (lines 2205-2251)
+   - Intersection source/target logic (lines 2253-2304)
+   - Conditional type logic (lines 2295-2307)
+   - Type parameter logic (lines 2327-2342)
+   - Intrinsic/intrinsic matching (lines 2336-2341)
+   - Literal/intrinsic matching (lines 2345-2368)
+   - Template literal logic (lines 2371-2376, 2815-2872)
+   - Object keyword/function keyword checks (lines 2378-2391)
+   - Array/tuple logic (lines 2394-2431)
+   - Object/indexed object logic (lines 2433-2492)
+   - Function/callable logic (lines 2494-2547)
+   - Application types (lines 2526-2547)
+   - Enum logic (lines 2558-2578)
+   - Lazy/Ref types (lines 2588-2685)
+   - Index access, type query, keyof, readonly logic (lines 2664-2704)
+   - Unique symbol, this type logic (lines 2721-2799)
+
+3. **Expected outcome**:
+   - `check_subtype_inner` reduced to ~50 lines: pre-checks + visitor dispatch
+   - All structural logic consolidated in `SubtypeVisitor`
+   - Proper double dispatch: visitor inspects target type for correct algorithm
+   - Easier to maintain and extend
+
+**Files to Modify**:
+- `src/solver/subtype.rs` - Refactor check_subtype_inner
+- `src/solver/subtype_rules/*.rs` - Update visitor methods
+
+**Test Results** (baseline):
+- 911 subtype tests passing
+
+---
+
+### Task #51: Diagnostic Integration - ✅ COMPLETE
 
 **Status**: ✅ COMPLETE (all 4 subtasks complete)
 
