@@ -1,5 +1,4 @@
 use crate::solver::evaluate::{evaluate_index_access_with_options, evaluate_type};
-use crate::solver::subtype::is_subtype_of;
 use crate::solver::{LiteralValue, TypeDatabase, TypeId, TypeKey};
 
 #[derive(Debug, Clone)]
@@ -120,28 +119,34 @@ impl<'a> ElementAccessEvaluator<'a> {
 
     fn should_report_no_index_signature(&self, object_type: TypeId, index_type: TypeId) -> bool {
         let index_type = evaluate_type(self.interner, index_type);
+        // PERF: Reuse a single SubtypeChecker across all checks
+        let mut checker = crate::solver::subtype::SubtypeChecker::new(self.interner);
         // Simplified check: checking if object has index signature compatible with index_type
         match self.interner.lookup(object_type) {
             Some(TypeKey::Object(_)) => {
                 // Object without explicit index signature
                 // If index_type is string/number (not literal), then it's an error
                 // unless it's ANY
-                if is_subtype_of(self.interner, index_type, TypeId::STRING)
-                    || is_subtype_of(self.interner, index_type, TypeId::NUMBER)
-                {
+                checker.reset();
+                if checker.is_subtype_of(index_type, TypeId::STRING) {
+                    return true;
+                }
+                checker.reset();
+                if checker.is_subtype_of(index_type, TypeId::NUMBER) {
                     return true;
                 }
                 false
             }
             Some(TypeKey::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
-                if is_subtype_of(self.interner, index_type, TypeId::STRING)
-                    && shape.string_index.is_none()
+                checker.reset();
+                if checker.is_subtype_of(index_type, TypeId::STRING) && shape.string_index.is_none()
                 {
                     return true;
                 }
                 // For number index, we can fallback to string index if present
-                if is_subtype_of(self.interner, index_type, TypeId::NUMBER) {
+                checker.reset();
+                if checker.is_subtype_of(index_type, TypeId::NUMBER) {
                     if shape.number_index.is_none() && shape.string_index.is_none() {
                         return true;
                     }

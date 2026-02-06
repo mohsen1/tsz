@@ -1,5 +1,5 @@
 use colored::Colorize;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::path::Path;
 
 use crate::checker::types::diagnostics::{
@@ -12,8 +12,8 @@ pub struct Reporter {
     pretty: bool,
     color: bool,
     cwd: Option<String>,
-    sources: HashMap<String, String>,
-    line_maps: HashMap<String, LineMap>,
+    sources: FxHashMap<String, String>,
+    line_maps: FxHashMap<String, LineMap>,
 }
 
 impl Reporter {
@@ -24,8 +24,8 @@ impl Reporter {
             cwd: std::env::current_dir()
                 .ok()
                 .map(|p| p.to_string_lossy().into_owned()),
-            sources: HashMap::new(),
-            line_maps: HashMap::new(),
+            sources: FxHashMap::default(),
+            line_maps: FxHashMap::default(),
         }
     }
 
@@ -404,7 +404,7 @@ impl Reporter {
 
         // Collect unique files that have errors and find first error line per file
         let mut file_errors: Vec<(String, u32)> = Vec::new();
-        let mut seen_files: HashMap<String, usize> = HashMap::new();
+        let mut seen_files: FxHashMap<String, usize> = FxHashMap::default();
 
         for diag in diagnostics {
             if diag.category != DiagnosticCategory::Error {
@@ -421,7 +421,7 @@ impl Reporter {
         }
 
         // Find the first error line per file for the summary
-        let mut first_error_lines: HashMap<String, u32> = HashMap::new();
+        let mut first_error_lines: FxHashMap<String, u32> = FxHashMap::default();
         for diag in diagnostics {
             if diag.category != DiagnosticCategory::Error {
                 continue;

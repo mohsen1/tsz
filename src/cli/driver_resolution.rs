@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use rayon::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::cli::config::{JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
@@ -28,7 +28,7 @@ enum PackageType {
 
 #[derive(Default)]
 pub(crate) struct ModuleResolutionCache {
-    package_type_by_dir: HashMap<PathBuf, Option<PackageType>>,
+    package_type_by_dir: FxHashMap<PathBuf, Option<PackageType>>,
 }
 
 impl ModuleResolutionCache {
@@ -489,7 +489,7 @@ pub(crate) fn resolve_module_specifier(
     options: &ResolvedCompilerOptions,
     base_dir: &Path,
     resolution_cache: &mut ModuleResolutionCache,
-    known_files: &HashSet<PathBuf>,
+    known_files: &FxHashSet<PathBuf>,
 ) -> Option<PathBuf> {
     let specifier = module_specifier.trim();
     if specifier.is_empty() {
@@ -1088,7 +1088,7 @@ fn read_package_json(path: &Path) -> Option<PackageJson> {
 }
 
 fn collect_package_entry_candidates(package_json: &PackageJson) -> Vec<String> {
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     let mut candidates = Vec::new();
 
     for value in [package_json.types.as_ref(), package_json.typings.as_ref()]
@@ -1676,8 +1676,8 @@ pub(crate) fn emit_outputs(
     root_dir: Option<&Path>,
     out_dir: Option<&Path>,
     declaration_dir: Option<&Path>,
-    dirty_paths: Option<&HashSet<PathBuf>>,
-    type_caches: &std::collections::HashMap<std::path::PathBuf, crate::checker::TypeCache>,
+    dirty_paths: Option<&FxHashSet<PathBuf>>,
+    type_caches: &FxHashMap<std::path::PathBuf, crate::checker::TypeCache>,
 ) -> Result<Vec<OutputFile>> {
     let mut outputs = Vec::new();
     let new_line = new_line_str(options.printer.new_line);

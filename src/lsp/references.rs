@@ -14,6 +14,7 @@ use crate::lsp::utils::find_node_at_offset;
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
+use rustc_hash::FxHashSet;
 
 /// Detailed information about a single reference to a symbol.
 ///
@@ -323,8 +324,7 @@ impl<'a> FindReferences<'a> {
 
         let symbol_id = self.resolve_symbol_internal(root, node_idx, None, None)?;
         let symbol = self.binder.symbols.get(symbol_id)?;
-        let declaration_set: std::collections::HashSet<u32> =
-            symbol.declarations.iter().map(|n| n.0).collect();
+        let declaration_set: FxHashSet<u32> = symbol.declarations.iter().map(|n| n.0).collect();
 
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let ref_nodes = walker.find_references(root, symbol_id);
@@ -652,11 +652,7 @@ impl<'a> FindReferences<'a> {
     /// - Import bindings
     /// - Parameter declarations
     /// - Export declarations (but not re-exports of other modules)
-    fn is_definition_node(
-        &self,
-        node_idx: NodeIndex,
-        declaration_set: &std::collections::HashSet<u32>,
-    ) -> bool {
+    fn is_definition_node(&self, node_idx: NodeIndex, declaration_set: &FxHashSet<u32>) -> bool {
         if node_idx.is_none() {
             return false;
         }

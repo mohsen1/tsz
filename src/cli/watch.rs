@@ -2,7 +2,9 @@
 
 use anyhow::{Context, Result, bail};
 use notify::{Config, Event, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
+
+use rustc_hash::FxHashSet;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -295,7 +297,10 @@ fn compute_ignore_dirs(base_dir: &Path, resolved: &ResolvedCompilerOptions) -> V
     dirs.into_iter().collect()
 }
 
-fn collect_watch_roots(base_dir: &Path, explicit_files: Option<&HashSet<PathBuf>>) -> Vec<PathBuf> {
+fn collect_watch_roots(
+    base_dir: &Path,
+    explicit_files: Option<&FxHashSet<PathBuf>>,
+) -> Vec<PathBuf> {
     let mut roots = BTreeSet::new();
     roots.insert(base_dir.to_path_buf());
 
@@ -310,12 +315,12 @@ fn collect_watch_roots(base_dir: &Path, explicit_files: Option<&HashSet<PathBuf>
     roots.into_iter().collect()
 }
 
-fn resolve_explicit_files(base_dir: &Path, files: &[PathBuf]) -> Option<HashSet<PathBuf>> {
+fn resolve_explicit_files(base_dir: &Path, files: &[PathBuf]) -> Option<FxHashSet<PathBuf>> {
     if files.is_empty() {
         return None;
     }
 
-    let mut resolved = HashSet::new();
+    let mut resolved = FxHashSet::default();
     for file in files {
         let path = if file.is_absolute() {
             file.to_path_buf()
@@ -365,22 +370,22 @@ fn canonicalize_or_owned(path: &Path) -> PathBuf {
 }
 
 pub(crate) struct WatchFilter {
-    explicit_files: Option<HashSet<PathBuf>>,
+    explicit_files: Option<FxHashSet<PathBuf>>,
     ignore_dirs: Vec<PathBuf>,
-    last_emitted: HashSet<PathBuf>,
+    last_emitted: FxHashSet<PathBuf>,
     project_config: Option<PathBuf>,
 }
 
 impl WatchFilter {
     pub(crate) fn new(
-        explicit_files: Option<HashSet<PathBuf>>,
+        explicit_files: Option<FxHashSet<PathBuf>>,
         ignore_dirs: Vec<PathBuf>,
         project_config: Option<PathBuf>,
     ) -> Self {
         WatchFilter {
             explicit_files,
             ignore_dirs,
-            last_emitted: HashSet::new(),
+            last_emitted: FxHashSet::default(),
             project_config,
         }
     }
@@ -430,7 +435,7 @@ impl WatchFilter {
 
 pub(crate) struct Debouncer {
     delay: Duration,
-    pending: HashSet<PathBuf>,
+    pending: FxHashSet<PathBuf>,
     last_event_at: Option<Instant>,
 }
 
@@ -438,7 +443,7 @@ impl Debouncer {
     pub(crate) fn new(delay: Duration) -> Self {
         Debouncer {
             delay,
-            pending: HashSet::new(),
+            pending: FxHashSet::default(),
             last_event_at: None,
         }
     }
@@ -461,7 +466,7 @@ impl Debouncer {
         Some(self.pending.drain().collect())
     }
 
-    pub(crate) fn remove_paths(&mut self, paths: &HashSet<PathBuf>) {
+    pub(crate) fn remove_paths(&mut self, paths: &FxHashSet<PathBuf>) {
         for path in paths {
             self.pending.remove(path);
         }

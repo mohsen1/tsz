@@ -27,7 +27,7 @@ use crate::parser::NodeIndex;
 use crate::parser::node::{Node, NodeAccess, NodeArena};
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
@@ -224,7 +224,7 @@ impl<'a> CodeActionProvider<'a> {
         let (import_decl, removal) = self.import_removal_target(node_idx)?;
         let (edit, title) = self.build_import_removal_edit(import_decl, removal)?;
 
-        let mut changes = std::collections::HashMap::new();
+        let mut changes = FxHashMap::default();
         changes.insert(self.file_name.clone(), vec![edit]);
 
         Some(CodeAction {
@@ -253,7 +253,7 @@ impl<'a> CodeActionProvider<'a> {
         let decl_node = self.find_declaration_node(node_idx)?;
         let (edit, name) = self.build_declaration_removal_edit(decl_node)?;
 
-        let mut changes = std::collections::HashMap::new();
+        let mut changes = FxHashMap::default();
         changes.insert(self.file_name.clone(), vec![edit]);
 
         let title = format!("Remove unused declaration '{}'", name);
@@ -454,7 +454,7 @@ impl<'a> CodeActionProvider<'a> {
             return None;
         };
 
-        let mut changes = std::collections::HashMap::new();
+        let mut changes = FxHashMap::default();
         changes.insert(self.file_name.clone(), edits);
 
         Some(CodeAction {
@@ -501,7 +501,7 @@ impl<'a> CodeActionProvider<'a> {
                 continue;
             };
 
-            let mut changes = std::collections::HashMap::new();
+            let mut changes = FxHashMap::default();
             changes.insert(self.file_name.clone(), edits);
 
             let title = format!(
@@ -551,7 +551,7 @@ impl<'a> CodeActionProvider<'a> {
             return None;
         }
 
-        let mut changes = std::collections::HashMap::new();
+        let mut changes = FxHashMap::default();
         changes.insert(self.file_name.clone(), edits);
 
         Some(CodeAction {
@@ -1961,7 +1961,7 @@ impl<'a> CodeActionProvider<'a> {
         });
 
         // Create the workspace edit
-        let mut changes = std::collections::HashMap::new();
+        let mut changes = FxHashMap::default();
         changes.insert(self.file_name.clone(), edits);
 
         Some(CodeAction {
