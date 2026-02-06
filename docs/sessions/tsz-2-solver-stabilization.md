@@ -313,49 +313,33 @@ The implementation in `src/solver/intern.rs` (lines 2732-2738) already correctly
 
 ---
 
-### 🔴 Priority 2: Keyof Union Narrowing - IN PROGRESS (Complex Bug)
-**Test**: `test_keyof_union_string_index_and_literal_narrows`
-**File**: `src/solver/evaluate_rules/keyof.rs`
-**Complexity**: Complex - requires investigation of evaluation flow
+### ✅ Priority 2: Keyof Union Narrowing - COMPLETED (Commit f3c28bb71)
+**Tests**:
+- ✅ `test_keyof_union_string_index_and_literal_narrows`
+- ✅ `test_keyof_template_literal_number_union_interpolation`
 
-**The Issue**:
-`keyof ({ [k: string]: number } | { a: number })` should return `"a"` but is returning `string | number`
+**Solution**: Distribution-First Evaluation
 
-**Expected Behavior**:
-- `keyof { [k: string]: number }` = `string | number`
-- `keyof { a: number }` = `"a"`
-- `keyof (A | B)` = `(keyof A) & (keyof B)`
-- Result: `(string | number) & "a"` = `"a"`
+**Root Cause**:
+`evaluate_union()` in `src/solver/evaluate.rs` simplifies unions by removing "redundant" members (where A ⊆ B, then A ∪ B ≡ B). This simplification is correct for values but WRONG for keyof intersection computation.
 
-**Actual Behavior**:
-The evaluation returns `string | number` instead of `"a"`
+**Implementation**:
+Handle Union and TemplateLiteral types BEFORE calling general `evaluate()`:
 
-**Investigation Status**:
-- ROOT CAUSE FOUND: `evaluate_union` in `src/solver/evaluate.rs` simplifies unions
-- When `evaluate_keyof` is called with `union = string_index | obj_a`:
-  - `evaluate(union)` is called
-  - `evaluate_union` calls `simplify_union_members`
-  - This incorrectly simplifies `{ a: number } | { [k: string]: number }` to just `{ [k: string]: number }`
-  - Reason: `{ a: number }` is a subtype of `{ [k: string]: number }`, so it's considered "redundant"
+1. **TemplateLiteral check** (highest priority): Template literals that expand to unions should return apparent keys of string, not the intersection of individual literal keys.
 
-**Attempted Fix (FAILED)**:
-- Modified `evaluate_keyof` to NOT call `evaluate()` on Union types
-- This fixed the target test but broke 11 other tests
-- The fix was too broad and prevented needed union evaluation in other contexts
+2. **Union check** (second priority): For union operands, directly iterate members and recursively compute `keyof` for each. Then intersect the results using `intersect_keyof_sets`. This bypasses `evaluate_union()` simplification while still resolving Lazy/Ref types through `recurse_keyof()`.
 
-**Required Fix**:
-- Need a more targeted approach that preserves union simplification in general
-- But prevents simplification when the union is being used specifically for `keyof` intersection
-- This may require passing a context flag through the evaluation pipeline
-- OR modifying the union simplification logic to be aware of `keyof` context
+3. **All other types**: Proceed to normal evaluation and match on the result.
 
-**Recommendation**:
-This requires architectural changes to distinguish between "evaluation for general purposes" vs "evaluation for keyof". The current evaluation pipeline doesn't have this distinction.
-- Debug tracing showed `evaluate_keyof` returns a `Union` type instead of the expected intersection
-- Need to determine if:
-  1. `intersect_keyof_sets` is returning None (fallback issue)
-  2. `intersect_keyof_sets` is called but returns wrong result
-  3. The evaluation is taking a different code path entirely
+This preserves the distributive property `keyof (A | B) = (keyof A) & (keyof B)` while avoiding union simplification that loses information needed for intersection computation.
+
+**Files Modified**:
+- `src/solver/evaluate_rules/keyof.rs`:
+  - Added TemplateLiteral check before Union check
+  - Added Union handling before general evaluation
+  - Removed unused `keyof_union()` function (logic now inlined)
+  - Fixed indentation for match statement
 
 **Files to Investigate**:
 - `src/solver/evaluate_rules/keyof.rs` - `keyof_union` and `intersect_keyof_sets` functions
