@@ -1658,6 +1658,15 @@ impl BinderState {
     /// Called during binding to track flow position for identifiers and other expressions.
     pub(crate) fn record_flow(&mut self, node: NodeIndex) {
         if !self.current_flow.is_none() {
+            use tracing::trace;
+            if let Some(flow_node) = self.flow_nodes.get(self.current_flow) {
+                trace!(
+                    node_idx = node.0,
+                    flow_id = self.current_flow.0,
+                    flow_flags = flow_node.flags,
+                    "record_flow: associating node with flow"
+                );
+            }
             self.node_flow.insert(node.0, self.current_flow);
         }
     }
