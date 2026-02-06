@@ -515,20 +515,24 @@ is_assignable_to(number, 9127) = FAILS
 ```typescript
 type Test<T> = T extends "age" ? never : T;
 type T1 = Test<"name">;  // Should be "name", not string
+let x: T1 = "name";  // tsz errors, tsc accepts
 ```
 
 **Current Behavior**: Literal types widened to primitives in conditionals
 **Expected Behavior**: Literal types should be preserved
 
-**Location**: `src/solver/evaluate.rs` - `evaluate_conditional` method
+**Investigation Started**:
+- Confirmed bug: tsz returns `string`, tsc returns `"name"`
+- Need to trace through `evaluate_conditional` in `src/solver/evaluate_rules/conditional.rs`
+- Suspect literal widening occurs during branch evaluation or union normalization
 
-**Strategy**:
-1. Write failing unit test
-2. Use TSZ_LOG=trace to identify where literal widening occurs
-3. Fix evaluation to preserve literals
+**Next Steps**:
+1. Add tracing to `evaluate_conditional` to identify widening point
+2. Check if `true_type`/`false_type` evaluation preserves literals
+3. Fix evaluation to maintain literal types
 4. Verify fix unblocks Key Remapping
 
-**Next Steps**: See Priority 1 below
+**Status**: Investigation started - need to identify root cause
 
 ## Dependencies
 
