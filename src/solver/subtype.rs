@@ -2206,6 +2206,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let member_list = self.interner.type_list(members);
             for &member in member_list.iter() {
                 if !self.check_subtype(member, target).is_true() {
+                    // Trace: No union member matches target
+                    if let Some(tracer) = &mut self.tracer {
+                        if !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {
+                            source_type: source,
+                            target_union_members: vec![target],
+                        }) {
+                            return SubtypeResult::False;
+                        }
+                    }
                     return SubtypeResult::False;
                 }
             }
@@ -2245,6 +2254,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             for &member in member_list.iter() {
                 if self.check_subtype(source, member).is_true() {
                     return SubtypeResult::True;
+                }
+            }
+            // Trace: Source is not a subtype of any union member
+            if let Some(tracer) = &mut self.tracer {
+                if !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {
+                    source_type: source,
+                    target_union_members: member_list.iter().copied().collect(),
+                }) {
+                    return SubtypeResult::False;
                 }
             }
             return SubtypeResult::False;
@@ -2339,15 +2357,34 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             //
             // Note: When the type parameter is the SOURCE (e.g., T <: string), we check
             // against its constraint. But as TARGET, we return False.
+
+            // Trace: Concrete type not assignable to type parameter
+            if let Some(tracer) = &mut self.tracer {
+                if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                }) {
+                    return SubtypeResult::False;
+                }
+            }
             return SubtypeResult::False;
         }
 
         if let Some(s_kind) = intrinsic_kind(self.interner, source) {
-            return if self.is_boxed_primitive_subtype(s_kind, target) {
-                SubtypeResult::True
+            if self.is_boxed_primitive_subtype(s_kind, target) {
+                return SubtypeResult::True;
             } else {
-                SubtypeResult::False
-            };
+                // Trace: Intrinsic type mismatch (boxed primitive check failed)
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    }) {
+                        return SubtypeResult::False;
+                    }
+                }
+                return SubtypeResult::False;
+            }
         }
 
         if let (Some(lit), Some(t_kind)) = (
@@ -2361,11 +2398,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             literal_value(self.interner, source),
             literal_value(self.interner, target),
         ) {
-            return if s_lit == t_lit {
-                SubtypeResult::True
+            if s_lit == t_lit {
+                return SubtypeResult::True;
             } else {
-                SubtypeResult::False
-            };
+                // Trace: Literal type mismatch
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::LiteralTypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    }) {
+                        return SubtypeResult::False;
+                    }
+                }
+                return SubtypeResult::False;
+            }
         }
 
         if let (Some(LiteralValue::String(s_lit)), Some(t_spans)) = (
@@ -2376,19 +2422,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if intrinsic_kind(self.interner, target) == Some(IntrinsicKind::Object) {
-            return if self.is_object_keyword_type(source) {
-                SubtypeResult::True
+            if self.is_object_keyword_type(source) {
+                return SubtypeResult::True;
             } else {
-                SubtypeResult::False
-            };
+                // Trace: Source is not object-compatible
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    }) {
+                        return SubtypeResult::False;
+                    }
+                }
+                return SubtypeResult::False;
+            }
         }
 
         if intrinsic_kind(self.interner, target) == Some(IntrinsicKind::Function) {
-            return if self.is_callable_type(source) {
-                SubtypeResult::True
+            if self.is_callable_type(source) {
+                return SubtypeResult::True;
             } else {
-                SubtypeResult::False
-            };
+                // Trace: Source is not function-compatible
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    }) {
+                        return SubtypeResult::False;
+                    }
+                }
+                return SubtypeResult::False;
+            }
         }
 
         if let (Some(s_elem), Some(t_elem)) = (
@@ -2564,6 +2628,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::True;
             }
             // Different enums are NOT compatible (nominal typing)
+            // Trace: Enum nominal mismatch
+            if let Some(tracer) = &mut self.tracer {
+                if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                }) {
+                    return SubtypeResult::False;
+                }
+            }
             return SubtypeResult::False;
         }
 
@@ -2749,12 +2822,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_list = self.interner.template_list(s_spans);
             let t_list = self.interner.template_list(t_spans);
             if s_list.len() != t_list.len() {
+                // Trace: Template literal length mismatch
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    }) {
+                        return SubtypeResult::False;
+                    }
+                }
                 return SubtypeResult::False;
             }
             for (s_span, t_span) in s_list.iter().zip(t_list.iter()) {
                 match (s_span, t_span) {
                     (TemplateSpan::Text(s_text), TemplateSpan::Text(t_text)) => {
                         if s_text != t_text {
+                            // Trace: Template literal text part mismatch
+                            if let Some(tracer) = &mut self.tracer {
+                                if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                                    source_type: source,
+                                    target_type: target,
+                                }) {
+                                    return SubtypeResult::False;
+                                }
+                            }
                             return SubtypeResult::False;
                         }
                     }
@@ -2764,6 +2855,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                     }
                     _ => {
+                        // Trace: Template literal span kind mismatch
+                        if let Some(tracer) = &mut self.tracer {
+                            if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                                source_type: source,
+                                target_type: target,
+                            }) {
+                                return SubtypeResult::False;
+                            }
+                        }
                         return SubtypeResult::False;
                     }
                 }
@@ -2782,19 +2882,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if source_is_callable {
             if let Some(t_shape_id) = object_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
-                return if t_shape.properties.is_empty() {
-                    SubtypeResult::True
+                if t_shape.properties.is_empty() {
+                    return SubtypeResult::True;
                 } else {
-                    SubtypeResult::False
-                };
+                    // Trace: Callable not assignable to object with non-empty properties
+                    if let Some(tracer) = &mut self.tracer {
+                        if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                            source_type: source,
+                            target_type: target,
+                        }) {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    return SubtypeResult::False;
+                }
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
-                return if t_shape.properties.is_empty() {
-                    SubtypeResult::True
+                if t_shape.properties.is_empty() {
+                    return SubtypeResult::True;
                 } else {
-                    SubtypeResult::False
-                };
+                    // Trace: Callable not assignable to indexed object with non-empty properties
+                    if let Some(tracer) = &mut self.tracer {
+                        if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                            source_type: source,
+                            target_type: target,
+                        }) {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    return SubtypeResult::False;
+                }
             }
         }
 
@@ -2819,11 +2937,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         break;
                     }
                 }
-                return if all_ok {
-                    SubtypeResult::True
+                if all_ok {
+                    return SubtypeResult::True;
                 } else {
-                    SubtypeResult::False
-                };
+                    // Trace: Array/tuple not compatible with object
+                    if let Some(tracer) = &mut self.tracer {
+                        if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                            source_type: source,
+                            target_type: target,
+                        }) {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    return SubtypeResult::False;
+                }
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
@@ -2832,10 +2959,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         let elem_type =
                             array_element_type(self.interner, source).unwrap_or(TypeId::ANY);
                         if !self.check_subtype(elem_type, num_idx.value_type).is_true() {
+                            // Trace: Array element type mismatch with index signature
+                            if let Some(tracer) = &mut self.tracer {
+                                if !tracer.on_mismatch_dyn(
+                                    SubtypeFailureReason::IndexSignatureMismatch {
+                                        index_kind: "number",
+                                        source_value_type: elem_type,
+                                        target_value_type: num_idx.value_type,
+                                    },
+                                ) {
+                                    return SubtypeResult::False;
+                                }
+                            }
                             return SubtypeResult::False;
                         }
                     }
                     return SubtypeResult::True;
+                }
+                // Trace: Array/tuple not compatible with indexed object with non-empty properties
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    }) {
+                        return SubtypeResult::False;
+                    }
                 }
                 return SubtypeResult::False;
             }
@@ -2862,7 +3010,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
 
         // Dispatch to the visitor using the extracted interner
-        visitor.visit_type(interner, source)
+        let result = visitor.visit_type(interner, source);
+
+        // Trace: Generic fallback type mismatch (no specific reason matched above)
+        if result == SubtypeResult::False {
+            if let Some(tracer) = &mut self.tracer {
+                if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                }) {
+                    return SubtypeResult::False;
+                }
+            }
+        }
+
+        result
     }
 
     /// Check if a deferred keyof type is a subtype of string | number | symbol.
