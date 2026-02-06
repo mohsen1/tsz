@@ -1,9 +1,9 @@
 //! Parser state - interface, type alias, enum, module, import/export, and control flow parsing methods
 
 use super::state::{CONTEXT_FLAG_DISALLOW_IN, ParserState};
-use crate::interner::Atom;
 use crate::parser::{NodeIndex, NodeList, node::*, node_flags, syntax_kind_ext};
-use crate::scanner::SyntaxKind;
+use tsz_common::interner::Atom;
+use tsz_scanner::SyntaxKind;
 
 impl ParserState {
     /// Parse interface declaration
@@ -66,7 +66,7 @@ impl ParserState {
 
         // Check for duplicate extends clause: interface I extends A extends B { }
         if self.is_token(SyntaxKind::ExtendsKeyword) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "'extends' clause already seen.",
                 diagnostic_codes::EXTENDS_CLAUSE_ALREADY_SEEN,
@@ -144,7 +144,7 @@ impl ParserState {
         ) && !self.look_ahead_is_property_name_after_keyword()
             && !self.look_ahead_has_line_break_after_keyword()
         {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Modifiers cannot appear here.",
                 diagnostic_codes::MODIFIERS_NOT_ALLOWED_HERE,
@@ -160,7 +160,7 @@ impl ParserState {
         if self.is_token(SyntaxKind::AsyncKeyword)
             && !self.look_ahead_is_property_name_after_keyword()
         {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "'async' modifier cannot appear on a type member.",
                 diagnostic_codes::ASYNC_MODIFIER_CANNOT_APPEAR_ON_TYPE_MEMBER,
@@ -649,7 +649,7 @@ impl ParserState {
 
     /// Parse enum members
     pub(crate) fn parse_enum_members(&mut self) -> NodeList {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
         let mut members = Vec::new();
 
         while !self.is_token(SyntaxKind::CloseBraceToken)
@@ -853,7 +853,7 @@ impl ParserState {
             // This is invalid syntax but should parse gracefully without cascading errors
             if self.is_token(SyntaxKind::OpenBraceToken) {
                 // Emit appropriate error for anonymous module (missing name)
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Namespace must be given a name.",
                     diagnostic_codes::IDENTIFIER_EXPECTED,
@@ -949,7 +949,7 @@ impl ParserState {
             // This is invalid syntax but should parse gracefully without cascading errors
             if self.is_token(SyntaxKind::OpenBraceToken) {
                 // Emit appropriate error for anonymous module (missing name)
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Namespace must be given a name.",
                     diagnostic_codes::IDENTIFIER_EXPECTED,
@@ -1842,7 +1842,7 @@ impl ParserState {
     /// Parse a string literal (used for module specifiers)
     pub(crate) fn parse_string_literal(&mut self) -> NodeIndex {
         if !self.is_token(SyntaxKind::StringLiteral) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "String literal expected",
                 diagnostic_codes::TOKEN_EXPECTED,
@@ -2009,7 +2009,7 @@ impl ParserState {
         if self.is_token(SyntaxKind::InKeyword) {
             // TS1005: for-await can only be used with 'of', not 'in'
             if await_modifier {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "'of' expected.",
                     diagnostic_codes::TOKEN_EXPECTED,
@@ -2131,7 +2131,7 @@ impl ParserState {
             false
         };
         if is_empty_decl {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Variable declaration list cannot be empty.",
                 diagnostic_codes::VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY,
@@ -2230,7 +2230,7 @@ impl ParserState {
             if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
                 if let Some(data) = self.arena.get_variable(node) {
                     if data.declarations.nodes.len() > 1 {
-                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        use tsz_common::diagnostics::diagnostic_codes;
                         // Report error at the second declaration
                         if let Some(&second_decl) = data.declarations.nodes.get(1) {
                             if let Some(second_node) = self.arena.get(second_decl) {
@@ -2279,7 +2279,7 @@ impl ParserState {
             if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
                 if let Some(data) = self.arena.get_variable(node) {
                     if data.declarations.nodes.len() > 1 {
-                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        use tsz_common::diagnostics::diagnostic_codes;
                         // Report error at the second declaration
                         if let Some(&second_decl) = data.declarations.nodes.get(1) {
                             if let Some(second_node) = self.arena.get(second_decl) {
@@ -2371,7 +2371,7 @@ impl ParserState {
 
     /// Parse throw statement
     pub(crate) fn parse_throw_statement(&mut self) -> NodeIndex {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
 
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ThrowKeyword);
@@ -2552,7 +2552,7 @@ impl ParserState {
             } else {
                 // Unexpected token in switch body - emit error and recover
                 if self.token_pos() != self.last_error_pos {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "case or default expected.",
                         diagnostic_codes::TOKEN_EXPECTED,
@@ -2644,7 +2644,7 @@ impl ParserState {
             && finally_block.is_none()
             && self.token_pos() != self.last_error_pos
         {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "catch or finally expected.",
                 diagnostic_codes::CATCH_OR_FINALLY_EXPECTED,
@@ -2728,7 +2728,7 @@ impl ParserState {
             // Emit error for unexpected token if we haven't already
             if self.token_pos() != self.last_error_pos && !self.is_token(SyntaxKind::EndOfFileToken)
             {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Expression expected.",
                     diagnostic_codes::EXPRESSION_EXPECTED,

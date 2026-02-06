@@ -12,34 +12,34 @@
 //! - Node data is stored in separate typed pools
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
 
-use crate::interner::Atom;
 use crate::parser::{
     NodeIndex, NodeList,
     node::{IdentifierData, NodeArena},
     syntax_kind_ext,
 };
-use crate::scanner::{SyntaxKind, token_is_keyword};
-use crate::scanner_impl::{ScannerState, TokenFlags};
+use tsz_common::interner::Atom;
+use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
+use tsz_scanner::{SyntaxKind, token_is_keyword};
 // =============================================================================
 // Parser Context Flags
 // =============================================================================
 
 /// Context flag: inside an async function/method/arrow
-pub(crate) const CONTEXT_FLAG_ASYNC: u32 = 1;
+pub const CONTEXT_FLAG_ASYNC: u32 = 1;
 /// Context flag: inside a generator function/method
-pub(crate) const CONTEXT_FLAG_GENERATOR: u32 = 2;
+pub const CONTEXT_FLAG_GENERATOR: u32 = 2;
 /// Context flag: inside a static block (where 'await' is reserved)
-pub(crate) const CONTEXT_FLAG_STATIC_BLOCK: u32 = 4;
+pub const CONTEXT_FLAG_STATIC_BLOCK: u32 = 4;
 /// Context flag: parsing a parameter default (where 'await' is not allowed)
-pub(crate) const CONTEXT_FLAG_PARAMETER_DEFAULT: u32 = 8;
+pub const CONTEXT_FLAG_PARAMETER_DEFAULT: u32 = 8;
 /// Context flag: disallow 'in' as a binary operator (for for-statement initializers)
-pub(crate) const CONTEXT_FLAG_DISALLOW_IN: u32 = 16;
+pub const CONTEXT_FLAG_DISALLOW_IN: u32 = 16;
 /// Context flag: inside an ambient context (declare namespace/module)
-pub(crate) const CONTEXT_FLAG_AMBIENT: u32 = 32;
+pub const CONTEXT_FLAG_AMBIENT: u32 = 32;
 /// Context flag: inside the 'true' branch of a conditional expression (a ? [here] : c)
 /// When set, arrow function lookahead should not treat ':' as a return type annotation
 /// because the ':' belongs to the enclosing conditional expression
-pub(crate) const CONTEXT_FLAG_IN_CONDITIONAL_TRUE: u32 = 64;
+pub const CONTEXT_FLAG_IN_CONDITIONAL_TRUE: u32 = 64;
 
 // =============================================================================
 // Parse Diagnostic
@@ -54,7 +54,7 @@ pub struct ParseDiagnostic {
     pub code: u32,
 }
 
-pub(crate) struct IncrementalParseResult {
+pub struct IncrementalParseResult {
     pub statements: NodeList,
     pub end_pos: u32,
     pub end_of_file_token: NodeIndex,
@@ -87,7 +87,7 @@ pub struct ParserState {
     /// Source file name
     pub(crate) file_name: String,
     /// Parser context flags
-    pub(crate) context_flags: u32,
+    pub context_flags: u32,
     /// Current token
     pub(crate) current_token: SyntaxKind,
     /// List of parse diagnostics
@@ -135,8 +135,8 @@ impl ParserState {
     /// Check recursion limit - returns true if we can continue, false if limit exceeded
     pub(crate) fn enter_recursion(&mut self) -> bool {
         self.recursion_depth += 1;
-        if self.recursion_depth > crate::limits::MAX_PARSER_RECURSION_DEPTH {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+        if self.recursion_depth > tsz_common::limits::MAX_PARSER_RECURSION_DEPTH {
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Maximum recursion depth exceeded",
                 diagnostic_codes::UNEXPECTED_TOKEN,
@@ -224,7 +224,7 @@ impl ParserState {
         // Check for UnicodeEscape flag
         let flags = self.scanner.get_token_flags();
         if (flags & TokenFlags::UnicodeEscape as u32) != 0 {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at(
                 self.scanner.get_token_start() as u32,
                 (self.scanner.get_token_end() - self.scanner.get_token_start()) as u32,
@@ -322,7 +322,7 @@ impl ParserState {
     /// Check if the current token is an illegal binding identifier in the current context
     /// Returns true if illegal and emits appropriate diagnostic
     pub(crate) fn check_illegal_binding_identifier(&mut self) -> bool {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
 
         // Check if current token is 'await' (either as keyword or identifier)
         let is_await = self.is_token(SyntaxKind::AwaitKeyword)
@@ -443,7 +443,7 @@ impl ParserState {
                 if !should_suppress {
                     // For forced errors, bypass the normal error budget logic
                     if force_emit {
-                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             &format!("'{}' expected", Self::token_to_string(kind)),
                             diagnostic_codes::TOKEN_EXPECTED,
@@ -517,7 +517,7 @@ impl ParserState {
         // This prevents cascading TS1109 errors when TS1005 or other errors already reported
         // Use centralized error suppression heuristic
         if self.should_report_error() {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Expression expected",
                 diagnostic_codes::EXPRESSION_EXPECTED,
@@ -527,7 +527,7 @@ impl ParserState {
 
     /// Error: Type expected (TS1110)
     pub(crate) fn error_type_expected(&mut self) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
         self.parse_error_at_current_token("Type expected", diagnostic_codes::TYPE_EXPECTED);
     }
 
@@ -537,7 +537,7 @@ impl ParserState {
         // This prevents cascading errors when a missing token causes identifier to be expected
         // Use centralized error suppression heuristic
         if self.should_report_error() {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Identifier expected",
                 diagnostic_codes::IDENTIFIER_EXPECTED,
@@ -602,7 +602,7 @@ impl ParserState {
     pub(crate) fn error_reserved_word_identifier(&mut self) {
         // Use centralized error suppression heuristic
         if self.should_report_error() {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             let word = self.current_keyword_text();
             self.parse_error_at_current_token(
                 &format!(
@@ -622,7 +622,7 @@ impl ParserState {
         // This prevents cascading errors when parse_semicolon() and similar functions call this
         // Use centralized error suppression heuristic
         if self.should_report_error() {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 &format!("'{}' expected", token),
                 diagnostic_codes::TOKEN_EXPECTED,
@@ -648,7 +648,7 @@ impl ParserState {
 
     /// Error: Unterminated template literal (TS1160)
     pub(crate) fn error_unterminated_template_literal_at(&mut self, start: u32, end: u32) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
         let length = end.saturating_sub(start).max(1);
         self.parse_error_at(
             start,
@@ -660,7 +660,7 @@ impl ParserState {
 
     /// Error: Declaration expected (TS1146)
     pub(crate) fn error_declaration_expected(&mut self) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
         self.parse_error_at_current_token(
             "Declaration expected",
             diagnostic_codes::DECLARATION_EXPECTED,
@@ -669,7 +669,7 @@ impl ParserState {
 
     /// Error: Statement expected (TS1129)
     pub(crate) fn error_statement_expected(&mut self) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
         self.parse_error_at_current_token(
             "Statement expected",
             diagnostic_codes::STATEMENT_EXPECTED,
@@ -678,8 +678,8 @@ impl ParserState {
 
     /// Check if a statement is a using/await using declaration not inside a block (TS1156)
     pub(crate) fn check_using_outside_block(&mut self, statement: NodeIndex) {
-        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::parser::node_flags;
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         if statement.is_none() {
             return;
@@ -707,7 +707,7 @@ impl ParserState {
 
     /// Error: Unexpected token (TS1012)
     pub(crate) fn error_unexpected_token(&mut self) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
         self.parse_error_at_current_token("Unexpected token", diagnostic_codes::UNEXPECTED_TOKEN);
     }
 

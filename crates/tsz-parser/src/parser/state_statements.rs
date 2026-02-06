@@ -5,7 +5,7 @@ use super::state::{
     CONTEXT_FLAG_PARAMETER_DEFAULT, CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
 };
 use crate::parser::{NodeIndex, NodeList, node::*, parse_rules::*, syntax_kind_ext};
-use crate::scanner::SyntaxKind;
+use tsz_scanner::SyntaxKind;
 
 impl ParserState {
     // =========================================================================
@@ -28,7 +28,7 @@ impl ParserState {
         // Cache comment ranges once during parsing (O(N) scan, done only once)
         // This avoids rescanning on every hover/documentation request
         // Use scanner's source text (no duplicate allocation)
-        let comments = crate::comments::get_comment_ranges(self.scanner.source_text());
+        let comments = tsz_common::comments::get_comment_ranges(self.scanner.source_text());
 
         // Create source file node
         let end_pos = self.token_end();
@@ -63,7 +63,7 @@ impl ParserState {
         )
     }
 
-    pub(crate) fn parse_source_file_statements_from_offset(
+    pub fn parse_source_file_statements_from_offset(
         &mut self,
         file_name: String,
         source_text: String,
@@ -105,7 +105,7 @@ impl ParserState {
 
             // Handle Unknown tokens (invalid characters) - must be checked FIRST
             if self.is_token(SyntaxKind::Unknown) {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Invalid character.",
                     diagnostic_codes::INVALID_CHARACTER,
@@ -118,7 +118,7 @@ impl ParserState {
             if self.is_token(SyntaxKind::CloseBraceToken) {
                 // Only emit error if we haven't already emitted one at this position
                 if self.token_pos() != self.last_error_pos {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Declaration or statement expected.",
                         diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
@@ -141,7 +141,7 @@ impl ParserState {
                 if (self.last_error_pos == 0 || current.abs_diff(self.last_error_pos) > 3)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Declaration or statement expected.",
                         diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
@@ -175,7 +175,7 @@ impl ParserState {
 
             // Handle Unknown tokens (invalid characters)
             if self.is_token(SyntaxKind::Unknown) {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Invalid character.",
                     diagnostic_codes::INVALID_CHARACTER,
@@ -195,7 +195,7 @@ impl ParserState {
                 if (self.last_error_pos == 0 || current.abs_diff(self.last_error_pos) > 3)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Declaration or statement expected.",
                         diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
@@ -296,7 +296,7 @@ impl ParserState {
                 if self.look_ahead_is_abstract_class() {
                     self.parse_abstract_class_declaration()
                 } else if self.look_ahead_is_abstract_declaration() {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Modifiers cannot appear here.",
                         diagnostic_codes::MODIFIERS_NOT_ALLOWED_HERE,
@@ -320,7 +320,7 @@ impl ParserState {
             }
             SyntaxKind::AccessorKeyword => {
                 if self.look_ahead_is_accessor_declaration() {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Modifiers cannot appear here.",
                         diagnostic_codes::MODIFIERS_NOT_ALLOWED_HERE,
@@ -341,7 +341,7 @@ impl ParserState {
             | SyntaxKind::OverrideKeyword
             | SyntaxKind::ReadonlyKeyword => {
                 if self.look_ahead_is_modifier_before_declaration() {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Modifier cannot be used here.",
                         diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
@@ -677,7 +677,7 @@ impl ParserState {
     pub(crate) fn parse_async_function_declaration(&mut self) -> NodeIndex {
         // TS1040: 'async' modifier cannot be used in an ambient context
         if (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) != 0 {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "'async' modifier cannot be used in an ambient context.",
                 diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
@@ -800,7 +800,7 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::CloseBraceToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Variable declaration expected.",
                         diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
@@ -840,7 +840,7 @@ impl ParserState {
             if !can_start_next {
                 // Next token cannot start a declaration - emit error for missing declaration
                 // and break to avoid consuming tokens that belong to the next statement
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 if !self.is_token(SyntaxKind::SemicolonToken)
                     && !self.is_token(SyntaxKind::CloseBraceToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
@@ -857,7 +857,7 @@ impl ParserState {
         // Check for empty declaration list: var ;
         // TSC emits TS1123 "Variable declaration list cannot be empty"
         if declarations.is_empty() {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Variable declaration list cannot be empty.",
                 diagnostic_codes::VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY,
@@ -884,8 +884,8 @@ impl ParserState {
 
     /// Parse variable declaration with declaration flags (for using/await using checks)
     pub(crate) fn parse_variable_declaration_with_flags(&mut self, flags: u16) -> NodeIndex {
-        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::parser::node_flags;
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let start_pos = self.token_pos();
 
@@ -998,7 +998,7 @@ impl ParserState {
         let _async_token_pos = self.token_pos();
         let is_async = if !is_async && self.is_token(SyntaxKind::AsyncKeyword) {
             if (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) != 0 {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "'async' modifier cannot be used in an ambient context.",
                     diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
@@ -1033,7 +1033,7 @@ impl ParserState {
         // function body. `async function * await() {}` and `function * yield() {}` are valid.
         // Only check for static block context (where await is always illegal as an identifier)
         if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Identifier expected. 'await' is a reserved word that cannot be used here.",
                 diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
@@ -1219,7 +1219,7 @@ impl ParserState {
         // function body. `async function * await() {}` and `function * yield() {}` are valid.
         // Only check for static block context (where await is always illegal as an identifier)
         if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Identifier expected. 'await' is a reserved word that cannot be used here.",
                 diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
@@ -1345,7 +1345,7 @@ impl ParserState {
             // TS1014: A rest parameter must be last in a parameter list
             // Check BEFORE parsing the next parameter (but only emit once)
             if seen_rest_parameter && !emitted_rest_error {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "A rest parameter must be last in a parameter list.",
                     diagnostic_codes::REST_PARAMETER_MUST_BE_LAST,
@@ -1468,7 +1468,7 @@ impl ParserState {
             // Check if parameter has both optional marker (?) and initializer (=)
             // TS1015: Parameter cannot have question mark and initializer
             if question_token {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "A parameter cannot have question mark and initializer.",
                     diagnostic_codes::PARAMETER_CANNOT_HAVE_INITIALIZER,
@@ -1778,7 +1778,7 @@ impl ParserState {
             }
             SyntaxKind::FunctionKeyword => {
                 // TS1206: Decorators are not valid on function declarations
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     start_pos,
                     0,
@@ -1789,7 +1789,7 @@ impl ParserState {
             }
             SyntaxKind::EnumKeyword => {
                 // TS1206: Decorators are not valid on enum declarations
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     start_pos,
                     0,
@@ -1800,7 +1800,7 @@ impl ParserState {
             }
             SyntaxKind::InterfaceKeyword => {
                 // TS1206: Decorators are not valid on interface declarations
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     start_pos,
                     0,
@@ -1811,7 +1811,7 @@ impl ParserState {
             }
             SyntaxKind::TypeKeyword => {
                 // TS1206: Decorators are not valid on type alias declarations
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     start_pos,
                     0,
@@ -1822,7 +1822,7 @@ impl ParserState {
             }
             SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
                 // TS1206: Decorators are not valid on namespace/module declarations
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     start_pos,
                     0,
@@ -1833,7 +1833,7 @@ impl ParserState {
             }
             SyntaxKind::VarKeyword | SyntaxKind::LetKeyword | SyntaxKind::ConstKeyword => {
                 // TS1206: Decorators are not valid on variable statements
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     start_pos,
                     0,
@@ -1844,7 +1844,7 @@ impl ParserState {
             }
             SyntaxKind::ImportKeyword => {
                 // TS1206: Decorators are not valid on import statements
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     start_pos,
                     0,
@@ -2025,7 +2025,7 @@ impl ParserState {
 
         loop {
             if self.is_token(SyntaxKind::ExtendsKeyword) {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 let start_pos = self.token_pos();
                 let is_duplicate = seen_extends;
                 let is_after_implements = seen_implements;
@@ -2089,7 +2089,7 @@ impl ParserState {
             }
 
             if self.is_token(SyntaxKind::ImplementsKeyword) {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 let start_pos = self.token_pos();
                 if seen_implements {
                     self.parse_error_at_current_token(
@@ -2150,7 +2150,7 @@ impl ParserState {
     /// Parse heritage type reference for interfaces (extends clause).
     /// Interfaces must reference types; literals or arbitrary expressions should produce diagnostics.
     pub(crate) fn parse_interface_heritage_type_reference(&mut self) -> NodeIndex {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
 
         if matches!(
             self.token(),
@@ -2215,7 +2215,7 @@ impl ParserState {
             self.parse_identifier_name()
         } else {
             // Invalid token in heritage clause - emit more specific error
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Class name or type expression expected",
                 diagnostic_codes::EXPRESSION_EXPECTED,
@@ -2387,7 +2387,7 @@ impl ParserState {
                     | SyntaxKind::ProtectedKeyword
             ) {
                 if seen_accessibility {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Accessibility modifier already seen.",
                         diagnostic_codes::ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
@@ -2401,7 +2401,7 @@ impl ParserState {
                     || seen_accessor
                     || seen_async
                 {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'accessibility modifier' must come before other modifiers.",
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
@@ -2411,7 +2411,7 @@ impl ParserState {
             } else if current_kind == SyntaxKind::StaticKeyword {
                 // TS1029: static must come after accessibility, before certain others
                 if seen_abstract || seen_readonly || seen_override || seen_accessor || seen_async {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'static' modifier must precede current modifier.",
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
@@ -2420,7 +2420,7 @@ impl ParserState {
                 seen_static = true;
             } else if current_kind == SyntaxKind::AbstractKeyword {
                 if seen_readonly || seen_override || seen_accessor || seen_async {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'abstract' modifier must precede current modifier.",
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
@@ -2429,7 +2429,7 @@ impl ParserState {
                 seen_abstract = true;
             } else if current_kind == SyntaxKind::ReadonlyKeyword {
                 if seen_override || seen_accessor || seen_async {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'readonly' modifier must precede current modifier.",
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
@@ -2438,7 +2438,7 @@ impl ParserState {
                 seen_readonly = true;
             } else if current_kind == SyntaxKind::OverrideKeyword {
                 if seen_accessor || seen_async {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'override' modifier must precede current modifier.",
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
@@ -2447,7 +2447,7 @@ impl ParserState {
                 seen_override = true;
             } else if current_kind == SyntaxKind::AccessorKeyword {
                 if seen_async {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'accessor' modifier must precede 'async' modifier.",
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
@@ -2497,7 +2497,7 @@ impl ParserState {
                 SyntaxKind::AsyncKeyword => {
                     // TS1040: 'async' modifier cannot be used in an ambient context
                     if (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) != 0 {
-                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             "'async' modifier cannot be used in an ambient context.",
                             diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
@@ -2549,7 +2549,7 @@ impl ParserState {
                 }
                 // Handle 'export' - not valid as class member modifier
                 SyntaxKind::ExportKeyword => {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Unexpected modifier.",
                         diagnostic_codes::UNEXPECTED_TOKEN,
@@ -2603,7 +2603,7 @@ impl ParserState {
                         false
                     };
 
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     if is_followed_by_constructor {
                         self.parse_error_at_current_token(
                             "Unexpected token. A constructor, method, accessor, or property was expected.",
@@ -2689,7 +2689,7 @@ impl ParserState {
         &mut self,
         modifiers: Option<NodeList>,
     ) -> NodeIndex {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ConstructorKeyword);
 
@@ -2751,7 +2751,7 @@ impl ParserState {
         let name = self.parse_property_name();
 
         let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
                 diagnostic_codes::ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
@@ -2765,7 +2765,7 @@ impl ParserState {
         let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
             self.make_node_list(vec![])
         } else {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'get' accessor cannot have parameters.",
                 diagnostic_codes::GETTER_MUST_NOT_HAVE_PARAMETERS,
@@ -2829,7 +2829,7 @@ impl ParserState {
         let name = self.parse_property_name();
 
         let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
                 diagnostic_codes::ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
@@ -2848,7 +2848,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         if parameters.len() != 1 {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'set' accessor must have exactly one parameter.",
                 diagnostic_codes::SETTER_MUST_HAVE_EXACTLY_ONE_PARAMETER,
@@ -2856,7 +2856,7 @@ impl ParserState {
         }
 
         if self.parse_optional(SyntaxKind::ColonToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'set' accessor cannot have a return type annotation.",
                 diagnostic_codes::SETTER_CANNOT_HAVE_RETURN_TYPE,
@@ -2922,7 +2922,7 @@ impl ParserState {
 
     /// Parse a single class member
     pub(crate) fn parse_class_member(&mut self) -> NodeIndex {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_codes;
         let start_pos = self.token_pos();
 
         // Handle empty statement (semicolon) in class body - this is valid TypeScript/JavaScript
@@ -3211,7 +3211,7 @@ impl ParserState {
                 || self.is_token(SyntaxKind::LessThanToken))
         {
             // var/let modifier followed by () - emit errors and attempt recovery
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
 
             // Emit error for '('
             if self.is_token(SyntaxKind::OpenParenToken) {

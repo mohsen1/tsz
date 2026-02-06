@@ -4,7 +4,7 @@
 
 use super::base::{NodeIndex, NodeList};
 use super::node::*;
-use crate::interner::{Atom, Interner};
+use tsz_common::interner::{Atom, Interner};
 
 impl NodeArena {
     /// Maximum pre-allocation to avoid capacity overflow in huge files.
@@ -207,23 +207,23 @@ impl NodeArena {
     }
 
     /// Create a modifier token (static, public, private, etc.)
-    pub fn create_modifier(&mut self, kind: crate::scanner::SyntaxKind, pos: u32) -> NodeIndex {
+    pub fn create_modifier(&mut self, kind: tsz_scanner::SyntaxKind, pos: u32) -> NodeIndex {
         // Modifiers are simple tokens, their kind IS the modifier type
         // End position is pos + keyword length
         let end = pos
             + match kind {
-                crate::scanner::SyntaxKind::StaticKeyword => 6, // "static"
-                crate::scanner::SyntaxKind::PublicKeyword => 6, // "public"
-                crate::scanner::SyntaxKind::PrivateKeyword => 7, // "private"
-                crate::scanner::SyntaxKind::ProtectedKeyword => 9, // "protected"
-                crate::scanner::SyntaxKind::ReadonlyKeyword => 8, // "readonly"
-                crate::scanner::SyntaxKind::AbstractKeyword => 8, // "abstract"
-                crate::scanner::SyntaxKind::OverrideKeyword => 8, // "override"
-                crate::scanner::SyntaxKind::AsyncKeyword => 5,  // "async"
-                crate::scanner::SyntaxKind::DeclareKeyword => 7, // "declare"
-                crate::scanner::SyntaxKind::ExportKeyword => 6, // "export"
-                crate::scanner::SyntaxKind::DefaultKeyword => 7, // "default"
-                crate::scanner::SyntaxKind::ConstKeyword => 5,  // "const"
+                tsz_scanner::SyntaxKind::StaticKeyword => 6,  // "static"
+                tsz_scanner::SyntaxKind::PublicKeyword => 6,  // "public"
+                tsz_scanner::SyntaxKind::PrivateKeyword => 7, // "private"
+                tsz_scanner::SyntaxKind::ProtectedKeyword => 9, // "protected"
+                tsz_scanner::SyntaxKind::ReadonlyKeyword => 8, // "readonly"
+                tsz_scanner::SyntaxKind::AbstractKeyword => 8, // "abstract"
+                tsz_scanner::SyntaxKind::OverrideKeyword => 8, // "override"
+                tsz_scanner::SyntaxKind::AsyncKeyword => 5,   // "async"
+                tsz_scanner::SyntaxKind::DeclareKeyword => 7, // "declare"
+                tsz_scanner::SyntaxKind::ExportKeyword => 6,  // "export"
+                tsz_scanner::SyntaxKind::DefaultKeyword => 7, // "default"
+                tsz_scanner::SyntaxKind::ConstKeyword => 5,   // "const"
                 _ => 0,
             };
         self.add_token(kind as u16, pos, end)

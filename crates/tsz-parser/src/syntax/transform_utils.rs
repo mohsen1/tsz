@@ -3,7 +3,7 @@
 //! Common functions used by ES5 transformations.
 
 use crate::parser::{NodeArena, NodeIndex, syntax_kind_ext};
-use crate::scanner::SyntaxKind;
+use tsz_scanner::SyntaxKind;
 
 /// Check if an AST node contains a reference to `this` or `super`.
 pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {

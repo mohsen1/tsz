@@ -1,9 +1,9 @@
 //! Parser state - type parsing, JSX, accessors, and into_parts methods
 
 use super::state::{ParseDiagnostic, ParserState};
-use crate::interner::Atom;
 use crate::parser::{NodeIndex, NodeList, node::*, syntax_kind_ext};
-use crate::scanner::SyntaxKind;
+use tsz_common::interner::Atom;
+use tsz_scanner::SyntaxKind;
 
 impl ParserState {
     // =========================================================================

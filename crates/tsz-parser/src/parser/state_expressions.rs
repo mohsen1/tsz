@@ -1,10 +1,10 @@
 //! Parser state - expression parsing methods
 
 use super::state::{CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR, ParserState};
-use crate::interner::Atom;
 use crate::parser::{NodeIndex, NodeList, node::*, node_flags, syntax_kind_ext};
-use crate::scanner::SyntaxKind;
-use crate::scanner_impl::TokenFlags;
+use tsz_common::interner::Atom;
+use tsz_scanner::SyntaxKind;
+use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
     // =========================================================================
@@ -335,7 +335,7 @@ impl ParserState {
         // Recovery: Handle missing fat arrow - common typo: (a, b) { return a; }
         // If we see { immediately after parameters/return type, the user forgot =>
         if self.is_token(SyntaxKind::OpenBraceToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token("'=>' expected.", diagnostic_codes::TOKEN_EXPECTED);
             // Don't consume the {, just continue to body parsing
             // The arrow is logically present but missing
@@ -391,7 +391,7 @@ impl ParserState {
         // Check for empty type parameter list: <>
         // TypeScript reports TS1098: "Type parameter list cannot be empty"
         if self.is_token(SyntaxKind::GreaterThanToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Type parameter list cannot be empty.",
                 diagnostic_codes::TYPE_PARAMETER_LIST_CANNOT_BE_EMPTY,
@@ -767,7 +767,7 @@ impl ParserState {
                     && !self.in_async_context()
                     && has_following_expression
                 {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'await' expression cannot be used inside a class static block.",
                         diagnostic_codes::AWAIT_IN_STATIC_BLOCK,
@@ -778,7 +778,7 @@ impl ParserState {
                     && !self.in_parameter_default_context()
                 {
                     // TS1359: await expression outside async function (general case)
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "An 'await' expression is only allowed within an async function.",
                         diagnostic_codes::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
@@ -789,7 +789,7 @@ impl ParserState {
                     // This only applies when there IS a following expression (e.g., `async (a = await foo)`)
                     // When there's no following expression (e.g., `async (a = await)`), we fall through
                     // to emit TS1109 from the await expression parsing at line 859-865
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'await' expressions cannot be used in a parameter initializer.",
                         diagnostic_codes::AWAIT_IN_PARAMETER_DEFAULT,
@@ -832,7 +832,7 @@ impl ParserState {
                         // In static blocks, 'await' used as a bare identifier should emit TS1359
                         // (reserved word cannot be used here) to match TSC behavior
                         if self.in_static_block_context() {
-                            use crate::checker::types::diagnostics::diagnostic_codes;
+                            use tsz_common::diagnostics::diagnostic_codes;
                             self.parse_error_at_current_token(
                                 "Identifier expected. 'await' is a reserved word that cannot be used here.",
                                 diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
@@ -903,7 +903,7 @@ impl ParserState {
                     && !self.in_generator_context()
                     && (has_following_expression || has_asterisk)
                 {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "A 'yield' expression is only allowed in a generator body.",
                         diagnostic_codes::YIELD_EXPRESSION_ONLY_IN_GENERATOR,
@@ -936,7 +936,7 @@ impl ParserState {
                 // Check if 'yield' is used in a parameter default context
                 // TS2523: 'yield' expressions cannot be used in a parameter initializer
                 if self.in_generator_context() && self.in_parameter_default_context() {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'yield' expressions cannot be used in a parameter initializer.",
                         diagnostic_codes::YIELD_IN_PARAMETER_DEFAULT,
@@ -1392,7 +1392,7 @@ impl ParserState {
             | SyntaxKind::YieldKeyword => self.parse_keyword_as_identifier(),
             SyntaxKind::Unknown => {
                 // TS1127: Invalid character - emit specific error for invalid characters
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Invalid character.",
                     diagnostic_codes::INVALID_CHARACTER,
@@ -1788,7 +1788,7 @@ impl ParserState {
                 integer_part.len() > 1 && integer_part[1..].bytes().any(|b| b == b'8' || b == b'9');
             if has_non_octal {
                 // TS1489: Decimals with leading zeros are not allowed (e.g., 08, 009, 08.5)
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     start_pos,
                     end_pos - start_pos,
@@ -1797,7 +1797,7 @@ impl ParserState {
                 );
             } else if integer_part.len() > 1 {
                 // TS1121: Legacy octal literal (e.g., 01, 0777)
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 // Convert legacy octal to modern octal for the suggestion (e.g., "01" -> "0o1")
                 let suggested = format!("0o{}", &integer_part[1..]);
                 let message = format!(
@@ -1832,7 +1832,7 @@ impl ParserState {
                 false
             };
             if missing_digit {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 // Find position of the missing digit (at the end)
                 self.parse_error_at(
                     end_pos,
@@ -1848,7 +1848,7 @@ impl ParserState {
             // Hex literal should be at least 3 chars (0x followed by at least one digit)
             // If it's just "0x" or "0X", no hex digits were provided
             if text.len() == 2 {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     end_pos,
                     0,
@@ -1863,7 +1863,7 @@ impl ParserState {
             // Binary literal should be at least 3 chars (0b followed by at least one digit)
             // If it's just "0b" or "0B", no binary digits were provided
             if text.len() == 2 {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     end_pos,
                     0,
@@ -1878,7 +1878,7 @@ impl ParserState {
             // Octal literal should be at least 3 chars (0o followed by at least one digit)
             // If it's just "0o" or "0O", no octal digits were provided
             if text.len() == 2 {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     end_pos,
                     0,
@@ -1910,7 +1910,7 @@ impl ParserState {
         // followed by an identifier or keyword, report "identifier cannot follow numeric literal"
         // In this case, skip the identifier to avoid "Cannot find name" error (TS2304)
         if has_invalid_separator && self.is_identifier_or_keyword() {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An identifier or keyword cannot immediately follow a numeric literal.",
                 diagnostic_codes::IDENTIFIER_AFTER_NUMERIC_LITERAL,
@@ -1957,7 +1957,7 @@ impl ParserState {
             return;
         }
 
-        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
         let (message, code) = if self.scanner.invalid_separator_is_consecutive() {
             (
                 diagnostic_messages::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_NOT_PERMITTED,
@@ -2041,13 +2041,13 @@ impl ParserState {
         // Emit errors for all regex flag issues detected by scanner
         for error in flag_errors {
             let (message, code) = match error.kind {
-                crate::scanner_impl::RegexFlagErrorKind::Duplicate => {
+                tsz_scanner::scanner_impl::RegexFlagErrorKind::Duplicate => {
                     ("Duplicate regular expression flag.", 1500)
                 }
-                crate::scanner_impl::RegexFlagErrorKind::InvalidFlag => {
+                tsz_scanner::scanner_impl::RegexFlagErrorKind::InvalidFlag => {
                     ("Unknown regular expression flag.", 1499)
                 }
-                crate::scanner_impl::RegexFlagErrorKind::IncompatibleFlags => (
+                tsz_scanner::scanner_impl::RegexFlagErrorKind::IncompatibleFlags => (
                     "The Unicode 'u' flag and the Unicode Sets 'v' flag cannot be set simultaneously.",
                     1502,
                 ),
@@ -2532,7 +2532,7 @@ impl ParserState {
             self.current_token = current;
 
             if is_accessor_or_method {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 // Report TS1042 for the specific modifier
                 let modifier_name = match self.token() {
                     SyntaxKind::PublicKeyword => "'public'",
@@ -2574,7 +2574,7 @@ impl ParserState {
         if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
             || self.is_token(SyntaxKind::TemplateHead)
         {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Property assignment expected.",
                 diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
@@ -2617,7 +2617,7 @@ impl ParserState {
         // Check for optional property marker '?' - not allowed in object literals
         // TSC emits TS1162: "An object member cannot be declared optional."
         if self.is_token(SyntaxKind::QuestionToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An object member cannot be declared optional.",
                 diagnostic_codes::OBJECT_MEMBER_CANNOT_BE_OPTIONAL,
@@ -2637,7 +2637,7 @@ impl ParserState {
         } else {
             // Shorthand property - but certain property names require `:` syntax
             if requires_colon {
-                use crate::checker::types::diagnostics::diagnostic_codes;
+                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "':' expected.",
                     diagnostic_codes::TOKEN_EXPECTED,
@@ -2695,7 +2695,7 @@ impl ParserState {
         let name = self.parse_property_name();
 
         let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
                 diagnostic_codes::ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
@@ -2709,7 +2709,7 @@ impl ParserState {
         let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
             self.make_node_list(vec![])
         } else {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'get' accessor cannot have parameters.",
                 diagnostic_codes::GETTER_MUST_NOT_HAVE_PARAMETERS,
@@ -2767,7 +2767,7 @@ impl ParserState {
         let name = self.parse_property_name();
 
         let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
                 diagnostic_codes::ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
@@ -2788,7 +2788,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         if parameters.len() != 1 {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'set' accessor must have exactly one parameter.",
                 diagnostic_codes::SETTER_MUST_HAVE_EXACTLY_ONE_PARAMETER,
@@ -2796,7 +2796,7 @@ impl ParserState {
         }
 
         if self.parse_optional(SyntaxKind::ColonToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'set' accessor cannot have a return type annotation.",
                 diagnostic_codes::SETTER_CANNOT_HAVE_RETURN_TYPE,
@@ -2982,7 +2982,7 @@ impl ParserState {
                 let is_identifier_or_keyword = self.is_identifier_or_keyword();
 
                 if !is_identifier_or_keyword {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Property assignment expected.",
                         diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
