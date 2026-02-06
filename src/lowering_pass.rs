@@ -731,6 +731,10 @@ impl<'a> LoweringPass<'a> {
                 self.mark_async_helpers();
                 directives.push(TransformDirective::ES5AsyncFunction { function_node });
             } else if self.function_parameters_need_es5_transform(&func.parameters) {
+                // Mark rest helper if parameters have rest
+                if self.function_parameters_need_rest_helper(&func.parameters) {
+                    self.transforms.helpers_mut().rest = true;
+                }
                 directives.push(TransformDirective::ES5FunctionParameters { function_node });
             }
         }
@@ -890,6 +894,10 @@ impl<'a> LoweringPass<'a> {
         } else if self.ctx.target_es5
             && self.function_parameters_need_es5_transform(&func.parameters)
         {
+            // Mark rest helper if parameters have rest
+            if self.function_parameters_need_rest_helper(&func.parameters) {
+                self.transforms.helpers_mut().rest = true;
+            }
             TransformDirective::ES5FunctionParameters { function_node: idx }
         } else {
             TransformDirective::Identity
@@ -1168,6 +1176,10 @@ impl<'a> LoweringPass<'a> {
                     TransformDirective::ES5AsyncFunction { function_node: idx },
                 );
             } else if self.function_parameters_need_es5_transform(&func.parameters) {
+                // Mark rest helper if parameters have rest
+                if self.function_parameters_need_rest_helper(&func.parameters) {
+                    self.transforms.helpers_mut().rest = true;
+                }
                 self.transforms.insert(
                     idx,
                     TransformDirective::ES5FunctionParameters { function_node: idx },
@@ -1399,6 +1411,55 @@ impl<'a> LoweringPass<'a> {
             param.dot_dot_dot_token
                 || !param.initializer.is_none()
                 || self.is_binding_pattern_idx(param.name)
+        })
+    }
+
+    /// Check if function parameters have rest that needs __rest helper
+    fn function_parameters_need_rest_helper(&self, params: &NodeList) -> bool {
+        params.nodes.iter().any(|&param_idx| {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                return false;
+            };
+
+            // Rest parameters in function declarations need __rest helper
+            if param.dot_dot_dot_token {
+                return true;
+            }
+
+            // Check if binding patterns contain rest
+            if self.is_binding_pattern_idx(param.name) {
+                self.binding_pattern_has_rest(param.name)
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Check if a binding pattern has a rest element
+    fn binding_pattern_has_rest(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+            && node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return false;
+        };
+
+        let Some(pattern) = self.arena.get_binding_pattern(node) else {
+            return false;
+        };
+
+        pattern.elements.nodes.iter().any(|&elem_idx| {
+            self.arena
+                .get(elem_idx)
+                .and_then(|elem_node| self.arena.get_binding_element(elem_node))
+                .map(|elem| elem.dot_dot_dot_token)
+                .unwrap_or(false)
         })
     }
 
