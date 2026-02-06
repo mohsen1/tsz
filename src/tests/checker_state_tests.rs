@@ -5088,10 +5088,10 @@ fn test_readonly_index_signature_element_access_assignment_2540() {
     use crate::parser::ParserState;
 
     let source = r#"
-interface ReadonlyMap {
+interface MyReadonlyMap {
     readonly [key: string]: number;
 }
-let map: ReadonlyMap = { a: 1 };
+let map: MyReadonlyMap = { a: 1 };
 map["a"] = 2;
 "#;
 
