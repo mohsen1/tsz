@@ -1333,3 +1333,53 @@ Ask Gemini for guidance on fixing the architectural mismatch. Options:
 1. Make ClassES5Transformer NOT convert arrow functions (pass through as ASTRef)
 2. Make ClassES5Transformer use directives for arrow conversion
 3. Add class_alias support to ClassES5Transformer's convert_arrow_function
+
+### 2025-02-06 Session 25: Arrow Function ES5 Downleveling in Static Methods - COMPLETED ✅
+
+**Problem:**
+Arrow functions inside static class methods were being emitted as ES6 syntax instead of ES5.
+
+**Root Cause:**
+`ClassES5Transformer` was converting arrow functions using its own analysis instead of using directives from `LoweringPass`.
+
+**Solution Implemented (commit b5ca30f36):**
+
+1. **Made ES5ClassTransformer and AstToIr directive-aware:**
+   - Added `transforms: Option<TransformContext>` field to both structs
+   - Updated `convert_arrow_function` to check directive first before local analysis
+   - Set `current_class_alias` before converting body for `this` substitution
+
+2. **Added `this` substitution for static method context:**
+   - Updated `ThisKeyword` conversion to use `class_alias` when set
+   - Return `IRNode::Identifier(alias)` instead of `IRNode::This` in static methods
+
+3. **Added class alias declaration to static methods:**
+   - Created `get_class_alias_for_static_method()` to check if method needs alias
+   - Added `convert_block_body_with_alias()` to prepend `var _v = this;`
+   - Static methods with this-capturing arrows now declare the alias
+
+**Test Input:**
+```typescript
+class Vector {
+    static foo() {
+        const f = () => this;
+        return f();
+    }
+}
+```
+
+**Output (after):**
+```javascript
+Vector.foo = function () {
+    var _v = this;  // Class alias declared
+    var f = function () { return _v; };  // ES5 with alias
+    return f();
+};
+```
+
+**Files Modified:**
+- `src/transforms/class_es5_ir.rs` - Main implementation
+- `src/transforms/class_es5.rs` - Pass transforms to transformer
+
+**Next Steps:**
+Continue improving emit test pass rate. The IR/Directive architectural mismatch has been resolved for arrow functions in static class methods.
