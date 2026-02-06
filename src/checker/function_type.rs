@@ -741,6 +741,34 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Fast path for enum member value access (`E.Member`).
+        // This avoids the general property-access pipeline (accessibility checks,
+        // type environment classification, etc.) for a very common hot path.
+        if let Some(name_ident) = self.ctx.arena.get_identifier(name_node) {
+            let property_name = &name_ident.escaped_text;
+            if let Some(base_sym_id) = self.resolve_identifier_symbol(access.expression)
+                && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
+                && base_symbol.flags & symbol_flags::ENUM != 0
+                && let Some(exports) = base_symbol.exports.as_ref()
+                && let Some(member_sym_id) = exports.get(property_name)
+            {
+                let member_type =
+                    if let Some(&cached_member_type) = self.ctx.symbol_types.get(&member_sym_id) {
+                        cached_member_type
+                    } else {
+                        // Resolve the enum symbol once to prefill all member types.
+                        // This keeps subsequent `E.Member` accesses on the fast cache path.
+                        let _ = self.get_type_of_symbol(base_sym_id);
+                        self.ctx
+                            .symbol_types
+                            .get(&member_sym_id)
+                            .copied()
+                            .unwrap_or_else(|| self.get_type_of_symbol(member_sym_id))
+                    };
+                return self.apply_flow_narrowing(idx, member_type);
+            }
+        }
+
         // Get the type of the object
         let original_object_type = self.get_type_of_node(access.expression);
 
