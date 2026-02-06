@@ -558,6 +558,7 @@ impl<'a> Printer<'a> {
                 // Delegate to existing ClassES5Emitter
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_indent_level(self.writer.indent_level());
+                es5_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     if self.writer.has_source_map() {
                         es5_emitter
@@ -791,6 +792,7 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Class { class_node } => {
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_indent_level(self.writer.indent_level());
+                es5_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     if self.writer.has_source_map() {
                         es5_emitter
@@ -925,6 +927,7 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Class { class_node } => {
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_indent_level(self.writer.indent_level());
+                es5_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     if self.writer.has_source_map() {
                         es5_emitter
