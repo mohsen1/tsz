@@ -54,31 +54,37 @@ While working towards making all tests pass, you can use `--no-verify` to make a
 
 **Next Session - Gemini's Recommendations:**
 
-1. **Priority 1: `test_variadic_tuple_optional_tail_inference_no_ts2769`**
+1. **Priority 1: `test_variadic_tuple_optional_tail_inference_no_ts2769`** (IN PROGRESS)
    - Impact: High - Tier 1 type system feature
    - Component: Solver (pure WHAT problem)
    - Files: `src/solver/operations.rs` (specifically `tuple_rest_element_type` at line 1269)
-   - **Root Cause Identified:** `tuple_rest_element_type` uses fixed calculation:
-     ```rust
-     let suffix_start = rest_arg_count.saturating_sub(total_suffix_len);
-     ```
-     But it should use greedy matching like `rest_tuple_inference_target` does (lines 1420-1436).
-   - **The Bug:** For `f20(["foo", "bar"])` with params `[...T, number?]`:
-     - Current: suffix_start = 2 - 1 = 1, forces "bar" to match `number?` (fails)
-     - Correct: Greedy match finds `number?` can't match "bar", so consumes 0 args, T = ["foo", "bar"]
-   - **Fix Required:** Modify `tuple_rest_element_type` to:
-     1. Accept `arg_types: &[TypeId]` parameter (need to thread through call chain)
-     2. Implement greedy backward matching similar to `rest_tuple_inference_target`
-     3. Calculate dynamic `suffix_start` based on actual assignability checks
-   - **Complexity:** High - requires threading `arg_types` through `param_type_for_arg_index`
-     and all its callers
+   - **Root Cause Identified:** `tuple_rest_element_type` uses fixed calculation instead of greedy matching
+   - **Fix Required:** Thread `arg_types` through call chain to enable dynamic suffix_start calculation
+   - **Status:** Analysis complete, complex fix requiring significant refactoring
 
-2. **Priority 2: `test_class_namespace_merging`**
+2. **Priority 2: `test_class_namespace_merging`** (IN PROGRESS)
    - Impact: High - Fundamental TypeScript feature
-   - Component: Binder (WHO problem)
-   - Files: `src/binder/mod.rs`, `src/checker/namespace_checker.rs`
-   - Approach: Allow `CLASS` and `MODULE` flags to merge in `can_merge_flags`,
-     ensure namespace exports are attached to merged symbol
+   - Component: Binder (WHO) + Checker (WHAT/WHERE)
+   - Files: `src/binder/state.rs`, `src/checker/namespace_checker.rs`
+   - **Investigation Findings:**
+     - Binder correctly merges CLASS + MODULE flags (can_merge_flags allows it)
+     - Checker's `merge_namespace_exports_into_constructor` IS being called
+     - Exports ARE present (export_count=2: Track interface, create function)
+     - Merged type IS created with properties
+     - **Issue:** Despite merging, property access still fails with "Type 'Album' is not assignable to type 'Album'"
+   - **Hypothesis:** The merged type is created but may not be cached correctly, OR property access
+     resolution (`Album.Track`) may not be looking up the merged type correctly
+   - **Next Steps:**
+     1. Trace property access resolution to see if it uses the merged type
+     2. Verify type caching in `get_type_of_symbol` for merged symbols
+     3. Check if `compute_type_of_symbol` is called before or after namespace merging
+
+3. **Other Remaining Tests:**
+   - `test_ts2339_computed_name_this_missing_static` - Static context property access
+   - `test_variadic_tuple_optional_tail_inference_no_ts2769` - Tuple type inference with optional tails
+   - `compile_generic_utility_library_with_constraints` - CLI driver test
+   - 3x LSP scope cache performance tests
+   - LSP signature help test
 
 **Remember MANDATORY Two-Question Rule from AGENTS.md:**
 1. Ask Gemini (Flash) to validate approach before implementing
