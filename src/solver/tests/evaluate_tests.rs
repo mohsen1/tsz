@@ -42559,6 +42559,7 @@ fn test_template_literal_with_number_type() {
 #[test]
 fn test_template_literal_with_boolean_type() {
     // `is_${boolean}` - template literal with boolean placeholder
+    // TypeScript expands this to "is_true" | "is_false"
     let interner = TypeInterner::new();
 
     let template = interner.template_literal(vec![
@@ -42566,10 +42567,24 @@ fn test_template_literal_with_boolean_type() {
         TemplateSpan::Type(TypeId::BOOLEAN),
     ]);
 
-    // Verify template structure is created
+    // Should expand to union of two string literals
     match interner.lookup(template) {
-        Some(TypeKey::TemplateLiteral(_)) => (),
-        _ => panic!("Expected TemplateLiteral type"),
+        Some(TypeKey::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            assert_eq!(
+                members.len(),
+                2,
+                "Expected 2 members in union for boolean expansion"
+            );
+            // Both should be string literals
+            for member in members.iter() {
+                match interner.lookup(*member) {
+                    Some(TypeKey::Literal(LiteralValue::String(_))) => (),
+                    other => panic!("Expected string literal in union, got {:?}", other),
+                }
+            }
+        }
+        other => panic!("Expected Union type for `is_${{boolean}}`, got {:?}", other),
     }
 }
 
@@ -42805,19 +42820,36 @@ fn test_template_literal_bigint_type() {
 #[test]
 fn test_template_literal_null_undefined() {
     // `${null}` and `${undefined}` - special types in template
+    // TypeScript expands these to string literals "null" and "undefined"
     let interner = TypeInterner::new();
 
     let template_null = interner.template_literal(vec![TemplateSpan::Type(TypeId::NULL)]);
     let template_undefined = interner.template_literal(vec![TemplateSpan::Type(TypeId::UNDEFINED)]);
 
-    // Both should be valid templates
+    // Both should expand to string literals
     match interner.lookup(template_null) {
-        Some(TypeKey::TemplateLiteral(_)) => (),
-        _ => panic!("Expected TemplateLiteral type"),
+        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+            let s = interner.resolve_atom_ref(atom);
+            assert_eq!(s.as_ref(), "null", "Expected 'null' string literal");
+        }
+        _ => panic!(
+            "Expected string literal 'null' for `${{null}}`, got {:?}",
+            interner.lookup(template_null)
+        ),
     }
     match interner.lookup(template_undefined) {
-        Some(TypeKey::TemplateLiteral(_)) => (),
-        _ => panic!("Expected TemplateLiteral type"),
+        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+            let s = interner.resolve_atom_ref(atom);
+            assert_eq!(
+                s.as_ref(),
+                "undefined",
+                "Expected 'undefined' string literal"
+            );
+        }
+        _ => panic!(
+            "Expected string literal 'undefined' for `${{undefined}}`, got {:?}",
+            interner.lookup(template_undefined)
+        ),
     }
 }
 
@@ -46716,7 +46748,7 @@ fn test_non_distributive_conditional_template_union() {
 }
 
 /// Test template literal with boolean interpolation
-/// `flag${boolean}` should work
+/// `flag${boolean}` expands to "flagtrue" | "flagfalse"
 #[test]
 fn test_template_literal_with_boolean_interpolation() {
     let interner = TypeInterner::new();
@@ -46726,12 +46758,16 @@ fn test_template_literal_with_boolean_interpolation() {
         TemplateSpan::Type(TypeId::BOOLEAN),
     ]);
 
-    // Verify template was created
-    if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
-        let spans = interner.template_list(spans);
-        assert_eq!(spans.len(), 2);
-    } else {
-        panic!("Expected template literal");
+    // TypeScript expands boolean interpolation to union
+    match interner.lookup(template) {
+        Some(TypeKey::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            assert_eq!(members.len(), 2, "Expected 2 members for boolean expansion");
+        }
+        other => panic!(
+            "Expected Union type for `flag${{boolean}}`, got {:?}",
+            other
+        ),
     }
 }
 

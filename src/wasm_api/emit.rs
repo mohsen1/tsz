@@ -72,6 +72,9 @@ pub struct TranspileOptions {
     /// JSX mode
     #[serde(default)]
     pub jsx: Option<u8>,
+    /// Downlevel iteration for for-of loops
+    #[serde(default)]
+    pub downlevel_iteration: Option<bool>,
 }
 
 impl TranspileOptions {
@@ -110,6 +113,7 @@ impl TranspileOptions {
         };
 
         opts.remove_comments = self.remove_comments.unwrap_or(false);
+        opts.downlevel_iteration = self.downlevel_iteration.unwrap_or(false);
 
         opts
     }

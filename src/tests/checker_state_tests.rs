@@ -15,7 +15,7 @@ use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
-use crate::solver::{TypeId, TypeInterner, Visibility, types::TypeKey};
+use crate::solver::{TypeId, TypeInterner, Visibility, types::RelationCacheKey, types::TypeKey};
 use crate::test_fixtures::{TestContext, merge_shared_lib_symbols, setup_lib_contexts};
 
 // =============================================================================
@@ -1153,6 +1153,62 @@ fn test_checker_subtype_intrinsics() {
 }
 
 #[test]
+fn test_checker_assignability_relation_cache_hit() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    let before = checker.ctx.relation_cache.borrow().len();
+    assert_eq!(before, 0);
+
+    assert!(checker.is_assignable_to(TypeId::STRING, TypeId::ANY));
+    let after_first = checker.ctx.relation_cache.borrow().len();
+    assert_eq!(after_first, before + 1);
+
+    assert!(checker.is_assignable_to(TypeId::STRING, TypeId::ANY));
+    let after_second = checker.ctx.relation_cache.borrow().len();
+    assert_eq!(after_second, after_first, "second check should hit cache");
+
+    let key = RelationCacheKey::assignability(TypeId::STRING, TypeId::ANY, 0, 0);
+    assert_eq!(checker.ctx.relation_cache.borrow().get(&key), Some(&true));
+}
+
+#[test]
+fn test_checker_assignability_bivariant_cache_key_is_distinct() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    assert!(checker.is_assignable_to(TypeId::STRING, TypeId::ANY));
+    assert!(checker.is_assignable_to_bivariant(TypeId::STRING, TypeId::ANY));
+
+    // `any_mode` distinguishes regular (0) and bivariant (2) entries.
+    let regular_key = RelationCacheKey::assignability(TypeId::STRING, TypeId::ANY, 0, 0);
+    let bivariant_key = RelationCacheKey::assignability(TypeId::STRING, TypeId::ANY, 0, 2);
+    let cache = checker.ctx.relation_cache.borrow();
+    assert_eq!(cache.get(&regular_key), Some(&true));
+    assert_eq!(cache.get(&bivariant_key), Some(&true));
+    assert!(
+        cache.len() >= 2,
+        "expected at least two distinct cache entries for regular and bivariant checks"
+    );
+}
+
+#[test]
 fn test_checker_subtype_literals() {
     let arena = NodeArena::new();
     let binder = BinderState::new();
@@ -1207,6 +1263,30 @@ fn test_checker_subtype_unions() {
     // string | number is assignable to string | number | boolean
     let three_types = checker.get_union_type(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
     assert!(checker.is_assignable_to(string_or_number, three_types));
+}
+
+#[test]
+fn test_checker_assignability_direct_union_member_fast_path() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    let string_or_number = checker.get_union_type(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert!(checker.is_assignable_to(TypeId::STRING, string_or_number));
+    assert!(checker.is_assignable_to_bivariant(TypeId::STRING, string_or_number));
+
+    let regular_key = RelationCacheKey::assignability(TypeId::STRING, string_or_number, 0, 0);
+    let bivariant_key = RelationCacheKey::assignability(TypeId::STRING, string_or_number, 0, 2);
+    let cache = checker.ctx.relation_cache.borrow();
+    assert_eq!(cache.get(&regular_key), Some(&true));
+    assert_eq!(cache.get(&bivariant_key), Some(&true));
 }
 
 #[test]
@@ -10185,9 +10265,11 @@ fn test_checker_property_access_union_type() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
 
+    // Test union property access WITHOUT narrowing
+    // Using declare prevents CFA narrowing on initialization
     let source = r#"
 type U = { a: number } | { a: string };
-const obj: U = { a: 1 };
+declare const obj: U;
 const value = obj.a;
 "#;
 

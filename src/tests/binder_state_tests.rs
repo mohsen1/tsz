@@ -429,6 +429,149 @@ fn node_is_within(
     false
 }
 
+fn find_function_param_and_usage(
+    arena: &crate::parser::node::NodeArena,
+    binder: &BinderState,
+    function_name: &str,
+    param_name: &str,
+) -> (crate::parser::NodeIndex, Option<crate::binder::SymbolId>) {
+    use crate::parser::{NodeIndex, syntax_kind_ext};
+
+    let mut param_name_idx = NodeIndex::NONE;
+    let mut function_body = NodeIndex::NONE;
+    let mut param_symbol = None;
+
+    for i in 0..arena.len() {
+        let idx = NodeIndex(i as u32);
+        let Some(node) = arena.get(idx) else {
+            continue;
+        };
+        if node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+            continue;
+        }
+        let Some(func) = arena.get_function(node) else {
+            continue;
+        };
+        let name = arena
+            .get(func.name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str());
+        if name != Some(function_name) {
+            continue;
+        }
+
+        function_body = func.body;
+        for &param_idx in &func.parameters.nodes {
+            let Some(param_node) = arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = arena.get_parameter(param_node) else {
+                continue;
+            };
+            let param_text = arena
+                .get(param.name)
+                .and_then(|param_name_node| arena.get_identifier(param_name_node))
+                .map(|ident| ident.escaped_text.as_str());
+            if param_text == Some(param_name) {
+                param_name_idx = param.name;
+                param_symbol = binder.get_node_symbol(param.name);
+                break;
+            }
+        }
+        break;
+    }
+
+    assert!(
+        !param_name_idx.is_none(),
+        "Expected to find parameter '{param_name}' in function '{function_name}'"
+    );
+    assert!(
+        !function_body.is_none(),
+        "Expected function body for '{function_name}'"
+    );
+
+    let mut usage_idx = NodeIndex::NONE;
+    for i in 0..arena.len() {
+        let idx = NodeIndex(i as u32);
+        if idx == param_name_idx {
+            continue;
+        }
+        let Some(node) = arena.get(idx) else {
+            continue;
+        };
+        let Some(ident) = arena.get_identifier(node) else {
+            continue;
+        };
+        if ident.escaped_text != param_name {
+            continue;
+        }
+        if node_is_within(arena, idx, function_body) {
+            usage_idx = idx;
+            break;
+        }
+    }
+
+    assert!(
+        !usage_idx.is_none(),
+        "Expected usage of parameter '{param_name}' in function body"
+    );
+
+    (usage_idx, param_symbol)
+}
+
+#[test]
+fn test_resolve_identifier_caches_results_for_repeated_lookup() {
+    let source = r#"
+function f(x: number) {
+    return x + x;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert_eq!(binder.resolved_identifier_cache_len(), 0);
+
+    let (usage_idx, expected_symbol) = find_function_param_and_usage(arena, &binder, "f", "x");
+
+    let first = binder.resolve_identifier(arena, usage_idx);
+    assert_eq!(first, expected_symbol);
+    assert_eq!(binder.resolved_identifier_cache_len(), 1);
+
+    let second = binder.resolve_identifier(arena, usage_idx);
+    assert_eq!(second, expected_symbol);
+    assert_eq!(binder.resolved_identifier_cache_len(), 1);
+}
+
+#[test]
+fn test_resolve_identifier_cache_cleared_on_rebind() {
+    let source = r#"
+function f(x: number) {
+    return x;
+}
+"#;
+    let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let (usage_idx, _) = find_function_param_and_usage(arena, &binder, "f", "x");
+    let _ = binder.resolve_identifier(arena, usage_idx);
+    assert_eq!(binder.resolved_identifier_cache_len(), 1);
+
+    let mut parser2 = ParserState::new("b.ts".to_string(), "const y = 1;".to_string());
+    let root2 = parser2.parse_source_file();
+    binder.bind_source_file(parser2.get_arena(), root2);
+
+    assert_eq!(binder.resolved_identifier_cache_len(), 0);
+}
+
 #[test]
 fn test_binder_resolves_parameter_from_bound_state() {
     let source = r#"

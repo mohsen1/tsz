@@ -98,6 +98,7 @@ impl PrintOptions {
             module: self.module,
             remove_comments: self.remove_comments,
             single_quote: self.single_quote,
+            downlevel_iteration: false,
             ..Default::default()
         }
     }

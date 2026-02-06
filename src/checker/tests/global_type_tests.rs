@@ -182,6 +182,43 @@ fn test_console_emits_ts2304_without_lib() {
     );
 }
 
+#[test]
+fn test_merged_promise_value_uses_constructor_side_without_lib() {
+    let diagnostics = check_without_lib(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+type Awaited<T> = T;
+
+interface Promise<T> {
+  then<U>(f: (x: T) => U): Promise<U>;
+}
+interface PromiseConstructor {
+  resolve<T>(x: T): Promise<T>;
+  race<T>(xs: Promise<T>[]): Promise<T>;
+  new <T>(executor: (resolve: (v: T) => void, reject: (e: any) => void) => void): Promise<T>;
+}
+declare var Promise: PromiseConstructor;
+
+const p = Promise.resolve(1);
+const q = Promise.race([p]);
+const r = new Promise<number>((resolve) => resolve(1));
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected merged Promise value-side constructor/type access to succeed, got: {:?}",
+        diagnostics
+    );
+}
+
 // Tests with lib.d.ts loaded - these should NOT emit errors
 
 /// Helper function to create a checker WITH lib.d.ts and check source code.

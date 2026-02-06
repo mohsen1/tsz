@@ -804,13 +804,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.exact_optional_property_types = self.exact_optional_property_types;
         self.subtype.strict_null_checks = self.strict_null_checks;
         self.subtype.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
-        // In strict function type mode, use TopLevelOnly for any propagation
-        // This ensures `any` behaves like `unknown` at depth > 0 (e.g., in function parameters)
-        self.subtype.any_propagation = if strict_function_types {
-            crate::solver::subtype::AnyPropagationMode::TopLevelOnly
-        } else {
-            self.lawyer.any_propagation_mode()
-        };
+        // Any propagation is controlled by the Lawyer's allow_any_suppression flag
+        // Standard TypeScript allows any to propagate through arrays/objects regardless
+        // of strictFunctionTypes - it only affects function parameter variance
+        self.subtype.any_propagation = self.lawyer.any_propagation_mode();
         // In strict mode, disable method bivariance for soundness
         self.subtype.disable_method_bivariance = self.strict_subtype_checking;
     }
@@ -1307,70 +1304,28 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
         }
 
-        // BUG FIX: Handle number -> Union enum type (e.g., number -> E where E = E.A | E.B)
-        // Check if source is number and target is a numeric enum TYPE (not a member)
-        let is_source_number = source == TypeId::NUMBER
-            || matches!(
-                self.interner.lookup(source),
-                Some(TypeKey::Literal(LiteralValue::Number(_)))
-            );
+        // BUG FIX: String enums SHOULD be assignable to string (like numeric enums are to number)
+        // The union of string literal types that makes up a string enum is a subtype of string.
+        // Let Case 3 handle this by falling through to structural checking.
+        // Removed incorrect early return that rejected string enum -> string assignments.
 
-        if is_source_number {
-            // Check if target is an enum type (Union of enum members from same parent)
-            if self.subtype.resolver.is_enum_type(target, self.interner) {
-                // Target is a numeric enum TYPE, check if it's a numeric enum
-                // We need to get the DefId to check is_numeric_enum
-                if let Some(members) = visitor::union_list_id(self.interner, target) {
-                    // Get first member to extract parent enum DefId
-                    let member_list = self.interner.type_list(members);
-                    if let Some(&first_member) = member_list.first() {
-                        if let Some((def_id, _)) =
-                            visitor::enum_components(self.interner, first_member)
-                        {
-                            if self.subtype.resolver.is_numeric_enum(def_id) {
-                                // number -> numeric enum TYPE E is allowed
-                                return Some(true);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let source_def = self.get_enum_def_id(source);
+        let target_def = self.get_enum_def_id(target);
 
-        // BUG FIX: Handle String Enum -> string when source is a Union enum type
-        // Gap B: String enum opacity - SE (string enum) -> string should be rejected
-        // visitor::enum_components returns None for Unions, so we need to check separately
-        if target == TypeId::STRING {
-            // Check if source is a string enum type (Union of string enum members)
-            if self.subtype.resolver.is_enum_type(source, self.interner) {
-                // Source is an enum type, check if it's a string enum
-                if let Some(members) = visitor::union_list_id(self.interner, source) {
-                    let member_list = self.interner.type_list(members);
-                    if let Some(&first_member) = member_list.first() {
-                        if let Some((def_id, _)) =
-                            visitor::enum_components(self.interner, first_member)
-                        {
-                            if !self.subtype.resolver.is_numeric_enum(def_id) {
-                                // Source is a string enum -> string is NOT allowed
-                                return Some(false);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let source_enum = visitor::enum_components(self.interner, source);
-        let target_enum = visitor::enum_components(self.interner, target);
-
-        match (source_enum, target_enum) {
-            // Case 1: Both are enums (or enum members)
-            (Some((s_def, _)), Some((t_def, _))) => {
+        match (source_def, target_def) {
+            // Case 1: Both are enums (or enum members or Union-based enums)
+            (Some(s_def), Some(t_def)) => {
                 if s_def == t_def {
-                    // Same DefId: Check if they're the exact same member
-                    // If source == target, they're the same member (assignable)
-                    // If source != target, they're different members (not assignable)
-                    return Some(source == target);
+                    // Same DefId: Check if they're the exact same type
+                    // This handles both same-member (E.A -> E.A) and whole-enum (E -> E)
+                    // For whole enums represented as unions, we need structural check
+                    // For same members, they're assignable
+                    if source == target {
+                        return Some(true);
+                    }
+                    // Same enum DefId but different TypeIds -> could be member->member or union case
+                    // Fall through to structural check
+                    return None;
                 }
 
                 // Gap A: Different DefIds, but might be member -> parent relationship
@@ -1389,6 +1344,17 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                         // E.A -> E.B should fail even if they have the same value
                         Some(false)
                     }
+                    (Some(sp), None) => {
+                        // Source is a member, target doesn't have a parent (target is not a member)
+                        // Check if target is the parent enum type
+                        if t_def == sp {
+                            // Target is the parent enum of source member
+                            // Allow member to parent enum assignment (E.A -> E)
+                            return Some(true);
+                        }
+                        // Target is an enum type but not the parent
+                        Some(false)
+                    }
                     _ => {
                         // Different parents (or one/both are types, not members)
                         // Nominal mismatch: EnumA.X is not assignable to EnumB
@@ -1398,7 +1364,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
 
             // Case 2: Target is an enum, source is a primitive
-            (None, Some((t_def, _))) => {
+            (None, Some(t_def)) => {
                 // Check if target is a numeric enum
                 if self.subtype.resolver.is_numeric_enum(t_def) {
                     // Rule #7: Numeric enums allow number assignability
@@ -1438,20 +1404,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
 
             // Case 3: Source is an enum, target is a primitive
-            // Gap B: String Enum Opacity - String enums are NOT assignable to string
-            (Some((s_def, _)), None) => {
+            // String enums (both types and members) are assignable to string via structural checking
+            (Some(s_def), None) => {
                 // Check if source is a string enum
                 if !self.subtype.resolver.is_numeric_enum(s_def) {
                     // Source is a string enum
                     if target == TypeId::STRING {
-                        // String enum -> string is NOT allowed
-                        return Some(false);
-                    }
-                    // Check if source is a string literal
-                    if let Some(TypeKey::Literal(LiteralValue::String(_))) =
-                        self.interner.lookup(source)
-                    {
-                        return Some(false);
+                        // Both enum types (Union of members) and enum members (string literals)
+                        // are assignable to string. Fall through to structural checking.
+                        return None;
                     }
                 }
                 // Numeric enums and non-string targets: fall through to structural check
@@ -1479,35 +1440,59 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Returns Some(def_id) if the type is an Enum or a Union of Enum members from the same enum.
     /// Returns None if the type is not an enum or contains mixed enums.
     fn get_enum_def_id(&self, type_id: TypeId) -> Option<crate::solver::def::DefId> {
-        use crate::solver::visitor;
+        use crate::solver::{type_queries, visitor};
 
-        // Check direct Enum member
-        if let Some((def_id, _)) = visitor::enum_components(self.interner, type_id) {
-            return Some(def_id);
-        }
-
-        // Check Union of Enum members (handles Enum types represented as Unions)
-        if let Some(members) = visitor::union_list_id(self.interner, type_id) {
-            let members = self.interner.type_list(members);
-            let mut common_def: Option<crate::solver::def::DefId> = None;
-
-            for &member in members.iter() {
-                if let Some((def_id, _)) = visitor::enum_components(self.interner, member) {
-                    if let Some(existing) = common_def {
-                        if existing != def_id {
-                            // Mixed enums in union (e.g., E.A | F.B)
-                            return None;
-                        }
-                    } else {
-                        common_def = Some(def_id);
-                    }
+        // Resolve Lazy types first (handles imported/forward-declared enums)
+        let resolved =
+            if let Some(lazy_def_id) = type_queries::get_lazy_def_id(self.interner, type_id) {
+                // Try to resolve the Lazy type
+                if let Some(resolved_type) = self
+                    .subtype
+                    .resolver
+                    .resolve_lazy(lazy_def_id, self.interner)
+                {
+                    // Recursively check the resolved type
+                    return self.get_enum_def_id(resolved_type);
                 } else {
-                    // Union contains non-enum member
+                    // Lazy type couldn't be resolved yet, return None
                     return None;
                 }
+            } else {
+                type_id
+            };
+
+        // 1. Check for Intrinsic Primitives first (using visitor, not TypeId constants)
+        // This filters out intrinsic types like string, number, boolean which are stored
+        // as TypeKey::Enum for definition store purposes but are NOT user enums
+        if visitor::intrinsic_kind(self.interner, resolved).is_some() {
+            return None;
+        }
+
+        // 2. Check direct Enum member
+        if let Some((def_id, _inner)) = visitor::enum_components(self.interner, resolved) {
+            // Use the new is_user_enum_def method to check if this is a user-defined enum
+            // This properly filters out intrinsic types from lib.d.ts
+            if self.subtype.resolver.is_user_enum_def(def_id) {
+                return Some(def_id);
+            }
+            // Not a user-defined enum (intrinsic type or type alias)
+            return None;
+        }
+
+        // 3. Check Union of Enum members (handles Enum types represented as Unions)
+        if let Some(members) = visitor::union_list_id(self.interner, resolved) {
+            let members = self.interner.type_list(members);
+            if members.is_empty() {
+                return None;
             }
 
-            return common_def;
+            let first_def = self.get_enum_def_id(members[0])?;
+            for &member in members.iter().skip(1) {
+                if self.get_enum_def_id(member) != Some(first_def) {
+                    return None; // Mixed union or non-enum members
+                }
+            }
+            return Some(first_def);
         }
 
         None

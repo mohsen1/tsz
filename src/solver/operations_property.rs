@@ -435,6 +435,18 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         Some(self.resolve_string_property(prop_name, prop_atom))
     }
 
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let prop_name = self.current_prop_name.borrow();
+        let prop_atom_opt = self.current_prop_atom.borrow();
+
+        let prop_name = match prop_name.as_deref() {
+            Some(name) => name,
+            None => return None,
+        };
+
+        self.visit_union_impl(list_id, prop_name, prop_atom_opt.as_ref().copied())
+    }
+
     fn default_output() -> Self::Output {
         None
     }
@@ -582,6 +594,178 @@ impl<'a> PropertyAccessEvaluator<'a> {
             None => self.interner().intern_string(prop_name),
         };
         Some(self.resolve_array_property(obj_type, prop_name, prop_atom))
+    }
+
+    fn visit_union_impl(
+        &self,
+        list_id: u32,
+        prop_name: &str,
+        prop_atom: Option<Atom>,
+    ) -> Option<PropertyAccessResult> {
+        use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::solver::types::TypeKey;
+
+        let members = self
+            .interner()
+            .type_list(crate::solver::types::TypeListId(list_id));
+
+        // Fast-path: if ANY member is any, result is any
+        if members.contains(&TypeId::ANY) {
+            return Some(PropertyAccessResult::Success {
+                type_id: TypeId::ANY,
+                from_index_signature: false,
+            });
+        }
+
+        // Fast-path: if ANY member is error, result is error
+        if members.contains(&TypeId::ERROR) {
+            return Some(PropertyAccessResult::Success {
+                type_id: TypeId::ERROR,
+                from_index_signature: false,
+            });
+        }
+
+        // Filter out UNKNOWN members - they shouldn't cause the entire union to be unknown
+        // Only return IsUnknown if ALL members are UNKNOWN
+        let non_unknown_members: Vec<_> = members
+            .iter()
+            .filter(|&&t| t != TypeId::UNKNOWN)
+            .copied()
+            .collect();
+
+        if non_unknown_members.is_empty() {
+            // All members are UNKNOWN
+            return Some(PropertyAccessResult::IsUnknown);
+        }
+
+        // Reconstruct obj_type for error messages
+        let obj_type = self
+            .interner()
+            .intern(TypeKey::Union(crate::solver::types::TypeListId(list_id)));
+
+        let prop_atom = match prop_atom {
+            Some(atom) => atom,
+            None => self.interner().intern_string(prop_name),
+        };
+
+        // Property access on union: partition into nullable and non-nullable members
+        let mut valid_results = Vec::new();
+        let mut nullable_causes = Vec::new();
+        let mut any_from_index = false; // Track if any member used index signature
+
+        for &member in &non_unknown_members {
+            // Check for null/undefined directly
+            if member == TypeId::NULL || member == TypeId::UNDEFINED || member == TypeId::VOID {
+                let cause = if member == TypeId::VOID {
+                    TypeId::UNDEFINED
+                } else {
+                    member
+                };
+                nullable_causes.push(cause);
+                continue;
+            }
+
+            match self.resolve_property_access_inner(member, prop_name, Some(prop_atom)) {
+                PropertyAccessResult::Success {
+                    type_id,
+                    from_index_signature,
+                } => {
+                    valid_results.push(type_id);
+                    if from_index_signature {
+                        any_from_index = true; // Propagate: if ANY member uses index, flag it
+                    }
+                }
+                PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type,
+                    cause,
+                } => {
+                    if let Some(t) = property_type {
+                        valid_results.push(t);
+                    }
+                    nullable_causes.push(cause);
+                }
+                // PropertyNotFound: if ANY member is missing the property, the property does not exist on the Union
+                PropertyAccessResult::PropertyNotFound { .. } => {
+                    return Some(PropertyAccessResult::PropertyNotFound {
+                        type_id: obj_type,
+                        property_name: prop_atom,
+                    });
+                }
+                // IsUnknown: if any member is unknown, we cannot safely access the property
+                PropertyAccessResult::IsUnknown => {
+                    return Some(PropertyAccessResult::IsUnknown);
+                }
+            }
+        }
+
+        // If no non-nullable members had the property, it's a PropertyNotFound error
+        if valid_results.is_empty() && nullable_causes.is_empty() {
+            // Before giving up, check union-level index signatures
+            let resolver = IndexSignatureResolver::new(self.interner());
+
+            if resolver.has_index_signature(obj_type, IndexKind::String) {
+                if let Some(value_type) = resolver.resolve_string_index(obj_type) {
+                    return Some(PropertyAccessResult::Success {
+                        type_id: self.add_undefined_if_unchecked(value_type),
+                        from_index_signature: true,
+                    });
+                }
+            }
+
+            if resolver.is_numeric_index_name(prop_name) {
+                if let Some(value_type) = resolver.resolve_number_index(obj_type) {
+                    return Some(PropertyAccessResult::Success {
+                        type_id: self.add_undefined_if_unchecked(value_type),
+                        from_index_signature: true,
+                    });
+                }
+            }
+
+            return Some(PropertyAccessResult::PropertyNotFound {
+                type_id: obj_type,
+                property_name: prop_atom,
+            });
+        }
+
+        // If there are nullable causes, return PossiblyNullOrUndefined
+        if !nullable_causes.is_empty() {
+            let cause = if nullable_causes.len() == 1 {
+                nullable_causes[0]
+            } else {
+                self.interner().union(nullable_causes)
+            };
+
+            let mut property_type = if valid_results.is_empty() {
+                None
+            } else if valid_results.len() == 1 {
+                Some(valid_results[0])
+            } else {
+                Some(self.interner().union(valid_results))
+            };
+
+            if any_from_index
+                && self.no_unchecked_indexed_access
+                && let Some(t) = property_type
+            {
+                property_type = Some(self.add_undefined_if_unchecked(t));
+            }
+
+            return Some(PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type,
+                cause,
+            });
+        }
+
+        let mut type_id = self.interner().union(valid_results);
+        if any_from_index && self.no_unchecked_indexed_access {
+            type_id = self.add_undefined_if_unchecked(type_id);
+        }
+
+        // Union of all result types
+        Some(PropertyAccessResult::Success {
+            type_id,
+            from_index_signature: any_from_index, // Contagious across union members
+        })
     }
 }
 
@@ -991,6 +1175,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // Inline visitor logic for Tuple
                     self.visit_array_impl(obj_type, prop_name, prop_atom)
                 }
+                TypeKey::Union(list_id) => {
+                    // Inline visitor logic for Union - calls visit_union implementation
+                    self.visit_union_impl(list_id.0, prop_name, prop_atom)
+                }
                 // Note: TypeKey::Application is handled in the fallback section with proper type substitution
                 _ => None, // Not yet migrated to visitor
             };
@@ -1133,158 +1321,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 self.resolve_function_property(obj_type, prop_name, prop_atom)
             }
 
-            TypeKey::Union(members) => {
-                let members = self.interner().type_list(members);
-                if members.contains(&TypeId::ANY) {
-                    return PropertyAccessResult::Success {
-                        type_id: TypeId::ANY,
-                        from_index_signature: false,
-                    };
-                }
-                if members.contains(&TypeId::ERROR) {
-                    return PropertyAccessResult::Success {
-                        type_id: TypeId::ERROR,
-                        from_index_signature: false,
-                    };
-                }
-                // Filter out UNKNOWN members - they shouldn't cause the entire union to be unknown
-                // Only return IsUnknown if ALL members are UNKNOWN
-                let non_unknown_members: Vec<_> = members
-                    .iter()
-                    .filter(|&&t| t != TypeId::UNKNOWN)
-                    .copied()
-                    .collect();
-                if non_unknown_members.is_empty() {
-                    // All members are UNKNOWN
-                    return PropertyAccessResult::IsUnknown;
-                }
-                // Continue with non-UNKNOWN members
-                // Property access on union: partition into nullable and non-nullable members
-                let prop_atom =
-                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                let mut valid_results = Vec::new();
-                let mut nullable_causes = Vec::new();
-                let mut any_from_index = false; // Track if any member used index signature
-
-                for &member in non_unknown_members.iter() {
-                    // Check for null/undefined directly
-                    if member == TypeId::NULL
-                        || member == TypeId::UNDEFINED
-                        || member == TypeId::VOID
-                    {
-                        let cause = if member == TypeId::VOID {
-                            TypeId::UNDEFINED
-                        } else {
-                            member
-                        };
-                        nullable_causes.push(cause);
-                        continue;
-                    }
-
-                    match self.resolve_property_access_inner(member, prop_name, Some(prop_atom)) {
-                        PropertyAccessResult::Success {
-                            type_id,
-                            from_index_signature,
-                        } => {
-                            valid_results.push(type_id);
-                            if from_index_signature {
-                                any_from_index = true; // Propagate: if ANY member uses index, flag it
-                            }
-                        }
-                        PropertyAccessResult::PossiblyNullOrUndefined {
-                            property_type,
-                            cause,
-                        } => {
-                            if let Some(t) = property_type {
-                                valid_results.push(t);
-                            }
-                            nullable_causes.push(cause);
-                        }
-                        // PropertyNotFound: if ANY member is missing the property, the property does not exist on the Union
-                        PropertyAccessResult::PropertyNotFound { .. } => {
-                            return PropertyAccessResult::PropertyNotFound {
-                                type_id: obj_type,
-                                property_name: prop_atom,
-                            };
-                        }
-                        // IsUnknown: if any member is unknown, we cannot safely access the property
-                        PropertyAccessResult::IsUnknown => {
-                            return PropertyAccessResult::IsUnknown;
-                        }
-                    }
-                }
-
-                // If no non-nullable members had the property, it's a PropertyNotFound error
-                if valid_results.is_empty() && nullable_causes.is_empty() {
-                    // Before giving up, check union-level index signatures
-                    use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
-                    let resolver = IndexSignatureResolver::new(self.interner());
-
-                    if resolver.has_index_signature(obj_type, IndexKind::String) {
-                        if let Some(value_type) = resolver.resolve_string_index(obj_type) {
-                            return PropertyAccessResult::Success {
-                                type_id: self.add_undefined_if_unchecked(value_type),
-                                from_index_signature: true,
-                            };
-                        }
-                    }
-
-                    if resolver.is_numeric_index_name(prop_name) {
-                        if let Some(value_type) = resolver.resolve_number_index(obj_type) {
-                            return PropertyAccessResult::Success {
-                                type_id: self.add_undefined_if_unchecked(value_type),
-                                from_index_signature: true,
-                            };
-                        }
-                    }
-
-                    return PropertyAccessResult::PropertyNotFound {
-                        type_id: obj_type,
-                        property_name: prop_atom,
-                    };
-                }
-
-                // If there are nullable causes, return PossiblyNullOrUndefined
-                if !nullable_causes.is_empty() {
-                    let cause = if nullable_causes.len() == 1 {
-                        nullable_causes[0]
-                    } else {
-                        self.interner().union(nullable_causes)
-                    };
-
-                    let mut property_type = if valid_results.is_empty() {
-                        None
-                    } else if valid_results.len() == 1 {
-                        Some(valid_results[0])
-                    } else {
-                        Some(self.interner().union(valid_results))
-                    };
-
-                    if any_from_index
-                        && self.no_unchecked_indexed_access
-                        && let Some(t) = property_type
-                    {
-                        property_type = Some(self.add_undefined_if_unchecked(t));
-                    }
-
-                    return PropertyAccessResult::PossiblyNullOrUndefined {
-                        property_type,
-                        cause,
-                    };
-                }
-
-                let mut type_id = self.interner().union(valid_results);
-                if any_from_index && self.no_unchecked_indexed_access {
-                    type_id = self.add_undefined_if_unchecked(type_id);
-                }
-
-                // Union of all result types
-                PropertyAccessResult::Success {
-                    type_id,
-                    from_index_signature: any_from_index, // Contagious across union members
-                }
-            }
-
+            // TypeKey::Union - migrated to visitor pattern (see visit_union_impl)
+            // This should never be reached since visitor handles it above
             TypeKey::Intersection(members) => {
                 let members = self.interner().type_list(members);
                 let prop_atom =

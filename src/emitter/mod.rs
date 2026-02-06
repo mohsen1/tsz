@@ -82,6 +82,8 @@ pub struct PrinterOptions {
     pub module: ModuleKind,
     /// New line character
     pub new_line: NewLineKind,
+    /// Downlevel iteration (for-of with full iterator protocol)
+    pub downlevel_iteration: bool,
 }
 
 impl Default for PrinterOptions {
@@ -94,6 +96,7 @@ impl Default for PrinterOptions {
             no_emit_helpers: false,
             module: ModuleKind::None,
             new_line: NewLineKind::LineFeed,
+            downlevel_iteration: false,
         }
     }
 }

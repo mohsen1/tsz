@@ -212,6 +212,41 @@ switch (x.kind) {
 }
 
 #[test]
+fn test_switch_default_does_not_narrow_unrelated_reference() {
+    let source = r#"
+let x: "a" | "b";
+let y: string | number;
+switch (x) {
+  case "a":
+    y;
+    break;
+  default:
+    y;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let switch_idx = get_switch_statement(arena, root, 2);
+    let ident_default = get_switch_clause_expression(arena, switch_idx, 1);
+
+    let string_or_number = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let flow_default = binder
+        .get_node_flow(ident_default)
+        .expect("flow for default");
+    let narrowed_default = analyzer.get_flow_type(ident_default, string_or_number, flow_default);
+    assert_eq!(narrowed_default, string_or_number);
+}
+
+#[test]
 #[ignore = "TODO: instanceof narrowing with union types - pre-existing issue"]
 fn test_instanceof_narrows_to_object_union_members() {
     let source = r#"

@@ -878,6 +878,21 @@ impl<'a> CheckerState<'a> {
                 if let Some(def_id) = def_id {
                     self.maybe_register_numeric_enum(&mut env, sym_id, def_id);
                 }
+
+                // Register enum parent relationships for Task #17 (Enum Type Resolution)
+                if let Some(def_id) = def_id {
+                    if let Some(symbol) = self.ctx.binder.symbols.get(sym_id) {
+                        use crate::binder::symbol_flags;
+                        if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+                            let parent_sym_id = symbol.parent;
+                            if let Some(&parent_def_id) =
+                                self.ctx.symbol_to_def.borrow().get(&parent_sym_id)
+                            {
+                                env.register_enum_parent(def_id, parent_def_id);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1088,6 +1103,15 @@ impl<'a> CheckerState<'a> {
         // Get the member's DefId for nominal typing
         let member_def_id = self.ctx.get_or_create_def_id(sym_id);
 
+        // CRITICAL: Also ensure the parent enum has a DefId
+        // This is needed for get_enum_parent_def_id to work when checking
+        // member-to-parent assignability (e.g., E.A -> E)
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            let parent_sym_id = symbol.parent;
+            // Call get_or_create_def_id for the parent to populate symbol_to_def mapping
+            self.ctx.get_or_create_def_id(parent_sym_id);
+        }
+
         // Get the literal type from the initializer
         let literal_type = self.enum_member_type_from_decl(value_decl);
 
@@ -1164,7 +1188,6 @@ impl<'a> CheckerState<'a> {
         // enum-namespace merges have both ENUM and NAMESPACE_MODULE flags. We want to
         // handle them as enums (returning TypeKey::Enum) rather than as namespaces (returning Lazy).
         if flags & symbol_flags::ENUM != 0 {
-            use crate::scanner::SyntaxKind;
             use crate::solver::TypeKey;
 
             // Create DefId first
@@ -1177,58 +1200,53 @@ impl<'a> CheckerState<'a> {
                 declarations.first().copied().unwrap_or(NodeIndex::NONE)
             };
 
-            // Compute the union type of all enum member types
+            // Compute the union type of all enum member types.
+            // Also pre-cache each member symbol type so `E.Member` property access
+            // can hit `ctx.symbol_types` directly instead of running full symbol
+            // resolution for each distinct member.
             let mut member_types = Vec::new();
             if !decl_idx.is_none() {
                 if let Some(node) = self.ctx.arena.get(decl_idx) {
                     if let Some(enum_decl) = self.ctx.arena.get_enum(node) {
+                        let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
+                        member_types.reserve(enum_decl.members.nodes.len());
                         for &member_idx in &enum_decl.members.nodes {
                             if let Some(member_node) = self.ctx.arena.get(member_idx) {
                                 if let Some(member) = self.ctx.arena.get_enum_member(member_node) {
-                                    // Get the type of this enum member
-                                    if !member.initializer.is_none() {
-                                        if let Some(init_node) =
-                                            self.ctx.arena.get(member.initializer)
-                                        {
-                                            match init_node.kind {
-                                                k if k == SyntaxKind::StringLiteral as u16 => {
-                                                    // String literal member
-                                                    if let Some(lit) =
-                                                        self.ctx.arena.get_literal(init_node)
-                                                    {
-                                                        let type_id = self
-                                                            .ctx
-                                                            .types
-                                                            .literal_string(&lit.text);
-                                                        member_types.push(type_id);
-                                                    }
-                                                }
-                                                k if k == SyntaxKind::NumericLiteral as u16 => {
-                                                    // Numeric literal member
-                                                    if let Some(lit) =
-                                                        self.ctx.arena.get_literal(init_node)
-                                                    {
-                                                        let text = &lit.text;
-                                                        // Try to parse as integer first for literal type
-                                                        let parsed: Result<i64, _> = text.parse();
-                                                        if let Ok(n) = parsed {
-                                                            let type_id = self
-                                                                .ctx
-                                                                .types
-                                                                .literal_number(n as f64);
-                                                            member_types.push(type_id);
-                                                        } else {
-                                                            // Float or parse error - just use NUMBER
-                                                            member_types.push(TypeId::NUMBER);
-                                                        }
-                                                    }
-                                                }
-                                                _ => {}
+                                    let member_type = self.enum_member_type_from_decl(member_idx);
+                                    if member_type != TypeId::ERROR {
+                                        member_types.push(member_type);
+                                    }
+
+                                    // Pre-cache member symbol types.
+                                    // This avoids per-member `get_type_of_symbol` overhead in
+                                    // hot paths such as large enum property-access switches.
+                                    if let Some(member_name) = self.get_property_name(member.name)
+                                        && let Some(member_sym_id) = self
+                                            .ctx
+                                            .binder
+                                            .get_symbol(sym_id)
+                                            .and_then(|enum_symbol| enum_symbol.exports.as_ref())
+                                            .and_then(|exports| exports.get(&member_name))
+                                    {
+                                        let member_def_id =
+                                            self.ctx.get_or_create_def_id(member_sym_id);
+                                        let member_enum_type = self
+                                            .ctx
+                                            .types
+                                            .intern(TypeKey::Enum(member_def_id, member_type));
+                                        self.ctx
+                                            .symbol_types
+                                            .insert(member_sym_id, member_enum_type);
+                                        if let Some(env) = maybe_env.as_mut() {
+                                            env.insert(
+                                                crate::solver::SymbolRef(member_sym_id.0),
+                                                member_enum_type,
+                                            );
+                                            if member_def_id != crate::solver::DefId::INVALID {
+                                                env.insert_def(member_def_id, member_enum_type);
                                             }
                                         }
-                                    } else {
-                                        // Auto-incremented numeric member
-                                        member_types.push(TypeId::NUMBER);
                                     }
                                 }
                             }
@@ -1272,8 +1290,16 @@ impl<'a> CheckerState<'a> {
             if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
                 // Create an object type that includes both enum members and namespace exports
                 let merged_type = self.merge_namespace_exports_into_object(sym_id, enum_type);
+                // Register DefId <-> SymbolId mapping for enum type resolution
+                self.ctx
+                    .register_resolved_type(sym_id, merged_type, Vec::new());
                 return (merged_type, Vec::new());
             }
+
+            // Register DefId <-> SymbolId mapping for enum type resolution
+            // This enables get_enum_def_id to distinguish user enums from intrinsic types
+            self.ctx
+                .register_resolved_type(sym_id, enum_type, Vec::new());
 
             return (enum_type, Vec::new());
         }
@@ -1350,6 +1376,21 @@ impl<'a> CheckerState<'a> {
 
         // Interface - return interface type with call signatures
         if flags & symbol_flags::INTERFACE != 0 {
+            // Merged lib symbols can live in the main binder but still carry
+            // declaration nodes from other arenas. Lowering those declarations
+            // against the current arena produces incomplete interface shapes
+            // (e.g. PromiseConstructor without resolve/race/new).
+            let has_out_of_arena_decl = declarations
+                .iter()
+                .any(|&decl_idx| self.ctx.arena.get(decl_idx).is_none());
+            if has_out_of_arena_decl
+                && !self.ctx.lib_contexts.is_empty()
+                && escaped_name.ends_with("Constructor")
+                && let Some(lib_type) = self.resolve_lib_type_by_name(&escaped_name)
+            {
+                return (lib_type, Vec::new());
+            }
+
             if !declarations.is_empty() {
                 // Get type parameters from the first interface declaration
                 let mut params = Vec::new();

@@ -142,11 +142,11 @@ const x: E = "a";  // ERROR: string literal to string enum
 }
 
 #[test]
-fn test_string_enum_not_to_string() {
-    // String enum should NOT be assignable to string
+fn test_string_enum_to_string() {
+    // String enum SHOULD be assignable to string (TS behavior)
     let source = r#"
 enum E { A = "a" }
-const x: string = E.A;  // ERROR: string enum to string
+const x: string = E.A;  // OK: string enum to string
 "#;
-    test_enum_assignability(source, 1);
+    test_enum_assignability(source, 0);
 }

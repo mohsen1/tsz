@@ -333,6 +333,14 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Expose the underlying TypeDatabase view for legacy entry points.
     fn as_type_database(&self) -> &dyn TypeDatabase;
 
+    /// Register the canonical `Array<T>` base type used by property access resolution.
+    ///
+    /// Some call paths resolve properties through a `TypeInterner`-backed database,
+    /// while others use a `TypeEnvironment`-backed resolver. Implementations should
+    /// store this in whichever backing stores they use so `T[]` methods/properties
+    /// (e.g. `push`, `length`) resolve consistently.
+    fn register_array_base_type(&self, _type_id: TypeId, _type_params: Vec<TypeParamInfo>) {}
+
     fn evaluate_conditional(&self, cond: &ConditionalType) -> TypeId {
         crate::solver::evaluate::evaluate_conditional(self.as_type_database(), cond)
     }
@@ -566,6 +574,10 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
 impl QueryDatabase for TypeInterner {
     fn as_type_database(&self) -> &dyn TypeDatabase {
         self
+    }
+
+    fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
+        self.set_array_base_type(type_id, type_params);
     }
 
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
@@ -1101,13 +1113,21 @@ impl TypeResolver for QueryCache<'_> {
     }
 
     fn get_array_base_type(&self) -> Option<TypeId> {
-        None
+        self.interner.get_array_base_type()
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        self.interner.get_array_base_type_params()
     }
 }
 
 impl QueryDatabase for QueryCache<'_> {
     fn as_type_database(&self) -> &dyn TypeDatabase {
         self
+    }
+
+    fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
+        self.interner.set_array_base_type(type_id, type_params);
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
@@ -1615,6 +1635,15 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         self
     }
 
+    fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
+        self.query_cache
+            .interner
+            .set_array_base_type(type_id, type_params.clone());
+        self.type_env
+            .borrow_mut()
+            .set_array_base_type(type_id, type_params);
+    }
+
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
         self.evaluate_type_with_options(type_id, self.query_cache.no_unchecked_indexed_access())
     }
@@ -1637,9 +1666,10 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
             return result;
         }
 
-        // CRITICAL: Use TypeEvaluator with SELF as resolver (since we implemented TypeResolver)
+        // CRITICAL: Use TypeEvaluator with type_env as resolver
         // This ensures Lazy types are resolved using the TypeEnvironment
-        let mut evaluator = TypeEvaluator::with_resolver(self.as_type_database(), self);
+        let type_env = self.type_env.borrow();
+        let mut evaluator = TypeEvaluator::with_resolver(self.as_type_database(), &*type_env);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
 
         let result = evaluator.evaluate(type_id);
@@ -1674,11 +1704,25 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
     }
 
     fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
-        self.query_cache.evaluate_mapped(mapped)
+        // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution
+        // This fixes the NoopResolver issue that prevents type alias resolution in mapped types
+        let type_env = self.type_env.borrow();
+        let mut evaluator = crate::solver::evaluate::TypeEvaluator::with_resolver(
+            self.as_type_database(),
+            &*type_env,
+        );
+        evaluator.evaluate_mapped(mapped)
     }
 
     fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
-        self.query_cache.evaluate_keyof(operand)
+        // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution
+        // This fixes the NoopResolver issue that prevents type alias resolution in keyof
+        let type_env = self.type_env.borrow();
+        let mut evaluator = crate::solver::evaluate::TypeEvaluator::with_resolver(
+            self.as_type_database(),
+            &*type_env,
+        );
+        evaluator.evaluate_keyof(operand)
     }
 
     fn resolve_property_access(
