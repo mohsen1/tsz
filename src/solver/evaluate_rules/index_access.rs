@@ -204,7 +204,28 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 return Some(result);
             }
         }
-        None
+        // If no member had the property, return UNDEFINED (not None which would defer evaluation)
+        Some(TypeId::UNDEFINED)
+    }
+
+    fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+        // CRITICAL: Classes and interfaces are represented as Lazy types.
+        // We must resolve them and recurse to find properties.
+        let def_id = crate::solver::def::DefId(def_id);
+        let resolved = self
+            .evaluator
+            .resolver()
+            .resolve_lazy(def_id, self.evaluator.interner())?;
+
+        // If it resolved to the same type (cycle/unresolvable), defer evaluation
+        if resolved == self.object_type {
+            return None;
+        }
+
+        Some(
+            self.evaluator
+                .recurse_index_access(resolved, self.index_type),
+        )
     }
 
     fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
