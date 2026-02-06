@@ -194,6 +194,19 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         Some(self.evaluator.interner().union(results))
     }
 
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        // For intersection types, try each member and return the first successful result.
+        // This handles cases where a class is intersected with a mixin or interface.
+        let members = self.evaluator.interner().type_list(TypeListId(list_id));
+        for &member in members.iter() {
+            let result = self.evaluator.recurse_index_access(member, self.index_type);
+            if result != TypeId::UNDEFINED {
+                return Some(result);
+            }
+        }
+        None
+    }
+
     fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
         Some(
             self.evaluator
