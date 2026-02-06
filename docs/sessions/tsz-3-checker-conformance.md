@@ -121,17 +121,30 @@ type b3 = (name: string, mixed: any, ...args: any[]) => any
 type test3 = a3 extends b3 ? "y" : "n"  // tsc: "y", tsz: "n"
 ```
 
-**Investigation Plan** (per Gemini guidance):
-1. Reproduce with tracing: `TSZ_LOG="wasm::solver::subtype=trace"`
-2. Focus on **Lawyer layer** (`src/solver/lawyer.rs`) - not Checker
-3. Check **Variadic Tuple Subtyping** - rest params may be represented as tuples
-4. Audit `any` propagation rules during function parameter comparison
-5. Use Two-Question Rule before implementing fix
+**Status**: Investigation in progress
+- The `extra_required_accepts_undefined` logic appears correct
+- Need deeper investigation with tracing
+- Disk space constraint requiring careful approach
 
-**Files**:
-- `src/solver/subtype_rules/functions.rs` - function subtyping logic
-- `src/solver/lawyer.rs` - any propagation rules
-- `src/solver/subtype.rs` - tuple assignability
+**Alternative Quick Win Identified**: Union Property Access
+- TS2339 (48 extra errors) - union type property access
+- Already has fix branch: `fix/ts2339-union-property-access`
+- Could merge for quick conformance improvement
+
+## Session Summary
+
+**Completed**:
+- Union of constructors bug (commit d44a93ddd)
+- Session tracking and documentation
+
+**Blocked On**:
+- Rest parameter bug requires extensive debugging
+- Disk space constraints affecting rebuild time
+
+**Options**:
+1. Continue rest parameter investigation (high value, time-intensive)
+2. Merge union property access branch (quick win)
+3. Find other simpler bug to fix
 
 ## Next Steps
 
