@@ -437,8 +437,9 @@ When a task is marked "ALREADY DONE", it means:
 
 **Remaining Tasks for tsz-1:**
 1. **Task B**: Audit `evaluate.rs` for Canonicalization
-2. **Task C**: Visitor Pattern for evaluation ✅ COMPLETE
+2. ~~**Task C**: Visitor Pattern for evaluation~~ ✅ COMPLETE
 3. ~~**Task A (continued)**: Fix `QueryDatabase` trait to accept flags~~ ✅ COMPLETE
+4. ~~**Task #46**: Instantiation Canonicalization~~ ✅ COMPLETE
 
 ---
 
@@ -480,4 +481,38 @@ Implemented visitor pattern in `src/solver/evaluate.rs`:
 **Next Steps:**
 - Task B: Audit `evaluate.rs` for canonicalization opportunities
 - Continue with remaining tsz-1 session work
+
+---
+
+## Session Update (2026-02-06 - Part 4)
+
+**Completed Work:**
+- ✅ Task A (RelationCacheKey Audit) - COMPLETE (commit: f4285a73b)
+- ✅ Task C (Visitor Pattern for TypeEvaluator) - COMPLETE (commit: 448be3ebe)
+- ✅ Task #46 (Instantiation Canonicalization) - COMPLETE (commit: [to be added])
+
+**Task #46: Instantiation Canonicalization (Meta-type Reduction)**
+Fixed TypeInstantiator::instantiate_key in `src/solver/instantiate.rs`:
+- **IndexAccess** (lines 564-569): Now calls `crate::solver::evaluate::evaluate_index_access()` to immediately reduce `T[K]` when `T` is concrete
+- **KeyOf** (lines 572-575): Now calls `crate::solver::evaluate::evaluate_keyof()` to immediately expand `keyof { a: 1 }` -> `"a"`
+- **ReadonlyType**: Left as-is (no normalization needed)
+- **Application**: Did NOT auto-expand (correct - keeps canonical form for generics)
+
+**Why This Matters:**
+This ensures O(1) equality for meta-types produced during instantiation. Without this:
+- `Pick<T, "a">` and `{ a: T["a"] }` would have different TypeIds even when structurally identical
+- `keyof { a: 1 }` would remain as a meta-type instead of reducing to `"a"`
+
+**Test Results:**
+- All 42 instantiate tests pass
+- All 8 evaluate tests pass
+- 8091 total tests passing (no regressions)
+
+**Gemini Pro Review:**
+- ✅ Logic is correct for TypeScript
+- ✅ No infinite recursion issues (protected by depth limits)
+- ✅ Edge cases handled (union distribution, any/never propagation, generic constraints)
+
+**Remaining Tasks for tsz-1:**
+- Task B: Audit `evaluate.rs` for canonicalization opportunities
 

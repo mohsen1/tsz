@@ -560,18 +560,21 @@ impl<'a> TypeInstantiator<'a> {
                 self.interner.mapped(instantiated)
             }
 
-            // Index access: instantiate both parts
+            // Index access: instantiate both parts and evaluate immediately
+            // Task #46: Meta-type reduction for O(1) equality
             TypeKey::IndexAccess(obj, idx) => {
                 let inst_obj = self.instantiate(*obj);
                 let inst_idx = self.instantiate(*idx);
-                self.interner
-                    .intern(TypeKey::IndexAccess(inst_obj, inst_idx))
+                // Evaluate immediately to achieve O(1) equality
+                crate::solver::evaluate::evaluate_index_access(self.interner, inst_obj, inst_idx)
             }
 
-            // KeyOf: instantiate the operand
+            // KeyOf: instantiate the operand and evaluate immediately
+            // Task #46: Meta-type reduction for O(1) equality
             TypeKey::KeyOf(operand) => {
                 let inst_operand = self.instantiate(*operand);
-                self.interner.intern(TypeKey::KeyOf(inst_operand))
+                // Evaluate immediately to expand keyof { a: 1 } -> "a"
+                crate::solver::evaluate::evaluate_keyof(self.interner, inst_operand)
             }
 
             // ReadonlyType: instantiate the operand
