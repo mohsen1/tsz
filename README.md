@@ -25,7 +25,7 @@ Progress: [█████████░░░░░░░░░░░] 41.5% (
 ```
 <!-- CONFORMANCE_END -->
 
-### Emit
+### Emitter
 
 We compare tsz JavaScript/declaration emit output against TypeScript's baseline files
 to ensure correct code generation.
