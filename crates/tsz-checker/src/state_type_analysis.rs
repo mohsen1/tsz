@@ -1039,7 +1039,7 @@ impl<'a> CheckerState<'a> {
         }
         // 3. Check other files in the project (multi-file mode)
         if let Some(binders) = &self.ctx.all_binders {
-            for binder in binders {
+            for binder in binders.iter() {
                 if let Some(sym) = binder.get_symbol(sym_id) {
                     return Some(sym);
                 }

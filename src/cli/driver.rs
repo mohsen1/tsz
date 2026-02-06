@@ -1777,6 +1777,8 @@ fn collect_diagnostics(
     cache: Option<&mut CompilationCache>,
     lib_contexts: &[LibContext],
 ) -> Vec<Diagnostic> {
+    let _collect_span =
+        tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
     let mut diagnostics = Vec::new();
     let mut used_paths = FxHashSet::default();
     let mut cache = cache;
@@ -1785,35 +1787,48 @@ fn collect_diagnostics(
     let mut canonical_to_file_name: FxHashMap<PathBuf, String> = FxHashMap::default();
     let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> = FxHashMap::default();
 
-    for (idx, file) in program.files.iter().enumerate() {
-        let canonical = canonicalize_or_owned(Path::new(&file.file_name));
-        program_paths.insert(canonical.clone());
-        canonical_to_file_name.insert(canonical.clone(), file.file_name.clone());
-        canonical_to_file_idx.insert(canonical, idx);
+    {
+        let _span = tracing::info_span!("build_program_path_maps").entered();
+        for (idx, file) in program.files.iter().enumerate() {
+            let canonical = canonicalize_or_owned(Path::new(&file.file_name));
+            program_paths.insert(canonical.clone());
+            canonical_to_file_name.insert(canonical.clone(), file.file_name.clone());
+            canonical_to_file_idx.insert(canonical, idx);
+        }
     }
 
     // Pre-create all binders for cross-file resolution
-    let all_binders: Vec<Arc<BinderState>> = program
-        .files
-        .iter()
-        .enumerate()
-        .map(|(file_idx, file)| Arc::new(create_binder_from_bound_file(file, program, file_idx)))
-        .collect();
+    let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new({
+        let _span = tracing::info_span!("build_cross_file_binders").entered();
+        program
+            .files
+            .iter()
+            .enumerate()
+            .map(|(file_idx, file)| {
+                Arc::new(create_cross_file_lookup_binder(file, program, file_idx))
+            })
+            .collect()
+    });
 
     // Extract is_external_module from BoundFile to preserve state across file bindings
     // This fixes TS2664 which requires accurate per-file is_external_module values
-    let is_external_module_by_file: rustc_hash::FxHashMap<String, bool> = program
-        .files
-        .iter()
-        .map(|file| (file.file_name.clone(), file.is_external_module))
-        .collect();
+    let is_external_module_by_file: Arc<rustc_hash::FxHashMap<String, bool>> = Arc::new(
+        program
+            .files
+            .iter()
+            .map(|file| (file.file_name.clone(), file.is_external_module))
+            .collect(),
+    );
 
     // Collect all arenas for cross-file resolution
-    let all_arenas: Vec<Arc<NodeArena>> = program
-        .files
-        .iter()
-        .map(|file| Arc::clone(&file.arena))
-        .collect();
+    let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new({
+        let _span = tracing::info_span!("collect_all_arenas").entered();
+        program
+            .files
+            .iter()
+            .map(|file| Arc::clone(&file.arena))
+            .collect()
+    });
 
     // Create ModuleResolver instance for proper error reporting (TS2834, TS2835, TS2792, etc.)
     let mut module_resolver = ModuleResolver::new(options);
@@ -1826,103 +1841,113 @@ fn collect_diagnostics(
         crate::checker::context::ResolutionError,
     > = FxHashMap::default();
 
-    for (file_idx, file) in program.files.iter().enumerate() {
-        let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
-        let file_path = Path::new(&file.file_name);
+    {
+        let _span = tracing::info_span!("build_resolved_module_maps").entered();
+        for (file_idx, file) in program.files.iter().enumerate() {
+            let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
+            let file_path = Path::new(&file.file_name);
 
-        for (specifier, specifier_node) in &module_specifiers {
-            // Get span from the specifier node
-            let span = if let Some(spec_node) = file.arena.get(*specifier_node) {
-                Span::new(spec_node.pos, spec_node.end)
-            } else {
-                Span::new(0, 0) // Fallback for invalid nodes
-            };
+            for (specifier, specifier_node) in &module_specifiers {
+                // Get span from the specifier node
+                let span = if let Some(spec_node) = file.arena.get(*specifier_node) {
+                    Span::new(spec_node.pos, spec_node.end)
+                } else {
+                    Span::new(0, 0) // Fallback for invalid nodes
+                };
 
-            // Always try ModuleResolver first to get specific error types (TS2834/TS2835/TS2792)
-            match module_resolver.resolve(specifier, file_path, span) {
-                Ok(resolved_module) => {
-                    let canonical = canonicalize_or_owned(&resolved_module.resolved_path);
-                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                        resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
-                    }
-                }
-                Err(failure) => {
-                    // Check if this is NotFound and the old resolver would find it (virtual test files)
-                    // In that case, validate Node16 rules before accepting the fallback
-                    if failure.is_not_found() {
-                        if let Some(resolved) = resolve_module_specifier(
-                            file_path,
-                            specifier,
-                            options,
-                            base_dir,
-                            &mut resolution_cache,
-                            &program_paths,
-                        ) {
-                            // Validate Node16/NodeNext extension requirements for virtual files
-                            let resolution_kind = options.effective_module_resolution();
-                            let is_node16_or_next = matches!(
-                                resolution_kind,
-                                crate::cli::config::ModuleResolutionKind::Node16
-                                    | crate::cli::config::ModuleResolutionKind::NodeNext
-                            );
-
-                            if is_node16_or_next {
-                                // Check if importing file is ESM (by extension or path)
-                                let file_path_str = file_path.to_string_lossy();
-                                let importing_ext =
-                                    crate::module_resolver::ModuleExtension::from_path(file_path);
-                                let is_esm = importing_ext.forces_esm()
-                                    || file_path_str.ends_with(".mts")
-                                    || file_path_str.ends_with(".mjs");
-
-                                // Check if specifier has an extension
-                                let specifier_has_extension =
-                                    Path::new(specifier).extension().is_some();
-
-                                // In Node16/NodeNext ESM mode, relative imports must have explicit extensions
-                                // If the import is extensionless, TypeScript treats it as "cannot find module" (TS2307)
-                                // even though the file exists, because ESM requires explicit extensions
-                                if is_esm && !specifier_has_extension && specifier.starts_with('.')
-                                {
-                                    // Emit TS2307 error - module cannot be found with the exact specifier
-                                    // (even though the file exists, ESM requires explicit extension)
-                                    resolved_module_errors.insert(
-                                        (file_idx, specifier.clone()),
-                                        crate::checker::context::ResolutionError {
-                                            code: crate::module_resolver::CANNOT_FIND_MODULE,
-                                            message: format!(
-                                                "Cannot find module '{}' or its corresponding type declarations.",
-                                                specifier
-                                            ),
-                                        },
-                                    );
-                                    continue; // Don't add to resolved_modules - this is an error
-                                }
-                            }
-
-                            // Fallback succeeded and passed validation - add to resolved paths
-                            let canonical = canonicalize_or_owned(&resolved);
-                            if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                                resolved_module_paths
-                                    .insert((file_idx, specifier.clone()), target_idx);
-                            }
-                            continue; // Virtual file found and validated, skip error
+                // Always try ModuleResolver first to get specific error types (TS2834/TS2835/TS2792)
+                match module_resolver.resolve(specifier, file_path, span) {
+                    Ok(resolved_module) => {
+                        let canonical = canonicalize_or_owned(&resolved_module.resolved_path);
+                        if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                            resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                         }
                     }
+                    Err(failure) => {
+                        // Check if this is NotFound and the old resolver would find it (virtual test files)
+                        // In that case, validate Node16 rules before accepting the fallback
+                        if failure.is_not_found() {
+                            if let Some(resolved) = resolve_module_specifier(
+                                file_path,
+                                specifier,
+                                options,
+                                base_dir,
+                                &mut resolution_cache,
+                                &program_paths,
+                            ) {
+                                // Validate Node16/NodeNext extension requirements for virtual files
+                                let resolution_kind = options.effective_module_resolution();
+                                let is_node16_or_next = matches!(
+                                    resolution_kind,
+                                    crate::cli::config::ModuleResolutionKind::Node16
+                                        | crate::cli::config::ModuleResolutionKind::NodeNext
+                                );
 
-                    // Convert ResolutionFailure to Diagnostic to get the error code and message
-                    let diagnostic = failure.to_diagnostic();
-                    resolved_module_errors.insert(
-                        (file_idx, specifier.clone()),
-                        crate::checker::context::ResolutionError {
-                            code: diagnostic.code,
-                            message: diagnostic.message,
-                        },
-                    );
+                                if is_node16_or_next {
+                                    // Check if importing file is ESM (by extension or path)
+                                    let file_path_str = file_path.to_string_lossy();
+                                    let importing_ext =
+                                        crate::module_resolver::ModuleExtension::from_path(
+                                            file_path,
+                                        );
+                                    let is_esm = importing_ext.forces_esm()
+                                        || file_path_str.ends_with(".mts")
+                                        || file_path_str.ends_with(".mjs");
+
+                                    // Check if specifier has an extension
+                                    let specifier_has_extension =
+                                        Path::new(specifier).extension().is_some();
+
+                                    // In Node16/NodeNext ESM mode, relative imports must have explicit extensions
+                                    // If the import is extensionless, TypeScript treats it as "cannot find module" (TS2307)
+                                    // even though the file exists, because ESM requires explicit extensions
+                                    if is_esm
+                                        && !specifier_has_extension
+                                        && specifier.starts_with('.')
+                                    {
+                                        // Emit TS2307 error - module cannot be found with the exact specifier
+                                        // (even though the file exists, ESM requires explicit extension)
+                                        resolved_module_errors.insert(
+                                            (file_idx, specifier.clone()),
+                                            crate::checker::context::ResolutionError {
+                                                code: crate::module_resolver::CANNOT_FIND_MODULE,
+                                                message: format!(
+                                                    "Cannot find module '{}' or its corresponding type declarations.",
+                                                    specifier
+                                                ),
+                                            },
+                                        );
+                                        continue; // Don't add to resolved_modules - this is an error
+                                    }
+                                }
+
+                                // Fallback succeeded and passed validation - add to resolved paths
+                                let canonical = canonicalize_or_owned(&resolved);
+                                if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                                    resolved_module_paths
+                                        .insert((file_idx, specifier.clone()), target_idx);
+                                }
+                                continue; // Virtual file found and validated, skip error
+                            }
+                        }
+
+                        // Convert ResolutionFailure to Diagnostic to get the error code and message
+                        let diagnostic = failure.to_diagnostic();
+                        resolved_module_errors.insert(
+                            (file_idx, specifier.clone()),
+                            crate::checker::context::ResolutionError {
+                                code: diagnostic.code,
+                                message: diagnostic.message,
+                            },
+                        );
+                    }
                 }
             }
         }
     }
+
+    let resolved_module_paths = Arc::new(resolved_module_paths);
+    let resolved_module_errors = Arc::new(resolved_module_errors);
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = crate::solver::QueryCache::new(&program.type_interner);
@@ -2013,17 +2038,17 @@ fn collect_diagnostics(
             checker.ctx.set_actual_lib_file_count(lib_contexts.len());
         }
         // Set cross-file resolution context for import type resolution
-        checker.ctx.set_all_arenas(all_arenas.clone());
-        checker.ctx.set_all_binders(all_binders.clone());
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
         checker
             .ctx
-            .set_resolved_module_paths(resolved_module_paths.clone());
+            .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
         checker
             .ctx
-            .set_resolved_module_errors(resolved_module_errors.clone());
+            .set_resolved_module_errors(Arc::clone(&resolved_module_errors));
         checker.ctx.set_current_file_idx(file_idx);
         // Set per-file is_external_module cache to preserve state across file bindings
-        checker.ctx.is_external_module_by_file = Some(is_external_module_by_file.clone());
+        checker.ctx.is_external_module_by_file = Some(Arc::clone(&is_external_module_by_file));
 
         // Build resolved_modules set for backward compatibility
         // Only include modules that were successfully resolved (not in error map)
@@ -2672,6 +2697,42 @@ fn create_binder_from_bound_file(
 
     binder.declared_modules = program.declared_modules.clone();
     // Restore is_external_module from BoundFile to preserve per-file state
+    binder.is_external_module = file.is_external_module;
+    binder
+}
+
+/// Build a lightweight binder for cross-file symbol/export lookups.
+///
+/// This avoids cloning per-file node/scope/flow structures when populating
+/// `CheckerContext::all_binders`, which only needs symbol/file-local/module-export data.
+fn create_cross_file_lookup_binder(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+) -> BinderState {
+    let mut file_locals = SymbolTable::new();
+
+    if file_idx < program.file_locals.len() {
+        for (name, &sym_id) in program.file_locals[file_idx].iter() {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+
+    for (name, &sym_id) in program.globals.iter() {
+        if !file_locals.has(name) {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+
+    // Keep cross-file binders intentionally tiny: they are only used to map
+    // import targets to that file's locals/exports.
+    let mut binder = BinderState::new();
+    binder.file_locals = file_locals;
+    if let Some(exports) = program.module_exports.get(&file.file_name) {
+        binder
+            .module_exports
+            .insert(file.file_name.clone(), exports.clone());
+    }
     binder.is_external_module = file.is_external_module;
     binder
 }

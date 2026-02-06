@@ -426,15 +426,15 @@ pub struct CheckerContext<'a> {
 
     /// All arenas for cross-file resolution (indexed by file_idx from Symbol.decl_file_idx).
     /// Set during multi-file type checking to allow resolving declarations across files.
-    pub all_arenas: Option<Vec<Arc<NodeArena>>>,
+    pub all_arenas: Option<Arc<Vec<Arc<NodeArena>>>>,
 
     /// All binders for cross-file resolution (indexed by file_idx).
     /// Enables looking up exported symbols from other files during import resolution.
-    pub all_binders: Option<Vec<Arc<BinderState>>>,
+    pub all_binders: Option<Arc<Vec<Arc<BinderState>>>>,
 
     /// Resolved module paths map: (source_file_idx, specifier) -> target_file_idx.
     /// Used by get_type_of_symbol to resolve imports to their target file and symbol.
-    pub resolved_module_paths: Option<FxHashMap<(usize, String), usize>>,
+    pub resolved_module_paths: Option<Arc<FxHashMap<(usize, String), usize>>>,
 
     /// Current file index in multi-file mode (index into all_arenas/all_binders).
     /// Used with resolved_module_paths to look up cross-file imports.
@@ -446,12 +446,12 @@ pub struct CheckerContext<'a> {
     /// Per-file cache of is_external_module values to preserve state across files.
     /// Maps file path -> whether that file is an external module (has imports/exports).
     /// This prevents state corruption when binding multiple files sequentially.
-    pub is_external_module_by_file: Option<FxHashMap<String, bool>>,
+    pub is_external_module_by_file: Option<Arc<FxHashMap<String, bool>>>,
 
     /// Map of resolution errors: (source_file_idx, specifier) -> Error details.
     /// Populated by the driver when ModuleResolver returns a specific error.
     /// Contains structured error information (code, message) for TS2834, TS2835, TS2792, etc.
-    pub resolved_module_errors: Option<FxHashMap<(usize, String), ResolutionError>>,
+    pub resolved_module_errors: Option<Arc<FxHashMap<(usize, String), ResolutionError>>>,
 
     /// Import resolution stack for circular import detection.
     /// Tracks the chain of modules being resolved to detect circular dependencies.
@@ -1100,17 +1100,17 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Set all arenas for cross-file resolution.
-    pub fn set_all_arenas(&mut self, arenas: Vec<Arc<NodeArena>>) {
+    pub fn set_all_arenas(&mut self, arenas: Arc<Vec<Arc<NodeArena>>>) {
         self.all_arenas = Some(arenas);
     }
 
     /// Set all binders for cross-file resolution.
-    pub fn set_all_binders(&mut self, binders: Vec<Arc<BinderState>>) {
+    pub fn set_all_binders(&mut self, binders: Arc<Vec<Arc<BinderState>>>) {
         self.all_binders = Some(binders);
     }
 
     /// Set resolved module paths map for cross-file import resolution.
-    pub fn set_resolved_module_paths(&mut self, paths: FxHashMap<(usize, String), usize>) {
+    pub fn set_resolved_module_paths(&mut self, paths: Arc<FxHashMap<(usize, String), usize>>) {
         self.resolved_module_paths = Some(paths);
     }
 
@@ -1124,7 +1124,7 @@ impl<'a> CheckerContext<'a> {
     /// Populated by the driver when ModuleResolver returns specific errors (TS2834, TS2835, TS2792, etc.).
     pub fn set_resolved_module_errors(
         &mut self,
-        errors: FxHashMap<(usize, String), ResolutionError>,
+        errors: Arc<FxHashMap<(usize, String), ResolutionError>>,
     ) {
         self.resolved_module_errors = Some(errors);
     }
@@ -1148,7 +1148,7 @@ impl<'a> CheckerContext<'a> {
         if file_idx == u32::MAX {
             return self.arena;
         }
-        if let Some(ref arenas) = self.all_arenas
+        if let Some(arenas) = self.all_arenas.as_ref()
             && let Some(arena) = arenas.get(file_idx as usize)
         {
             return arena.as_ref();
