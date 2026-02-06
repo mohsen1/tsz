@@ -30,78 +30,45 @@ The codebase is **partially aligned** with the North Star architecture. Parser/B
 
 These directly degrade throughput and must be addressed first.
 
-### 1. SubtypeChecker Allocates 4 Hash Structures Per Construction
+### 1. ~~SubtypeChecker Allocates 4 Hash Structures Per Construction~~ FIXED
 
-**File**: `src/solver/subtype.rs:1304-1363`
+**Status**: FIXED in commit `0f51522`
 
-Every `SubtypeChecker::new()` allocates:
-- `in_progress: FxHashSet<(TypeId, TypeId)>`
-- `seen_refs: FxHashSet<(SymbolRef, SymbolRef)>`
-- `seen_defs: FxHashSet<(DefId, DefId)>`
-- `eval_cache: FxHashMap`
+Added `reset()` method to `SubtypeChecker` that clears hash sets without deallocating. Applied reuse pattern in `narrowing.rs` (NarrowingVisitor, instanceof filtering), `contextual.rs`, and `element_access.rs`.
 
-The free function `is_subtype_of()` at line 4058 creates a fresh checker per call. The codebase already acknowledges this was catastrophic for `best_common_type` (see `expression_ops.rs:170-172` comment about 262,144 allocations), but the pattern persists elsewhere.
+### 2. ~~TypeEvaluator Allocates 3 Hash Structures Per Construction~~ FIXED
 
-**Fix**: Pool/reuse `SubtypeChecker` instances. Clear hash sets between uses instead of reallocating.
+**Status**: FIXED in commit `0f51522`
 
-### 2. TypeEvaluator Allocates 3 Hash Structures Per Construction
+Added `reset()` method to `TypeEvaluator`. Same clear-without-dealloc pattern.
 
-**File**: `src/solver/evaluate.rs:56-67, 125-145`
+### 3. ~~FxHashMap/FxHashSet Created Inside Loops~~ ALREADY OPTIMIZED
 
-Every `TypeEvaluator::new()` allocates:
-- `cache: FxHashMap`
-- `visiting: FxHashSet`
-- `visiting_defs: FxHashSet`
+**Status**: ALREADY OPTIMIZED (verified 2026-02-06)
 
-The free function `evaluate_type()` at line 982-984 creates a fresh evaluator per call.
+Investigation found the codebase already uses the `.clear()` reuse pattern for all loop-internal hash sets. The `placeholder_visited` sets at lines 604/611 and 999/1006 are created before loops and cleared between iterations.
 
-**Fix**: Same as SubtypeChecker — pool/reuse or thread-local caching.
+### 4. ~~`format!()` String Allocations in Generic Call Resolution~~ ALREADY FIXED
 
-### 3. FxHashMap/FxHashSet Created Inside Loops
+**Status**: ALREADY FIXED
 
-**File**: `src/solver/operations.rs:749`
+The `format!("__infer_{}", var.0)` pattern has been removed from `operations.rs`.
 
-`FxHashSet::default()` is created **inside a loop body** during generic inference. Each iteration of the constraint-resolution loop allocates a new hash set.
+### 5. ~~`std::collections::HashMap` Used Instead of `FxHashMap` in Hot Path~~ FIXED
 
-Additional per-call allocations at lines 603-604, 642, 732, 816, 987-988, 1021, 1935, 2086-2087, 2110, 2584.
+**Status**: FIXED in commit `901d149`
 
-**Fix**: Hoist hash set allocation above the loop; clear between iterations.
+All `std::collections::HashMap/HashSet` replaced with `FxHashMap/FxHashSet` across 23 files including solver, checker, CLI, LSP, transforms, and WASM modules.
 
-### 4. `format!()` String Allocations in Generic Call Resolution
+### 6. `String` Used Where `Atom` Should Be (PARTIALLY FIXED)
 
-**File**: `src/solver/operations.rs:621, 999, 2092`
+**Status**: PARTIALLY FIXED
 
-```rust
-format!("__infer_{}", var.0)
-```
+- **FIXED**: `TypeGuard::Typeof(String)` replaced with `TypeGuard::Typeof(TypeofKind)` enum — zero-allocation, Copy type.
+- **BLOCKED**: `FlowFacts` String->Atom conversion blocked by separate interner architecture (parser `Interner` vs solver `ShardedInterner` are different instances with different atom numbering). FlowFacts is currently only used in tests, so impact is minimal.
+- **BLOCKED**: Checker's `intern_string(&ident.escaped_text)` cannot be replaced with `ident.atom` because the parser atom namespace differs from the solver atom namespace.
 
-Creates a heap-allocated `String` per type parameter per generic function call. Generic calls are extremely frequent.
-
-**Fix**: Use a pre-interned naming scheme or use `TypeId`/index directly as the map key.
-
-### 5. `std::collections::HashMap` Used Instead of `FxHashMap` in Hot Path
-
-**File**: `src/solver/subtype.rs:367-421`
-
-`TypeEnvironment` uses `std::collections::HashMap<u32, ...>` (SipHash) for **9 maps + 1 set**, all keyed by `u32`. This is in the subtype checking path.
-
-Additional `std::HashMap/HashSet` instances: `src/solver/evaluate.rs:425,435`, `src/solver/infer.rs:3447-3478`, `src/checker/type_api.rs`, `src/checker/class_checker.rs`, `src/checker/state_type_environment.rs` — **43 occurrences across 15 files**.
-
-**Fix**: Replace all `std::collections::HashMap/HashSet` with `FxHashMap/FxHashSet` in solver and checker.
-
-### 6. `String` Used Where `Atom` Should Be
-
-**File**: `src/solver/flow_analysis.rs:25-51`
-
-`FlowFacts` uses `FxHashMap<String, TypeId>` and `FxHashSet<String>` for variable narrowings, definite assignments, and TDZ violations. These are created/merged on every control flow node.
-
-Also: `NarrowingCondition::Typeof(String)` at `narrowing.rs:66` allocates a heap `String` for typeof checks.
-
-~30+ additional `String`-keyed collections across 12 checker files.
-
-**Fix**: Convert to `Atom` keys — they're interned u32 values with O(1) equality.
-
-### 7. `Vec<TypeId>` Instead of `SmallVec` (304 Sites)
+### 7. `Vec<TypeId>` Instead of `SmallVec` (304 Sites) — OPEN
 
 The codebase has **304 `Vec<TypeId>` usages** vs only **16 `SmallVec`** (all in `intern.rs`). Zero SmallVec usage in the checker.
 
@@ -114,7 +81,7 @@ Most unions have <8 members. Narrowing typically produces <8 results. Function s
 
 **Fix**: Use `SmallVec<[TypeId; 8]>` for local collections. Use `Arc` or `Rc` for `app.args` to make clone O(1).
 
-### 8. Signature Cloning in Call Resolution
+### 8. Signature Cloning in Call Resolution — OPEN
 
 **File**: `src/solver/operations.rs:148-233, 2567-2570, 2895-2920, 3042-3066`
 
@@ -146,7 +113,7 @@ These cause correctness risks and maintenance burden.
 
 **Fix**: Add solver query methods (e.g., `solver.widen_to_primitive()`, `solver.is_abstract_type()`, `solver.extract_iterator_result()`) and have checker delegate.
 
-### 10. Visitor Pattern Massively Underused (42:1 Ratio)
+### 10. Visitor Pattern Massively Underused (42:1 Ratio) — ANALYZED
 
 **North Star Rule 2**: "Use visitor pattern for ALL type operations"
 
@@ -157,21 +124,21 @@ These cause correctness risks and maintenance burden.
 | Match blocks with all 29 TypeKey variants | 7 |
 | Match blocks with 5+ variants | 35 |
 
-**7 functions match all 29 TypeKey variants** to walk the type tree — each is a copy-paste of the same traversal:
+**Analysis of 7 functions matching all 29 TypeKey variants** (2026-02-06):
 
-| File | Function |
-|------|----------|
-| `solver/infer.rs:725` | `type_contains_param()` |
-| `solver/operations.rs:1461` | `type_contains_placeholder()` |
-| `solver/operations.rs:1643` | `is_contextually_sensitive()` |
-| `solver/lower.rs:1481` | `contains_meta_type_inner()` |
-| `solver/lower.rs:1821` | `collect_infer_bindings()` |
-| `solver/evaluate_rules/infer_pattern.rs:46` | `type_contains_infer_inner()` |
-| `solver/canonicalize.rs:87` | `canonicalize()` |
+| File | Function | Replaceable? | Reason |
+|------|----------|:---:|--------|
+| `solver/infer.rs:725` | `type_contains_param()` | NO | Has scope shadowing logic for TypeParameter |
+| `solver/operations.rs:1461` | `type_contains_placeholder()` | NO | Requires external `var_map` state |
+| `solver/operations.rs:1643` | `is_contextually_sensitive()` | RISKY | Visitor checks ObjectWithIndex more thoroughly (false positives) |
+| `solver/lower.rs:1481` | `contains_meta_type_inner()` | NO | Traverses Function.type_params that visitor does NOT |
+| `solver/lower.rs:1821` | `collect_infer_bindings()` | NO | Collects data (not bool), needs full traversal control |
+| `solver/evaluate_rules/infer_pattern.rs:46` | `type_contains_infer_inner()` | MAYBE | Needs verification of traversal equivalence |
+| `solver/canonicalize.rs:87` | `canonicalize()` | NO | Transforms types, not just checks containment |
 
-`visitor.rs` already provides `for_each_child()` and `contains_type_matching()` that do exactly this — but they're never used outside `visitor.rs`.
+**Conclusion**: Only 2 of 7 are candidates, and both have subtle traversal differences. The `visitor::contains_type_matching` traversal differs from manual traversals in edge cases (e.g., Function.type_params constraints/defaults, ObjectWithIndex index signatures). Consolidation requires fixing these traversal gaps first.
 
-**Fix**: Replace all "contains" functions with `visitor::contains_type_matching()`. Replace structural walks with `for_each_child()`.
+**Fix**: First extend `visitor::check_key()` to traverse Function.type_params and ObjectWithIndex index signatures, then migrate the 2 candidate functions.
 
 ### 11. Duplicated Logic Between Components (40+ Functions)
 
@@ -233,21 +200,25 @@ These cause correctness risks and maintenance burden.
 
 ### Immediate (P0 Performance — highest ROI)
 
-1. **Pool SubtypeChecker and TypeEvaluator** — eliminates thousands of hash allocations per file
-2. **Replace std HashMap with FxHashMap** in TypeEnvironment (subtype.rs) — 9 maps on hot path
-3. **Hoist FxHashSet out of loops** in operations.rs — eliminates per-iteration allocations
-4. **Convert FlowFacts to Atom keys** — eliminates String allocations in control flow
-5. **Replace format!() in inference** with pre-interned or index-based keys
+1. ~~**Pool SubtypeChecker and TypeEvaluator**~~ DONE — `reset()` + reuse in narrowing, contextual, element_access
+2. ~~**Replace std HashMap with FxHashMap**~~ DONE — 23 files migrated
+3. ~~**Hoist FxHashSet out of loops**~~ VERIFIED — already uses `.clear()` pattern
+4. ~~**Convert FlowFacts to Atom keys**~~ PARTIALLY DONE — TypeGuard::Typeof fixed, FlowFacts blocked by interner architecture
+5. ~~**Replace format!() in inference**~~ VERIFIED — already removed
+
+### Next (Remaining P0 Performance)
+
+6. **SmallVec for narrowing and call resolution** — 304 Vec<TypeId> → SmallVec where <8 elements typical
+7. **Arc for shared signature data** — eliminates signature cloning in call resolution
 
 ### Short-term (P1 Architecture)
 
-6. **Consolidate "contains" functions** — replace 7 copy-paste traversals with visitor calls
-7. **Add solver query methods** for checker TypeKey violations — enables removing 49 violations
-8. **Unify divergent duplicates** — fix `is_unit_type`, `is_enum_type`, `get_property_type`
+8. **Add solver query methods** for checker TypeKey violations — enables removing 49 violations
+9. **Unify divergent duplicates** — fix `is_unit_type`, `is_enum_type`, `get_property_type`
+10. **Extend visitor traversal** — add Function.type_params and ObjectWithIndex to `check_key()`
+11. **Unify parser/solver interner** — enables FlowFacts Atom keys and ident.atom usage
 
 ### Medium-term (P1 Maintenance)
 
-9. **SmallVec for narrowing and call resolution** — 304 Vec<TypeId> → SmallVec where <8 elements typical
-10. **Arc for shared signature data** — eliminates signature cloning in call resolution
-11. **Split God Objects** — especially subtype.rs (4174), operations.rs (3639), type_checking.rs (3703)
-12. **Delete type_queries.rs duplicates** — 14 functions already exist in visitor.rs
+12. **Split God Objects** — especially subtype.rs (4174), operations.rs (3639), type_checking.rs (3703)
+13. **Delete type_queries.rs duplicates** — 14 functions already exist in visitor.rs
