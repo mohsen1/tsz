@@ -183,7 +183,7 @@ required-features = ["cli"]
 [features]
 default = ["cli"]
 cli = []
-experimental_salsa = []
+experimental_salsa = ["tsz-solver/experimental_salsa"]
 
 [dependencies]
 tsz-common = { workspace = true }
