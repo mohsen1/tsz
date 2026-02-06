@@ -1,8 +1,9 @@
-# Session TSZ-12: Cache Invalidation & Test Infrastructure Cleanup
+# Session TSZ-12: Cache Invalidation Fix
 
 **Started**: 2026-02-06
-**Status**: ✅ PARTIAL COMPLETE - Cache Fix Done
+**Status**: ✅ COMPLETE
 **Predecessor**: TSZ-11 (Readonly Type Support - Complete)
+**Successor**: TSZ-13 (Foundational Cleanup & Index Signatures)
 
 ## Accomplishments
 
@@ -40,40 +41,11 @@ if cache.is_none() && (resolved.incremental || resolved.ts_build_info_file.is_so
 - `compile_with_cache_rechecks_dependents_on_export_change` ✅
 - +9 other cache-related tests ✅
 
-## Remaining Work
-
-### Readonly Test Infrastructure (~6 tests)
-
-These tests fail due to lib infrastructure issues, not subtyping logic (fixed in tsz-11):
-- Tests manually create `CheckerState` without loading lib files
-- Missing `Array`, `ReadonlyArray`, or `readonly` keyword support
-- Need to fix test setup to use lib fixtures
-
-**Tests affected**:
-- `test_readonly_array_element_assignment_2540`
-- `test_readonly_element_access_assignment_2540`
-- `test_readonly_index_signature_element_access_assignment_2540`
-- `test_readonly_method_signature_assignment_2540`
-- `test_readonly_index_signature_variable_access_assignment_2540`
-- (+1 more)
-
 ## Test Status
 
 **Start**: 8232 passing, 68 failing
-**Current**: 8247 passing, 53 failing
-**Progress**: +15 tests fixed (22% of remaining failures)
-
-## Next Steps
-
-The 53 remaining failures include:
-- Cache invalidation: ~0 tests (all fixed!)
-- Readonly test infrastructure: ~6 tests
-- Element access index signatures: ~3 tests
-- Flow narrowing: ~5 tests
-- Enum types: ~2 tests (error count mismatches)
-- Module resolution: ~4 tests
-- Overload resolution: ~3 tests
-- Other individual features: ~30 tests
+**End**: 8247 passing, 53 failing
+**Result**: +15 tests fixed (22% of remaining failures)
 
 ## Notes
 
@@ -81,4 +53,7 @@ The 53 remaining failures include:
 
 **Pattern Recognition**: Following AGENTS.md mandatory workflow (asking Gemini for investigation guidance) led directly to finding the root cause in <5 minutes, vs hours of manual debugging.
 
-**Recommendation**: The readonly infrastructure tests are straightforward to fix (update test setup to use lib fixtures). These should be addressed next for quick wins.
+**Next Session**: TSZ-13 focuses on "Foundational Cleanup & Index Signatures":
+- Readonly infrastructure tests (~6 tests) - test setup issues
+- Enum error count mismatches (~2 tests) - diagnostic deduplication
+- Element access index signatures (~3 tests) - high impact foundational feature
