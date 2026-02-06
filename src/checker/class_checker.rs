@@ -800,7 +800,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Collect implemented members from derived class
-        let mut implemented_members = std::collections::HashSet::new();
+        let mut implemented_members = rustc_hash::FxHashSet::default();
         for &member_idx in &class_data.members.nodes {
             if let Some(name) = self.get_member_name(member_idx) {
                 // Check if this member is not abstract (i.e., it's an implementation)
@@ -920,15 +920,15 @@ impl<'a> CheckerState<'a> {
 
         // Collect implemented members from the class (name -> node_idx).
         // Member types are computed lazily only when needed for an interface match.
-        let mut class_members: std::collections::HashMap<String, NodeIndex> =
-            std::collections::HashMap::new();
+        let mut class_members: rustc_hash::FxHashMap<String, NodeIndex> =
+            rustc_hash::FxHashMap::default();
         for &member_idx in &class_data.members.nodes {
             if let Some(name) = self.get_member_name(member_idx) {
                 class_members.insert(name, member_idx);
             }
         }
-        let mut class_member_types: std::collections::HashMap<NodeIndex, TypeId> =
-            std::collections::HashMap::new();
+        let mut class_member_types: rustc_hash::FxHashMap<NodeIndex, TypeId> =
+            rustc_hash::FxHashMap::default();
 
         // Get the class name for error messages
         let class_name = if !class_data.name.is_none() {
