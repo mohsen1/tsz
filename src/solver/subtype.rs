@@ -984,7 +984,51 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     fn visit_type_query(&mut self, _symbol_ref: u32) -> Self::Output {
         SubtypeResult::False
     }
-    fn visit_keyof(&mut self, _type_id: TypeId) -> Self::Output {
+    fn visit_keyof(&mut self, inner_type: TypeId) -> Self::Output {
+        use crate::solver::types::IntrinsicKind;
+        use crate::solver::visitor::{keyof_inner_type, union_list_id};
+
+        // keyof S <: keyof T  <=>  T <: S (Contravariant)
+        // If target is also a keyof type, check inner types in reverse
+        if let Some(t_inner) = keyof_inner_type(self.checker.interner, self.target) {
+            return self.checker.check_subtype(t_inner, inner_type);
+        }
+
+        // If inner_type is a TypeParameter, keyof T is NOT a subtype of primitives
+        // (deferred keyof - we don't know what keys T has)
+        if matches!(
+            self.checker.interner.lookup(inner_type),
+            Some(TypeKey::TypeParameter(_))
+        ) {
+            return SubtypeResult::False;
+        }
+
+        // keyof T is always a subtype of string | number | symbol
+        // Check if target is a union that matches this pattern
+        if let Some(union_id) = union_list_id(self.checker.interner, self.target) {
+            let members = self.checker.interner.type_list(union_id);
+            // Check if all members are string, number, or symbol
+            let all_primitive = members.iter().all(|&m| {
+                matches!(
+                    self.checker.interner.lookup(m),
+                    Some(TypeKey::Intrinsic(
+                        IntrinsicKind::String | IntrinsicKind::Number | IntrinsicKind::Symbol
+                    ))
+                )
+            });
+            if all_primitive && !members.is_empty() {
+                return SubtypeResult::True;
+            }
+        }
+
+        // keyof is also subtype of the specific primitive if it matches
+        if let Some(TypeKey::Intrinsic(
+            IntrinsicKind::String | IntrinsicKind::Number | IntrinsicKind::Symbol,
+        )) = self.checker.interner.lookup(self.target)
+        {
+            return SubtypeResult::True;
+        }
+
         SubtypeResult::False
     }
     fn visit_this_type(&mut self) -> Self::Output {
@@ -994,7 +1038,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         SubtypeResult::False
     }
     fn visit_unique_symbol(&mut self, symbol_ref: u32) -> Self::Output {
-        use crate::solver::types::SymbolRef;
+        
         use crate::solver::visitor::unique_symbol_ref;
 
         // unique symbol has nominal identity - same symbol ref is subtype
