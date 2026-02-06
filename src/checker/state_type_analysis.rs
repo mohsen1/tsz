@@ -1686,9 +1686,29 @@ impl<'a> CheckerState<'a> {
                         self.emit_module_not_found_error(&module_specifier, value_decl);
                         return (TypeId::ANY, Vec::new());
                     }
-                    // Namespace import failed to resolve (e.g., import m = no where 'no' doesn't exist)
-                    // Return ANY to prevent cascading errors - TS2503 will be emitted by check_import_equals_declaration
-                    return (TypeId::ANY, Vec::new());
+                    // Namespace import failed to resolve
+                    // Check for TS2694 (Namespace has no exported member) or TS2304 (Cannot find name)
+                    // This happens when: import Alias = NS.NotExported (where NotExported is not exported)
+
+                    // 1. Check for TS2694 (Namespace has no exported member)
+                    if self.report_type_query_missing_member(import.module_specifier) {
+                        return (TypeId::ERROR, Vec::new());
+                    }
+
+                    // 2. Check for TS2304 (Cannot find name) for the left-most part
+                    if let Some(missing_idx) = self.missing_type_query_left(import.module_specifier)
+                    {
+                        // Suppress if it's an unresolved import (TS2307 already emitted)
+                        if !self.is_unresolved_import_symbol(missing_idx) {
+                            if let Some(name) = self.entity_name_text(missing_idx) {
+                                self.error_cannot_find_name_at(&name, missing_idx);
+                            }
+                        }
+                        return (TypeId::ERROR, Vec::new());
+                    }
+
+                    // Return ERROR for other cases to prevent cascading errors
+                    return (TypeId::ERROR, Vec::new());
                 }
                 // Handle ES6 named imports (import { X } from './module')
                 // Use the import_module field to resolve to the actual export
