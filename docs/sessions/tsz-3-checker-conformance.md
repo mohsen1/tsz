@@ -303,3 +303,41 @@ Use tracing with specific filters to see actual TypeId values during comparison:
 TSZ_LOG="wasm::solver::subtype=trace" cargo test ...
 ```
 
+---
+
+## 2026-02-06 MAJOR DISCOVERY: Unit Test Passes!
+
+### Test Results
+
+**Unit test**: `test_rest_any_three_fixed_to_two_fixed_plus_rest` - **PASSES ✓**
+- Created exact replica of failing conformance test
+- Uses same type structure: 3 fixed vs 2 fixed + 1 rest with `any[]`
+- Result: Works correctly!
+
+**Conformance test**: `aliasOfGenericFunctionWithRestBehavedSameAsUnaliased.ts` - **FAILS ✗**
+- Same type pattern
+- Result: Incorrectly reports `"n"` instead of `"y"`
+
+### Critical Conclusion
+
+**The bug is NOT in the function subtype checking logic!**
+
+The problem must be in:
+1. **Type lowering**: How generic functions are parsed from TypeScript
+2. **Type instantiation**: How `ExtendedMapper<any, any, [any]>` creates the function type
+3. **Type representation**: The instantiated type doesn't match the expected structure
+
+### Next Investigation Steps
+
+1. Compare the FunctionShape from unit test vs. conformance test
+2. Add tracing to see actual FunctionShape during conformance test
+3. Check how `[any]` (tuple) vs `any[]` (array) are distinguished
+4. Verify generic instantiation preserves rest flag correctly
+
+### Impact
+
+This is actually GOOD news - it means:
+- The subtype logic is correct
+- The fix will be in type lowering/instantiation, not core type operations
+- More surgical fix, less risk of breaking other things
+
