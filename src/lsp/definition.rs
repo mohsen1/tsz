@@ -2,12 +2,13 @@
 //!
 //! Given a position in the source, finds where the symbol at that position is defined.
 
-use crate::binder::{BinderState, SymbolId};
+use crate::binder::{BinderState, SymbolId, symbol_flags};
 use crate::lsp::position::{LineMap, Location, Position, Range};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 
 /// Well-known built-in global identifiers that are provided by the runtime
 /// environment and not defined in user source files.
@@ -162,6 +163,28 @@ const BUILTIN_GLOBALS: &[&str] = &[
 /// Check if a name is a well-known built-in global.
 fn is_builtin_global(name: &str) -> bool {
     BUILTIN_GLOBALS.contains(&name)
+}
+
+/// Rich definition information matching TypeScript's tsserver response format.
+/// Includes metadata about the symbol kind, name, and declaration context.
+#[derive(Debug, Clone)]
+pub struct DefinitionInfo {
+    /// The location of the identifier name within the declaration.
+    pub location: Location,
+    /// The span of the entire declaration (contextSpan in tsserver).
+    pub context_span: Option<Range>,
+    /// The symbol name (e.g., "ambientVar").
+    pub name: String,
+    /// The symbol kind string (e.g., "var", "function", "class").
+    pub kind: String,
+    /// The container name (e.g., class name for a method).
+    pub container_name: String,
+    /// The container kind string.
+    pub container_kind: String,
+    /// Whether the symbol is local (not exported).
+    pub is_local: bool,
+    /// Whether the symbol is ambient (declared with `declare`).
+    pub is_ambient: bool,
 }
 
 /// Go-to-Definition provider.
@@ -387,6 +410,470 @@ impl<'a> GoToDefinition<'a> {
         // Try looking up in file_locals
         let symbol_id = self.binder.file_locals.get(text)?;
         self.locations_from_symbol(symbol_id)
+    }
+
+    // -----------------------------------------------------------------------
+    // Rich definition info (for tsserver compatibility)
+    // -----------------------------------------------------------------------
+
+    /// Get rich definition info including metadata for tsserver protocol.
+    pub fn get_definition_info(
+        &self,
+        root: NodeIndex,
+        position: Position,
+    ) -> Option<Vec<DefinitionInfo>> {
+        let offset = self
+            .line_map
+            .position_to_offset(position, self.source_text)?;
+
+        let node_idx = find_node_at_offset(self.arena, offset);
+        if node_idx.is_none() {
+            return None;
+        }
+
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let symbol_id_opt = walker.resolve_node(root, node_idx);
+
+        if let Some(symbol_id) = symbol_id_opt {
+            if let Some(infos) = self.definition_infos_from_symbol(symbol_id) {
+                return Some(infos);
+            }
+        }
+
+        // Fallback: try file_locals
+        if let Some(infos) = self.try_file_locals_fallback_info(node_idx) {
+            return Some(infos);
+        }
+
+        None
+    }
+
+    /// Convert a symbol's declarations into rich DefinitionInfo objects.
+    fn definition_infos_from_symbol(&self, symbol_id: SymbolId) -> Option<Vec<DefinitionInfo>> {
+        let symbol = self.binder.symbols.get(symbol_id)?;
+        let source_len = self.source_text.len() as u32;
+
+        let infos: Vec<DefinitionInfo> = symbol
+            .declarations
+            .iter()
+            .filter_map(|&decl_idx| {
+                let decl_node = self.arena.get(decl_idx)?;
+
+                if decl_node.pos > source_len || decl_node.end > source_len {
+                    return None;
+                }
+                if decl_node.end < decl_node.pos {
+                    return None;
+                }
+
+                // Get the name node span (text span) vs full declaration span (context span)
+                let (name_range, context_range) =
+                    self.compute_name_and_context_spans(decl_idx, decl_node);
+
+                let line_count = self.line_map.line_count() as u32;
+                if name_range.start.line >= line_count || name_range.end.line >= line_count {
+                    return None;
+                }
+
+                // Determine kind, name, and other metadata
+                let kind = self.symbol_flags_to_kind_string(symbol.flags);
+                let name = symbol.escaped_name.clone();
+                let (container_name, container_kind) = self.get_container_info(symbol_id);
+                let is_local = !self.is_top_level_declaration(decl_idx);
+                let is_ambient = self.is_ambient_declaration(decl_idx);
+
+                Some(DefinitionInfo {
+                    location: Location {
+                        file_path: self.file_name.clone(),
+                        range: name_range,
+                    },
+                    context_span: Some(context_range),
+                    name,
+                    kind,
+                    container_name,
+                    container_kind,
+                    is_local,
+                    is_ambient,
+                })
+            })
+            .collect();
+
+        if infos.is_empty() { None } else { Some(infos) }
+    }
+
+    /// Try file_locals fallback but return DefinitionInfo.
+    fn try_file_locals_fallback_info(&self, node_idx: NodeIndex) -> Option<Vec<DefinitionInfo>> {
+        let node = self.arena.get(node_idx)?;
+        let pos = node.pos as usize;
+        let end = node.end as usize;
+        if end > self.source_text.len() || pos > end {
+            return None;
+        }
+
+        let text = &self.source_text[pos..end];
+        if is_builtin_global(text) {
+            return None;
+        }
+
+        let symbol_id = self.binder.file_locals.get(text)?;
+        self.definition_infos_from_symbol(symbol_id)
+    }
+
+    /// Compute the name span and context span for a declaration node.
+    /// Returns (name_range for the identifier, full declaration range for context).
+    fn compute_name_and_context_spans(
+        &self,
+        decl_idx: NodeIndex,
+        decl_node: &crate::parser::node::Node,
+    ) -> (Range, Range) {
+        // For the context span, we may need to go up to the parent node.
+        // For VariableDeclaration, the context is the VariableStatement
+        // (which includes `declare var ... ;`).
+        let context_node_span = self.get_context_span_node(decl_idx, decl_node);
+
+        let context_start = self
+            .line_map
+            .offset_to_position(context_node_span.0, self.source_text);
+        let context_end = self
+            .line_map
+            .offset_to_position(context_node_span.1, self.source_text);
+        let context_range = Range::new(context_start, context_end);
+
+        // Try to find the identifier name node within the declaration
+        if let Some(name_idx) = self.get_declaration_name_idx(decl_idx) {
+            if !name_idx.is_none() {
+                if let Some(name_node) = self.arena.get(name_idx) {
+                    let name_start = self
+                        .line_map
+                        .offset_to_position(name_node.pos, self.source_text);
+                    let name_end = self
+                        .line_map
+                        .offset_to_position(name_node.end, self.source_text);
+                    return (Range::new(name_start, name_end), context_range);
+                }
+            }
+        }
+
+        // If we can't find a name node, use the declaration span for both
+        (context_range, context_range)
+    }
+
+    /// Get the span for the context (the full declaration statement).
+    /// For VariableDeclaration, walk up to VariableStatement.
+    /// For other declarations, use the declaration node itself.
+    /// Returns the span with leading trivia stripped (using getStart semantics).
+    fn get_context_span_node(
+        &self,
+        decl_idx: NodeIndex,
+        decl_node: &crate::parser::node::Node,
+    ) -> (u32, u32) {
+        let source_bytes = self.source_text.as_bytes();
+        let source_len = self.source_text.len() as u32;
+
+        // Strip leading whitespace/newlines from a position
+        let skip_leading = |pos: u32, end: u32| -> u32 {
+            let limit = end.min(source_len) as usize;
+            let mut i = pos as usize;
+            while i < limit {
+                match source_bytes[i] {
+                    b' ' | b'\t' | b'\n' | b'\r' => i += 1,
+                    _ => break,
+                }
+            }
+            i as u32
+        };
+
+        // Strip trailing whitespace/newlines from an end position
+        let skip_trailing = |pos: u32, end: u32| -> u32 {
+            let start = pos as usize;
+            let mut i = end.min(source_len) as usize;
+            while i > start {
+                match source_bytes[i - 1] {
+                    b' ' | b'\t' | b'\n' | b'\r' => i -= 1,
+                    _ => break,
+                }
+            }
+            i as u32
+        };
+
+        // Find the position right after the last significant token in the range.
+        // This handles cases where the parser's node `end` extends into the next
+        // statement by finding the last ; or } in the range.
+        let find_real_end = |pos: u32, end: u32| -> u32 {
+            let start = pos as usize;
+            let e = end.min(source_len) as usize;
+            // Scan backwards for the last ; or } (statement-ending tokens)
+            for i in (start..e).rev() {
+                match source_bytes[i] {
+                    b';' | b'}' => return (i + 1) as u32,
+                    _ => {}
+                }
+            }
+            // Fall back to stripping trailing whitespace
+            skip_trailing(pos, end)
+        };
+
+        // Clean span: strip leading trivia, find real end
+        let clean = |pos: u32, end: u32| -> (u32, u32) {
+            let s = skip_leading(pos, end);
+            let e = find_real_end(s, end);
+            (s, e)
+        };
+
+        match decl_node.kind {
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                // Walk up: VariableDeclaration -> VariableDeclarationList -> VariableStatement
+                if let Some(ext) = self.arena.get_extended(decl_idx) {
+                    let parent_idx = ext.parent;
+                    if !parent_idx.is_none() {
+                        if let Some(parent_ext) = self.arena.get_extended(parent_idx) {
+                            let grandparent_idx = parent_ext.parent;
+                            if !grandparent_idx.is_none() {
+                                if let Some(gp_node) = self.arena.get(grandparent_idx) {
+                                    if gp_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                                        return clean(gp_node.pos, gp_node.end);
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(parent_node) = self.arena.get(parent_idx) {
+                            return clean(parent_node.pos, parent_node.end);
+                        }
+                    }
+                }
+                (decl_node.pos, decl_node.end)
+            }
+            syntax_kind_ext::FUNCTION_DECLARATION
+            | syntax_kind_ext::CLASS_DECLARATION
+            | syntax_kind_ext::INTERFACE_DECLARATION
+            | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+            | syntax_kind_ext::ENUM_DECLARATION
+            | syntax_kind_ext::MODULE_DECLARATION => clean(decl_node.pos, decl_node.end),
+            _ => (decl_node.pos, decl_node.end),
+        }
+    }
+
+    /// Get the name node index from a declaration node.
+    fn get_declaration_name_idx(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.arena.get(decl_idx)?;
+        match node.kind {
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                let var_decl = self.arena.get_variable_declaration(node)?;
+                Some(var_decl.name)
+            }
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                let func = self.arena.get_function(node)?;
+                Some(func.name)
+            }
+            syntax_kind_ext::CLASS_DECLARATION | syntax_kind_ext::CLASS_EXPRESSION => {
+                let class = self.arena.get_class(node)?;
+                Some(class.name)
+            }
+            syntax_kind_ext::INTERFACE_DECLARATION => {
+                let iface = self.arena.get_interface(node)?;
+                Some(iface.name)
+            }
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                let type_alias = self.arena.get_type_alias(node)?;
+                Some(type_alias.name)
+            }
+            syntax_kind_ext::ENUM_DECLARATION => {
+                let enum_decl = self.arena.get_enum(node)?;
+                Some(enum_decl.name)
+            }
+            syntax_kind_ext::MODULE_DECLARATION => {
+                let module = self.arena.get_module(node)?;
+                Some(module.name)
+            }
+            syntax_kind_ext::METHOD_DECLARATION => {
+                let method = self.arena.get_method_decl(node)?;
+                Some(method.name)
+            }
+            syntax_kind_ext::PROPERTY_DECLARATION => {
+                let prop = self.arena.get_property_decl(node)?;
+                Some(prop.name)
+            }
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                let accessor = self.arena.get_accessor(node)?;
+                Some(accessor.name)
+            }
+            syntax_kind_ext::ENUM_MEMBER => {
+                let member = self.arena.get_enum_member(node)?;
+                Some(member.name)
+            }
+            syntax_kind_ext::PARAMETER => {
+                let param = self.arena.get_parameter(node)?;
+                Some(param.name)
+            }
+            syntax_kind_ext::IMPORT_SPECIFIER => {
+                let spec = self.arena.get_specifier(node)?;
+                Some(spec.name)
+            }
+            _ => None,
+        }
+    }
+
+    /// Convert symbol flags to a tsserver-compatible kind string.
+    fn symbol_flags_to_kind_string(&self, flags: u32) -> String {
+        if flags & symbol_flags::FUNCTION != 0 {
+            "function".to_string()
+        } else if flags & symbol_flags::CLASS != 0 {
+            "class".to_string()
+        } else if flags & symbol_flags::INTERFACE != 0 {
+            "interface".to_string()
+        } else if flags & symbol_flags::TYPE_ALIAS != 0 {
+            "type".to_string()
+        } else if flags & symbol_flags::ENUM != 0 {
+            "enum".to_string()
+        } else if flags & symbol_flags::ENUM_MEMBER != 0 {
+            "enum member".to_string()
+        } else if flags & symbol_flags::MODULE != 0 {
+            "module".to_string()
+        } else if flags & symbol_flags::METHOD != 0 {
+            "method".to_string()
+        } else if flags & symbol_flags::PROPERTY != 0 {
+            "property".to_string()
+        } else if flags & symbol_flags::CONSTRUCTOR != 0 {
+            "constructor".to_string()
+        } else if flags & symbol_flags::GET_ACCESSOR != 0 {
+            "getter".to_string()
+        } else if flags & symbol_flags::SET_ACCESSOR != 0 {
+            "setter".to_string()
+        } else if flags & symbol_flags::TYPE_PARAMETER != 0 {
+            "type parameter".to_string()
+        } else if flags & symbol_flags::ALIAS != 0 {
+            "alias".to_string()
+        } else if flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
+            // Could be let or const
+            "let".to_string()
+        } else if flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
+            "var".to_string()
+        } else {
+            "".to_string()
+        }
+    }
+
+    /// Get the container name and kind for a symbol.
+    fn get_container_info(&self, symbol_id: SymbolId) -> (String, String) {
+        let symbol = match self.binder.symbols.get(symbol_id) {
+            Some(s) => s,
+            None => return (String::new(), String::new()),
+        };
+
+        if symbol.parent.is_none() {
+            return (String::new(), String::new());
+        }
+
+        if let Some(parent_symbol) = self.binder.symbols.get(symbol.parent) {
+            let parent_kind = self.symbol_flags_to_kind_string(parent_symbol.flags);
+            (parent_symbol.escaped_name.clone(), parent_kind)
+        } else {
+            (String::new(), String::new())
+        }
+    }
+
+    /// Check if a declaration is ambient (has `declare` modifier).
+    /// Walks up the parent chain to find a node with `declare` in its modifiers.
+    fn is_ambient_declaration(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+        for _ in 0..15 {
+            if let Some(node) = self.arena.get(current) {
+                if self.node_has_declare_modifier(current, node) {
+                    return true;
+                }
+            }
+            // Walk up to parent
+            if let Some(ext) = self.arena.get_extended(current) {
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    /// Check if a specific node has the `declare` keyword in its modifiers list.
+    fn node_has_declare_modifier(
+        &self,
+        _node_idx: NodeIndex,
+        node: &crate::parser::node::Node,
+    ) -> bool {
+        use crate::scanner::SyntaxKind;
+        let modifiers = match node.kind {
+            syntax_kind_ext::VARIABLE_STATEMENT => self
+                .arena
+                .get_variable(node)
+                .and_then(|v| v.modifiers.as_ref()),
+            syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(node)
+                .and_then(|f| f.modifiers.as_ref()),
+            syntax_kind_ext::CLASS_DECLARATION => self
+                .arena
+                .get_class(node)
+                .and_then(|c| c.modifiers.as_ref()),
+            syntax_kind_ext::INTERFACE_DECLARATION => self
+                .arena
+                .get_interface(node)
+                .and_then(|i| i.modifiers.as_ref()),
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                .arena
+                .get_type_alias(node)
+                .and_then(|t| t.modifiers.as_ref()),
+            syntax_kind_ext::ENUM_DECLARATION => {
+                self.arena.get_enum(node).and_then(|e| e.modifiers.as_ref())
+            }
+            syntax_kind_ext::MODULE_DECLARATION => self
+                .arena
+                .get_module(node)
+                .and_then(|m| m.modifiers.as_ref()),
+            _ => None,
+        };
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a declaration is at the top level of the source file.
+    /// Top-level declarations have isLocal = false.
+    fn is_top_level_declaration(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+        // Walk up through the parent chain looking for source file
+        for _ in 0..20 {
+            if let Some(ext) = self.arena.get_extended(current) {
+                let parent = ext.parent;
+                if parent.is_none() {
+                    return true; // Reached root
+                }
+                if let Some(parent_node) = self.arena.get(parent) {
+                    match parent_node.kind {
+                        syntax_kind_ext::SOURCE_FILE => return true,
+                        // VariableDeclarationList and VariableStatement are transparent
+                        syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                        | syntax_kind_ext::VARIABLE_STATEMENT => {
+                            current = parent;
+                            continue;
+                        }
+                        // If we hit a function/method/class body, it's local
+                        _ => return false,
+                    }
+                }
+                current = parent;
+            } else {
+                break;
+            }
+        }
+        false
     }
 }
 
