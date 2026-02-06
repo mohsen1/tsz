@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use rustc_hash::FxHashMap;
 use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::time::Duration;
@@ -62,7 +63,7 @@ fn main() -> Result<()> {
     let tracer = if args.generate_trace.is_some() {
         let mut t = wasm::cli::trace::Tracer::new();
         // Add process metadata
-        let mut meta_args = std::collections::HashMap::new();
+        let mut meta_args = FxHashMap::default();
         meta_args.insert("name".to_string(), serde_json::json!("tsz"));
         t.metadata("process_name", meta_args);
         Some(t)
@@ -88,7 +89,7 @@ fn main() -> Result<()> {
 
         // Record compilation summary events
         tracer.complete_with_args("Compile", categories::PROGRAM, start_time, elapsed, {
-            let mut args = std::collections::HashMap::new();
+            let mut args = FxHashMap::default();
             args.insert(
                 "fileCount".to_string(),
                 serde_json::json!(result.files_read.len()),
@@ -106,7 +107,7 @@ fn main() -> Result<()> {
 
         // Add per-file events for files read
         for file in &result.files_read {
-            let mut args = std::collections::HashMap::new();
+            let mut args = FxHashMap::default();
             args.insert(
                 "path".to_string(),
                 serde_json::json!(file.display().to_string()),

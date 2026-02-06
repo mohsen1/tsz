@@ -11,7 +11,7 @@ use crate::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{
     LiteralValue, NarrowingContext, ParamInfo, TypeGuard, TypeId, TypePredicate,
-    TypePredicateTarget,
+    TypePredicateTarget, TypeofKind,
     type_queries::{
         ConstructorInstanceKind, FalsyComponentKind, LiteralValueKind, NonObjectKind,
         PredicateSignatureKind, PropertyPresenceKind, TypeParameterConstraintKind,
@@ -1595,14 +1595,65 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub(crate) fn atom_from_numeric_value(&self, value: f64) -> Atom {
-        let name = if value == 0.0 && value.is_sign_negative() {
-            "-0".to_string()
-        } else if value.fract() == 0.0 {
-            format!("{:.0}", value)
+        let normalized_bits = if value == 0.0 && !value.is_sign_negative() {
+            0.0f64.to_bits()
         } else {
-            format!("{}", value)
+            value.to_bits()
         };
-        self.interner.intern_string(&name)
+        if let Some(&cached) = self.numeric_atom_cache.borrow().get(&normalized_bits) {
+            return cached;
+        }
+
+        let atom = if value == 0.0 {
+            if value.is_sign_negative() {
+                self.interner.intern_string("-0")
+            } else {
+                self.interner.intern_string("0")
+            }
+        } else if value.is_finite()
+            && value.fract() == 0.0
+            && value >= i64::MIN as f64
+            && value <= i64::MAX as f64
+        {
+            let int = value as i64;
+            if int as f64 == value {
+                self.intern_i64_decimal(int)
+            } else {
+                self.interner.intern_string(&value.to_string())
+            }
+        } else {
+            self.interner.intern_string(&value.to_string())
+        };
+
+        self.numeric_atom_cache
+            .borrow_mut()
+            .insert(normalized_bits, atom);
+        atom
+    }
+
+    fn intern_i64_decimal(&self, value: i64) -> Atom {
+        if value == 0 {
+            return self.interner.intern_string("0");
+        }
+
+        let negative = value < 0;
+        let mut n = value.unsigned_abs();
+        let mut buf = [0u8; 21];
+        let mut pos = buf.len();
+
+        while n != 0 {
+            pos -= 1;
+            buf[pos] = b'0' + (n % 10) as u8;
+            n /= 10;
+        }
+
+        if negative {
+            pos -= 1;
+            buf[pos] = b'-';
+        }
+
+        let text = std::str::from_utf8(&buf[pos..]).expect("decimal digits must be valid UTF-8");
+        self.interner.intern_string(text)
     }
 
     pub(crate) fn reference_base(&self, idx: NodeIndex) -> Option<NodeIndex> {
@@ -1916,7 +1967,9 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Check for typeof comparison: typeof x === "string"
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
-            return Some((TypeGuard::Typeof(type_name.to_string()), target, false));
+            if let Some(typeof_kind) = TypeofKind::from_str(type_name) {
+                return Some((TypeGuard::Typeof(typeof_kind), target, false));
+            }
         }
 
         // Check for loose equality with null/undefined: x == null, x != null, x == undefined, x != undefined

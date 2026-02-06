@@ -772,7 +772,32 @@ impl<'a> CheckerState<'a> {
 
         // Check for circular reference
         if self.ctx.symbol_resolution_set.contains(&sym_id) {
-            // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
+            // CRITICAL: For named entities (Interface, Class, TypeAlias, Enum), return Lazy placeholder
+            // instead of ERROR. This allows circular dependencies to work correctly.
+            //
+            // For example: `interface User { filtered: Filtered } type Filtered = { [K in keyof User]: ... }`
+            // When Filtered evaluates `keyof User` and User is still being checked, we return Lazy(User)
+            // instead of ERROR, allowing the type system to defer evaluation.
+            //
+            // For other symbols (variables, functions, etc.), we still return ERROR to prevent infinite loops.
+            let symbol = self.ctx.binder.get_symbol(sym_id);
+            if let Some(symbol) = symbol {
+                let flags = symbol.flags;
+                if flags
+                    & (symbol_flags::INTERFACE
+                        | symbol_flags::CLASS
+                        | symbol_flags::TYPE_ALIAS
+                        | symbol_flags::ENUM)
+                    != 0
+                {
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    let lazy_type = self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id));
+                    // Don't cache the Lazy type - we want to retry when the circular reference is broken
+                    return lazy_type;
+                }
+            }
+
+            // For non-named entities, cache ERROR to prevent repeated deep recursion
             // This is key for fixing timeout issues with circular class inheritance
             self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
             return TypeId::ERROR; // Circular reference - propagate error
@@ -791,12 +816,44 @@ impl<'a> CheckerState<'a> {
         self.ctx.symbol_resolution_stack.push(sym_id);
         self.ctx.symbol_resolution_set.insert(sym_id);
 
-        // CRITICAL: Pre-cache a placeholder (ERROR) to break deep recursion chains
+        // CRITICAL: Pre-cache a placeholder to break deep recursion chains
         // This prevents stack overflow in circular class inheritance by ensuring
         // that when we try to resolve this symbol again mid-resolution, we get
-        // the cached ERROR immediately instead of recursing deeper.
-        // We'll overwrite this with the real result later (line 3098).
-        self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+        // the cached value immediately instead of recursing deeper.
+        // We'll overwrite this with the real result later (line 815).
+        //
+        // For named entities (Interface, Class, TypeAlias, Enum), use a Lazy type
+        // as the placeholder instead of ERROR. This allows circular dependencies
+        // like `interface User { filtered: Filtered } type Filtered = { [K in keyof User]: ... }`
+        // to work correctly, since keyof Lazy(User) can defer evaluation instead of failing.
+        let symbol = self.ctx.binder.get_symbol(sym_id);
+        let placeholder = if let Some(symbol) = symbol {
+            let flags = symbol.flags;
+            if flags
+                & (symbol_flags::INTERFACE
+                    | symbol_flags::CLASS
+                    | symbol_flags::TYPE_ALIAS
+                    | symbol_flags::ENUM)
+                != 0
+            {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id))
+            } else {
+                TypeId::ERROR
+            }
+        } else {
+            TypeId::ERROR
+        };
+        trace!(
+            sym_id = sym_id.0,
+            placeholder = placeholder.0,
+            is_lazy = matches!(
+                self.ctx.types.lookup(placeholder),
+                Some(crate::solver::TypeKey::Lazy(_))
+            ),
+            "get_type_of_symbol: inserted placeholder"
+        );
+        self.ctx.symbol_types.insert(sym_id, placeholder);
 
         self.push_symbol_dependency(sym_id, true);
         let (result, type_params) = self.compute_type_of_symbol(sym_id);
@@ -1014,11 +1071,9 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol_arena) = opt_symbol_arena
             && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
         {
-            // CRITICAL FIX: Remove the "in-progress" ERROR marker from cache before
-            // delegating to child checker. The parent pre-caches ERROR as a cycle
-            // detection marker (line ~826), but since the child shares the cache,
-            // it would immediately return ERROR without computing the actual type.
-            // We'll re-insert the real result after delegation completes.
+            // Remove the in-progress ERROR marker before delegating to child checker.
+            // The parent pre-caches ERROR as a cycle-detection marker and we don't
+            // want the child checker to observe that placeholder.
             self.ctx.symbol_types.remove(&sym_id);
 
             let mut checker = CheckerState::with_parent_cache(
@@ -1043,8 +1098,22 @@ impl<'a> CheckerState<'a> {
             for &id in &self.ctx.class_instance_resolution_set {
                 checker.ctx.class_instance_resolution_set.insert(id);
             }
-            // Use get_type_of_symbol to ensure proper cycle detection
+            // Use get_type_of_symbol to ensure proper cycle detection.
             let result = checker.get_type_of_symbol(sym_id);
+
+            // `with_parent_cache` currently clones map-backed caches, so child updates
+            // do not automatically propagate. Merge symbol caches back to the parent
+            // to avoid repeated lib symbol recomputation across delegated resolutions.
+            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_types {
+                self.ctx.symbol_types.entry(cached_sym).or_insert(cached_ty);
+            }
+            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_instance_types {
+                self.ctx
+                    .symbol_instance_types
+                    .entry(cached_sym)
+                    .or_insert(cached_ty);
+            }
+
             return Some((result, Vec::new()));
         }
 

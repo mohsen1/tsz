@@ -1268,7 +1268,7 @@ fn test_narrow_to_interface_type() {
 // TypeGuard and narrow_type() Tests
 // =============================================================================
 
-use crate::solver::narrowing::{NarrowingContext, TypeGuard};
+use crate::solver::narrowing::{NarrowingContext, TypeGuard, TypeofKind};
 
 #[test]
 fn test_type_guard_typeof_string() {
@@ -1279,7 +1279,7 @@ fn test_type_guard_typeof_string() {
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     // typeof x === "string"
-    let guard = TypeGuard::Typeof("string".to_string());
+    let guard = TypeGuard::Typeof(TypeofKind::String);
     let narrowed = ctx.narrow_type(union, &guard, true);
 
     // Should narrow to string
@@ -1295,7 +1295,7 @@ fn test_type_guard_typeof_string_negated() {
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     // typeof x !== "string" (sense=false)
-    let guard = TypeGuard::Typeof("string".to_string());
+    let guard = TypeGuard::Typeof(TypeofKind::String);
     let narrowed = ctx.narrow_type(union, &guard, false);
 
     // Should narrow to number (exclude string)

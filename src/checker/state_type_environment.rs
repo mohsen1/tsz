@@ -1108,6 +1108,18 @@ impl<'a> CheckerState<'a> {
                 self, // Share parent's cache to fix Cache Isolation Bug
             );
             let result = checker.get_type_params_for_symbol(sym_id);
+
+            // Propagate delegated symbol caches back to the parent context.
+            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_types {
+                self.ctx.symbol_types.entry(cached_sym).or_insert(cached_ty);
+            }
+            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_instance_types {
+                self.ctx
+                    .symbol_instance_types
+                    .entry(cached_sym)
+                    .or_insert(cached_ty);
+            }
+
             self.ctx.leave_recursion();
             return result;
         }

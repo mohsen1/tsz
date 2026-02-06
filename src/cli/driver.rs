@@ -1,5 +1,7 @@
 use anyhow::{Result, bail};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -39,7 +41,7 @@ use crate::parser::ParseDiagnostic;
 use crate::parser::node::{NodeAccess, NodeArena};
 use crate::parser::syntax_kind_ext;
 use crate::solver::{TypeFormatter, TypeId};
-use rustc_hash::{FxHashMap, FxHasher};
+use rustc_hash::FxHasher;
 
 /// Reason why a file was included in compilation
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,14 +101,14 @@ pub struct CompilationResult {
 
 #[derive(Default)]
 pub(crate) struct CompilationCache {
-    type_caches: HashMap<PathBuf, TypeCache>,
-    bind_cache: HashMap<PathBuf, BindCacheEntry>,
-    dependencies: HashMap<PathBuf, HashSet<PathBuf>>,
-    reverse_dependencies: HashMap<PathBuf, HashSet<PathBuf>>,
-    diagnostics: HashMap<PathBuf, Vec<Diagnostic>>,
-    export_hashes: HashMap<PathBuf, u64>,
-    import_symbol_ids: HashMap<PathBuf, HashMap<PathBuf, Vec<SymbolId>>>,
-    star_export_dependencies: HashMap<PathBuf, HashSet<PathBuf>>,
+    type_caches: FxHashMap<PathBuf, TypeCache>,
+    bind_cache: FxHashMap<PathBuf, BindCacheEntry>,
+    dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    reverse_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    diagnostics: FxHashMap<PathBuf, Vec<Diagnostic>>,
+    export_hashes: FxHashMap<PathBuf, u64>,
+    import_symbol_ids: FxHashMap<PathBuf, FxHashMap<PathBuf, Vec<SymbolId>>>,
+    star_export_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
 }
 
 struct BindCacheEntry {
@@ -135,7 +137,7 @@ impl CompilationCache {
     where
         I: IntoIterator<Item = PathBuf>,
     {
-        let changed: HashSet<PathBuf> = paths.into_iter().collect();
+        let changed: FxHashSet<PathBuf> = paths.into_iter().collect();
         let affected = self.collect_dependents(changed.iter().cloned());
         for path in affected {
             if changed.contains(&path) {
@@ -247,13 +249,16 @@ impl CompilationCache {
             .map(|cache| cache.node_types.len())
     }
 
-    pub(crate) fn update_dependencies(&mut self, dependencies: HashMap<PathBuf, HashSet<PathBuf>>) {
-        let mut reverse = HashMap::new();
+    pub(crate) fn update_dependencies(
+        &mut self,
+        dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    ) {
+        let mut reverse = FxHashMap::default();
         for (source, deps) in &dependencies {
             for dep in deps {
                 reverse
                     .entry(dep.clone())
-                    .or_insert_with(HashSet::new)
+                    .or_insert_with(FxHashSet::default)
                     .insert(source.clone());
             }
         }
@@ -261,12 +266,12 @@ impl CompilationCache {
         self.reverse_dependencies = reverse;
     }
 
-    fn collect_dependents<I>(&self, paths: I) -> HashSet<PathBuf>
+    fn collect_dependents<I>(&self, paths: I) -> FxHashSet<PathBuf>
     where
         I: IntoIterator<Item = PathBuf>,
     {
         let mut pending = VecDeque::new();
-        let mut affected = HashSet::new();
+        let mut affected = FxHashSet::default();
 
         for path in paths {
             if affected.insert(path.clone()) {
@@ -459,7 +464,7 @@ fn build_info_to_compilation_cache(build_info: &BuildInfo, base_dir: &Path) -> C
 
         // Convert dependencies
         if let Some(deps) = build_info.get_dependencies(path_str) {
-            let mut dep_paths = HashSet::new();
+            let mut dep_paths = FxHashSet::default();
             for dep in deps {
                 let dep_path = base_dir.join(dep);
                 cache
@@ -570,7 +575,7 @@ pub(crate) fn compile_with_cache_and_changes(
         .iter()
         .map(|path| canonicalize_or_owned(path))
         .collect();
-    let mut old_hashes = HashMap::new();
+    let mut old_hashes = FxHashMap::default();
     for path in &canonical_paths {
         if let Some(&hash) = cache.export_hashes.get(path) {
             old_hashes.insert(path.clone(), hash);
@@ -590,7 +595,7 @@ pub(crate) fn compile_with_cache_and_changes(
     // If --assumeChangesOnlyAffectDirectDependencies is set, only recompile direct dependents
     let dependents = if args.assume_changes_only_affect_direct_dependencies {
         // Only get direct dependents (one level deep)
-        let mut direct_dependents = HashSet::new();
+        let mut direct_dependents = FxHashSet::default();
         for path in &canonical_paths {
             if let Some(deps) = cache.reverse_dependencies.get(path) {
                 direct_dependents.extend(deps.iter().cloned());
@@ -618,7 +623,7 @@ fn compile_inner(
     cwd: &Path,
     mut cache: Option<&mut CompilationCache>,
     changed_paths: Option<&[PathBuf]>,
-    forced_dirty_paths: Option<&HashSet<PathBuf>>,
+    forced_dirty_paths: Option<&FxHashSet<PathBuf>>,
     explicit_config_path: Option<&Path>,
 ) -> Result<CompilationResult> {
     let _compile_span = tracing::info_span!("compile", cwd = %cwd.display()).entered();
@@ -754,7 +759,7 @@ fn compile_inner(
         paths
             .iter()
             .map(|path| canonicalize_or_owned(path))
-            .collect::<HashSet<_>>()
+            .collect::<FxHashSet<_>>()
     });
 
     // Create a unified effective cache reference that works for both cases
@@ -856,9 +861,9 @@ fn compile_inner(
     );
 
     // Get reference to type caches for declaration emit
-    // Create a longer-lived empty HashMap for the fallback case
-    let empty_type_caches = std::collections::HashMap::new();
-    let type_caches_ref: &std::collections::HashMap<_, _> = local_cache
+    // Create a longer-lived empty FxHashMap for the fallback case
+    let empty_type_caches = FxHashMap::default();
+    let type_caches_ref: &FxHashMap<_, _> = local_cache
         .as_ref()
         .map(|c| &c.type_caches)
         .or_else(|| cache.as_ref().map(|c| &c.type_caches))
@@ -971,8 +976,8 @@ fn build_file_infos(
     config: Option<&crate::cli::config::TsConfig>,
     _base_dir: &Path,
 ) -> Vec<FileInfo> {
-    let root_set: std::collections::HashSet<_> = root_file_paths.iter().collect();
-    let cli_files: std::collections::HashSet<_> = args.files.iter().collect();
+    let root_set: FxHashSet<_> = root_file_paths.iter().collect();
+    let cli_files: FxHashSet<_> = args.files.iter().collect();
 
     // Get include patterns if available
     let include_patterns = config
@@ -1028,7 +1033,7 @@ struct SourceMeta {
 
 struct BuildProgramResult {
     program: MergedProgram,
-    dirty_paths: HashSet<PathBuf>,
+    dirty_paths: FxHashSet<PathBuf>,
 }
 
 fn build_program_with_cache(
@@ -1038,7 +1043,7 @@ fn build_program_with_cache(
 ) -> BuildProgramResult {
     let mut meta = Vec::with_capacity(sources.len());
     let mut to_parse = Vec::new();
-    let mut dirty_paths = HashSet::new();
+    let mut dirty_paths = FxHashSet::default();
 
     for source in sources {
         let file_name = source.path.to_string_lossy().into_owned();
@@ -1083,7 +1088,7 @@ fn build_program_with_cache(
         parallel::parse_and_bind_parallel_with_lib_files(to_parse, &lib_path_refs)
     };
 
-    let mut parsed_map: HashMap<String, BindResult> = parsed_results
+    let mut parsed_map: FxHashMap<String, BindResult> = parsed_results
         .into_iter()
         .map(|result| (result.file_name.clone(), result))
         .collect();
@@ -1134,7 +1139,8 @@ fn build_program_with_cache(
         );
     }
 
-    let mut current_paths = HashSet::with_capacity(meta.len());
+    let mut current_paths: FxHashSet<PathBuf> =
+        FxHashSet::with_capacity_and_hasher(meta.len(), Default::default());
     for entry in &meta {
         current_paths.insert(entry.path.clone());
     }
@@ -1163,11 +1169,12 @@ fn update_import_symbol_ids(
     cache: &mut CompilationCache,
 ) {
     let mut resolution_cache = ModuleResolutionCache::default();
-    let mut import_symbol_ids: HashMap<PathBuf, HashMap<PathBuf, Vec<SymbolId>>> = HashMap::new();
-    let mut star_export_dependencies: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+    let mut import_symbol_ids: FxHashMap<PathBuf, FxHashMap<PathBuf, Vec<SymbolId>>> =
+        FxHashMap::default();
+    let mut star_export_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> = FxHashMap::default();
 
     // Build set of known file paths for module resolution
-    let known_files: HashSet<PathBuf> = program
+    let known_files: FxHashSet<PathBuf> = program
         .files
         .iter()
         .map(|f| PathBuf::from(&f.file_name))
@@ -1175,8 +1182,8 @@ fn update_import_symbol_ids(
 
     for (file_idx, file) in program.files.iter().enumerate() {
         let file_path = PathBuf::from(&file.file_name);
-        let mut by_dep: HashMap<PathBuf, Vec<SymbolId>> = HashMap::new();
-        let mut star_exports: HashSet<PathBuf> = HashSet::new();
+        let mut by_dep: FxHashMap<PathBuf, Vec<SymbolId>> = FxHashMap::default();
+        let mut star_exports: FxHashSet<PathBuf> = FxHashSet::default();
         for (specifier, local_names) in collect_import_bindings(&file.arena, file.source_file) {
             let resolved = resolve_module_specifier(
                 Path::new(&file.file_name),
@@ -1451,7 +1458,7 @@ pub(crate) fn has_no_types_and_symbols_directive(source: &str) -> bool {
 
 struct SourceReadResult {
     sources: Vec<SourceEntry>,
-    dependencies: HashMap<PathBuf, HashSet<PathBuf>>,
+    dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
 }
 
 pub(crate) fn find_tsconfig(cwd: &Path) -> Option<PathBuf> {
@@ -1570,11 +1577,11 @@ fn read_source_files(
     base_dir: &Path,
     options: &ResolvedCompilerOptions,
     cache: Option<&CompilationCache>,
-    changed_paths: Option<&HashSet<PathBuf>>,
+    changed_paths: Option<&FxHashSet<PathBuf>>,
 ) -> Result<SourceReadResult> {
-    let mut sources: HashMap<PathBuf, (Option<String>, bool)> = HashMap::new(); // (text, is_binary)
-    let mut dependencies: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
-    let mut seen = HashSet::new();
+    let mut sources: FxHashMap<PathBuf, (Option<String>, bool)> = FxHashMap::default(); // (text, is_binary)
+    let mut dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> = FxHashMap::default();
+    let mut seen = FxHashSet::default();
     let mut pending = VecDeque::new();
     let mut resolution_cache = ModuleResolutionCache::default();
     let use_cache = cache.is_some() && changed_paths.is_some();
@@ -1771,12 +1778,12 @@ fn collect_diagnostics(
     lib_contexts: &[LibContext],
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
-    let mut used_paths = HashSet::new();
+    let mut used_paths = FxHashSet::default();
     let mut cache = cache;
     let mut resolution_cache = ModuleResolutionCache::default();
-    let mut program_paths = HashSet::new();
-    let mut canonical_to_file_name: HashMap<PathBuf, String> = HashMap::new();
-    let mut canonical_to_file_idx: HashMap<PathBuf, usize> = HashMap::new();
+    let mut program_paths = FxHashSet::default();
+    let mut canonical_to_file_name: FxHashMap<PathBuf, String> = FxHashMap::default();
+    let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> = FxHashMap::default();
 
     for (idx, file) in program.files.iter().enumerate() {
         let canonical = canonicalize_or_owned(Path::new(&file.file_name));
@@ -1924,7 +1931,7 @@ fn collect_diagnostics(
     // Only type-check files that have changed or depend on files with changed export signatures
 
     let mut work_queue: VecDeque<usize> = VecDeque::new();
-    let mut checked_files: HashSet<usize> = HashSet::new();
+    let mut checked_files: FxHashSet<usize> = FxHashSet::default();
 
     // Mark all files as used for cache cleanup
     for (idx, file) in program.files.iter().enumerate() {
@@ -2774,6 +2781,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.downlevel_iteration {
         options.printer.downlevel_iteration = true;
+    }
+    if args.no_emit_helpers {
+        options.printer.no_emit_helpers = true;
     }
     if args.target.is_some() && options.lib_is_default && !options.checker.no_lib {
         options.lib_files = resolve_default_lib_files(options.printer.target)?;

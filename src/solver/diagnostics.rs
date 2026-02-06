@@ -279,6 +279,11 @@ pub enum SubtypeFailureReason {
         source_type: TypeId,
         target_union_members: Vec<TypeId>,
     },
+    /// No intersection member matches target (intersection requires at least one member).
+    NoIntersectionMemberMatches {
+        source_type: TypeId,
+        target_type: TypeId,
+    },
     /// No overlapping properties for weak type target.
     NoCommonProperties {
         source_type: TypeId,
@@ -1179,6 +1184,14 @@ impl SubtypeFailureReason {
                 }
                 diag
             }
+
+            SubtypeFailureReason::NoIntersectionMemberMatches {
+                source_type,
+                target_type,
+            } => PendingDiagnostic::error(
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![(*source_type).into(), (*target_type).into()],
+            ),
 
             SubtypeFailureReason::NoCommonProperties {
                 source_type,

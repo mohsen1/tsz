@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use rayon::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::cli::config::{JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
@@ -28,7 +28,7 @@ enum PackageType {
 
 #[derive(Default)]
 pub(crate) struct ModuleResolutionCache {
-    package_type_by_dir: HashMap<PathBuf, Option<PackageType>>,
+    package_type_by_dir: FxHashMap<PathBuf, Option<PackageType>>,
 }
 
 impl ModuleResolutionCache {
@@ -489,7 +489,7 @@ pub(crate) fn resolve_module_specifier(
     options: &ResolvedCompilerOptions,
     base_dir: &Path,
     resolution_cache: &mut ModuleResolutionCache,
-    known_files: &HashSet<PathBuf>,
+    known_files: &FxHashSet<PathBuf>,
 ) -> Option<PathBuf> {
     let specifier = module_specifier.trim();
     if specifier.is_empty() {
@@ -1088,7 +1088,7 @@ fn read_package_json(path: &Path) -> Option<PackageJson> {
 }
 
 fn collect_package_entry_candidates(package_json: &PackageJson) -> Vec<String> {
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     let mut candidates = Vec::new();
 
     for value in [package_json.types.as_ref(), package_json.typings.as_ref()]
@@ -1676,8 +1676,8 @@ pub(crate) fn emit_outputs(
     root_dir: Option<&Path>,
     out_dir: Option<&Path>,
     declaration_dir: Option<&Path>,
-    dirty_paths: Option<&HashSet<PathBuf>>,
-    type_caches: &std::collections::HashMap<std::path::PathBuf, crate::checker::TypeCache>,
+    dirty_paths: Option<&FxHashSet<PathBuf>>,
+    type_caches: &FxHashMap<std::path::PathBuf, crate::checker::TypeCache>,
 ) -> Result<Vec<OutputFile>> {
     let mut outputs = Vec::new();
     let new_line = new_line_str(options.printer.new_line);
@@ -1702,16 +1702,23 @@ pub(crate) fn emit_outputs(
 
         if let Some(js_path) = js_output_path(base_dir, root_dir, out_dir, options.jsx, &input_path)
         {
+            // Get type_only_nodes from the type cache (if available)
+            let type_only_nodes = type_caches
+                .get(&input_path)
+                .map(|cache| std::sync::Arc::new(cache.type_only_nodes.clone()))
+                .unwrap_or_else(|| std::sync::Arc::new(rustc_hash::FxHashSet::default()));
+
+            // Clone and update printer options with type_only_nodes
+            let mut printer_options = options.printer.clone();
+            printer_options.type_only_nodes = type_only_nodes;
+
             // Run the lowering pass to generate transform directives
-            let ctx = crate::emit_context::EmitContext::with_options(options.printer.clone());
+            let ctx = crate::emit_context::EmitContext::with_options(printer_options.clone());
             let transforms =
                 crate::lowering_pass::LoweringPass::new(&file.arena, &ctx).run(file.source_file);
 
-            let mut printer = Printer::with_transforms_and_options(
-                &file.arena,
-                transforms,
-                options.printer.clone(),
-            );
+            let mut printer =
+                Printer::with_transforms_and_options(&file.arena, transforms, printer_options);
             // Always set source text for comment preservation and single-line detection
             if let Some(source_text) = file
                 .arena

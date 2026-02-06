@@ -20,8 +20,8 @@
 //! tracer.write_to_file("trace/trace.json")?;
 //! ```
 
+use rustc_hash::FxHashMap;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -65,8 +65,8 @@ pub struct TraceEvent {
     /// Thread ID
     pub tid: u32,
     /// Additional arguments
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub args: HashMap<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "FxHashMap::is_empty")]
+    pub args: FxHashMap<String, serde_json::Value>,
 }
 
 /// Categories for trace events
@@ -85,7 +85,7 @@ pub mod categories {
 pub struct Tracer {
     events: Vec<TraceEvent>,
     start_time: Instant,
-    active_spans: HashMap<String, Instant>,
+    active_spans: FxHashMap<String, Instant>,
     pid: u32,
     tid: u32,
 }
@@ -96,7 +96,7 @@ impl Tracer {
         Tracer {
             events: Vec::new(),
             start_time: Instant::now(),
-            active_spans: HashMap::new(),
+            active_spans: FxHashMap::default(),
             pid: std::process::id(),
             tid: 1, // Main thread
         }
@@ -121,7 +121,7 @@ impl Tracer {
             dur: None,
             pid: self.pid,
             tid: self.tid,
-            args: HashMap::new(),
+            args: FxHashMap::default(),
         });
     }
 
@@ -130,7 +130,7 @@ impl Tracer {
         &mut self,
         name: &str,
         category: &str,
-        args: HashMap<String, serde_json::Value>,
+        args: FxHashMap<String, serde_json::Value>,
     ) {
         let ts = self.timestamp();
         let key = format!("{}:{}", category, name);
@@ -162,7 +162,7 @@ impl Tracer {
             dur: None,
             pid: self.pid,
             tid: self.tid,
-            args: HashMap::new(),
+            args: FxHashMap::default(),
         });
     }
 
@@ -179,7 +179,7 @@ impl Tracer {
             dur: Some(dur),
             pid: self.pid,
             tid: self.tid,
-            args: HashMap::new(),
+            args: FxHashMap::default(),
         });
     }
 
@@ -190,7 +190,7 @@ impl Tracer {
         category: &str,
         start: Instant,
         duration: Duration,
-        args: HashMap<String, serde_json::Value>,
+        args: FxHashMap<String, serde_json::Value>,
     ) {
         let ts = (start.duration_since(self.start_time)).as_micros() as u64;
         let dur = duration.as_micros() as u64;
@@ -219,7 +219,7 @@ impl Tracer {
             dur: None,
             pid: self.pid,
             tid: self.tid,
-            args: HashMap::new(),
+            args: FxHashMap::default(),
         });
     }
 
@@ -228,7 +228,7 @@ impl Tracer {
         &mut self,
         name: &str,
         category: &str,
-        args: HashMap<String, serde_json::Value>,
+        args: FxHashMap<String, serde_json::Value>,
     ) {
         let ts = self.timestamp();
 
@@ -245,7 +245,7 @@ impl Tracer {
     }
 
     /// Add metadata event (e.g., process/thread names)
-    pub fn metadata(&mut self, name: &str, args: HashMap<String, serde_json::Value>) {
+    pub fn metadata(&mut self, name: &str, args: FxHashMap<String, serde_json::Value>) {
         self.events.push(TraceEvent {
             name: name.to_string(),
             cat: "__metadata".to_string(),
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn test_tracer_with_args() {
         let mut tracer = Tracer::new();
-        let mut args = HashMap::new();
+        let mut args = FxHashMap::default();
         args.insert("file".to_string(), serde_json::json!("test.ts"));
 
         tracer.instant_with_args("FileRead", categories::IO, args);

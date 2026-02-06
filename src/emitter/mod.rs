@@ -32,6 +32,7 @@ use crate::scanner::SyntaxKind;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use crate::transform_context::{IdentifierId, TransformContext, TransformDirective};
 use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
 mod binding_patterns;
@@ -84,6 +85,8 @@ pub struct PrinterOptions {
     pub new_line: NewLineKind,
     /// Downlevel iteration (for-of with full iterator protocol)
     pub downlevel_iteration: bool,
+    /// Set of import specifier nodes that should be elided (type-only imports)
+    pub type_only_nodes: Arc<FxHashSet<NodeIndex>>,
 }
 
 impl Default for PrinterOptions {
@@ -97,6 +100,7 @@ impl Default for PrinterOptions {
             module: ModuleKind::None,
             new_line: NewLineKind::LineFeed,
             downlevel_iteration: false,
+            type_only_nodes: Arc::new(FxHashSet::default()),
         }
     }
 }
@@ -1894,11 +1898,13 @@ impl<'a> Printer<'a> {
 
         let has_es5_transforms = self.has_es5_transforms();
 
-        // Emit all needed helpers
-        let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
-        if !helpers_code.is_empty() {
-            self.write(&helpers_code);
-            // emit_helpers() already adds newlines, no need to add more
+        // Emit all needed helpers (unless no_emit_helpers is set)
+        if !self.ctx.options.no_emit_helpers {
+            let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
+            if !helpers_code.is_empty() {
+                self.write(&helpers_code);
+                // emit_helpers() already adds newlines, no need to add more
+            }
         }
 
         if has_es5_transforms && helpers.make_template_object {
@@ -2016,6 +2022,11 @@ impl<'a> Printer<'a> {
                 }
                 self.comment_emit_idx += 1;
             }
+        }
+
+        // Ensure output ends with a newline (matching tsc behavior)
+        if !self.writer.is_at_line_start() {
+            self.write_line();
         }
     }
 }

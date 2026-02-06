@@ -473,12 +473,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // This fixes Bug #1: Key Remapping with conditionals
             TypeKey::KeyOf(operand) => {
                 tracing::trace!(
+                    operand = operand.0,
                     operand_lookup = ?self.interner().lookup(operand),
                     "extract_mapped_keys: handling KeyOf type"
                 );
                 // NORTH STAR: Use collect_properties to extract keys from KeyOf operand.
                 // This handles interfaces, classes, intersections, and type parameters.
-                match collect_properties(operand, self.interner(), self.resolver()) {
+                let prop_result = collect_properties(operand, self.interner(), self.resolver());
+                tracing::trace!(
+                    operand = operand.0,
+                    prop_result = ?std::mem::discriminant(&prop_result),
+                    "extract_mapped_keys: collect_properties result"
+                );
+                match prop_result {
                     PropertyCollectionResult::Properties {
                         properties,
                         string_index,

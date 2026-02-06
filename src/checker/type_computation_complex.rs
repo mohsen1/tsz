@@ -573,8 +573,32 @@ impl<'a> CheckerState<'a> {
     /// type Empty = keyof {};
     /// // never
     /// ```
-    pub(crate) fn get_keyof_type(&self, operand: TypeId) -> TypeId {
-        use crate::solver::type_queries::{KeyOfTypeKind, classify_for_keyof};
+    pub(crate) fn get_keyof_type(&mut self, operand: TypeId) -> TypeId {
+        use crate::solver::{
+            type_queries::KeyOfTypeKind,
+            type_queries_extended::{
+                TypeResolutionKind, classify_for_keyof, classify_for_type_resolution,
+            },
+        };
+
+        // Handle Lazy types by attempting to resolve them first
+        // This allows keyof Lazy(DefId) to work correctly for circular dependencies
+        match classify_for_type_resolution(self.ctx.types, operand) {
+            TypeResolutionKind::Lazy(def_id) => {
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    let resolved = self.get_type_of_symbol(sym_id);
+                    // Recursively get keyof of the resolved type
+                    return self.get_keyof_type(resolved);
+                }
+            }
+            TypeResolutionKind::Application => {
+                // Evaluate application types first
+                let evaluated = self.evaluate_type_for_assignability(operand);
+                return self.get_keyof_type(evaluated);
+            }
+            TypeResolutionKind::Resolved => {}
+        }
+
         match classify_for_keyof(self.ctx.types, operand) {
             KeyOfTypeKind::Object(shape_id) => {
                 let shape = self.ctx.types.object_shape(shape_id);
@@ -1765,7 +1789,20 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_resolution_depth
             .set(self.ctx.symbol_resolution_depth.get());
-        checker.type_of_value_declaration(decl_idx)
+        let result = checker.type_of_value_declaration(decl_idx);
+
+        // Propagate delegated symbol caches back to the parent context.
+        for (&cached_sym, &cached_ty) in &checker.ctx.symbol_types {
+            self.ctx.symbol_types.entry(cached_sym).or_insert(cached_ty);
+        }
+        for (&cached_sym, &cached_ty) in &checker.ctx.symbol_instance_types {
+            self.ctx
+                .symbol_instance_types
+                .entry(cached_sym)
+                .or_insert(cached_ty);
+        }
+
+        result
     }
 
     /// Resolve a value-side type by global name, preferring value declarations.

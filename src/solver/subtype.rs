@@ -716,6 +716,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 SubtypeResult::False
             };
         }
+        // Trace: Literal doesn't match target
+        if let Some(tracer) = &mut self.checker.tracer {
+            if !tracer.on_mismatch_dyn(SubtypeFailureReason::LiteralTypeMismatch {
+                source_type: self.source,
+                target_type: self.target,
+            }) {
+                return SubtypeResult::False;
+            }
+        }
         SubtypeResult::False
     }
 
@@ -723,6 +732,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         if let Some(t_elem) = array_element_type(self.checker.interner, self.target) {
             self.checker.check_subtype(element_type, t_elem)
         } else {
+            // Trace: Array source doesn't match non-array target
+            if let Some(tracer) = &mut self.checker.tracer {
+                if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: self.source,
+                    target_type: self.target,
+                }) {
+                    return SubtypeResult::False;
+                }
+            }
             SubtypeResult::False
         }
     }
@@ -742,6 +760,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             self.checker
                 .check_tuple_to_array_subtype(s_tuple_id, t_elem)
         } else {
+            // Trace: Tuple source doesn't match non-tuple/non-array target
+            if let Some(tracer) = &mut self.checker.tracer {
+                if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: self.source,
+                    target_type: self.target,
+                }) {
+                    return SubtypeResult::False;
+                }
+            }
             SubtypeResult::False
         }
     }
@@ -751,6 +778,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         let member_list = self.checker.interner.type_list(TypeListId(list_id));
         for &member in member_list.iter() {
             if !self.checker.check_subtype(member, self.target).is_true() {
+                // Trace: No union member matches target
+                if let Some(tracer) = &mut self.checker.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {
+                        source_type: self.source,
+                        target_union_members: vec![self.target],
+                    }) {
+                        return SubtypeResult::False;
+                    }
+                }
                 return SubtypeResult::False;
             }
         }
@@ -810,6 +846,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             }
         }
 
+        // Trace: No intersection member matches target
+        if let Some(tracer) = &mut self.checker.tracer {
+            if !tracer.on_mismatch_dyn(SubtypeFailureReason::NoIntersectionMemberMatches {
+                source_type: self.source,
+                target_type: self.target,
+            }) {
+                return SubtypeResult::False;
+            }
+        }
         SubtypeResult::False
     }
 
@@ -927,6 +972,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 &t_shape,
             )
         } else {
+            // Trace: Object source doesn't match non-object target
+            if let Some(tracer) = &mut self.checker.tracer {
+                if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: self.source,
+                    target_type: self.target,
+                }) {
+                    return SubtypeResult::False;
+                }
+            }
             SubtypeResult::False
         }
     }
@@ -952,6 +1006,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 &t_shape.properties,
             )
         } else {
+            // Trace: ObjectWithIndex source doesn't match non-object target
+            if let Some(tracer) = &mut self.checker.tracer {
+                if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: self.source,
+                    target_type: self.target,
+                }) {
+                    return SubtypeResult::False;
+                }
+            }
             SubtypeResult::False
         }
     }
@@ -970,6 +1033,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             self.checker
                 .check_function_to_callable_subtype(FunctionShapeId(shape_id), t_callable_id)
         } else {
+            // Trace: Function source doesn't match non-function target
+            if let Some(tracer) = &mut self.checker.tracer {
+                if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: self.source,
+                    target_type: self.target,
+                }) {
+                    return SubtypeResult::False;
+                }
+            }
             SubtypeResult::False
         }
     }
@@ -990,6 +1062,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             self.checker
                 .check_callable_to_function_subtype(CallableShapeId(shape_id), t_fn_id)
         } else {
+            // Trace: Callable source doesn't match non-callable target
+            if let Some(tracer) = &mut self.checker.tracer {
+                if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: self.source,
+                    target_type: self.target,
+                }) {
+                    return SubtypeResult::False;
+                }
+            }
             SubtypeResult::False
         }
     }
@@ -1040,6 +1121,14 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // If target is not an IndexAccess, we cannot prove subtyping.
         // Note: If S[I] could have been simplified to a concrete type that matches the target,
         // evaluate_type() in the caller (check_subtype) would have already handled it.
+        if let Some(tracer) = &mut self.checker.tracer {
+            if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                source_type: self.source,
+                target_type: self.target,
+            }) {
+                return SubtypeResult::False;
+            }
+        }
         SubtypeResult::False
     }
     fn visit_template_literal(&mut self, template_id: u32) -> Self::Output {
@@ -1094,6 +1183,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             return SubtypeResult::True;
         }
 
+        // Trace: Template literal doesn't match target
+        if let Some(tracer) = &mut self.checker.tracer {
+            if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                source_type: self.source,
+                target_type: self.target,
+            }) {
+                return SubtypeResult::False;
+            }
+        }
         SubtypeResult::False
     }
     fn visit_type_query(&mut self, symbol_ref: u32) -> Self::Output {
@@ -1171,6 +1269,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             return SubtypeResult::True;
         }
 
+        // Trace: keyof doesn't match target
+        if let Some(tracer) = &mut self.checker.tracer {
+            if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                source_type: self.source,
+                target_type: self.target,
+            }) {
+                return SubtypeResult::False;
+            }
+        }
         SubtypeResult::False
     }
     fn visit_this_type(&mut self) -> Self::Output {
@@ -1186,6 +1293,14 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // In most cases, check_subtype_inner's apparent_primitive_shape_for_type
         // would have resolved 'this' to its containing class/interface.
         // If that didn't happen or didn't result in 'True', we return False.
+        if let Some(tracer) = &mut self.checker.tracer {
+            if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                source_type: self.source,
+                target_type: self.target,
+            }) {
+                return SubtypeResult::False;
+            }
+        }
         SubtypeResult::False
     }
     fn visit_infer(&mut self, param_info: &TypeParamInfo) -> Self::Output {
@@ -1213,6 +1328,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             return SubtypeResult::True;
         }
 
+        // Trace: unique symbol doesn't match target
+        if let Some(tracer) = &mut self.checker.tracer {
+            if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                source_type: self.source,
+                target_type: self.target,
+            }) {
+                return SubtypeResult::False;
+            }
+        }
         SubtypeResult::False
     }
     fn visit_module_namespace(&mut self, _symbol_ref: u32) -> Self::Output {
@@ -1411,6 +1535,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub fn with_strict_null_checks(mut self, strict_null_checks: bool) -> Self {
         self.strict_null_checks = strict_null_checks;
         self
+    }
+
+    /// Reset per-check state so this checker can be reused for another subtype check.
+    ///
+    /// This clears cycle detection sets and counters while preserving configuration
+    /// (strict_function_types, allow_void_return, etc.) and borrowed references
+    /// (interner, resolver, inheritance_graph, etc.).
+    ///
+    /// Uses `.clear()` instead of re-allocating, so hash set memory is reused.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.in_progress.clear();
+        self.seen_refs.clear();
+        self.seen_defs.clear();
+        self.eval_cache.clear();
+        self.depth = 0;
+        self.total_checks = 0;
+        self.depth_exceeded = false;
     }
 
     /// Apply compiler flags from a packed u16 bitmask.
@@ -2024,6 +2166,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // Task #54: Structural Identity Fast-Path (O(1) after canonicalization)
+        // Check if source and target canonicalize to the same TypeId, which means
+        // they are structurally identical. This avoids expensive structural walks
+        // for types that are the same structure but were interned separately.
+        //
+        // Guarded by bypass_evaluation to prevent infinite recursion when called
+        // from TypeEvaluator during simplification (evaluation has already been done).
+        if !self.bypass_evaluation {
+            if let Some(db) = self.query_db {
+                if db.canonical_id(source) == db.canonical_id(target) {
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         // Any is assignable to anything (when allowed)
         if allow_any && source == TypeId::ANY {
             return SubtypeResult::True;
@@ -2308,6 +2465,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.subtype_of_conditional_target(source, target_cond.as_ref());
         }
 
+        // Note: Source union/intersection handling is consolidated as follows:
+        //
+        // 1. Source union: Kept here (not moved to visitor) because it must run BEFORE
+        //    the target union check. This order dependency is critical for correct
+        //    union-to-union semantics: Union(A,B) <: Union(C,D) means ALL members of
+        //    source must be subtypes of the target union (delegating to target union check).
+        //
+        // 2. Source intersection: Moved to visitor pattern (visit_intersection) which
+        //    handles both the "at least one member" check AND the property merging logic
+        //    for object targets. This removed ~50 lines of duplicate code.
+        //
+        // Source union check must run BEFORE target union check to handle union-to-union cases:
+        // Union(A, B) <: Union(C, D) means (A <: Union(C, D)) AND (B <: Union(C, D))
+        // This is different from the target union check which does: Source <: C OR Source <: D
         if let Some(members) = union_list_id(self.interner, source) {
             let member_list = self.interner.type_list(members);
             for &member in member_list.iter() {
@@ -2374,60 +2545,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        if let Some(members) = intersection_list_id(self.interner, source) {
-            let member_list = self.interner.type_list(members);
-
-            for &member in member_list.iter() {
-                if self.check_subtype(member, target).is_true() {
-                    return SubtypeResult::True;
-                }
-            }
-
-            if object_shape_id(self.interner, target).is_some()
-                || object_with_index_shape_id(self.interner, target).is_some()
-            {
-                // Use PropertyCollector to merge all properties from intersection members
-                // This handles Lazy/Ref resolution and avoids infinite recursion
-                use crate::solver::objects::{PropertyCollectionResult, collect_properties};
-
-                match collect_properties(source, self.interner, self.resolver) {
-                    PropertyCollectionResult::Any => {
-                        // any & T = any, so check if any is subtype of target
-                        return self.check_subtype(TypeId::ANY, target);
-                    }
-                    PropertyCollectionResult::NonObject => {
-                        // No object properties to check, fall through to other checks
-                    }
-                    PropertyCollectionResult::Properties {
-                        properties,
-                        string_index,
-                        number_index,
-                    } => {
-                        if !properties.is_empty()
-                            || string_index.is_some()
-                            || number_index.is_some()
-                        {
-                            let merged_type = if string_index.is_some() || number_index.is_some() {
-                                self.interner.object_with_index(ObjectShape {
-                                    flags: ObjectFlags::empty(),
-                                    properties,
-                                    string_index,
-                                    number_index,
-                                    symbol: None,
-                                })
-                            } else {
-                                self.interner.object(properties)
-                            };
-                            if self.check_subtype(merged_type, target).is_true() {
-                                return SubtypeResult::True;
-                            }
-                        }
-                    }
-                }
-            }
-
-            return SubtypeResult::False;
-        }
+        // Note: Source intersection check removed - handled by visitor pattern dispatch
+        // at the end of this function. The visitor includes the property merging logic.
 
         if let Some(members) = intersection_list_id(self.interner, target) {
             let member_list = self.interner.type_list(members);

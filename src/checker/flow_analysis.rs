@@ -1339,18 +1339,16 @@ impl<'a> CheckerState<'a> {
             None => return declared_type, // No flow info - use declared type
         };
 
-        // For identifiers, check Rule #42 (closure invalidation for captured mutable variables)
-        if let Some(sym_id) = self.get_symbol_for_identifier(idx) {
-            // Bug #1.2: Check if this is a captured mutable variable
-            // Rule #42 only applies to variables captured from outer scope, not local variables
-            if self.is_inside_closure()
-                && self.is_captured_variable(sym_id)
-                && self.is_mutable_binding(sym_id)
-            {
-                // Rule #42: Reset narrowing for captured mutable bindings in closures
-                // (const variables preserve narrowing, let/var reset to declared type)
-                return declared_type;
-            }
+        // Rule #42 only applies inside closures. Avoid symbol resolution work
+        // on the common non-closure path.
+        if self.is_inside_closure()
+            && let Some(sym_id) = self.get_symbol_for_identifier(idx)
+            && self.is_captured_variable(sym_id)
+            && self.is_mutable_binding(sym_id)
+        {
+            // Rule #42: Reset narrowing for captured mutable bindings in closures
+            // (const variables preserve narrowing, let/var reset to declared type)
+            return declared_type;
         }
 
         // TEMPORARY FIX: Removed is_narrowable_type check to allow instanceof narrowing
