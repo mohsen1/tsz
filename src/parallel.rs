@@ -38,6 +38,7 @@ use crate::lib_loader;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::parser::{ParseDiagnostic, ParserState};
+use anyhow::{Context, Result, bail};
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -384,6 +385,56 @@ pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::Li
         .collect()
 }
 
+/// Load lib.d.ts files from disk for binding, failing on any load/parse error.
+///
+/// Unlike `load_lib_files_for_binding`, this enforces strict disk-loading semantics:
+/// missing files, unreadable files, and parse errors are surfaced as hard errors.
+pub fn load_lib_files_for_binding_strict(
+    lib_files: &[&Path],
+) -> Result<Vec<Arc<lib_loader::LibFile>>> {
+    use crate::parser::ParserState;
+    use rayon::prelude::*;
+
+    if lib_files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    lib_files
+        .par_iter()
+        .map(|path| {
+            let lib_path = path.to_path_buf();
+            if !lib_path.exists() {
+                bail!("lib file not found on disk: {}", lib_path.display());
+            }
+
+            let source_text = std::fs::read_to_string(&lib_path)
+                .with_context(|| format!("failed to read lib file {}", lib_path.display()))?;
+
+            let file_name = lib_path.to_string_lossy().to_string();
+            let mut lib_parser = ParserState::new(file_name.clone(), source_text);
+            let source_file_idx = lib_parser.parse_source_file();
+            let diagnostics = lib_parser.get_diagnostics();
+            if !diagnostics.is_empty() {
+                let first = &diagnostics[0];
+                bail!(
+                    "failed to parse lib file {} ({}:{}): {}",
+                    lib_path.display(),
+                    first.start,
+                    first.length,
+                    first.message
+                );
+            }
+
+            let mut lib_binder = BinderState::new();
+            lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
+
+            let arena = Arc::new(lib_parser.into_arena());
+            let binder = Arc::new(lib_binder);
+            Ok(Arc::new(lib_loader::LibFile::new(file_name, arena, binder)))
+        })
+        .collect()
+}
+
 /// Parse and bind multiple files in parallel with lib symbol injection.
 ///
 /// This is the main entry point for compilation that includes lib.d.ts symbols.
@@ -400,8 +451,10 @@ pub fn parse_and_bind_parallel_with_lib_files(
     files: Vec<(String, String)>,
     lib_files: &[&Path],
 ) -> Vec<BindResult> {
-    // Load lib files for binding
-    let lib_contexts = load_lib_files_for_binding(lib_files);
+    // Load lib files for binding.
+    // This path is intentionally strict so missing/unreadable lib files are not ignored.
+    let lib_contexts = load_lib_files_for_binding_strict(lib_files)
+        .unwrap_or_else(|err| panic!("failed to load lib files from disk: {err}"));
 
     // Parse and bind with lib symbols
     parse_and_bind_parallel_with_libs(files, &lib_contexts)
@@ -1144,7 +1197,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 /// This is the main entry point for multi-file compilation.
 /// Lib files are automatically loaded and merged during binding.
 pub fn compile_files(files: Vec<(String, String)>) -> MergedProgram {
-    let lib_files = resolve_default_lib_files(ScriptTarget::ESNext).unwrap_or_default();
+    let lib_files = resolve_default_lib_files(ScriptTarget::ESNext)
+        .unwrap_or_else(|err| panic!("failed to resolve default lib files: {err}"));
     compile_files_with_libs(files, &lib_files)
 }
 

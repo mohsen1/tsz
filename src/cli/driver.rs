@@ -824,7 +824,7 @@ fn compile_inner(
     // Load and bind each lib exactly once, then reuse for:
     // 1) user-file binding (global symbol availability during bind)
     // 2) checker lib contexts (global symbol/type resolution)
-    let lib_files: Vec<Arc<LibFile>> = parallel::load_lib_files_for_binding(&lib_path_refs);
+    let lib_files: Vec<Arc<LibFile>> = parallel::load_lib_files_for_binding_strict(&lib_path_refs)?;
 
     let (program, dirty_paths) = if let Some(ref mut c) = effective_cache {
         let result = build_program_with_cache(sources, c, &lib_files);

@@ -326,6 +326,10 @@ pub fn resolve_compiler_options(
         resolved.checker.no_types_and_symbols = no_types_and_symbols;
     }
 
+    if resolved.checker.no_lib && options.lib.is_some() {
+        bail!("Option 'lib' cannot be specified with option 'noLib'.");
+    }
+
     if let Some(lib_list) = options.lib.as_ref() {
         resolved.lib_files = resolve_lib_files(lib_list)?;
         resolved.lib_is_default = false;
@@ -701,6 +705,18 @@ pub(crate) fn resolve_lib_files_with_options(
     }
 
     let lib_dir = default_lib_dir()?;
+    resolve_lib_files_from_dir_with_options(lib_list, follow_references, &lib_dir)
+}
+
+pub(crate) fn resolve_lib_files_from_dir_with_options(
+    lib_list: &[String],
+    follow_references: bool,
+    lib_dir: &Path,
+) -> Result<Vec<PathBuf>> {
+    if lib_list.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let lib_map = build_lib_map(&lib_dir)?;
     let mut resolved = Vec::new();
     let mut pending: VecDeque<String> = lib_list
@@ -765,6 +781,13 @@ pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
     resolve_lib_files_with_options(lib_list, true)
 }
 
+pub(crate) fn resolve_lib_files_from_dir(
+    lib_list: &[String],
+    lib_dir: &Path,
+) -> Result<Vec<PathBuf>> {
+    resolve_lib_files_from_dir_with_options(lib_list, true, lib_dir)
+}
+
 /// Resolve default lib files for a given target.
 ///
 /// Matches tsc's behavior exactly:
@@ -773,18 +796,17 @@ pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
 ///
 /// This means `--target es5` loads lib.d.ts -> dom -> es2015 (transitively),
 /// which is exactly what tsc does (verified with `tsc --target es5 --listFiles`).
-///
-/// Falls back to core lib (without DOM) if the full lib is not available.
 pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<PathBuf>> {
-    let root_lib = default_lib_name_for_target(target);
-    match resolve_lib_files(&[root_lib.to_string()]) {
-        Ok(files) if !files.is_empty() => return Ok(files),
-        _ => {}
-    }
+    let lib_dir = default_lib_dir()?;
+    resolve_default_lib_files_from_dir(target, &lib_dir)
+}
 
-    // Fallback to core lib (without DOM) if full lib not available
-    let core_lib = core_lib_name_for_target(target);
-    resolve_lib_files(&[core_lib.to_string()])
+pub(crate) fn resolve_default_lib_files_from_dir(
+    target: ScriptTarget,
+    lib_dir: &Path,
+) -> Result<Vec<PathBuf>> {
+    let root_lib = default_lib_name_for_target(target);
+    resolve_lib_files_from_dir(&[root_lib.to_string()], lib_dir)
 }
 
 /// Get the default lib name for a target.
@@ -851,8 +873,15 @@ pub fn core_lib_name_for_target(target: ScriptTarget) -> &'static str {
 /// 3. Relative to current working directory
 /// 4. TypeScript/src/lib in the source tree
 pub fn default_lib_dir() -> Result<PathBuf> {
-    if let Some(dir) = lib_dir_from_env() {
-        return Ok(dir);
+    if let Some(dir) = env::var_os("TSZ_LIB_DIR") {
+        let dir = PathBuf::from(dir);
+        if !dir.is_dir() {
+            bail!(
+                "TSZ_LIB_DIR does not point to a directory: {}",
+                dir.display()
+            );
+        }
+        return Ok(canonicalize_or_owned(&dir));
     }
 
     if let Some(dir) = lib_dir_from_exe() {
@@ -869,16 +898,6 @@ pub fn default_lib_dir() -> Result<PathBuf> {
     }
 
     bail!("lib directory not found under {}", manifest_dir.display());
-}
-
-fn lib_dir_from_env() -> Option<PathBuf> {
-    let dir = env::var_os("TSZ_LIB_DIR")?;
-    let dir = PathBuf::from(dir);
-    if dir.is_dir() {
-        Some(canonicalize_or_owned(&dir))
-    } else {
-        None
-    }
 }
 
 fn lib_dir_from_exe() -> Option<PathBuf> {
