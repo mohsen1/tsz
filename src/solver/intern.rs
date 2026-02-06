@@ -2670,6 +2670,48 @@ impl TypeInterner {
                     }
                 }
                 TemplateSpan::Type(type_id) => {
+                    // Task #47: Intrinsic stringification/expansion rules
+                    match *type_id {
+                        TypeId::NULL => {
+                            // null becomes text "null"
+                            let text = "null";
+                            if let Some(ref mut pt) = pending_text {
+                                pt.push_str(text);
+                                has_consecutive_texts = true;
+                            } else {
+                                pending_text = Some(text.to_string());
+                            }
+                            continue;
+                        }
+                        TypeId::UNDEFINED | TypeId::VOID => {
+                            // undefined/void becomes text "undefined"
+                            let text = "undefined";
+                            if let Some(ref mut pt) = pending_text {
+                                pt.push_str(text);
+                                has_consecutive_texts = true;
+                            } else {
+                                pending_text = Some(text.to_string());
+                            }
+                            continue;
+                        }
+                        TypeId::BOOLEAN => {
+                            // boolean expands to union of "true" | "false"
+                            // Flush pending text first
+                            if let Some(text) = pending_text.take() {
+                                if !text.is_empty() {
+                                    normalized.push(TemplateSpan::Text(self.intern_string(&text)));
+                                }
+                            }
+                            // Add the boolean union type
+                            let bool_union =
+                                self.union2(TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE);
+                            normalized.push(TemplateSpan::Type(bool_union));
+                            continue;
+                        }
+                        // number, bigint, string intrinsics do NOT widen - they're kept as-is for pattern matching
+                        _ => {}
+                    }
+
                     // Task #47: Remove empty string literals from interpolations
                     // An empty string literal contributes nothing to the template
                     if let Some(TypeKey::Literal(LiteralValue::String(s))) = self.lookup(*type_id) {
