@@ -918,15 +918,17 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Collect implemented members from the class (name -> (node_idx, type))
-        let mut class_members: std::collections::HashMap<String, (NodeIndex, TypeId)> =
+        // Collect implemented members from the class (name -> node_idx).
+        // Member types are computed lazily only when needed for an interface match.
+        let mut class_members: std::collections::HashMap<String, NodeIndex> =
             std::collections::HashMap::new();
         for &member_idx in &class_data.members.nodes {
             if let Some(name) = self.get_member_name(member_idx) {
-                let member_type = self.get_type_of_class_member(member_idx);
-                class_members.insert(name, (member_idx, member_type));
+                class_members.insert(name, member_idx);
             }
         }
+        let mut class_member_types: std::collections::HashMap<NodeIndex, TypeId> =
+            std::collections::HashMap::new();
 
         // Get the class name for error messages
         let class_name = if !class_data.name.is_none() {
@@ -1018,9 +1020,15 @@ impl<'a> CheckerState<'a> {
                         };
 
                         // Check if class has this member
-                        if let Some(&(_class_member_idx, class_member_type)) =
-                            class_members.get(&member_name)
-                        {
+                        if let Some(&class_member_idx) = class_members.get(&member_name) {
+                            let class_member_type =
+                                if let Some(&cached) = class_member_types.get(&class_member_idx) {
+                                    cached
+                                } else {
+                                    let computed = self.get_type_of_class_member(class_member_idx);
+                                    class_member_types.insert(class_member_idx, computed);
+                                    computed
+                                };
                             // Get the expected type from the interface
                             let interface_member_type =
                                 self.get_type_of_interface_member_simple(member_idx);
