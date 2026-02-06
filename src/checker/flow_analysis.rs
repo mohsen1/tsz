@@ -1562,6 +1562,22 @@ impl<'a> CheckerState<'a> {
 
     /// Emit TS2454 error for variable used before definite assignment.
     fn emit_definite_assignment_error(&mut self, idx: NodeIndex, sym_id: SymbolId) {
+        // Get the location for error reporting and deduplication key
+        let Some(node) = self.ctx.arena.get(idx) else {
+            // If the node doesn't exist in the arena, we can't deduplicate by position
+            // Skip error emission to avoid potential duplicates
+            return;
+        };
+
+        let pos = node.pos;
+
+        // Deduplicate: check if we've already emitted an error for this (node, symbol) pair
+        let key = (pos, sym_id);
+        if !self.ctx.emitted_ts2454_errors.insert(key) {
+            // Already inserted - duplicate error, skip
+            return;
+        }
+
         // Get the variable name for the error message
         let name = self
             .ctx
@@ -1571,23 +1587,11 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_else(|| "<unknown>".to_string());
 
         // Get the location for error reporting
-        let Some(node) = self.ctx.arena.get(idx) else {
-            // If the node doesn't exist in the arena, emit error with position 0
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                0,
-                0,
-                format!("Variable '{}' is used before being assigned", name),
-                2454, // TS2454
-            ));
-            return;
-        };
-        let start = node.pos;
         let length = node.end - node.pos;
 
         self.ctx.diagnostics.push(Diagnostic::error(
             self.ctx.file_name.clone(),
-            start,
+            pos,
             length,
             format!("Variable '{}' is used before being assigned", name),
             2454, // TS2454

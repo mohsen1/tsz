@@ -621,6 +621,18 @@ pub struct CheckerContext<'a> {
     /// the function boundary.
     pub had_outer_loop: bool,
 
+    /// When true, suppress definite assignment errors (TS2454).
+    /// This is used during return type inference to avoid duplicate errors.
+    /// The function body is checked twice: once for return type inference
+    /// and once for actual statement checking. We only want to emit TS2454
+    /// errors during the second pass.
+    pub suppress_definite_assignment_errors: bool,
+
+    /// Track which (node, symbol) pairs have already emitted TS2454 errors
+    /// to avoid duplicate errors when the same usage is checked multiple times.
+    /// Key: (node_position, symbol_id)
+    pub emitted_ts2454_errors: FxHashSet<(u32, SymbolId)>,
+
     /// Fuel counter for type resolution operations.
     /// Decremented on each type resolution to prevent timeout on pathological types.
     /// When exhausted, type resolution returns ERROR to prevent infinite loops.
@@ -732,6 +744,8 @@ impl<'a> CheckerContext<'a> {
             function_depth: 0,
             label_stack: Vec::new(),
             had_outer_loop: false,
+            suppress_definite_assignment_errors: false,
+            emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -826,6 +840,8 @@ impl<'a> CheckerContext<'a> {
             function_depth: 0,
             label_stack: Vec::new(),
             had_outer_loop: false,
+            suppress_definite_assignment_errors: false,
+            emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -923,6 +939,8 @@ impl<'a> CheckerContext<'a> {
             function_depth: 0,
             label_stack: Vec::new(),
             had_outer_loop: false,
+            suppress_definite_assignment_errors: false,
+            emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -1019,6 +1037,8 @@ impl<'a> CheckerContext<'a> {
             function_depth: 0,
             label_stack: Vec::new(),
             had_outer_loop: false,
+            suppress_definite_assignment_errors: false,
+            emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
@@ -1123,6 +1143,8 @@ impl<'a> CheckerContext<'a> {
             function_depth: 0,
             label_stack: Vec::new(),
             had_outer_loop: false,
+            suppress_definite_assignment_errors: false,
+            emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
