@@ -1126,10 +1126,25 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         SubtypeResult::False
     }
     fn visit_this_type(&mut self) -> Self::Output {
+        use crate::solver::visitor::is_this_type;
+
+        // If target is also a 'this' type, they are compatible.
+        // This handles cases like comparing two uninstantiated generic methods.
+        if is_this_type(self.checker.interner, self.target) {
+            return SubtypeResult::True;
+        }
+
+        // If we reach here, 'this' is being compared against a non-this type.
+        // In most cases, check_subtype_inner's apparent_primitive_shape_for_type
+        // would have resolved 'this' to its containing class/interface.
+        // If that didn't happen or didn't result in 'True', we return False.
         SubtypeResult::False
     }
-    fn visit_infer(&mut self, _param_info: &TypeParamInfo) -> Self::Output {
-        SubtypeResult::False
+    fn visit_infer(&mut self, param_info: &TypeParamInfo) -> Self::Output {
+        // 'infer R' behaves like a type parameter during structural subtyping.
+        // It is a subtype of the target if its constraint satisfies the target.
+        self.checker
+            .check_type_parameter_subtype(param_info, self.target)
     }
     fn visit_unique_symbol(&mut self, symbol_ref: u32) -> Self::Output {
         use crate::solver::visitor::unique_symbol_ref;
