@@ -171,13 +171,6 @@ impl ParserState {
     /// ASI Rule: If there's a line break between ) and =>, it's NOT an arrow function.
     /// Example: `(x)\n=> y` should NOT be parsed as an arrow function.
     pub(crate) fn look_ahead_is_arrow_function(&mut self) -> bool {
-        // IMPORTANT: If we're inside the 'true' branch of a conditional expression (a ? [here] : b),
-        // a following ':' belongs to the conditional, NOT to an arrow function return type.
-        // This prevents "stealing" the colon from the enclosing conditional.
-        if (self.context_flags & crate::parser::state::CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0 {
-            return false;
-        }
-
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
 
