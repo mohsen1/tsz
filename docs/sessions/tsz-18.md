@@ -351,7 +351,25 @@ let w: WithoutAge = { name: "Alice" }; // tsz errors, tsc accepts
 
 **Hypothesis**: The issue is likely in how the conditional type result is being handled. If `literal_string()` can't extract a string from the result, the mapped type is returned unevaluated (line 265).
 
-**Current Status**: Debugging in progress. Need to trace what type the conditional actually returns.
+**ROOT CAUSE DISCOVERED!**: The conditional type evaluator is not preserving literal types!
+
+**Test Case**:
+```typescript
+type Test1 = "name" extends "age" ? never : "name";
+let t1: Test1 = "name"; // Error: Type 'string' is not assignable to type 'Test1'
+```
+
+**Expected**: `Test1` should be `"name"` (literal string type)
+**Actual**: `Test1` is `string` (widened type)
+
+This is why key remapping fails! When the conditional `K extends "age" ? never : K` evaluates for `K = "name"`, it should return `"name"` (literal), but it's returning `string` (widened).
+
+**Impact**: This is a fundamental bug in conditional type evaluation that affects:
+- Key remapping with `as` clause
+- Any conditional type that returns a literal from the check/false branches
+- Possibly many other conditional type use cases
+
+**Next Steps**: Fix conditional type literal preservation before continuing with key remapping.
 
 **Test Results**: 8272 passing, 40 failing (unchanged)
 
