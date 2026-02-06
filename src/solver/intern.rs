@@ -1152,6 +1152,68 @@ impl TypeInterner {
         )
     }
 
+    /// Check if a type is an empty object type (no properties, no index signatures).
+    ///
+    /// Empty objects like `{}` represent "any non-nullish value" in TypeScript.
+    /// In intersections like `string & {}`, the empty object is redundant and can be removed.
+    fn is_empty_object(&self, id: TypeId) -> bool {
+        match self.lookup(id) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.object_shape(shape_id);
+                shape.properties.is_empty()
+                    && shape.string_index.is_none()
+                    && shape.number_index.is_none()
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a type is non-nullish (i.e., not null, undefined, void, or never).
+    ///
+    /// This is used to determine if an intersection has non-nullish members that
+    /// make empty objects redundant.
+    ///
+    /// For unions: returns true only if ALL members are non-nullish (conservative).
+    /// For intersections: returns true if ANY member is non-nullish (permissive).
+    fn is_non_nullish_type(&self, id: TypeId) -> bool {
+        match id {
+            TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID | TypeId::NEVER => false,
+            TypeId::STRING
+            | TypeId::NUMBER
+            | TypeId::BOOLEAN
+            | TypeId::BIGINT
+            | TypeId::SYMBOL
+            | TypeId::OBJECT => true,
+            _ => match self.lookup(id) {
+                Some(TypeKey::Literal(_))
+                | Some(TypeKey::Object(_))
+                | Some(TypeKey::ObjectWithIndex(_))
+                | Some(TypeKey::Array(_))
+                | Some(TypeKey::Tuple(_))
+                | Some(TypeKey::Function(_))
+                | Some(TypeKey::Callable(_))
+                | Some(TypeKey::TemplateLiteral(_))
+                | Some(TypeKey::UniqueSymbol(_)) => true,
+
+                // Union is non-nullish only if ALL members are non-nullish
+                // (conservative: don't remove {} if any member might be nullish)
+                Some(TypeKey::Union(list_id)) => {
+                    let members = self.type_list(list_id);
+                    members.iter().all(|&m| self.is_non_nullish_type(m))
+                }
+
+                // Intersection is non-nullish if ANY member is non-nullish
+                // (permissive: string & T is non-nullish regardless of T)
+                Some(TypeKey::Intersection(list_id)) => {
+                    let members = self.type_list(list_id);
+                    members.iter().any(|&m| self.is_non_nullish_type(m))
+                }
+
+                _ => false,
+            },
+        }
+    }
+
     fn normalize_intersection(&self, mut flat: TypeListBuffer) -> TypeId {
         // FIX: Do not blindly sort all members. Callables must preserve order
         // for correct overload resolution. Non-callables should be sorted for
@@ -1214,6 +1276,25 @@ impl TypeInterner {
         }
         // Remove `unknown` from intersections (identity element)
         flat.retain(|id| *id != TypeId::UNKNOWN);
+
+        // =========================================================
+        // Task #48: Empty Object Rule for Intersections
+        // =========================================================
+        // Remove {} from intersections if other non-nullish types are present.
+        // In TypeScript, {} represents "any non-nullish value", which is redundant
+        // when we already have a non-nullish type like string, number, etc.
+        // Example: `string & {}` → `string` (correct)
+        // Note: This is INTERSECTION-SPECIFIC. For unions, we DO NOT remove {}
+        //       because `string | {}` should stay as `string | {}` (weak type rule).
+        if flat.len() > 1 && flat.iter().any(|&id| self.is_empty_object(id)) {
+            let has_non_nullish = flat
+                .iter()
+                .any(|&id| !self.is_empty_object(id) && self.is_non_nullish_type(id));
+
+            if has_non_nullish {
+                flat.retain(|id| !self.is_empty_object(*id));
+            }
+        }
 
         // Abort reduction if any member is a Lazy type.
         // The interner (Judge) cannot resolve symbols, so if we have unresolved types,
@@ -1714,17 +1795,12 @@ impl TypeInterner {
             if member == TypeId::NULL || member == TypeId::UNDEFINED || member == TypeId::VOID {
                 has_null_or_undefined = true;
             } else {
-                // Check if this is an object type (not empty object)
+                // Check if this is an object type
                 match self.lookup(member) {
-                    Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                        // Empty objects {} do NOT count - `null & {}` is valid in some contexts
-                        let shape = self.object_shape(shape_id);
-                        if !shape.properties.is_empty()
-                            || shape.string_index.is_some()
-                            || shape.number_index.is_some()
-                        {
-                            has_object_type = true;
-                        }
+                    // Task #48: Empty objects ARE object types and are disjoint from null/undefined
+                    // null & {} = never (null is not a non-nullish value)
+                    Some(TypeKey::Object(_)) | Some(TypeKey::ObjectWithIndex(_)) => {
+                        has_object_type = true;
                     }
                     // Array, tuple, function, callable are all object types that are disjoint from null/undefined
                     Some(TypeKey::Array(_))
