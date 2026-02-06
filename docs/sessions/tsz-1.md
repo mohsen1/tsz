@@ -647,3 +647,64 @@ Created comprehensive test suite to validate the North Star O(1) equality goal.
 - Continue with Gap B: Audit evaluate_rules/ for canonical constructor usage
 - Or address the boolean expansion O(1) equality gap found by tests
 
+---
+
+## Session Update (2026-02-06 - Part 8)
+
+**Completed Work:**
+- ✅ Boolean Expansion O(1) Equality Gap - COMPLETE (commit: beafa50a7)
+- ✅ Gap B: Evaluation Rule Audit - COMPLETE (commit: b7763127c)
+
+**Boolean Expansion O(1) Equality Gap - RESOLVED**
+Fixed template literal boolean expansion to achieve O(1) equality.
+
+**Changes Made (in `src/solver/intern.rs`):**
+
+1. **template_span_cardinality**: Added BOOLEAN intrinsic case
+   - Returns `Some(2)` for BOOLEAN (expands to "true" | "false")
+   - Added BOOLEAN_TRUE, BOOLEAN_FALSE, NULL, UNDEFINED, VOID intrinsics as single-value expandables
+
+2. **get_string_literal_values**: Added BOOLEAN handling
+   - Returns `vec!["true".to_string(), "false".to_string()]` for BOOLEAN
+   - Made Union branch recursive to handle boolean-in-union correctly
+
+3. **normalize_template_spans**: Removed BOOLEAN-specific case
+   - Let general expansion logic handle boolean with updated helpers
+   - Removed premature union conversion that prevented proper handling
+
+**Test Results:**
+- 17/17 isomorphism validation tests passing (was 16/17)
+
+---
+
+**Gap B: Evaluation Rule Audit - RESOLVED**
+Fixed non-canonical type construction in evaluate_rules per Gemini guidance.
+
+**Files Modified:**
+1. **`src/solver/evaluate_rules/mapped.rs`**:
+   - Line ~297: Replaced `intern(TypeKey::Literal(...))` with `literal_string_atom()`
+   - Line ~305: Replaced `lookup` + `match` with `visitor::literal_string()` helper (North Star Rule 3)
+   - Line ~497: Replaced `lookup` + `match` with `visitor::literal_string()` helper
+
+2. **`src/solver/evaluate_rules/keyof.rs`**:
+   - Lines ~154, ~166: Replaced `intern(TypeKey::Literal(...))` with `literal_string_atom()`
+   - Line ~358: Replaced `intern(TypeKey::Literal(...))` with `literal_string_atom()`
+
+**Other Files Audited (No Issues Found):**
+- `conditional.rs` - No direct TypeKey construction patterns
+- `index_access.rs` - Only IndexAccess construction (acceptable - no named constructor yet)
+- `template_literal.rs` - No direct TypeKey construction patterns
+
+**Test Results:**
+- All 25 isomorphism validation tests passing
+- All 147 keyof tests passing
+- 2 pre-existing test failures (unrelated to this work)
+
+**Gemini Guidance Summary:**
+1. Always use canonical constructors (`literal_string_atom()`, `union()`, etc.)
+2. Use visitor helpers (`visitor::literal_string()`) instead of `lookup` + `match` for data extraction
+3. Direct TypeKey construction only acceptable for types without named constructors (e.g., IndexAccess)
+
+**Remaining Gap:**
+- Gap C: Cache Soundness Verification (Lawyer flags in RelationCacheKey)
+
