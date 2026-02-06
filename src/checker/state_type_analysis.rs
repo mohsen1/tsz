@@ -1071,11 +1071,9 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol_arena) = opt_symbol_arena
             && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
         {
-            // CRITICAL FIX: Remove the "in-progress" ERROR marker from cache before
-            // delegating to child checker. The parent pre-caches ERROR as a cycle
-            // detection marker (line ~826), but since the child shares the cache,
-            // it would immediately return ERROR without computing the actual type.
-            // We'll re-insert the real result after delegation completes.
+            // Remove the in-progress ERROR marker before delegating to child checker.
+            // The parent pre-caches ERROR as a cycle-detection marker and we don't
+            // want the child checker to observe that placeholder.
             self.ctx.symbol_types.remove(&sym_id);
 
             let mut checker = CheckerState::with_parent_cache(
@@ -1100,8 +1098,22 @@ impl<'a> CheckerState<'a> {
             for &id in &self.ctx.class_instance_resolution_set {
                 checker.ctx.class_instance_resolution_set.insert(id);
             }
-            // Use get_type_of_symbol to ensure proper cycle detection
+            // Use get_type_of_symbol to ensure proper cycle detection.
             let result = checker.get_type_of_symbol(sym_id);
+
+            // `with_parent_cache` currently clones map-backed caches, so child updates
+            // do not automatically propagate. Merge symbol caches back to the parent
+            // to avoid repeated lib symbol recomputation across delegated resolutions.
+            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_types {
+                self.ctx.symbol_types.entry(cached_sym).or_insert(cached_ty);
+            }
+            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_instance_types {
+                self.ctx
+                    .symbol_instance_types
+                    .entry(cached_sym)
+                    .or_insert(cached_ty);
+            }
+
             return Some((result, Vec::new()));
         }
 
