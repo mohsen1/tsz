@@ -386,6 +386,9 @@ pub struct TypeEnvironment {
     /// Used by the Canonicalizer to distinguish structural types (TypeAlias)
     /// from nominal types (Interface/Class/Enum).
     def_kinds: std::collections::HashMap<u32, crate::solver::def::DefKind>,
+    /// Maps enum member DefIds to their parent enum DefId.
+    /// Used for member-to-parent assignability (e.g., E.A -> E).
+    enum_parents: std::collections::HashMap<u32, DefId>,
 }
 
 impl TypeEnvironment {
@@ -402,6 +405,7 @@ impl TypeEnvironment {
             symbol_to_def: std::collections::HashMap::new(),
             numeric_enums: std::collections::HashSet::new(),
             def_kinds: std::collections::HashMap::new(),
+            enum_parents: std::collections::HashMap::new(),
         }
     }
 
@@ -558,6 +562,25 @@ impl TypeEnvironment {
     pub fn is_numeric_enum(&self, def_id: DefId) -> bool {
         self.numeric_enums.contains(&def_id.0)
     }
+
+    // =========================================================================
+    // Enum Parent Relationships (Task #17: Enum Type Resolution)
+    // =========================================================================
+
+    /// Register an enum member's parent enum DefId.
+    ///
+    /// Used for member-to-parent assignability (e.g., E.A -> E).
+    pub fn register_enum_parent(&mut self, member_def_id: DefId, parent_def_id: DefId) {
+        self.enum_parents.insert(member_def_id.0, parent_def_id);
+    }
+
+    /// Get the parent enum DefId for an enum member DefId.
+    ///
+    /// Returns Some(parent_def_id) if the DefId is an enum member.
+    /// Returns None if the DefId is not an enum member (e.g., it's the enum type itself).
+    pub fn get_enum_parent(&self, member_def_id: DefId) -> Option<DefId> {
+        self.enum_parents.get(&member_def_id.0).copied()
+    }
 }
 
 impl TypeResolver for TypeEnvironment {
@@ -603,6 +626,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn is_numeric_enum(&self, def_id: DefId) -> bool {
         TypeEnvironment::is_numeric_enum(self, def_id)
+    }
+
+    fn get_enum_parent_def_id(&self, member_def_id: DefId) -> Option<DefId> {
+        TypeEnvironment::get_enum_parent(self, member_def_id)
     }
 }
 
@@ -2623,6 +2650,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if s_def_id == t_def_id {
                 return SubtypeResult::True;
             }
+
+            // Check for member-to-parent relationship (e.g., E.A -> E)
+            // If source is a member of the target enum, it is a subtype
+            if self.resolver.get_enum_parent_def_id(s_def_id) == Some(t_def_id) {
+                // Source is a member of target enum
+                // Only allow if target is the full enum type (not a different member)
+                if self.resolver.is_enum_type(target, self.interner) {
+                    return SubtypeResult::True;
+                }
+            }
+
             // Different enums are NOT compatible (nominal typing)
             return SubtypeResult::False;
         }
@@ -2677,10 +2715,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Check: source is Number, target is numeric enum
+        // Check: source is Number (or numeric literal), target is numeric enum
         if let Some(t_def) = get_enum_def_id(target) {
             if source == TypeId::NUMBER && self.resolver.is_numeric_enum(t_def) {
                 return SubtypeResult::True;
+            }
+            // Also check for numeric literals (subtypes of number)
+            if matches!(
+                self.interner.lookup(source),
+                Some(TypeKey::Literal(LiteralValue::Number(_)))
+            ) {
+                if self.resolver.is_numeric_enum(t_def) {
+                    // For numeric literals, we need to check if they're assignable to the enum
+                    // Fall through to structural check (e.g., 0 -> E.A might succeed if E.A = 0)
+                    return self.check_subtype(source, self.resolve_lazy_type(target));
+                }
             }
         }
 
