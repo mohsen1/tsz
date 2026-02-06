@@ -216,6 +216,11 @@ pub struct BinderState {
     /// is looked up multiple times across different files.
     /// Uses RwLock for thread-safety in parallel compilation.
     resolved_export_cache: std::sync::RwLock<FxHashMap<(String, String), Option<SymbolId>>>,
+    /// Cache for identifier resolution by AST node.
+    /// Key: (arena_pointer, node_index) -> resolved SymbolId (or None if not found).
+    /// This avoids repeated scope walks for hot checker paths that ask for the same
+    /// identifier symbol many times (e.g. large switch/flow analysis files).
+    resolved_identifier_cache: std::sync::RwLock<FxHashMap<(usize, u32), Option<SymbolId>>>,
 
     /// Shorthand ambient modules: modules declared with just `declare module "xxx"` (no body)
     /// Imports from these modules should resolve to `any` type
@@ -298,6 +303,7 @@ impl BinderState {
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
             resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
+            resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules: FxHashSet::default(),
             lib_symbols_merged: false,
         }
@@ -338,6 +344,7 @@ impl BinderState {
         self.reexports.clear();
         self.wildcard_reexports.clear();
         self.resolved_export_cache.write().unwrap().clear();
+        self.resolved_identifier_cache.write().unwrap().clear();
         self.shorthand_ambient_modules.clear();
         self.lib_symbols_merged = false;
     }
@@ -448,6 +455,7 @@ impl BinderState {
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
             resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
+            resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules: FxHashSet::default(),
             lib_symbols_merged: false,
         }
@@ -550,6 +558,7 @@ impl BinderState {
             reexports,
             wildcard_reexports,
             resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
+            resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules,
             lib_symbols_merged: false,
         }
@@ -568,90 +577,113 @@ impl BinderState {
     /// - Falls through to lib_binders
     /// - Resolution failures
     pub fn resolve_identifier(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<SymbolId> {
+        // Fast path: identifier resolution is pure for a fixed binder + arena.
+        // Cache both hits and misses to avoid repeated scope walks in checker hot paths.
+        let cache_key = (arena as *const NodeArena as usize, node_idx.0);
+        if let Some(&cached) = self
+            .resolved_identifier_cache
+            .read()
+            .unwrap()
+            .get(&cache_key)
+        {
+            return cached;
+        }
+
         let _span = span!(Level::DEBUG, "resolve_identifier", node_idx = node_idx.0).entered();
 
-        let node = arena.get(node_idx)?;
+        let result = 'resolve: {
+            let Some(node) = arena.get(node_idx) else {
+                break 'resolve None;
+            };
 
-        // Get the identifier text
-        let name = if let Some(ident) = arena.get_identifier(node) {
-            &ident.escaped_text
-        } else {
-            return None;
-        };
+            // Get the identifier text
+            let name = if let Some(ident) = arena.get_identifier(node) {
+                &ident.escaped_text
+            } else {
+                break 'resolve None;
+            };
 
-        debug!("[RESOLVE] Looking up identifier '{}'", name);
+            debug!("[RESOLVE] Looking up identifier '{}'", name);
 
-        if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
-            // Walk up the scope chain
-            let mut scope_depth = 0;
-            while !scope_id.is_none() {
-                if let Some(scope) = self.scopes.get(scope_id.0 as usize) {
-                    if let Some(sym_id) = scope.table.get(name) {
-                        debug!(
-                            "[RESOLVE] '{}' FOUND in scope at depth {} (id={})",
-                            name, scope_depth, sym_id.0
-                        );
-                        // Resolve import if this symbol is imported from another module
-                        if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
-                            return Some(resolved);
+            if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
+                // Walk up the scope chain
+                let mut scope_depth = 0;
+                while !scope_id.is_none() {
+                    if let Some(scope) = self.scopes.get(scope_id.0 as usize) {
+                        if let Some(sym_id) = scope.table.get(name) {
+                            debug!(
+                                "[RESOLVE] '{}' FOUND in scope at depth {} (id={})",
+                                name, scope_depth, sym_id.0
+                            );
+                            // Resolve import if this symbol is imported from another module
+                            if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
+                                break 'resolve Some(resolved);
+                            }
+                            break 'resolve Some(sym_id);
                         }
-                        return Some(sym_id);
+                        scope_id = scope.parent;
+                        scope_depth += 1;
+                    } else {
+                        break;
                     }
-                    scope_id = scope.parent;
-                    scope_depth += 1;
-                } else {
-                    break;
                 }
             }
-        }
 
-        // Fallback for bound-state binders without persistent scopes.
-        if let Some(sym_id) = self.resolve_parameter_fallback(arena, node_idx, name) {
-            debug!(
-                "[RESOLVE] '{}' FOUND via parameter fallback (id={})",
-                name, sym_id.0
-            );
-            // Resolve import if this symbol is imported from another module
-            if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
-                return Some(resolved);
-            }
-            return Some(sym_id);
-        }
-
-        // Finally check file locals / globals
-        if let Some(sym_id) = self.file_locals.get(name) {
-            debug!(
-                "[RESOLVE] '{}' FOUND in file_locals (id={})",
-                name, sym_id.0
-            );
-            // Resolve import if this symbol is imported from another module
-            if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
-                return Some(resolved);
-            }
-            return Some(sym_id);
-        }
-
-        // Chained lookup: check lib binders for global symbols
-        // This enables resolving console, Array, Object, etc. from lib.d.ts
-        for (i, lib_binder) in self.lib_binders.iter().enumerate() {
-            if let Some(sym_id) = lib_binder.file_locals.get(name) {
+            // Fallback for bound-state binders without persistent scopes.
+            if let Some(sym_id) = self.resolve_parameter_fallback(arena, node_idx, name) {
                 debug!(
-                    "[RESOLVE] '{}' FOUND in lib_binder[{}] (id={}) - LIB SYMBOL",
-                    name, i, sym_id.0
+                    "[RESOLVE] '{}' FOUND via parameter fallback (id={})",
+                    name, sym_id.0
                 );
-                // Note: lib symbols are not imports, so no need to resolve
-                return Some(sym_id);
+                // Resolve import if this symbol is imported from another module
+                if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
+                    break 'resolve Some(resolved);
+                }
+                break 'resolve Some(sym_id);
             }
-        }
 
-        // Symbol not found - log the failure
-        debug!(
-            "[RESOLVE] '{}' NOT FOUND - searched scopes, file_locals, and {} lib binders",
-            name,
-            self.lib_binders.len()
-        );
+            // Finally check file locals / globals
+            if let Some(sym_id) = self.file_locals.get(name) {
+                debug!(
+                    "[RESOLVE] '{}' FOUND in file_locals (id={})",
+                    name, sym_id.0
+                );
+                // Resolve import if this symbol is imported from another module
+                if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
+                    break 'resolve Some(resolved);
+                }
+                break 'resolve Some(sym_id);
+            }
 
-        None
+            // Chained lookup: check lib binders for global symbols
+            // This enables resolving console, Array, Object, etc. from lib.d.ts
+            for (i, lib_binder) in self.lib_binders.iter().enumerate() {
+                if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                    debug!(
+                        "[RESOLVE] '{}' FOUND in lib_binder[{}] (id={}) - LIB SYMBOL",
+                        name, i, sym_id.0
+                    );
+                    // Note: lib symbols are not imports, so no need to resolve
+                    break 'resolve Some(sym_id);
+                }
+            }
+
+            // Symbol not found - log the failure
+            debug!(
+                "[RESOLVE] '{}' NOT FOUND - searched scopes, file_locals, and {} lib binders",
+                name,
+                self.lib_binders.len()
+            );
+
+            None
+        };
+
+        self.resolved_identifier_cache
+            .write()
+            .unwrap()
+            .insert(cache_key, result);
+
+        result
     }
 
     /// Resolve an identifier by walking scopes and invoking a filter callback on candidates.
@@ -1183,6 +1215,9 @@ impl BinderState {
     /// After this method, all symbol lookups can use our local arena directly,
     /// avoiding cross-binder ID collisions.
     pub fn merge_lib_contexts_into_binder(&mut self, lib_contexts: &[LibContext]) {
+        // Visible globals can change after merge; invalidate identifier resolutions.
+        self.resolved_identifier_cache.write().unwrap().clear();
+
         if lib_contexts.is_empty() {
             return;
         }
@@ -1368,6 +1403,11 @@ impl BinderState {
         self.lib_symbols_merged = true;
     }
 
+    #[cfg(test)]
+    pub(crate) fn resolved_identifier_cache_len(&self) -> usize {
+        self.resolved_identifier_cache.read().unwrap().len()
+    }
+
     /// Inject lib file symbols into file_locals for global symbol resolution.
     ///
     /// This method now delegates to `merge_lib_contexts_into_binder` which properly
@@ -1381,6 +1421,10 @@ impl BinderState {
 
     /// Bind a source file using NodeArena.
     pub fn bind_source_file(&mut self, arena: &NodeArena, root: NodeIndex) {
+        // Binding mutates scope/symbol tables, so stale identifier resolution entries
+        // from prior passes must be dropped.
+        self.resolved_identifier_cache.write().unwrap().clear();
+
         // Preserve lib symbols that were merged before binding (e.g., in parallel.rs)
         // When merge_lib_symbols is called before bind_source_file, lib symbols are stored
         // in file_locals and need to be preserved across the binding process.
@@ -1513,6 +1557,9 @@ impl BinderState {
     /// binder.merge_lib_symbols(&lib_files);
     /// ```
     pub fn merge_lib_symbols(&mut self, lib_files: &[Arc<lib_loader::LibFile>]) {
+        // Merging lib globals changes visible symbols, so invalidate identifier cache.
+        self.resolved_identifier_cache.write().unwrap().clear();
+
         // Convert LibFiles to LibContexts
         let lib_contexts: Vec<LibContext> = lib_files
             .iter()
@@ -1587,6 +1634,9 @@ impl BinderState {
         new_suffix_statements: &[NodeIndex],
         reparse_start: u32,
     ) -> bool {
+        // Incremental binding mutates scopes; clear stale identifier resolutions.
+        self.resolved_identifier_cache.write().unwrap().clear();
+
         let last_prefix = match prefix_statements.last() {
             Some(stmt) => *stmt,
             None => return false,
