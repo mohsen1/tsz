@@ -1809,9 +1809,19 @@ impl<'a> Printer<'a> {
                     helpers.class_private_field_set = true;
                 }
             }
-        } else if self.ctx.target_es5 && self.needs_async_helpers() {
-            helpers.awaiter = true;
-            helpers.generator = true;
+        } else if self.ctx.target_es5 {
+            // Even without other ES5 transforms, check if lowering pass marked async helpers
+            if self.transforms.helpers_populated() {
+                let es5_helpers = self.transforms.helpers();
+                helpers.awaiter |= es5_helpers.awaiter;
+                helpers.generator |= es5_helpers.generator;
+            } else {
+                // Fallback: scan for async functions (expensive O(N) operation)
+                if self.needs_async_helpers() {
+                    helpers.awaiter = true;
+                    helpers.generator = true;
+                }
+            }
         }
 
         // Emit all needed helpers
