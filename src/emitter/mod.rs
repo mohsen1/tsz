@@ -32,6 +32,7 @@ use crate::scanner::SyntaxKind;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use crate::transform_context::{IdentifierId, TransformContext, TransformDirective};
 use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
 mod binding_patterns;
@@ -84,6 +85,8 @@ pub struct PrinterOptions {
     pub new_line: NewLineKind,
     /// Downlevel iteration (for-of with full iterator protocol)
     pub downlevel_iteration: bool,
+    /// Set of import specifier nodes that should be elided (type-only imports)
+    pub type_only_nodes: Arc<FxHashSet<NodeIndex>>,
 }
 
 impl Default for PrinterOptions {
@@ -97,6 +100,7 @@ impl Default for PrinterOptions {
             module: ModuleKind::None,
             new_line: NewLineKind::LineFeed,
             downlevel_iteration: false,
+            type_only_nodes: Arc::new(FxHashSet::default()),
         }
     }
 }

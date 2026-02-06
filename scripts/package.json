@@ -13,6 +13,7 @@
     "dotenv": "^17.2.3"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1"
+    "@google/generative-ai": "^0.24.1",
+    "blake3": "^2.1.7"
   }
 }

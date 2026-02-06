@@ -2166,6 +2166,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // Task #54: Structural Identity Fast-Path (O(1) after canonicalization)
+        // Check if source and target canonicalize to the same TypeId, which means
+        // they are structurally identical. This avoids expensive structural walks
+        // for types that are the same structure but were interned separately.
+        //
+        // Guarded by bypass_evaluation to prevent infinite recursion when called
+        // from TypeEvaluator during simplification (evaluation has already been done).
+        if !self.bypass_evaluation {
+            if let Some(db) = self.query_db {
+                if db.canonical_id(source) == db.canonical_id(target) {
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         // Any is assignable to anything (when allowed)
         if allow_any && source == TypeId::ANY {
             return SubtypeResult::True;
