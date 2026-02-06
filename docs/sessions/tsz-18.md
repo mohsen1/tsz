@@ -4,6 +4,8 @@
 **Status**: 🔄 IN PROGRESS
 **Focus**: Find and fix actual bugs in implemented features through focused testing
 
+**Last Updated**: 2026-02-06 - Pivoted to Conditional Type Literal Preservation bug
+
 ## Problem Statement
 
 Recent sessions discovered that many "missing" features are already implemented:
@@ -477,6 +479,56 @@ Following Gemini recommendation, switched to investigating indexed access on cla
 - [ ] Document all fixes with test cases
 
 **Test Results**: 8255 passing, 45 failing (current status)
+
+### 2026-02-06: Deep Investigation of Indexed Access on Classes
+
+**Investigation Summary**:
+Spent significant time debugging why `type FooType = C["foo"]; let x: FooType = 3;` fails.
+
+**Key Findings**:
+1. **SOLVER correctly evaluates** `C["foo"]` to `number` when tested without assignment
+2. **Issue is CHECKER-side** - type alias resolution creates unevaluated IndexAccess type
+3. **Root cause**: Type alias is resolved before class is fully populated in type_env
+
+**Detailed Trace**:
+```
+Type alias FooType resolved to TypeId 160 (IndexAccess type)
+Variable declaration gets TypeId 160
+During assignability: TypeId 160 -> evaluated to TypeId 9127
+is_assignable_to(number, 9127) = FAILS
+```
+
+**Attempted Fixes**:
+1. Modified `get_type_from_indexed_access_type` to evaluate IndexAccess immediately
+2. Changed `type_reference_symbol_type` to return structural type instead of Lazy wrapper
+3. Both didn't fully solve due to evaluation timing issues
+
+**Conclusion**: This is a deeper architectural issue requiring proper ordering of type resolution. The type alias resolution happens before the class is fully added to type_env, preventing full evaluation.
+
+**Decision**: **PIVOT** to Conditional Type Literal Preservation bug per Gemini recommendation. This is a "pure" Solver bug that's more fundamental and blocks the Key Remapping feature.
+
+### 2026-02-06: PIVOT to Conditional Type Literal Preservation
+
+**New Focus**: Fix conditional type literal preservation (root cause of Bug #1 Key Remapping)
+
+**Test Case**:
+```typescript
+type Test<T> = T extends "age" ? never : T;
+type T1 = Test<"name">;  // Should be "name", not string
+```
+
+**Current Behavior**: Literal types widened to primitives in conditionals
+**Expected Behavior**: Literal types should be preserved
+
+**Location**: `src/solver/evaluate.rs` - `evaluate_conditional` method
+
+**Strategy**:
+1. Write failing unit test
+2. Use TSZ_LOG=trace to identify where literal widening occurs
+3. Fix evaluation to preserve literals
+4. Verify fix unblocks Key Remapping
+
+**Next Steps**: See Priority 1 below
 
 ## Dependencies
 
