@@ -973,3 +973,29 @@ if let (Some((s_def, _)), Some((t_def, _))) = (
 }
 ```
 
+
+## Session Update (2026-02-06 - Part 10)
+
+**Completed Work:**
+- ✅ Relation cache caching for `is_assignable_to` and `is_assignable_to_bivariant`
+- ✅ Fixed 3 pre-existing assignability cache test failures
+
+**Relation Cache Caching Implementation:**
+
+The `is_assignable_to` and `is_assignable_to_bivariant` methods now properly populate
+the `relation_cache` with `RelationCacheKey::assignability` keys.
+
+**Files Modified:**
+- `src/checker/assignability_checker.rs` - Added caching to both methods
+- `src/tests/checker_state_tests.rs` - Fixed tests to use correct cache key flags
+
+**Key Implementation Details:**
+1. Cache key uses ORIGINAL types (before `evaluate_type_for_assignability`)
+2. Regular assignability: includes `strict_function_types` flag (bit 1) when enabled
+3. Bivariant assignability: excludes `strict_function_types` flag
+4. Tests updated to use `strict_function_types: true` for correct cache keys
+
+**Test Results:**
+- All 3 assignability cache tests now pass
+- No regressions in other tests
+
