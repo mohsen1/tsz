@@ -2746,6 +2746,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         for prop in target_props {
+            // CRITICAL: Only infer from index signatures if the property is optional.
+            // Required properties missing from the source cause a structural mismatch,
+            // so TypeScript does not infer from them.
+            if !prop.optional {
+                continue;
+            }
+
             let prop_type = self.optional_property_type(prop);
 
             if let Some(number_idx) = number_index
