@@ -571,6 +571,11 @@ impl<'a> GoToDefinition<'a> {
             return None;
         }
 
+        // Check for keyword navigation (return/await/yield/case/switch)
+        if let Some(infos) = self.try_keyword_navigation(node_idx, offset) {
+            return Some(infos);
+        }
+
         // Skip keyword literals and built-in identifiers
         if self.is_builtin_node(node_idx) {
             return None;
@@ -660,7 +665,72 @@ impl<'a> GoToDefinition<'a> {
             })
             .collect();
 
-        if infos.is_empty() { None } else { Some(infos) }
+        if infos.is_empty() {
+            return None;
+        }
+
+        // For function/method overloads, return only the implementation (the one with a body)
+        if infos.len() > 1 && self.has_function_overloads(symbol) {
+            if let Some(impl_info) = self.find_implementation_info(&infos, symbol) {
+                return Some(vec![impl_info]);
+            }
+        }
+
+        Some(infos)
+    }
+
+    /// Check if a symbol has function/method overloads (multiple function declarations).
+    fn has_function_overloads(&self, symbol: &crate::binder::Symbol) -> bool {
+        if symbol.declarations.len() <= 1 {
+            return false;
+        }
+        let mut func_count = 0;
+        for &decl_idx in &symbol.declarations {
+            if let Some(node) = self.arena.get(decl_idx) {
+                match node.kind {
+                    syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::CONSTRUCTOR => {
+                        func_count += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        func_count > 1
+    }
+
+    /// Find the implementation definition info (the overload with a function body).
+    fn find_implementation_info(
+        &self,
+        infos: &[DefinitionInfo],
+        symbol: &crate::binder::Symbol,
+    ) -> Option<DefinitionInfo> {
+        for (i, &decl_idx) in symbol.declarations.iter().enumerate() {
+            if let Some(node) = self.arena.get(decl_idx) {
+                let has_body = match node.kind {
+                    syntax_kind_ext::FUNCTION_DECLARATION => self
+                        .arena
+                        .get_function(node)
+                        .map_or(false, |f| !f.body.is_none()),
+                    syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(node)
+                        .map_or(false, |m| !m.body.is_none()),
+                    syntax_kind_ext::CONSTRUCTOR => self
+                        .arena
+                        .get_constructor(node)
+                        .map_or(false, |c| !c.body.is_none()),
+                    _ => false,
+                };
+                if has_body {
+                    if let Some(info) = infos.get(i) {
+                        return Some(info.clone());
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Try file_locals fallback but return DefinitionInfo.
@@ -1046,9 +1116,23 @@ impl<'a> GoToDefinition<'a> {
                     return "parameter".to_string();
                 }
             }
+            // Check if var is inside a function body -> "local var"
+            if self.is_inside_function_body(decl_idx) {
+                return "local var".to_string();
+            }
+            return "var".to_string();
         }
 
-        self.symbol_flags_to_kind_string(flags)
+        let base_kind = self.symbol_flags_to_kind_string(flags);
+        // For functions inside function bodies, use "local function"
+        if base_kind == "function" && self.is_inside_function_body(decl_idx) {
+            return "local function".to_string();
+        }
+        // For classes inside function bodies, use "local class"
+        if base_kind == "class" && self.is_inside_function_body(decl_idx) {
+            return "local class".to_string();
+        }
+        base_kind
     }
 
     /// Convert symbol flags to a tsserver-compatible kind string.
@@ -1259,6 +1343,158 @@ impl<'a> GoToDefinition<'a> {
 
     /// Check if a declaration is at the top level of the source file.
     /// Top-level declarations have isLocal = false.
+    /// Handle keyword navigation: clicking on `return`, `await`, `yield`, `case`, `default`,
+    /// or `switch` navigates to the containing function/switch declaration.
+    fn try_keyword_navigation(
+        &self,
+        node_idx: NodeIndex,
+        offset: u32,
+    ) -> Option<Vec<DefinitionInfo>> {
+        let node = self.arena.get(node_idx)?;
+        let node_start = node.pos;
+        let keyword_offset = offset - node_start;
+
+        // Check if cursor is on the keyword portion of the node
+        let (keyword_len, target_kind) = match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => (6, "function"), // "return"
+            syntax_kind_ext::AWAIT_EXPRESSION => (5, "function"), // "await"
+            syntax_kind_ext::YIELD_EXPRESSION => (5, "function"), // "yield"
+            syntax_kind_ext::SWITCH_STATEMENT => (6, "switch"),   // "switch"
+            syntax_kind_ext::CASE_CLAUSE => (4, "switch"),        // "case"
+            syntax_kind_ext::DEFAULT_CLAUSE => (7, "switch"),     // "default"
+            _ => return None,
+        };
+
+        // Only navigate if cursor is within the keyword text
+        if keyword_offset >= keyword_len {
+            return None;
+        }
+
+        // Walk up to find the containing function or switch
+        let target_idx = self.find_containing_declaration(node_idx, target_kind)?;
+        let target_node = self.arena.get(target_idx)?;
+
+        // Build a DefinitionInfo pointing to the containing declaration
+        let (name_range, context_range) =
+            self.compute_name_and_context_spans(target_idx, target_node);
+
+        let line_count = self.line_map.line_count() as u32;
+        if name_range.start.line >= line_count {
+            return None;
+        }
+
+        // Get the name from the target
+        let name = if let Some(name_idx) = self.get_declaration_name_idx(target_idx) {
+            if !name_idx.is_none() {
+                self.get_node_text(name_idx)
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        let kind = match target_node.kind {
+            syntax_kind_ext::FUNCTION_DECLARATION => "function".to_string(),
+            syntax_kind_ext::FUNCTION_EXPRESSION => "function".to_string(),
+            syntax_kind_ext::ARROW_FUNCTION => "function".to_string(),
+            syntax_kind_ext::METHOD_DECLARATION => "method".to_string(),
+            syntax_kind_ext::CONSTRUCTOR => "constructor".to_string(),
+            syntax_kind_ext::GET_ACCESSOR => "getter".to_string(),
+            syntax_kind_ext::SET_ACCESSOR => "setter".to_string(),
+            syntax_kind_ext::SWITCH_STATEMENT => "var".to_string(),
+            _ => "function".to_string(),
+        };
+
+        Some(vec![DefinitionInfo {
+            location: Location {
+                file_path: self.file_name.clone(),
+                range: name_range,
+            },
+            context_span: Some(context_range),
+            name,
+            kind,
+            container_name: String::new(),
+            container_kind: String::new(),
+            is_local: false,
+            is_ambient: false,
+        }])
+    }
+
+    /// Find the containing function or switch declaration, walking up the AST.
+    fn find_containing_declaration(
+        &self,
+        start_idx: NodeIndex,
+        target_kind: &str,
+    ) -> Option<NodeIndex> {
+        let mut current = start_idx;
+        for _ in 0..30 {
+            if let Some(ext) = self.arena.get_extended(current) {
+                let parent = ext.parent;
+                if parent.is_none() {
+                    return None;
+                }
+                if let Some(parent_node) = self.arena.get(parent) {
+                    match target_kind {
+                        "function" => match parent_node.kind {
+                            syntax_kind_ext::FUNCTION_DECLARATION
+                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                            | syntax_kind_ext::ARROW_FUNCTION
+                            | syntax_kind_ext::METHOD_DECLARATION
+                            | syntax_kind_ext::CONSTRUCTOR
+                            | syntax_kind_ext::GET_ACCESSOR
+                            | syntax_kind_ext::SET_ACCESSOR => return Some(parent),
+                            _ => {}
+                        },
+                        "switch" => {
+                            if parent_node.kind == syntax_kind_ext::SWITCH_STATEMENT {
+                                return Some(parent);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                current = parent;
+            } else {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// Check if a declaration is inside a function body (not at module/source level).
+    fn is_inside_function_body(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+        for _ in 0..30 {
+            if let Some(ext) = self.arena.get_extended(current) {
+                let parent = ext.parent;
+                if parent.is_none() {
+                    return false;
+                }
+                if let Some(parent_node) = self.arena.get(parent) {
+                    match parent_node.kind {
+                        syntax_kind_ext::SOURCE_FILE => return false,
+                        syntax_kind_ext::FUNCTION_DECLARATION
+                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                        | syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::METHOD_DECLARATION
+                        | syntax_kind_ext::CONSTRUCTOR
+                        | syntax_kind_ext::GET_ACCESSOR
+                        | syntax_kind_ext::SET_ACCESSOR => return true,
+                        _ => {
+                            current = parent;
+                        }
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
     /// Check if a declaration is a member of a class or interface.
     fn is_class_or_interface_member(&self, decl_idx: NodeIndex) -> bool {
         if let Some(ext) = self.arena.get_extended(decl_idx) {

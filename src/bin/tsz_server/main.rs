@@ -2804,7 +2804,7 @@ impl Server {
 
                     let mut def_json = serde_json::json!({
                         "containerKind": "",
-                        "containerName": first_def.container_name,
+                        "containerName": "",
                         "kind": first_def.kind,
                         "name": name,
                         "displayParts": display_parts,
