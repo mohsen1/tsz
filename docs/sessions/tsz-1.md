@@ -50,14 +50,15 @@
 - One new test passes: test_generic_parameter_without_constraint_fallback_to_unknown
 - 4 pre-existing failures remain (tsz-2 tracked issues)
 
-#### Priority 3: Task #49 - Global Canonical Mapping (The O(1) Goal)
-**Status**: ⏳ PENDING
-**Files**: `src/solver/db.rs`, `src/solver/intern.rs`
-**Problem**: `are_types_structurally_identical` is O(N) - re-runs Canonicalizer every time.
-**Action**:
-1. Add `canonical_id(TypeId) -> TypeId` to `QueryDatabase` trait
-2. Implement in `QueryCache` using `RwLock<FxHashMap<TypeId, TypeId>>`
-3. Update `SubtypeChecker::are_types_structurally_identical` to compare `db.canonical_id(a) == db.canonical_id(b)`
+#### Priority 3: Task #49 - Global Canonical Mapping (The O(1) Goal) ✅ COMPLETE
+**Status**: ✅ ALREADY IMPLEMENTED
+**Files**: `src/solver/db.rs`, `src/solver/subtype.rs`
+**Problem**: `are_types_structurally_identical` was O(N) - re-ran Canonicalizer every time.
+**Action Completed**:
+1. ✅ `canonical_id(TypeId) -> TypeId` added to `QueryDatabase` trait (line 486)
+2. ✅ Implemented in `QueryCache` using `RwLock<FxHashMap<TypeId, TypeId>>` (lines 1236-1265)
+3. ✅ `SubtypeChecker::are_types_structurally_identical` uses `db.canonical_id()` (lines 3768-3769)
+4. ✅ Always uses fresh `Canonicalizer` with empty stacks (absolute De Bruijn indices)
 
 #### Priority 4: Task #50 - Variance Analysis for Lazy Types ✅ COMPLETE
 **Status**: ✅ COMPLETE (Phase 3 complete, commits: 39d70dbd4, 3619bb501)
