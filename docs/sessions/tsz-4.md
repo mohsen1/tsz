@@ -1484,3 +1484,64 @@ tsz --target ES5 --noEmitHelpers file.ts  # No helper emitted
 - Verify all helpers are being tracked correctly in LoweringPass
 - Test various helper combinations (extends + awaiter + generator, etc.)
 
+---
+
+### 2025-02-06 Session 28: Comment Preservation Investigation - TOO COMPLEX
+
+**Task:** Implement comment preservation in IRPrinter to fix ~80% of formatting-related test failures.
+
+**Investigation Findings:**
+
+1. **Architecture is More Complex Than Expected:**
+   - `ClassES5Emitter` (from `class_es5.rs`) wraps `ES5ClassTransformer` + `IRPrinter`
+   - Main emitter has its own comment collection system that tracks comments by position
+   - When IRPrinter emits a class, comments are collected by the main emitter and emitted at the END
+   - Example output showing the problem:
+   ```javascript
+   var Point = /** @class */ (function () {
+       function Point(x, y) {
+           this.x = x;
+           this.y = y;
+       }
+       Point.prototype.add = function (other) {
+           console.log("Adding points");
+           return new Point(this.x + other.x, this.y + other.y);
+       };
+       return Point;
+   }());
+   // Set x
+   // Set y
+   // Log message
+   ```
+   The comments should be inline but are being moved to the end.
+
+2. **Attempted Solutions:**
+   - **"Clean Subtree" Rule** - Only convert nodes that need transformation, keep rest as ASTRef
+     - Problem: `needs_transformation()` would need deep recursion into expressions
+     - Started implementation but realized complexity was too high
+   - **ASTRef Slicing Fix** - Strip trailing semicolons from ASTRef
+     - Implemented in `ir_printer.rs`
+     - Had no effect because comments are handled by main emitter, not IRPrinter
+
+3. **Root Cause:**
+   - IRPrinter doesn't have its own comment handling system
+   - It relies on the main emitter's comment collection, which tracks comments by position ranges
+   - When IRPrinter emits nodes (via ClassES5Emitter), position tracking is lost
+   - Comments get collected but emitted at wrong position (end of class instead of inline)
+
+**Why This Is Too Complex:**
+- Proper fix requires either:
+  1. Deep integration between IRPrinter and main emitter's comment system, OR
+  2. Complete comment handling system within IRPrinter (including position tracking, collection, and emission)
+- Both are significant architectural changes
+- Would require extensive testing across all transforms (classes, async, generators, etc.)
+
+**Recommendation:**
+Given the complexity and time required, this task should be deprioritized in favor of:
+1. Hygiene/variable renaming (avoid `_this` collisions)
+2. Directive prologues ("use strict" handling)
+3. Specific formatting fixes that can be done without architectural changes
+
+**Key Learning:**
+The IR system was designed for clean separation of concerns, but comment preservation requires tight coupling with the main emitter's position tracking system. This is a fundamental architectural tension that cannot be resolved with simple fixes.
+
