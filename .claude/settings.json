@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'See AGENTS.md. If it is a good time, test, commit, pull/push to origin and continue on your session. If not sure what to do, or session is completed, as gemini to redefine your session by giving it the todos docs. Do not repeat yourself. You can always ask gemini to read NORTH_STAR.md and doc/sessions to find something new to do' >&2; exit 2"
+            "command": "echo 'Continue with work. You can always find new work to do if you have nothing to do. scripts/conformance.sh should be a good start. unit tests too.' >&2; exit 2"
           }
         ]
       }
