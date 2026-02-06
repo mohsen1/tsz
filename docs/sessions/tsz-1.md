@@ -600,3 +600,50 @@ Completed template literal canonicalization in `src/solver/intern.rs` for O(1) e
 - Address the 189 pre-existing test failures
 - Or continue with remaining canonicalization gaps
 
+---
+
+## Session Update (2026-02-06 - Part 7)
+
+**Completed Work:**
+- ✅ Gap A: O(1) Equality Isomorphism Validation Suite - COMPLETE (commit: d2212cff2)
+
+**Gap A: Double Interning Audit & O(1) Validation Suite**
+Created comprehensive test suite to validate the North Star O(1) equality goal.
+
+**File Created:**
+- `src/solver/tests/isomorphism_validation.rs` - 17 tests for O(1) equality validation
+
+**Test Coverage:**
+1. **Union Order Independence** - Verifies `A | B == B | A`
+2. **Union Redundancy Elimination** - Verifies `A | A == A`
+3. **Union Literal Absorption** - Verifies `string | "a" == string`
+4. **Intersection Order Independence** - Verifies `{a} & {b} == {b} & {a}`
+5. **Intersection Duplication Elimination** - Verifies `{a} & {b} & {a} == {a} & {b}`
+6. **Never Absorption in Union** - Verifies `never | A | B == A | B`
+7. **Template Literal Adjacent Text Merging** - Verifies `` `a${""}b` == `ab` ``
+8. **Template Literal Nested Flattening** - Verifies `` `a${`b`}c` == `abc` ``
+9. **Template Literal Expansion to Union** - Verifies `` `a${"b"|"c"}d` == "abd" | "acd" ``
+10. **Empty String Removal in Template** - Verifies `` `a${""}` == `a` ``
+11. **Null Stringification in Template** - Verifies `` `a${null}b` == `anullb` ``
+12. **Undefined Stringification in Template** - Verifies `` `a${undefined}b` == `aundefinedb` ``
+13. **Boolean Expansion in Template** - ⚠️ KNOWN ISSUE: Currently doesn't achieve O(1) equality
+14. **Any Widening in Template** - Verifies `` `a${any}b` == string ``
+15. **Unknown Widening in Template** - Verifies `` `a${unknown}b` == string ``
+16. **Never Absorption in Template** - Verifies `` `a${never}b` == never ``
+
+**Test Results:**
+- 16/17 tests passing
+- 1 test ignored (boolean expansion) - documents known O(1) equality gap
+
+**Additional Fix:**
+- Updated `template_span_cardinality` in `src/solver/intern.rs` to recognize `BOOLEAN_TRUE` and `BOOLEAN_FALSE` intrinsics as string-literal-expandable types
+
+**What This Achieves:**
+- Provides automated detection of O(1) equality violations
+- Catches canonicalization bugs before they reach production
+- Documents known gaps for future resolution
+
+**Next Steps:**
+- Continue with Gap B: Audit evaluate_rules/ for canonical constructor usage
+- Or address the boolean expansion O(1) equality gap found by tests
+
