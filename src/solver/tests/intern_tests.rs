@@ -813,3 +813,218 @@ fn test_intersection_redundancy_elimination() {
         "Intersection of A & A should simplify to A"
     );
 }
+
+// Task #43: Test partial object merging in mixed intersections
+#[test]
+fn test_partial_object_merging_in_intersection() {
+    let interner = TypeInterner::new();
+
+    // Create two object types
+    let obj1 = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("a"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::NEVER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    let obj2 = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("b"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NEVER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    // Create a primitive type
+    let prim = TypeId::BOOLEAN;
+
+    // Intersection: { a: string } & { b: number } & boolean
+    // Expected: Merged object { a: string; b: number } & boolean
+    let inter1 = interner.intersection(vec![obj1, obj2, prim]);
+    let inter2 = interner.intersection(vec![obj2, obj1, prim]); // Different order
+
+    // Order independence should still hold
+    assert_eq!(
+        inter1, inter2,
+        "Partial object merging should be order-independent"
+    );
+
+    // The result should be an intersection of merged object and boolean
+    if let Some(TypeKey::Intersection(members)) = interner.lookup(inter1) {
+        let member_list = interner.type_list(members);
+        assert_eq!(
+            member_list.len(),
+            2,
+            "Result should have 2 members: merged object + boolean"
+        );
+    } else {
+        panic!("Expected intersection type");
+    }
+}
+
+// Task #43: Test partial callable merging in mixed intersections
+#[test]
+fn test_partial_callable_merging_in_intersection() {
+    let interner = TypeInterner::new();
+
+    // Create two function types
+    let func1 = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let func2 = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Create a primitive type
+    let prim = TypeId::BOOLEAN;
+
+    // Intersection: (x: string) => void & (x: number) => void & boolean
+    // Expected: Merged callable with 2 overloads & boolean
+    let inter = interner.intersection(vec![func1, func2, prim]);
+
+    // The result should be an intersection of merged callable and boolean
+    if let Some(TypeKey::Intersection(members)) = interner.lookup(inter) {
+        let member_list = interner.type_list(members);
+        assert_eq!(
+            member_list.len(),
+            2,
+            "Result should have 2 members: merged callable + boolean"
+        );
+    } else {
+        panic!("Expected intersection type");
+    }
+
+    // NOTE: Callable order IS significant in TypeScript, so different input
+    // orders produce different results (different overload orders).
+    // We do NOT test order independence for callables.
+}
+
+// Task #43: Test partial merging with both objects and callables
+#[test]
+fn test_partial_object_and_callable_merging() {
+    let interner = TypeInterner::new();
+
+    // Create object type
+    let obj1 = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("a"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::NEVER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    let obj2 = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("b"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NEVER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    // Create callable types
+    let func1 = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let func2 = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Intersection: { a: string } & { b: number } & (x: string) => void & (x: number) => void
+    // Expected: Merged object { a: string; b: number } & Merged callable (with 2 overloads)
+    let inter = interner.intersection(vec![obj1, obj2, func1, func2]);
+
+    // The result should be an intersection with 2 members: merged object + merged callable
+    if let Some(TypeKey::Intersection(members)) = interner.lookup(inter) {
+        let member_list = interner.type_list(members);
+        assert_eq!(
+            member_list.len(),
+            2,
+            "Result should have 2 members: merged object + merged callable"
+        );
+
+        // First member should be the merged object
+        if let Some(TypeKey::Object(_) | TypeKey::ObjectWithIndex(_)) =
+            interner.lookup(member_list[0])
+        {
+            // OK
+        } else {
+            panic!("First member should be an object");
+        }
+
+        // Second member should be the merged callable
+        if let Some(TypeKey::Callable(shape_id)) = interner.lookup(member_list[1]) {
+            // OK - verify it has 2 call signatures
+            let callable = interner.callable_shape(shape_id);
+            assert_eq!(
+                callable.call_signatures.len(),
+                2,
+                "Merged callable should have 2 call signatures"
+            );
+        } else {
+            panic!("Second member should be a callable");
+        }
+    } else {
+        panic!("Expected intersection type");
+    }
+
+    // NOTE: Object order independence should be tested separately
+}
