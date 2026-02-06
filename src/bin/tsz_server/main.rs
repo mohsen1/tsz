@@ -1758,25 +1758,37 @@ impl Server {
                         item["documentation"] = serde_json::json!([{"text": doc, "kind": "text"}]);
                     }
                     // Omit "documentation" when empty (TypeScript omits it)
-                    // Build tags from parameter documentation
-                    let tags: Vec<serde_json::Value> = sig
-                        .parameters
-                        .iter()
-                        .filter_map(|p| {
-                            let doc = p.documentation.as_ref()?;
-                            if doc.is_empty() {
-                                return None;
+                    // Build tags: param tags from parameter documentation + non-param tags
+                    let mut tags: Vec<serde_json::Value> = Vec::new();
+                    // Add @param tags from parameter documentation
+                    for p in &sig.parameters {
+                        if let Some(ref doc) = p.documentation {
+                            if !doc.is_empty() {
+                                tags.push(serde_json::json!({
+                                    "name": "param",
+                                    "text": [
+                                        {"text": &p.name, "kind": "parameterName"},
+                                        {"text": " ", "kind": "space"},
+                                        {"text": doc, "kind": "text"}
+                                    ]
+                                }));
                             }
-                            Some(serde_json::json!({
-                                "name": "param",
-                                "text": [
-                                    {"text": &p.name, "kind": "parameterName"},
-                                    {"text": " ", "kind": "space"},
-                                    {"text": doc, "kind": "text"}
-                                ]
-                            }))
-                        })
-                        .collect();
+                        }
+                    }
+                    // Add non-param tags (e.g. @returns, @mytag)
+                    for tag in &sig.tags {
+                        if tag.text.is_empty() {
+                            tags.push(serde_json::json!({
+                                "name": &tag.name,
+                                "text": []
+                            }));
+                        } else {
+                            tags.push(serde_json::json!({
+                                "name": &tag.name,
+                                "text": [{"text": &tag.text, "kind": "text"}]
+                            }));
+                        }
+                    }
                     item["tags"] = serde_json::json!(tags);
                     item
                 })

@@ -6,7 +6,7 @@
 use crate::binder::BinderState;
 use crate::binder::symbol_flags;
 use crate::checker::state::CheckerState;
-use crate::lsp::jsdoc::{ParsedJsdoc, jsdoc_for_node, parse_jsdoc};
+use crate::lsp::jsdoc::{JsdocTag, ParsedJsdoc, inline_param_jsdocs, jsdoc_for_node, parse_jsdoc};
 use crate::lsp::position::{LineMap, Position};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats};
 use crate::lsp::utils::find_node_at_or_before_offset;
@@ -47,6 +47,8 @@ pub struct SignatureInformation {
     pub is_variadic: bool,
     /// Whether this is a constructor signature (affects display part kinds)
     pub is_constructor: bool,
+    /// JSDoc tags (non-param tags like @returns, @mytag, etc.)
+    pub tags: Vec<JsdocTag>,
 }
 
 /// The response for a signature help request.
@@ -910,6 +912,7 @@ impl<'a> SignatureHelpProvider<'a> {
             parameters,
             is_variadic: has_rest,
             is_constructor,
+            tags: Vec::new(),
         }
     }
 
@@ -1054,6 +1057,13 @@ impl<'a> SignatureHelpProvider<'a> {
                 param_info.documentation = Some(param_doc.clone());
             }
         }
+
+        // Copy non-param tags
+        if overwrite || sig.info.tags.is_empty() {
+            if !parsed.tags.is_empty() {
+                sig.info.tags = parsed.tags.clone();
+            }
+        }
     }
 
     fn match_doc_candidate(
@@ -1104,10 +1114,23 @@ impl<'a> SignatureHelpProvider<'a> {
                 );
             }
             let doc = jsdoc_for_node(self.arena, root, decl, self.source_text);
-            if doc.is_empty() {
-                continue;
+            let mut parsed = if doc.is_empty() {
+                ParsedJsdoc {
+                    summary: None,
+                    params: std::collections::HashMap::new(),
+                    tags: Vec::new(),
+                }
+            } else {
+                parse_jsdoc(&doc)
+            };
+
+            // Merge inline parameter JSDoc comments (e.g. /** comment */ before param)
+            let inline_docs = inline_param_jsdocs(self.arena, root, decl, self.source_text);
+            for (name, doc) in inline_docs {
+                // Inline docs take precedence over @param tags only when @param is absent
+                parsed.params.entry(name).or_insert(doc);
             }
-            let parsed = parse_jsdoc(&doc);
+
             if parsed.is_empty() {
                 continue;
             }
@@ -1156,10 +1179,22 @@ impl<'a> SignatureHelpProvider<'a> {
             }
 
             let doc = jsdoc_for_node(self.arena, root, member, self.source_text);
-            if doc.is_empty() {
-                continue;
+            let mut parsed = if doc.is_empty() {
+                ParsedJsdoc {
+                    summary: None,
+                    params: std::collections::HashMap::new(),
+                    tags: Vec::new(),
+                }
+            } else {
+                parse_jsdoc(&doc)
+            };
+
+            // Merge inline parameter JSDoc comments
+            let inline_docs = inline_param_jsdocs(self.arena, root, member, self.source_text);
+            for (name, doc) in inline_docs {
+                parsed.params.entry(name).or_insert(doc);
             }
-            let parsed = parse_jsdoc(&doc);
+
             if parsed.is_empty() {
                 continue;
             }
@@ -1243,10 +1278,22 @@ impl<'a> SignatureHelpProvider<'a> {
                 }
 
                 let doc = jsdoc_for_node(self.arena, root, member, self.source_text);
-                if doc.is_empty() {
-                    continue;
+                let mut parsed = if doc.is_empty() {
+                    ParsedJsdoc {
+                        summary: None,
+                        params: std::collections::HashMap::new(),
+                        tags: Vec::new(),
+                    }
+                } else {
+                    parse_jsdoc(&doc)
+                };
+
+                // Merge inline parameter JSDoc comments
+                let inline_docs = inline_param_jsdocs(self.arena, root, member, self.source_text);
+                for (name, doc) in inline_docs {
+                    parsed.params.entry(name).or_insert(doc);
                 }
-                let parsed = parse_jsdoc(&doc);
+
                 if parsed.is_empty() {
                     continue;
                 }
