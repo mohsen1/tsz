@@ -282,10 +282,7 @@ fn test_definition_info_parameter_is_not_local() {
     let infos = goto_def.get_definition_info(root, Position::new(0, 33));
     assert!(infos.is_some(), "Should find definition info for parameter");
     let infos = infos.unwrap();
-    assert_eq!(
-        infos[0].is_local, false,
-        "Parameter should have is_local = false"
-    );
+    assert!(!infos[0].is_local, "Parameter should have is_local = false");
 }
 
 #[test]
@@ -319,8 +316,8 @@ fn test_definition_info_class_member_container_name() {
         infos[0].container_kind, "class",
         "Class method containerKind should be 'class'"
     );
-    assert_eq!(
-        infos[0].is_local, true,
+    assert!(
+        infos[0].is_local,
         "Class member should have is_local = true"
     );
 }
@@ -370,8 +367,8 @@ fn test_definition_info_top_level_not_local() {
         "Should find definition info for top-level const"
     );
     let infos = infos.unwrap();
-    assert_eq!(
-        infos[0].is_local, false,
+    assert!(
+        !infos[0].is_local,
         "Top-level declaration should have is_local = false"
     );
 }
@@ -398,8 +395,8 @@ fn test_definition_info_local_var_is_local() {
         "Should find definition info for local variable"
     );
     let infos = infos.unwrap();
-    assert_eq!(
-        infos[0].is_local, true,
+    assert!(
+        infos[0].is_local,
         "Function-scoped variable should have is_local = true"
     );
 }
