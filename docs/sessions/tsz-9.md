@@ -1,8 +1,26 @@
 # Session TSZ-9: Enum Type System
 
 **Started**: 2026-02-06
-**Status**: 🔄 ACTIVE
+**Status**: ✅ IN PROGRESS
 **Predecessor**: TSZ-8 (Investigation - Conditional Types Already Done)
+
+## Accomplishments
+
+### Enum Arithmetic ✅ Fixed
+
+**Problem**: `MyEnum.A + MyEnum.B` was emitting TS2362 errors instead of being recognized as valid arithmetic.
+
+**Root Cause**: `NumberLikeVisitor`, `StringLikeVisitor`, and `BigIntLikeVisitor` in `src/solver/binary_ops.rs` didn't override `visit_enum()`, so they defaulted to `false`.
+
+**Solution**: Added `visit_enum()` to each visitor to recurse into the enum's `member_type`:
+```rust
+fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> Self::Output {
+    self.visit_type(self.db, member_type)
+}
+```
+
+**Impact**: +7 tests fixed (8225 → 8232 passing, 75 → 68 failing)
+**Commit**: `76c33b4bd`
 
 ## Task
 
@@ -60,7 +78,27 @@ Tests are failing for enum-specific behaviors:
 ## Test Status
 
 **Start**: 8225 passing, 75 failing
-**Target**: ~8232 passing (+7 tests)
+**Current**: 8232 passing, 68 failing
+**Result**: +7 tests fixed so far
+
+## Remaining Work
+
+Some enum tests still have issues (expect 1 error but get 2), likely due to:
+- Cross-enum assignment reporting both member and type errors
+- Need to investigate error reporting logic
+
+## Implementation
+
+### Phase 1: Enum Arithmetic ✅ Complete
+- Added `visit_enum()` to NumberLikeVisitor
+- Added `visit_enum()` to StringLikeVisitor
+- Added `visit_enum()` to BigIntLikeVisitor
+- Tests now pass
+
+### Phase 2: Investigate Remaining Issues
+- `test_cross_enum_nominal_incompatibility` - expects 1 error, gets 2
+- `test_string_enum_cross_incompatibility` - expects 1 error, gets 2
+- May need to deduplicate error reporting
 
 ## Related NORTH_STAR.md Rules
 
