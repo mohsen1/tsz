@@ -1,0 +1,18 @@
+[package]
+name = "tsz-common"
+description = "Common types and utilities for the tsz TypeScript compiler"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+rustc-hash = { workspace = true }
+dashmap = { workspace = true }
+memchr = { workspace = true }
+
+[lints]
+workspace = true

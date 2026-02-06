@@ -1142,6 +1142,117 @@ dependencies = [
 ]
 
 [[package]]
+name = "tsz-binder"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash 2.1.1",
+ "tracing",
+ "tsz-common",
+ "tsz-parser",
+ "tsz-scanner",
+]
+
+[[package]]
+name = "tsz-checker"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash 2.1.1",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "tracing",
+ "tsz-binder",
+ "tsz-common",
+ "tsz-parser",
+ "tsz-scanner",
+ "tsz-solver",
+]
+
+[[package]]
+name = "tsz-common"
+version = "0.1.0"
+dependencies = [
+ "dashmap",
+ "memchr",
+ "rustc-hash 2.1.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "tsz-emitter"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash 2.1.1",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "tracing",
+ "tsz-binder",
+ "tsz-checker",
+ "tsz-common",
+ "tsz-parser",
+ "tsz-scanner",
+ "tsz-solver",
+]
+
+[[package]]
+name = "tsz-lsp"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash 2.1.1",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tsz-binder",
+ "tsz-checker",
+ "tsz-common",
+ "tsz-parser",
+ "tsz-scanner",
+ "tsz-solver",
+]
+
+[[package]]
+name = "tsz-parser"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "smallvec",
+ "tracing",
+ "tsz-common",
+ "tsz-scanner",
+]
+
+[[package]]
+name = "tsz-scanner"
+version = "0.1.0"
+dependencies = [
+ "memchr",
+ "tsz-common",
+]
+
+[[package]]
+name = "tsz-solver"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+ "dashmap",
+ "ena",
+ "fixedbitset",
+ "indexmap 2.12.1",
+ "rustc-hash 2.1.1",
+ "salsa",
+ "serde",
+ "smallvec",
+ "tracing",
+ "tsz-binder",
+ "tsz-common",
+ "tsz-parser",
+ "tsz-scanner",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1219,6 +1330,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tree",
+ "tsz-binder",
+ "tsz-checker",
+ "tsz-common",
+ "tsz-emitter",
+ "tsz-lsp",
+ "tsz-parser",
+ "tsz-scanner",
+ "tsz-solver",
  "walkdir",
  "wasm-bindgen",
 ]
