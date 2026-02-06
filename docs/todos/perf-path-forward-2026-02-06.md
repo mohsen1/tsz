@@ -4,6 +4,36 @@
 
 Resumed optimization work and landed one additional focused fix with isolated benchmark evidence.
 
+## Proven Change (Startup + Lib Loading Single-Pass)
+
+Removed duplicate lib parse/bind work in CLI compile flow by preloading libs once and reusing them across binding and checker setup.
+
+Files:
+- `src/cli/driver.rs`
+
+Key mechanics:
+- `compile_inner` now preloads libs once via `parallel::load_lib_files_for_binding`.
+- Reused that loaded lib set for:
+  - user-file parse/bind (`parse_and_bind_parallel_with_libs`)
+  - checker lib contexts (`load_lib_files_for_contexts` now consumes preloaded `Arc<LibFile>`s)
+- Cached compile path (`build_program_with_cache`) now takes preloaded lib files instead of lib paths, so dirty-file rebuilds also avoid reloading libs.
+- Removed the second parse/bind pass previously performed in `load_lib_files_for_contexts`.
+
+Validation:
+- `cargo fmt`
+- `cargo check -q`
+- `cargo test -q resolve_compiler_options_`
+- `cargo test -q compile_with_`
+
+Benchmark validation:
+- `./scripts/bench-vs-tsgo.sh --filter 'utility-types/index.ts|Constraint conflicts N=100|Constraint conflicts N=200|resolvingClassDeclarationWhenInBaseTypeResolution|BCT candidates=200'`
+- Results:
+  - `utility-types/index.ts`: `tsz 161.92ms` vs `tsgo 214.55ms` (`tsz 1.33x`)
+  - `resolvingClassDeclarationWhenInBaseTypeResolution.ts`: `tsz 139.45ms` vs `tsgo 227.32ms` (`tsz 1.63x`)
+  - `Constraint conflicts N=200`: `tsz 186.90ms` vs `tsgo 236.87ms` (`tsz 1.27x`)
+  - `Constraint conflicts N=100`: `tsz 82.45ms` vs `tsgo 220.88ms` (`tsz 2.68x`)
+  - `BCT candidates=200`: `tsz 102.78ms` vs `tsgo 240.91ms` (`tsz 2.34x`)
+
 ## Follow-up Session (Under-2x Benchmarks)
 
 Worked the remaining under-2x group with targeted profiling and checker/driver optimizations.
