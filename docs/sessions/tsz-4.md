@@ -1545,3 +1545,30 @@ Given the complexity and time required, this task should be deprioritized in fav
 **Key Learning:**
 The IR system was designed for clean separation of concerns, but comment preservation requires tight coupling with the main emitter's position tracking system. This is a fundamental architectural tension that cannot be resolved with simple fixes.
 
+---
+
+### 2025-02-06 Session 29: Formatting Normalization Attempt - Partial Success
+
+**Task:** Normalize IRPrinter/emitter formatting to match tsc output for improved test pass rate.
+
+**Changes Made:**
+- Added trailing newline at end of output in `src/emitter/mod.rs`
+  - `emit_source_file` now ensures output ends with a newline (matching tsc behavior)
+
+**Test Results:**
+- Pass rate remained at ~20% for the small sample tested
+- Main formatting issues identified:
+  1. **Comment placement** - Comments collected by main emitter and emitted at wrong positions
+  2. **Multi-line vs single-line formatting** - tsc prefers multi-line for certain constructs
+  3. **Missing newlines** - Partially fixed with trailing newline at end of file
+
+**Key Finding:**
+The formatting issues are primarily in the main emitter's comment collection system, not IRPrinter. Comments are tracked by position and emitted after the class/function is complete, causing them to appear at the wrong location.
+
+**Committed as:** `2cb1d27bb` - fix(emitter): add trailing newline at end of output
+
+**Recommendation:**
+Continue with other achievable tasks like:
+- Hygiene/variable renaming (avoid `_this` collisions)
+- Specific bug fixes rather than wholesale formatting improvements
+
