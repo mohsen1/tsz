@@ -1,79 +1,45 @@
-# Session TSZ-3: Method Bivariance Implementation
+# Session TSZ-3: Method Bivariance - ALREADY IMPLEMENTED
 
 **Started**: 2026-02-06
-**Status**: 🔄 READY TO START
+**Status**: ✅ ALREADY DONE
 **Predecessor**: Object Literal Freshness (Completed)
 
-## Task
+## Finding
 
-Implement method bivariance - a critical TypeScript compatibility rule in the "Lawyer" layer.
+Method bivariance is **already fully implemented** in tsz!
 
-## Problem Statement
+### Evidence
 
-TypeScript treats function properties **strictly** (contravariant parameters), but methods **bivariantly** (both co- and contravariant). This is essential for common patterns like:
+1. **All 9 tests pass** in `src/checker/tests/function_bivariance.rs`:
+   - `test_method_bivariance_same_params` ✅
+   - `test_method_bivariance_wider_param` ✅
+   - `test_method_bivariance_strict_mode` ✅
+   - `test_method_shorthand_bivariant` ✅
+   - `test_function_property_contravariance` ✅
+   - etc.
 
-```typescript
-// Array<string | number> should be assignable to Array<string>
-// because methods are bivariant
-const arr1: Array<string | number> = ["a", 1];
-const arr2: Array<string> = arr1;  // Should work!
+2. **Implementation is in the Judge layer** (`src/solver/subtype_rules/functions.rs`):
+   ```rust
+   let method_should_be_bivariant = is_method && !self.disable_method_bivariance;
+   let use_bivariance = method_should_be_bivariant || !self.strict_function_types;
+   ```
 
-// Event handlers use this pattern
-class EventEmitter {
-    on(fn: (data: string) => void): void;
-}
+3. **The `is_method` flag** is correctly set during lowering in `src/solver/lower.rs`:
+   - `lower_method_signature` sets `is_method: true`
+   - `lower_function_type` sets `is_method: false`
 
-// This should work because methods are bivariant
-const emitter: EventEmitter = {
-    on(fn: (data: string | number) => void) {  // Wider parameter type
-        fn("hello");
-    }
-};
-```
+### Why Gemini Recommended This
 
-Without method bivariance, simple DOM operations and Array manipulations will fail type checking.
+Gemini (Flash) made an assumption based on NORTH_STAR.md documentation. The Pro follow-up correctly identified that the feature is already implemented in the Judge layer, not the Lawyer layer.
 
-## Current Architecture
+## Conclusion
 
-From NORTH_STAR.md Section 3.3:
-- **Judge** (`src/solver/subtype.rs`): Pure structural subtyping
-- **Lawyer** (`src/solver/compat.rs`): TypeScript-specific compatibility rules (includes Freshness ✅, needs Method Bivariance)
+**No work needed** on method bivariance. Move to the next priority item.
 
-## Key Question
+## Next Steps
 
-How do we distinguish between **methods** and **function properties** in the current type system?
-
-According to NORTH_STAR.md:
-- Methods: Properties with `FunctionType` where the function is marked as a method
-- Function properties: Properties with `FunctionType` where the function is NOT marked as a method
-
-## Implementation Plan (To be validated with Gemini)
-
-1. **Investigation Phase**:
-   - Ask Gemini: "How does the current TypeKey/TypeId structure distinguish methods from function properties?"
-   - Find where function types are created and marked
-   - Understand the current subtype checking logic for functions
-
-2. **Implementation Phase** (after validation):
-   - Modify `src/solver/subtype.rs` to check if a function is a method
-   - Apply bivariant parameter checking for methods
-   - Apply contravariant parameter checking for function properties
-   - Add tests
-
-## Files to Investigate
-
-- `src/solver/subtype.rs` - Subtype checking logic
-- `src/solver/compat.rs` - Lawyer compatibility layer
-- `src/solver/intern.rs` - Type interning (how are functions created?)
-- `src/checker/tests/` - Look for existing bivariance tests
-
-## Next Step
-
-Ask Gemini Question 1 (Approach Validation) before writing any code:
-
-```bash
-./scripts/ask-gemini.mjs --include=src/solver "I need to implement method bivariance.
-Problem: TypeScript treats methods bivariantly but function properties strictly.
-How do I distinguish methods from function properties in the current TypeKey structure?
-What functions should I modify? Are there edge cases I'm missing?"
-```
+Ask Gemini to re-evaluate priorities and recommend the actual next task, considering:
+- Freshness ✅ Complete
+- Method Bivariance ✅ Already done
+- Discriminant Narrowing ✅ Already done (per earlier sessions)
+- What else is high priority?
