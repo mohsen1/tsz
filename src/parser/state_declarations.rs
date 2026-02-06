@@ -182,10 +182,24 @@ impl ParserState {
 
         // Handle construct signature: new (): returnType
         // But not if 'new' is used as property name (new: T, new?: T, new;, etc.)
-        if self.is_token(SyntaxKind::NewKeyword)
-            && !self.look_ahead_is_property_name_after_keyword()
-        {
-            return self.parse_construct_signature(start_pos);
+        // Note: new ( or new < starts a construct signature, not a property name
+        if self.is_token(SyntaxKind::NewKeyword) {
+            // For 'new' specifically, check if followed by property name indicators
+            // new ( or new < starts a construct signature, not a property
+            let snapshot = self.scanner.save_state();
+            let current = self.current_token;
+            self.next_token();
+            let is_property_name = self.is_token(SyntaxKind::ColonToken)
+                || self.is_token(SyntaxKind::QuestionToken)
+                || self.is_token(SyntaxKind::SemicolonToken)
+                || self.is_token(SyntaxKind::CommaToken)
+                || self.is_token(SyntaxKind::CloseBraceToken);
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+
+            if !is_property_name {
+                return self.parse_construct_signature(start_pos);
+            }
         }
 
         // Handle get accessor: get foo(): type
