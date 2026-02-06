@@ -1380,18 +1380,38 @@ impl<'a> CheckerState<'a> {
             // This handles TS2454 errors and applies flow-based narrowing
             let flow_type = self.check_flow_usage(idx, declared_type, sym_id);
 
+            // FIX: If flow analysis returns ANY but the declared type is a valid non-ANY, non-ERROR type,
+            // and the declared type is an ObjectWithIndex (has index signatures), use the declared type.
+            // IMPORTANT: Only apply this fix when there's NO contextual type to avoid interfering
+            // with variance checking and assignability analysis.
+            let result_type = if flow_type == TypeId::ANY
+                && declared_type != TypeId::ANY
+                && declared_type != TypeId::ERROR
+                && self.ctx.contextual_type.is_none()
+            // CRITICAL: Only when no contextual type
+            {
+                // Only preserve declared_type for ObjectWithIndex types (interfaces with index signatures)
+                // This avoids interfering with function types or other variance checking
+                match self.ctx.types.lookup(declared_type) {
+                    Some(crate::solver::TypeKey::ObjectWithIndex(_)) => declared_type,
+                    _ => flow_type,
+                }
+            } else {
+                flow_type
+            };
+
             // FIX: Flow analysis may return the original fresh type from the initializer expression.
             // For variable references, we must respect the widening that was applied during variable
             // declaration. If the symbol was widened (non-fresh), the flow result should also be widened.
             // This prevents "Zombie Freshness" where CFA bypasses the widened symbol type.
             if !self.ctx.compiler_options.sound_mode {
                 use crate::solver::freshness::{is_fresh_object_type, widen_freshness};
-                if is_fresh_object_type(self.ctx.types, flow_type) {
-                    return widen_freshness(self.ctx.types, flow_type);
+                if is_fresh_object_type(self.ctx.types, result_type) {
+                    return widen_freshness(self.ctx.types, result_type);
                 }
             }
 
-            return flow_type;
+            return result_type;
         }
 
         // Intrinsic names - use constant TypeIds

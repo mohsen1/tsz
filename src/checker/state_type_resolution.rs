@@ -665,14 +665,24 @@ impl<'a> CheckerState<'a> {
                     // 3. resolve_lazy() returns the cached structural type for actual type checking
 
                     // Step 1: Ensure the structural type is computed and cached
-                    let _structural_type = self.get_type_of_symbol(sym_id);
+                    let structural_type = self.get_type_of_symbol(sym_id);
 
-                    // Step 2: Return a Lazy type reference for the interface
-                    // This allows error formatting to look up the interface name by DefId
-                    let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
-
-                    self.ctx.leave_recursion();
-                    return lazy_type;
+                    // FIX: For interfaces with index signatures (ObjectWithIndex), return the structural
+                    // type directly instead of Lazy wrapper. The Lazy type causes issues with flow
+                    // analysis - it returns ANY instead of the proper type. For regular interfaces
+                    // (Object without index signatures), return Lazy to preserve error formatting.
+                    match self.ctx.types.lookup(structural_type) {
+                        Some(crate::solver::TypeKey::ObjectWithIndex(_)) => {
+                            self.ctx.leave_recursion();
+                            return structural_type;
+                        }
+                        _ => {
+                            // Return Lazy wrapper for regular interfaces
+                            let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
+                            self.ctx.leave_recursion();
+                            return lazy_type;
+                        }
+                    }
                 }
                 if !symbol.value_declaration.is_none() {
                     let result = self.get_type_of_interface(symbol.value_declaration);
