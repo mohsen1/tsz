@@ -155,6 +155,7 @@ enum EmitDirective {
     ES5ArrowFunction {
         arrow_node: NodeIndex,
         captures_this: bool,
+        captures_arguments: bool,
     },
     ES5AsyncFunction {
         function_node: NodeIndex,
@@ -176,6 +177,7 @@ enum EmitDirective {
     },
     ES5TemplateLiteral,
     SubstituteThis,
+    SubstituteArguments,
     ModuleWrapper {
         format: crate::transform_context::ModuleFormat,
         dependencies: Arc<[String]>,
@@ -460,9 +462,11 @@ impl<'a> Printer<'a> {
             TransformDirective::ES5ArrowFunction {
                 arrow_node,
                 captures_this,
+                captures_arguments,
             } => EmitDirective::ES5ArrowFunction {
                 arrow_node: *arrow_node,
                 captures_this: *captures_this,
+                captures_arguments: *captures_arguments,
             },
             TransformDirective::ES5AsyncFunction { function_node } => {
                 EmitDirective::ES5AsyncFunction {
@@ -494,6 +498,7 @@ impl<'a> Printer<'a> {
             }
             TransformDirective::ES5TemplateLiteral { .. } => EmitDirective::ES5TemplateLiteral,
             TransformDirective::SubstituteThis => EmitDirective::SubstituteThis,
+            TransformDirective::SubstituteArguments => EmitDirective::SubstituteArguments,
             TransformDirective::ModuleWrapper {
                 format,
                 dependencies,
@@ -634,11 +639,17 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5ArrowFunction {
                 arrow_node,
                 captures_this,
+                captures_arguments,
             } => {
                 if let Some(arrow_node) = self.arena.get(arrow_node)
                     && let Some(func) = self.arena.get_function(arrow_node)
                 {
-                    self.emit_arrow_function_es5(arrow_node, func, captures_this);
+                    self.emit_arrow_function_es5(
+                        arrow_node,
+                        func,
+                        captures_this,
+                        captures_arguments,
+                    );
                     return;
                 }
 
@@ -734,6 +745,11 @@ impl<'a> Printer<'a> {
                 self.write("_this");
             }
 
+            EmitDirective::SubstituteArguments => {
+                // Substitute 'arguments' with '_arguments' for lexical capture
+                self.write("_arguments");
+            }
+
             EmitDirective::ModuleWrapper {
                 format,
                 dependencies,
@@ -827,11 +843,17 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5ArrowFunction {
                 arrow_node,
                 captures_this,
+                captures_arguments,
             } => {
                 if let Some(arrow_node) = self.arena.get(*arrow_node)
                     && let Some(func) = self.arena.get_function(arrow_node)
                 {
-                    self.emit_arrow_function_es5(arrow_node, func, *captures_this);
+                    self.emit_arrow_function_es5(
+                        arrow_node,
+                        func,
+                        *captures_this,
+                        *captures_arguments,
+                    );
                 }
             }
             EmitDirective::ES5FunctionParameters { function_node } => {
@@ -961,11 +983,17 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5ArrowFunction {
                 arrow_node,
                 captures_this,
+                captures_arguments,
             } => {
                 if let Some(arrow_node) = self.arena.get(*arrow_node)
                     && let Some(func) = self.arena.get_function(arrow_node)
                 {
-                    self.emit_arrow_function_es5(arrow_node, func, *captures_this);
+                    self.emit_arrow_function_es5(
+                        arrow_node,
+                        func,
+                        *captures_this,
+                        *captures_arguments,
+                    );
                     return;
                 }
 
@@ -1053,6 +1081,10 @@ impl<'a> Printer<'a> {
             EmitDirective::SubstituteThis => {
                 // Substitute 'this' with '_this' for lexical capture
                 self.write("_this");
+            }
+            EmitDirective::SubstituteArguments => {
+                // Substitute 'arguments' with '_arguments' for lexical capture
+                self.write("_arguments");
             }
             EmitDirective::ModuleWrapper {
                 format,
@@ -1214,7 +1246,17 @@ impl<'a> Printer<'a> {
         match kind {
             // Identifiers
             k if k == SyntaxKind::Identifier as u16 => {
-                self.emit_identifier(node);
+                // Check for SubstituteArguments directive on 'arguments' identifier
+                if self.transforms.has_transform(idx) {
+                    if let Some(TransformDirective::SubstituteArguments) = self.transforms.get(idx)
+                    {
+                        self.write("_arguments");
+                    } else {
+                        self.emit_identifier(node);
+                    }
+                } else {
+                    self.emit_identifier(node);
+                }
             }
             k if k == syntax_kind_ext::TYPE_PARAMETER => {
                 self.emit_type_parameter(node);
