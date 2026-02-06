@@ -105,8 +105,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Actually evaluates the type to get the concrete structure.
     fn resolve_type_for_property_lookup(&mut self, ty: TypeId) -> TypeId {
         match self.interner().lookup(ty) {
-            Some(TypeKey::Lazy(_)) => {
-                // Actually evaluate it to get the concrete structure
+            Some(TypeKey::Lazy(def_id)) => {
+                // CRITICAL: For interfaces/classes (Lazy types), try to use the resolver first
+                // The resolver has the actual type with property modifiers from the type_env
+                // This is needed because evaluate() on a Lazy type might return a Lazy type
+                // (for nominal identity), but we need the actual Object structure
+                if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner()) {
+                    // Recursively resolve in case the resolved type is also Lazy
+                    return self.resolve_type_for_property_lookup(resolved);
+                }
+                // Fallback: Evaluate it directly
                 let evaluated = self.evaluate(ty);
                 // Protect against infinite loops if evaluate returns self
                 if evaluated != ty {
@@ -733,12 +741,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Get the modifiers for this element
             // Note: readonly is currently unused for tuple elements, but we preserve the logic
             // in case TypeScript adds readonly tuple element support in the future
-            let (optional, _readonly) = match (mapped.optional_modifier, mapped.readonly_modifier) {
-                (Some(MappedModifier::Add), _) | (_, Some(MappedModifier::Add)) => (true, true),
-                (Some(MappedModifier::Remove), _) | (_, Some(MappedModifier::Remove)) => {
-                    (false, false)
-                }
-                (None, None) => (elem.optional, false), // Preserve original optional
+            // CRITICAL: Handle optional and readonly modifiers independently
+            let optional = match mapped.optional_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => elem.optional, // Preserve original optional
+            };
+            let _readonly = match mapped.readonly_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => false, // Tuple elements don't have readonly in current TypeScript
             };
 
             mapped_elements.push(TupleElement {
