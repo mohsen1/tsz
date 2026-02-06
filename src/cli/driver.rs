@@ -20,6 +20,7 @@ use crate::cli::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
     resolve_compiler_options, resolve_default_lib_files, resolve_lib_files,
 };
+use crate::lib_loader::LibFile;
 use crate::module_resolver::ModuleResolver;
 use crate::span::Span;
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
@@ -707,7 +708,7 @@ fn compile_inner(
 
     // Add type definition files (e.g., @types packages) to the source file list.
     // Note: lib.d.ts files are NOT added here - they are loaded separately via
-    // load_lib_files_for_contexts() for symbol resolution. This prevents them from
+    // lib preloading + checker lib contexts. This prevents them from
     // being type-checked as regular source files (which would emit spurious errors).
     if !type_files.is_empty() {
         let mut merged = std::collections::BTreeSet::new();
@@ -818,9 +819,14 @@ fn compile_inner(
         } else {
             resolved.lib_files.clone()
         };
+    let lib_path_refs: Vec<&Path> = lib_paths.iter().map(PathBuf::as_path).collect();
+    // Load and bind each lib exactly once, then reuse for:
+    // 1) user-file binding (global symbol availability during bind)
+    // 2) checker lib contexts (global symbol/type resolution)
+    let lib_files: Vec<Arc<LibFile>> = parallel::load_lib_files_for_binding(&lib_path_refs);
 
     let (program, dirty_paths) = if let Some(ref mut c) = effective_cache {
-        let result = build_program_with_cache(sources, c, &lib_paths);
+        let result = build_program_with_cache(sources, c, &lib_files);
         (result.program, Some(result.dirty_paths))
     } else {
         let compile_inputs: Vec<(String, String)> = sources
@@ -834,10 +840,8 @@ fn compile_inner(
                 (source.path.to_string_lossy().into_owned(), text)
             })
             .collect();
-        (
-            parallel::compile_files_with_libs(compile_inputs, &lib_paths),
-            None,
-        )
+        let bind_results = parallel::parse_and_bind_parallel_with_libs(compile_inputs, &lib_files);
+        (parallel::merge_bind_results(bind_results), None)
     };
 
     // Update import symbol IDs if we have a cache
@@ -849,7 +853,7 @@ fn compile_inner(
     let lib_contexts = if resolved.no_check {
         Vec::new() // Skip lib loading when --noCheck is set
     } else {
-        load_lib_files_for_contexts(&lib_paths, resolved.printer.target)
+        load_lib_files_for_contexts(&lib_files)
     };
 
     let mut diagnostics = collect_diagnostics(
@@ -1039,7 +1043,7 @@ struct BuildProgramResult {
 fn build_program_with_cache(
     sources: Vec<SourceEntry>,
     cache: &mut CompilationCache,
-    lib_paths: &[PathBuf],
+    lib_files: &[Arc<LibFile>],
 ) -> BuildProgramResult {
     let mut meta = Vec::with_capacity(sources.len());
     let mut to_parse = Vec::new();
@@ -1080,12 +1084,11 @@ fn build_program_with_cache(
     let parsed_results = if to_parse.is_empty() {
         Vec::new()
     } else {
-        // Use parse_and_bind_parallel_with_lib_files to load lib.d.ts symbols
+        // Use parse_and_bind_parallel_with_libs to load prebound lib symbols
         // This ensures global symbols like console, Array, Promise are available
         // during binding, which prevents "Any poisoning" where unresolved symbols
         // default to Any type instead of emitting TS2304 errors.
-        let lib_path_refs: Vec<&Path> = lib_paths.iter().map(PathBuf::as_path).collect();
-        parallel::parse_and_bind_parallel_with_lib_files(to_parse, &lib_path_refs)
+        parallel::parse_and_bind_parallel_with_libs(to_parse, lib_files)
     };
 
     let mut parsed_map: FxHashMap<String, BindResult> = parsed_results
@@ -1668,106 +1671,39 @@ fn read_source_files(
 
 /// Load lib.d.ts files and create LibContext objects for the checker.
 ///
-/// This function loads the specified lib.d.ts files (e.g., lib.dom.d.ts, lib.es*.d.ts)
-/// and returns LibContext objects that can be used by the checker to resolve global
-/// symbols like `console`, `Array`, `Promise`, etc.
-///
-/// If disk files are not available or fail to load, this function falls back to embedded libs
-/// for the specified target to ensure global types are always available.
-///
-/// IMPORTANT: This function now recursively resolves lib dependencies (/// <reference lib="..." />)
-/// to prevent duplicate declarations. Previously, it would load only the explicitly specified libs
-/// from disk, then load embedded libs as a "fallback" for missing dependencies, which caused
-/// duplicate symbol declarations.
-fn load_lib_files_for_contexts(
-    lib_files: &[PathBuf],
-    _target: crate::emitter::ScriptTarget,
-) -> Vec<LibContext> {
-    use crate::binder::BinderState;
-    use crate::parser::ParserState;
-    use rayon::prelude::*;
-    use rustc_hash::FxHashSet;
-    use std::sync::Arc;
+/// This function reuses already-loaded lib files from the binding phase, avoiding a second
+/// parse/bind pass during checker setup.
+fn load_lib_files_for_contexts(lib_files: &[Arc<LibFile>]) -> Vec<LibContext> {
+    if lib_files.is_empty() {
+        return Vec::new();
+    }
 
-    // Deduplicate lib paths by file stem (lib name)
-    // resolve_lib_files already resolved all /// <reference lib="..." /> directives,
-    // so we just need to dedupe and read the files.
-    let mut seen_libs = FxHashSet::default();
-    let unique_lib_paths: Vec<_> = lib_files
+    let lib_contexts: Vec<LibContext> = lib_files
         .iter()
-        .filter(|path| {
-            let lib_name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .and_then(|s| s.strip_prefix("lib."))
-                .and_then(|s| s.strip_suffix(".generated"))
-                .unwrap_or_else(|| path.file_stem().and_then(|s| s.to_str()).unwrap_or(""));
-            path.exists() && seen_libs.insert(lib_name.to_string())
-        })
-        .collect();
-
-    // Read all lib files in PARALLEL (major speedup - eliminates sequential I/O bottleneck)
-    let lib_contents: Vec<(String, String)> = unique_lib_paths
-        .into_par_iter()
-        .filter_map(|lib_path| {
-            let source_text = std::fs::read_to_string(lib_path).ok()?;
-            let file_name = lib_path.to_string_lossy().to_string();
-            Some((file_name, source_text))
-        })
-        .collect();
-
-    // Parse and bind all libs in parallel
-    let lib_contexts: Vec<LibContext> = lib_contents
-        .into_par_iter()
-        .filter_map(|(file_name, source_text)| {
-            let mut lib_parser = ParserState::new(file_name, source_text);
-            let source_file_idx = lib_parser.parse_source_file();
-
-            if !lib_parser.get_diagnostics().is_empty() {
-                return None;
-            }
-
-            let mut lib_binder = BinderState::new();
-            lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
-
-            let arena = Arc::new(lib_parser.into_arena());
-            let binder = Arc::new(lib_binder);
-
-            Some(LibContext { arena, binder })
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
         })
         .collect();
 
     // Merge all lib binders into a single binder to avoid duplicate SymbolIds
-    // This is necessary because different lib files may declare the same symbols
-    // (e.g., "Intl" is declared in lib.esnext.d.ts, lib.es2024.d.ts, etc.)
-    if !lib_contexts.is_empty() {
-        use crate::binder::state::LibContext as BinderLibContext;
+    // (e.g., "Intl" declarations across multiple lib files).
+    use crate::binder::state::LibContext as BinderLibContext;
+    let mut merged_binder = crate::binder::BinderState::new();
+    let binder_lib_contexts: Vec<_> = lib_contexts
+        .iter()
+        .map(|ctx| BinderLibContext {
+            arena: Arc::clone(&ctx.arena),
+            binder: Arc::clone(&ctx.binder),
+        })
+        .collect();
+    merged_binder.merge_lib_contexts_into_binder(&binder_lib_contexts);
 
-        let mut merged_binder = crate::binder::BinderState::new();
-        let binder_lib_contexts: Vec<_> = lib_contexts
-            .iter()
-            .map(|ctx| BinderLibContext {
-                arena: std::sync::Arc::clone(&ctx.arena),
-                binder: std::sync::Arc::clone(&ctx.binder),
-            })
-            .collect();
-
-        merged_binder.merge_lib_contexts_into_binder(&binder_lib_contexts);
-
-        // Replace multiple lib contexts with a single merged one
-        let merged_arena = lib_contexts
-            .first()
-            .map(|ctx| std::sync::Arc::clone(&ctx.arena))
-            .unwrap();
-        let merged_binder = std::sync::Arc::new(merged_binder);
-
-        return vec![LibContext {
-            arena: merged_arena,
-            binder: merged_binder,
-        }];
-    }
-
-    lib_contexts
+    vec![LibContext {
+        // Keep a lib arena available for declaration lookups.
+        arena: Arc::clone(&lib_contexts[0].arena),
+        binder: Arc::new(merged_binder),
+    }]
 }
 
 fn collect_diagnostics(
