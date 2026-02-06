@@ -130,6 +130,9 @@ mod enum_nominality_tests;
 #[path = "tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
 #[cfg(test)]
+#[path = "tests/generic_tests.rs"]
+mod generic_tests;
+#[cfg(test)]
 #[path = "tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]

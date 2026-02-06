@@ -3,15 +3,15 @@
 //! These tests verify that duplicate identifier errors are correctly emitted
 //! for class members based on declaration order, matching tsc behavior.
 
+use crate::checker::context::CheckerOptions;
+use crate::checker::state::CheckerState;
+use std::sync::Arc;
 use tsz_binder::BinderState;
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
-use std::sync::Arc;
 
 /// Helper function to check source and return diagnostics.
-fn check(source: &str) -> Vec<crate::types::Diagnostic> {
+fn check(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     let lib_files = crate::test_fixtures::load_lib_files_for_test();
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -34,7 +34,7 @@ fn check(source: &str) -> Vec<crate::types::Diagnostic> {
     if !lib_files.is_empty() {
         let lib_contexts: Vec<_> = lib_files
             .iter()
-            .map(|lib| crate::context::LibContext {
+            .map(|lib| crate::checker::context::LibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })

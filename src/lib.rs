@@ -2681,3 +2681,35 @@ mod void_return_exception;
 #[cfg(test)]
 #[path = "../crates/tsz-checker/src/tests/any_propagation.rs"]
 mod any_propagation;
+
+// Tests that depend on test_fixtures (require root crate context)
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/any_propagation_tests.rs"]
+mod any_propagation_tests;
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/const_assertion_tests.rs"]
+mod const_assertion_tests;
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/contextual_typing_tests.rs"]
+mod contextual_typing_tests;
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/freshness_stripping_tests.rs"]
+mod freshness_stripping_tests;
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/function_bivariance.rs"]
+mod function_bivariance;
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/global_type_tests.rs"]
+mod global_type_tests;
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/symbol_resolution_tests.rs"]
+mod symbol_resolution_tests;
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/ts2300_tests.rs"]
+mod ts2300_tests;
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/ts2304_tests.rs"]
+mod ts2304_tests;
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/widening_integration_tests.rs"]
+mod widening_integration_tests;

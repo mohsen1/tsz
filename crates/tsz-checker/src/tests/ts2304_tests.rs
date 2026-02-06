@@ -5,19 +5,19 @@
 //! 2. TS2304 is NOT emitted when lib.d.ts is loaded and provides the name
 //! 3. The "Any poisoning" effect is eliminated
 
-use tsz_binder::BinderState;
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use crate::checker::context::CheckerOptions;
+use crate::checker::state::CheckerState;
 #[allow(unused_imports)]
 use crate::test_fixtures::TestContext;
 use std::sync::Arc;
+use tsz_binder::BinderState;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
 
 /// Helper function to check source with lib.es5.d.ts and return diagnostics.
 /// Loads lib files to avoid TS2318 errors for missing global types.
 /// Creates the checker with the parser's arena directly to ensure proper node resolution.
-fn check_without_lib(source: &str) -> Vec<crate::types::Diagnostic> {
+fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     // We still need lib files to avoid TS2318 errors for global types
     // The "without lib" name is a misnomer - we need basic global types
     let lib_files = crate::test_fixtures::load_lib_files_for_test();
@@ -51,7 +51,7 @@ fn check_without_lib(source: &str) -> Vec<crate::types::Diagnostic> {
     if !lib_files.is_empty() {
         let lib_contexts: Vec<_> = lib_files
             .iter()
-            .map(|lib| crate::context::LibContext {
+            .map(|lib| crate::checker::context::LibContext {
                 arena: std::sync::Arc::clone(&lib.arena),
                 binder: std::sync::Arc::clone(&lib.binder),
             })
@@ -65,7 +65,7 @@ fn check_without_lib(source: &str) -> Vec<crate::types::Diagnostic> {
 }
 
 /// Helper function to check source WITH lib.es5.d.ts and return diagnostics.
-fn check_with_lib(source: &str) -> Vec<crate::types::Diagnostic> {
+fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     // Load lib.es5.d.ts which contains actual type definitions
     let lib_files = crate::test_fixtures::load_lib_files_for_test();
 
@@ -88,9 +88,9 @@ fn check_with_lib(source: &str) -> Vec<crate::types::Diagnostic> {
 
     // Set lib contexts for global symbol resolution
     if !lib_files.is_empty() {
-        let lib_contexts: Vec<crate::context::LibContext> = lib_files
+        let lib_contexts: Vec<crate::checker::context::LibContext> = lib_files
             .iter()
-            .map(|lib| crate::context::LibContext {
+            .map(|lib| crate::checker::context::LibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })

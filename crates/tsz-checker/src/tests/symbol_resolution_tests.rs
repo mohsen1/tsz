@@ -1,14 +1,14 @@
 //! Tests for symbol resolution behavior in the checker.
 
+use crate::checker::context::CheckerOptions;
+use crate::checker::state::CheckerState;
 use tsz_binder::BinderState;
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
 
-fn collect_diagnostics(source: &str) -> Vec<crate::types::Diagnostic> {
+fn collect_diagnostics(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -31,7 +31,7 @@ fn collect_diagnostics(source: &str) -> Vec<crate::types::Diagnostic> {
     checker.ctx.diagnostics.clone()
 }
 
-fn collect_diagnostics_with_libs(source: &str) -> Vec<crate::types::Diagnostic> {
+fn collect_diagnostics_with_libs(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 

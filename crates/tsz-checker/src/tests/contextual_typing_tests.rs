@@ -1,12 +1,13 @@
 //! Tests for contextual typing and type inference
 
-use crate::types::Diagnostic;
+use crate::checker::types::Diagnostic;
 use crate::test_fixtures::TestContext;
 
 /// Helper function to check source and return diagnostics
 fn check_source(source: &str) -> Vec<Diagnostic> {
     let mut ctx = TestContext::new_without_lib();
-    let mut parser = tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     ctx.binder.bind_source_file(parser.get_arena(), root);
     let mut checker = ctx.checker();
