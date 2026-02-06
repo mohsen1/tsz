@@ -1722,7 +1722,7 @@ impl Server {
                         .map(|p| {
                             let display_parts = Self::tokenize_param_label(&p.label);
                             // Build param JSON with correct field order:
-                            // name, documentation (optional), displayParts, isOptional, isRest
+                            // name, documentation, displayParts, isOptional, isRest
                             let mut map = serde_json::Map::new();
                             map.insert("name".to_string(), serde_json::json!(p.name));
                             if let Some(ref doc) = p.documentation {
@@ -1730,6 +1730,8 @@ impl Server {
                                     "documentation".to_string(),
                                     serde_json::json!([{"text": doc, "kind": "text"}]),
                                 );
+                            } else {
+                                map.insert("documentation".to_string(), serde_json::json!([]));
                             }
                             map.insert(
                                 "displayParts".to_string(),
