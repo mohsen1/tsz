@@ -40,3 +40,34 @@ While working towards making all tests pass, you can use `--no-verify` to make a
 - `feat(contextual): add arity-based overload filtering for contextual typing` (earlier)
 
 ## Session logs
+
+### 2026-02-06: Excellent Progress - 7 Failing Tests Remaining
+
+**Fixed in this session:**
+1. `test_method_bivariance_event_handler_pattern` - Test expectation was outdated
+2. `test_overload_call_handles_generic_signatures` - Implemented generic overload compatibility
+
+**Key Implementation:**
+- Generic overload compatibility: When checking `non-generic impl <: generic overload`,
+  we now instantiate the target's type parameters to `any` before subtype checking.
+  This implements universal quantification in `src/solver/subtype_rules/functions.rs`.
+
+**Next Session - Gemini's Recommendations:**
+
+1. **Priority 1: `test_variadic_tuple_optional_tail_inference_no_ts2769`**
+   - Impact: High - Tier 1 type system feature
+   - Component: Solver (pure WHAT problem)
+   - Files: `src/solver/operations.rs`, `src/solver/evaluate_rules/infer_pattern.rs`
+   - Approach: Fix `constrain_tuple_types` and `rest_tuple_inference_target` to handle
+     optional elements following rest elements
+
+2. **Priority 2: `test_class_namespace_merging`**
+   - Impact: High - Fundamental TypeScript feature
+   - Component: Binder (WHO problem)
+   - Files: `src/binder/mod.rs`, `src/checker/namespace_checker.rs`
+   - Approach: Allow `CLASS` and `MODULE` flags to merge in `can_merge_flags`,
+     ensure namespace exports are attached to merged symbol
+
+**Remember MANDATORY Two-Question Rule from AGENTS.md:**
+1. Ask Gemini (Flash) to validate approach before implementing
+2. Ask Gemini (Pro) to review implementation after coding
