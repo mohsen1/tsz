@@ -835,32 +835,27 @@ Focus on high-impact, low-effort fixes first.
 
 ## Current Session Goal (2025-02-06 - Gemini Consulted)
 
-**Current Status: ES5 Downleveling Infrastructure Mostly Complete**
+## Current Session Goal (2025-02-06)
 
-**Completed Implementations:**
-- ✅ `__spreadArray` helper (Array Spread) - `[...a]` → `__spreadArray([], a, true)`
-- ✅ `__assign` helper (Object Spread) - `{...a}` → `__assign({}, a)`
-- ✅ For-of downleveling - `for (const x of arr)` → array indexing pattern
-- ✅ Destructuring support - Files exist in `src/emitter/binding_patterns.rs`, `src/transforms/destructuring_es5.rs`
+**Primary Goal: Implement ES5 Template Literal Downleveling**
 
-**Current Pass Rate: 33.9%** (148/437 tests)
+**Rationale (per Gemini consultation):**
+- Template literals (backticks) are core ES6 feature used extensively in tests
+- Currently likely emits raw backticks even when targeting ES5
+- Matching tsc requires transforming `` `a${b}c` `` → `"a" + b + "c"` or `"a".concat(b, "c")`
+- High-impact feature that will flip many tests
 
-**Observations:**
-- Core ES5 downleveling features are implemented
-- Remaining failures likely due to:
-  1. Formatting/whitespace differences vs tsc
-  2. Edge cases in existing implementations
-  3. Missing ES6+ features (decorators, private fields, etc.)
-  4. Test-specific scenarios
+**Implementation Plan:**
+1. Update `EmitDirective::ES5TemplateLiteral` in LoweringPass and Printer
+2. Implement transform in `src/emitter/es5_helpers.rs` or dedicated template file
+3. Handle simple case: `` `prefix${expr}suffix` `` → `"prefix" + expr + "suffix"`
+4. Handle complex case with multiple expressions
 
-**Next Steps Options:**
-A) Investigate specific failing test categories to find patterns
-B) Focus on exact whitespace/formatting matching
-C) Implement additional ES6+ features
+**Current Pass Rate: 33.9%** (148/437)
 
-**Session Status:** Awaiting direction from Gemini after discovering for-of was already implemented.
+---
 
-### Completed Work Summary
+### Previous Completed Work
 
 **Rationale (per Gemini consultation):**
 - The project must match `tsc` behavior exactly (per AGENTS.md)
