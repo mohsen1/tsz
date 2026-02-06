@@ -29,7 +29,7 @@ use crate::solver::TypeDatabase;
 use crate::solver::diagnostics::{SubtypeFailureReason, SubtypeTracer};
 use crate::solver::subtype::{MAX_SUBTYPE_DEPTH, TypeResolver};
 use crate::solver::types::*;
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
@@ -58,7 +58,7 @@ pub struct TracerSubtypeChecker<'a, R: TypeResolver> {
     #[allow(dead_code)]
     pub(crate) resolver: &'a R,
     /// Active subtype pairs being checked (for cycle detection).
-    pub(crate) in_progress: HashSet<(TypeId, TypeId)>,
+    pub(crate) in_progress: FxHashSet<(TypeId, TypeId)>,
     /// Current recursion depth.
     pub(crate) depth: u32,
     /// Total number of checks performed.
@@ -79,7 +79,7 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
         Self {
             interner,
             resolver,
-            in_progress: HashSet::new(),
+            in_progress: FxHashSet::default(),
             depth: 0,
             total_checks: 0,
             depth_exceeded: false,

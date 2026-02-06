@@ -14,7 +14,7 @@
 //! built by `build_module_resolution_maps`.
 
 use rustc_hash::FxHashMap;
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 use std::path::Path;
 
 /// TypeScript file extensions in resolution priority order.
@@ -85,9 +85,9 @@ fn relative_specifier(from_dir: &Path, to_path: &Path) -> Option<String> {
 /// - All TS/JS extensions: `.ts`, `.tsx`, `.d.ts`, `.js`, `.jsx`, `.mts`, `.cts`, etc.
 pub fn build_module_resolution_maps(
     file_names: &[String],
-) -> (FxHashMap<(usize, String), usize>, HashSet<String>) {
+) -> (FxHashMap<(usize, String), usize>, FxHashSet<String>) {
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
-    let mut resolved_modules: HashSet<String> = HashSet::new();
+    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
 
     // Build a map from extensionless path -> file index for index file resolution
     let mut stem_to_idx: FxHashMap<String, usize> = FxHashMap::default();
