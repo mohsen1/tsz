@@ -2588,6 +2588,80 @@ struct NarrowingVisitor<'a> {
 impl<'a> TypeVisitor for NarrowingVisitor<'a> {
     type Output = TypeId;
 
+    /// Override visit_type to handle types that need special handling.
+    /// We intercept Lazy/Ref/Application types for resolution, and Object/Function
+    /// types for proper subtype checking (we need the TypeId here).
+    fn visit_type(&mut self, types: &dyn TypeDatabase, type_id: TypeId) -> Self::Output {
+        // Check if this is a type that needs special handling
+        if let Some(type_key) = types.lookup(type_id) {
+            match type_key {
+                // Lazy types: resolve and recurse
+                TypeKey::Lazy(_) => {
+                    // Use self.db (QueryDatabase) which has evaluate_type
+                    let resolved = self.db.evaluate_type(type_id);
+                    // If resolution changed the type, recurse with the resolved type
+                    if resolved != type_id {
+                        return self.visit_type(types, resolved);
+                    }
+                    // Otherwise, fall through to normal visitation
+                }
+                // Ref types: resolve and recurse
+                TypeKey::TypeQuery(_) => {
+                    let resolved = self.db.evaluate_type(type_id);
+                    if resolved != type_id {
+                        return self.visit_type(types, resolved);
+                    }
+                }
+                // Application types (generics): resolve and recurse
+                TypeKey::Application(_) => {
+                    let resolved = self.db.evaluate_type(type_id);
+                    if resolved != type_id {
+                        return self.visit_type(types, resolved);
+                    }
+                }
+                // Object types: check subtype relationships
+                TypeKey::Object(_) => {
+                    // Case 1: type_id is subtype of narrower (e.g., { a: "foo" } narrowed by { a: string })
+                    // Result: type_id (keep the more specific type)
+                    if is_subtype_of(self.db, type_id, self.narrower) {
+                        return type_id;
+                    }
+                    // Case 2: narrower is subtype of type_id (e.g., { a: string } narrowed by { a: "foo" })
+                    // Result: narrower (narrow down to the more specific type)
+                    if is_subtype_of(self.db, self.narrower, type_id) {
+                        return self.narrower;
+                    }
+                    // Case 3: Both are object types but not directly related
+                    // They might overlap (e.g., interfaces with common properties)
+                    // For now, conservatively return the intersection
+                    if is_object_like_type_db(self.db, self.narrower) {
+                        return self.db.intersection2(type_id, self.narrower);
+                    }
+                    // Case 4: Disjoint object types
+                    return TypeId::NEVER;
+                }
+                // Function types: check subtype relationships
+                TypeKey::Function(_) => {
+                    // Case 1: type_id is subtype of narrower (keep specific)
+                    if is_subtype_of(self.db, type_id, self.narrower) {
+                        return type_id;
+                    }
+                    // Case 2: narrower is subtype of type_id (narrow down)
+                    if is_subtype_of(self.db, self.narrower, type_id) {
+                        return self.narrower;
+                    }
+                    // Case 3: Disjoint function types
+                    return TypeId::NEVER;
+                }
+                _ => {}
+            }
+        }
+
+        // For all other types, use the default visit_type implementation
+        // which calls visit_type_key and dispatches to specific methods
+        <Self as TypeVisitor>::visit_type(self, types, type_id)
+    }
+
     fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
         match kind {
             IntrinsicKind::Any => {
@@ -2666,20 +2740,26 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
         let members = self.db.type_list(TypeListId(list_id));
 
-        // For intersection, we need to check if ALL members are assignable to narrower
-        let all_match = members
+        // Narrow each intersection member individually and collect non-never results
+        // For (A & B) narrowed by C, the result is (A narrowed by C) & (B narrowed by C)
+        let narrowed_members: Vec<TypeId> = members
             .iter()
-            .all(|&member| is_subtype_of(self.db, member, self.narrower));
+            .filter_map(|&member| {
+                let narrowed = self.visit_type(self.db, member);
+                if narrowed == TypeId::NEVER {
+                    None
+                } else {
+                    Some(narrowed)
+                }
+            })
+            .collect();
 
-        if all_match {
-            // Intersection matches narrower, return the intersection
-            // We need to reconstruct the intersection type
-            self.db.intersection(members.to_vec())
+        if narrowed_members.is_empty() {
+            TypeId::NEVER
+        } else if narrowed_members.len() == 1 {
+            narrowed_members[0]
         } else {
-            // Intersection doesn't fully match - need to intersect with narrower
-            // For now, conservatively return the intersection as-is
-            // TODO: Implement proper intersection narrowing
-            self.db.intersection(members.to_vec())
+            self.db.intersection(narrowed_members)
         }
     }
 
@@ -2695,35 +2775,32 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
     }
 
     fn visit_lazy(&mut self, _def_id: u32) -> Self::Output {
-        // CRITICAL: Must resolve lazy types before narrowing
-        // For now, conservatively return narrower (may over-narrow but safe)
-        // TODO: Track current type_id to resolve and recurse properly
-        // The def_id corresponds to the lazy type being visited
+        // Lazy types are now handled in visit_type by resolving and recursing
+        // This should never be called anymore, but if it is, return narrower
         self.narrower
     }
 
     fn visit_ref(&mut self, _symbol_ref: u32) -> Self::Output {
-        // CRITICAL: Must resolve ref types before narrowing
-        // For now, conservatively return narrower (may over-narrow but safe)
-        // TODO: Track current type_id to resolve and recurse properly
+        // Ref types are now handled in visit_type by resolving and recursing
+        // This should never be called anymore, but if it is, return narrower
         self.narrower
     }
 
     fn visit_application(&mut self, _app_id: u32) -> Self::Output {
-        // CRITICAL: Must resolve application types before narrowing
-        // For now, conservatively return narrower (may over-narrow but safe)
-        // TODO: Track current type_id to resolve and recurse properly
+        // Application types are now handled in visit_type by resolving and recursing
+        // This should never be called anymore, but if it is, return narrower
         self.narrower
     }
 
     fn visit_object(&mut self, _shape_id: u32) -> Self::Output {
-        // For object types, conservatively return the narrower
-        // (Proper narrowing would check property compatibility)
+        // Object types are now handled in visit_type where we have the TypeId
+        // For now, conservatively return the narrower
         self.narrower
     }
 
     fn visit_function(&mut self, _shape_id: u32) -> Self::Output {
-        // For function types, conservatively return the narrower
+        // Function types are now handled in visit_type where we have the TypeId
+        // For now, conservatively return the narrower
         self.narrower
     }
 
