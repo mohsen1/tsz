@@ -1227,10 +1227,10 @@ impl TypeInterner {
             return self.intern(TypeKey::Intersection(list_id));
         }
 
-        // Narrow literal & primitive to literal (e.g., "hello" & string = "hello")
-        if let Some(literal) = self.narrow_literal_primitive_intersection(&flat) {
-            return literal;
-        }
+        // NOTE: narrow_literal_primitive_intersection was removed (Task #43) because it was too aggressive.
+        // It caused incorrect behavior in mixed intersections like "a" & string & { x: 1 }.
+        // The reduce_intersection_subtypes() at the end correctly handles literal/primitive narrowing
+        // via is_subtype_shallow checks without losing other intersection members.
 
         if self.intersection_has_disjoint_primitives(&flat) {
             return TypeId::NEVER;
@@ -1260,15 +1260,52 @@ impl TypeInterner {
             return flat[0];
         }
 
-        // If all members are objects, merge them into a single object
-        if let Some(merged) = self.try_merge_objects_in_intersection(&flat) {
-            return merged;
+        // =========================================================
+        // Task #43: Partial Merging Strategy
+        // =========================================================
+        // Instead of all-or-nothing merging, extract objects and callables
+        // from mixed intersections, merge them separately, then combine.
+        //
+        // Example: { a: string } & { b: number } & ((x: number) => void)
+        // → Merge objects: { a: string; b: number }
+        // → Merge callables: (x: number) => void
+        // → Result: Callable with properties (merging both)
+
+        // Step 1: Extract and merge objects from mixed intersection
+        let (merged_object, remaining_after_objects) = self.extract_and_merge_objects(&flat);
+
+        // Step 2: Extract and merge callables from remaining members
+        let (merged_callable, remaining_after_callables) =
+            self.extract_and_merge_callables(&remaining_after_objects);
+
+        // Step 3: Rebuild flat with merged results in canonical form
+        // Canonical form: [non-callables sorted, callables ordered]
+        let mut final_flat: TypeListBuffer = SmallVec::new();
+
+        // Add remaining non-object, non-callable members (these are non-callables)
+        final_flat.extend(remaining_after_callables.iter().copied());
+
+        // Add merged object if present (objects are non-callables)
+        if let Some(obj_id) = merged_object {
+            final_flat.push(obj_id);
         }
 
-        // If all members are callables/functions, merge them into overloaded callable
-        if let Some(merged) = self.try_merge_callables_in_intersection(&flat) {
-            return merged;
+        // Sort all non-callables for canonicalization
+        final_flat.sort_by_key(|id| id.0);
+        final_flat.dedup();
+
+        // Add merged callable if present (callables must come after non-callables)
+        if let Some(call_id) = merged_callable {
+            final_flat.push(call_id);
         }
+
+        // Early exit if simplified to single type
+        if final_flat.len() == 1 {
+            return final_flat[0];
+        }
+
+        // Update flat reference for subsequent checks
+        flat = final_flat;
 
         // Reduce intersection using subtype checks (e.g., {a: 1} & {a: 1 | number} => {a: 1})
         // Skip reduction if intersection contains complex types (TypeParameters, Lazy, etc.)
@@ -1387,45 +1424,6 @@ impl TypeInterner {
         Some(self.intern(TypeKey::Callable(shape_id)))
     }
 
-    fn narrow_literal_primitive_intersection(&self, members: &[TypeId]) -> Option<TypeId> {
-        // Check if we have a literal and its corresponding primitive
-        // e.g., "hello" & string => "hello"
-        let mut literal: Option<TypeId> = None;
-        let mut literal_class: Option<PrimitiveClass> = None;
-        let mut has_primitive = false;
-
-        // First pass: find the literal and its class
-        for &member in members {
-            if let Some(TypeKey::Literal(_)) = self.lookup(member) {
-                if literal.is_none() {
-                    literal = Some(member);
-                    literal_class = self.primitive_class_for(member);
-                } else {
-                    // Multiple literals, can't narrow
-                    return None;
-                }
-            }
-        }
-
-        // Second pass: check if we have a matching primitive
-        if let (Some(lit_class), Some(literal_val)) = (literal_class, literal) {
-            for &member in members {
-                if let Some(class) = self.primitive_class_for(member) {
-                    if class == lit_class && member != literal_val {
-                        has_primitive = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if literal.is_some() && has_primitive {
-            literal
-        } else {
-            None
-        }
-    }
-
     fn try_merge_objects_in_intersection(&self, members: &[TypeId]) -> Option<TypeId> {
         let mut objects: Vec<Arc<ObjectShape>> = Vec::new();
 
@@ -1542,6 +1540,97 @@ impl TypeInterner {
             Some(self.intern(TypeKey::ObjectWithIndex(shape_id)))
         } else {
             Some(self.intern(TypeKey::Object(shape_id)))
+        }
+    }
+
+    /// Task #43: Extract objects from a mixed intersection, merge them, and return
+    /// the merged object along with remaining non-object members.
+    ///
+    /// This implements partial merging for intersections like:
+    /// `{ a: string } & { b: number } & string`
+    /// → Extracts: `{ a: string }`, `{ b: number }`
+    /// → Merges to: `{ a: string; b: number }`
+    /// → Returns: (Some({ a: string; b: number }), [string])
+    fn extract_and_merge_objects(
+        &self,
+        members: &[TypeId],
+    ) -> (Option<TypeId>, SmallVec<[TypeId; 4]>) {
+        let mut objects: Vec<TypeId> = Vec::new();
+        let mut remaining: SmallVec<[TypeId; 4]> = SmallVec::new();
+
+        // Separate objects from non-objects
+        for &member in members {
+            match self.lookup(member) {
+                Some(TypeKey::Object(_)) | Some(TypeKey::ObjectWithIndex(_)) => {
+                    objects.push(member);
+                }
+                _ => {
+                    remaining.push(member);
+                }
+            }
+        }
+
+        // If no objects, return early
+        if objects.is_empty() {
+            return (None, remaining);
+        }
+
+        // If only one object, return it as-is
+        if objects.len() == 1 {
+            return (Some(objects[0]), remaining);
+        }
+
+        // Merge all objects using existing merge logic
+        if let Some(merged) = self.try_merge_objects_in_intersection(&objects) {
+            (Some(merged), remaining)
+        } else {
+            // Merge failed (shouldn't happen), return objects as-is
+            remaining.extend(objects);
+            (None, remaining)
+        }
+    }
+
+    /// Task #43: Extract callables from a mixed intersection, merge them, and return
+    /// the merged callable along with remaining non-callable members.
+    ///
+    /// This implements partial merging for intersections like:
+    /// `((x: string) => void) & ((x: number) => void) & { a: number }`
+    /// → Extracts: `(x: string) => void`, `(x: number) => void`
+    /// → Merges to: Callable with overloads
+    /// → Returns: (Some(Callable), [{ a: number }])
+    fn extract_and_merge_callables(
+        &self,
+        members: &[TypeId],
+    ) -> (Option<TypeId>, SmallVec<[TypeId; 4]>) {
+        let mut callables: Vec<TypeId> = Vec::new();
+        let mut remaining: SmallVec<[TypeId; 4]> = SmallVec::new();
+
+        // Separate callables from non-callables
+        for &member in members {
+            if self.is_callable_type(member) {
+                callables.push(member);
+            } else {
+                remaining.push(member);
+            }
+        }
+
+        // If no callables, return early
+        if callables.is_empty() {
+            return (None, remaining);
+        }
+
+        // If only one callable, return it as-is
+        if callables.len() == 1 {
+            return (Some(callables[0]), remaining);
+        }
+
+        // Merge all callables using existing merge logic
+        if let Some(merged) = self.try_merge_callables_in_intersection(&callables) {
+            (Some(merged), remaining)
+        } else {
+            // Merge failed, return callables as-is
+            remaining.extend(callables);
+            (None, remaining)
         }
     }
 
