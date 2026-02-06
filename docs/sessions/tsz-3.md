@@ -57,9 +57,21 @@ While working towards making all tests pass, you can use `--no-verify` to make a
 1. **Priority 1: `test_variadic_tuple_optional_tail_inference_no_ts2769`**
    - Impact: High - Tier 1 type system feature
    - Component: Solver (pure WHAT problem)
-   - Files: `src/solver/operations.rs`, `src/solver/evaluate_rules/infer_pattern.rs`
-   - Approach: Fix `constrain_tuple_types` and `rest_tuple_inference_target` to handle
-     optional elements following rest elements
+   - Files: `src/solver/operations.rs` (specifically `tuple_rest_element_type` at line 1269)
+   - **Root Cause Identified:** `tuple_rest_element_type` uses fixed calculation:
+     ```rust
+     let suffix_start = rest_arg_count.saturating_sub(total_suffix_len);
+     ```
+     But it should use greedy matching like `rest_tuple_inference_target` does (lines 1420-1436).
+   - **The Bug:** For `f20(["foo", "bar"])` with params `[...T, number?]`:
+     - Current: suffix_start = 2 - 1 = 1, forces "bar" to match `number?` (fails)
+     - Correct: Greedy match finds `number?` can't match "bar", so consumes 0 args, T = ["foo", "bar"]
+   - **Fix Required:** Modify `tuple_rest_element_type` to:
+     1. Accept `arg_types: &[TypeId]` parameter (need to thread through call chain)
+     2. Implement greedy backward matching similar to `rest_tuple_inference_target`
+     3. Calculate dynamic `suffix_start` based on actual assignability checks
+   - **Complexity:** High - requires threading `arg_types` through `param_type_for_arg_index`
+     and all its callers
 
 2. **Priority 2: `test_class_namespace_merging`**
    - Impact: High - Fundamental TypeScript feature
