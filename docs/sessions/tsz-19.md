@@ -36,7 +36,28 @@ let x4: T4 = "1e+21";    // tsc: ok, tsz: error
 
 ## Progress
 
-### 2026-02-06: Investigation Started
+### 2026-02-06: Investigation In Progress
 
-Created test case and confirmed bug exists. Ready to investigate template literal evaluation code.
+**Bug Confirmed**: Template literals with numbers like `${1e-7}` and `${1e21}` are not being evaluated to literal strings.
+
+**Test Case**:
+```typescript
+type T2 = `${1e-7}`;   // tsc: "1e-7", tsz: widened to `string`
+type T4 = `${1e21}`;   // tsc: "1e+21", tsz: widened to `string`
+```
+
+**Investigation**:
+1. Updated `extract_literal_strings` to handle JS scientific notation:
+   - Threshold: `< 10^-6` or `≥ 10^21` → scientific notation
+   - Fixed point: between thresholds
+   - Added "+" sign for positive exponents in scientific notation
+
+2. **Issue**: Template literals are being widened to `string` instead of evaluated to literal strings
+   - Traced to `evaluate_template_literal` in template_literal.rs
+   - The evaluation path may not be triggered, or the number literal isn't being stored as a literal
+
+**Next Steps**: Need deeper investigation to find why:
+- Template literals with only literals aren't being evaluated to literal strings
+- The evaluation path isn't being triggered during type checking
+- The numeric literal is being stored/prased incorrectly
 

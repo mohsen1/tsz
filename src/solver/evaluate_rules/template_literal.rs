@@ -18,12 +18,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let span_list = self.interner().template_list(spans);
 
+        tracing::trace!(
+            span_count = span_list.len(),
+            "evaluate_template_literal: called with {} spans",
+            span_list.len()
+        );
+
         // Check if all spans are just text (no interpolation)
         let all_text = span_list
             .iter()
             .all(|span| matches!(span, TemplateSpan::Text(_)));
 
         if all_text {
+            tracing::trace!("evaluate_template_literal: all text - concatenating");
             // Concatenate all text spans into a single string literal
             let mut result = String::new();
             for span in span_list.iter() {
@@ -68,10 +75,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 TemplateSpan::Type(type_id) => {
                     let evaluated = self.evaluate(*type_id);
 
+                    tracing::trace!(
+                        type_id = type_id.0,
+                        "evaluate_template_literal: evaluating type span"
+                    );
+
                     // Try to extract string representations from the type
                     let string_values = self.extract_literal_strings(evaluated);
+
+                    tracing::trace!(
+                        string_count = string_values.len(),
+                        strings = ?string_values,
+                        "evaluate_template_literal: extracted strings"
+                    );
+
                     if string_values.is_empty() {
                         // Can't evaluate this type - return template literal as-is
+                        tracing::trace!(
+                            "evaluate_template_literal: no strings extracted, returning template literal"
+                        );
                         return self.interner().template_literal(span_list.to_vec());
                     }
 
@@ -184,13 +206,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     vec![self.interner().resolve_atom_ref(atom).to_string()]
                 }
                 LiteralValue::Number(n) => {
-                    // Convert number to string (matching JS behavior)
+                    // Convert number to string matching JavaScript's Number::toString(10)
+                    // ECMAScript spec: use scientific notation if |x| < 10^-6 or |x| >= 10^21
                     let n_val = n.0;
-                    if n_val.fract() == 0.0 && n_val.abs() < 1e15 {
-                        // Integer-like number
-                        vec![format!("{}", n_val as i64)]
+                    let abs_val = n_val.abs();
+
+                    tracing::trace!(
+                        number = n_val,
+                        abs_val = abs_val,
+                        "extract_literal_strings: converting number to string"
+                    );
+
+                    if abs_val < 1e-6 || abs_val >= 1e21 {
+                        // Use scientific notation (Rust adds sign for negative exponents, but not positive)
+                        let mut s = format!("{:e}", n_val);
+                        // Rust outputs "1e-7" for 1e-7 (good) but "1e21" instead of "1e+21" for 1e21
+                        // We need to add "+" to positive exponents
+                        if s.contains("e") && !s.contains("e-") && !s.contains("e+") {
+                            let parts: Vec<&str> = s.split('e').collect();
+                            if parts.len() == 2 {
+                                s = format!("{}e+{}", parts[0], parts[1]);
+                            }
+                        }
+                        tracing::trace!(result = %s, "extract_literal_strings: scientific notation");
+                        vec![s]
+                    } else if n_val.fract() == 0.0 && abs_val < 1e15 {
+                        // Integer-like number - avoid scientific notation
+                        let s = format!("{}", n_val as i64);
+                        tracing::trace!(result = %s, "extract_literal_strings: integer-like");
+                        vec![s]
                     } else {
-                        vec![format!("{}", n_val)]
+                        // Fixed-point notation
+                        let s = format!("{}", n_val);
+                        tracing::trace!(result = %s, "extract_literal_strings: fixed-point");
+                        vec![s]
                     }
                 }
                 LiteralValue::Boolean(b) => {
