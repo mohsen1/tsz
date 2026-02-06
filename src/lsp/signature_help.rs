@@ -3,6 +3,8 @@
 //! Provides function signature information and active parameter highlighting
 //! when typing arguments in a call expression.
 
+use rustc_hash::FxHashMap;
+
 use crate::binder::BinderState;
 use crate::binder::symbol_flags;
 use crate::checker::state::CheckerState;
@@ -1121,7 +1123,7 @@ impl<'a> SignatureHelpProvider<'a> {
             let mut parsed = if doc.is_empty() {
                 ParsedJsdoc {
                     summary: None,
-                    params: std::collections::HashMap::new(),
+                    params: FxHashMap::default(),
                     tags: Vec::new(),
                 }
             } else {
@@ -1186,7 +1188,7 @@ impl<'a> SignatureHelpProvider<'a> {
             let mut parsed = if doc.is_empty() {
                 ParsedJsdoc {
                     summary: None,
-                    params: std::collections::HashMap::new(),
+                    params: FxHashMap::default(),
                     tags: Vec::new(),
                 }
             } else {
@@ -1285,7 +1287,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 let mut parsed = if doc.is_empty() {
                     ParsedJsdoc {
                         summary: None,
-                        params: std::collections::HashMap::new(),
+                        params: FxHashMap::default(),
                         tags: Vec::new(),
                     }
                 } else {

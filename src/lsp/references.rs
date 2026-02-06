@@ -371,8 +371,7 @@ impl<'a> FindReferences<'a> {
 
         let symbol_id = self.resolve_symbol_internal(root, node_idx, None, None)?;
         let symbol = self.binder.symbols.get(symbol_id)?;
-        let declaration_set: std::collections::HashSet<u32> =
-            symbol.declarations.iter().map(|n| n.0).collect();
+        let declaration_set: FxHashSet<u32> = symbol.declarations.iter().map(|n| n.0).collect();
 
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let ref_nodes = walker.find_references(root, symbol_id);
