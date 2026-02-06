@@ -51,7 +51,7 @@ impl NodeArena {
     /// Returns None if node is not an identifier or has no data.
     #[inline]
     pub fn get_identifier(&self, node: &Node) -> Option<&IdentifierData> {
-        use crate::scanner::SyntaxKind;
+        use tsz_scanner::SyntaxKind;
         if node.has_data()
             && (node.kind == SyntaxKind::Identifier as u16
                 || node.kind == SyntaxKind::PrivateIdentifier as u16)
@@ -66,7 +66,7 @@ impl NodeArena {
     /// Returns None if node is not a literal or has no data.
     #[inline]
     pub fn get_literal(&self, node: &Node) -> Option<&LiteralData> {
-        use crate::scanner::SyntaxKind;
+        use tsz_scanner::SyntaxKind;
         if node.has_data()
             && matches!(node.kind,
                 k if k == SyntaxKind::StringLiteral as u16 ||
@@ -748,7 +748,7 @@ impl NodeArena {
     /// Get JSX text data.
     #[inline]
     pub fn get_jsx_text(&self, node: &Node) -> Option<&JsxTextData> {
-        use crate::scanner::SyntaxKind;
+        use tsz_scanner::SyntaxKind;
         if node.has_data() && node.kind == SyntaxKind::JsxText as u16 {
             self.jsx_text.get(node.data_index as usize)
         } else {
@@ -1267,21 +1267,21 @@ impl Node {
     /// Check if this is an identifier node
     #[inline]
     pub fn is_identifier(&self) -> bool {
-        use crate::scanner::SyntaxKind;
+        use tsz_scanner::SyntaxKind;
         self.kind == SyntaxKind::Identifier as u16
     }
 
     /// Check if this is a string literal
     #[inline]
     pub fn is_string_literal(&self) -> bool {
-        use crate::scanner::SyntaxKind;
+        use tsz_scanner::SyntaxKind;
         self.kind == SyntaxKind::StringLiteral as u16
     }
 
     /// Check if this is a numeric literal
     #[inline]
     pub fn is_numeric_literal(&self) -> bool {
-        use crate::scanner::SyntaxKind;
+        use tsz_scanner::SyntaxKind;
         self.kind == SyntaxKind::NumericLiteral as u16
     }
 

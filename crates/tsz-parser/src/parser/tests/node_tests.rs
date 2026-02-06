@@ -1,6 +1,6 @@
 use super::*;
-use crate::interner::Atom;
 use std::mem::size_of;
+use tsz_common::interner::Atom;
 
 #[test]
 fn test_node_size() {
@@ -17,7 +17,7 @@ fn test_node_size() {
 
 #[test]
 fn test_node_arena_basic() {
-    use crate::scanner::SyntaxKind;
+    use tsz_scanner::SyntaxKind;
 
     let mut arena = NodeArena::new();
 
@@ -71,7 +71,7 @@ fn test_data_pool_sizes() {
 
 #[test]
 fn test_node_view() {
-    use crate::scanner::SyntaxKind;
+    use tsz_scanner::SyntaxKind;
 
     let mut arena = NodeArena::new();
 
@@ -102,7 +102,7 @@ fn test_node_view() {
 #[test]
 fn test_node_kind_utilities() {
     use super::super::syntax_kind_ext::*;
-    use crate::scanner::SyntaxKind;
+    use tsz_scanner::SyntaxKind;
 
     let ident = Node::new(SyntaxKind::Identifier as u16, 0, 5);
     assert!(ident.is_identifier());
@@ -126,7 +126,7 @@ fn test_node_kind_utilities() {
 
 #[test]
 fn test_node_access_trait() {
-    use crate::scanner::SyntaxKind;
+    use tsz_scanner::SyntaxKind;
 
     let mut arena = NodeArena::new();
 
@@ -161,7 +161,7 @@ fn test_node_access_trait() {
 #[test]
 fn test_parent_mapping() {
     use crate::parser::syntax_kind_ext::BINARY_EXPRESSION;
-    use crate::scanner::SyntaxKind;
+    use tsz_scanner::SyntaxKind;
 
     let mut arena = NodeArena::new();
 
@@ -226,7 +226,7 @@ fn test_parent_mapping() {
 #[test]
 fn test_parent_mapping_nested() {
     use crate::parser::syntax_kind_ext::BINARY_EXPRESSION;
-    use crate::scanner::SyntaxKind;
+    use tsz_scanner::SyntaxKind;
 
     let mut arena = NodeArena::new();
 
@@ -305,7 +305,7 @@ fn test_parent_mapping_nested() {
 fn test_parent_mapping_function() {
     use crate::parser::NodeList;
     use crate::parser::syntax_kind_ext::{BLOCK, FUNCTION_DECLARATION, RETURN_STATEMENT};
-    use crate::scanner::SyntaxKind;
+    use tsz_scanner::SyntaxKind;
 
     let mut arena = NodeArena::new();
 

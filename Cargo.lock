@@ -1222,6 +1222,7 @@ dependencies = [
  "tracing",
  "tsz-common",
  "tsz-scanner",
+ "wasm-bindgen",
 ]
 
 [[package]]

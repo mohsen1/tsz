@@ -33,3 +33,6 @@ pub mod source_map;
 
 // Comment parsing utilities
 pub mod comments;
+
+// Diagnostic codes and message templates (shared by parser and checker)
+pub mod diagnostics;

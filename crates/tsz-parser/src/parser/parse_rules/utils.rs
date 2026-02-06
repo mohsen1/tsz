@@ -4,8 +4,8 @@
 //! across the parser. It consolidates repeated patterns like look-ahead functions
 //! and modifier parsing.
 
-use crate::scanner::SyntaxKind;
-use crate::scanner_impl::ScannerState;
+use tsz_scanner::SyntaxKind;
+use tsz_scanner::scanner_impl::ScannerState;
 
 // Re-export token validation functions for use in look_ahead helpers
 pub use self::token_validation::*;
@@ -228,7 +228,7 @@ mod token_validation {
     /// Check if a token is an identifier or keyword (can be used as identifier).
     pub fn is_identifier_or_keyword(token: SyntaxKind) -> bool {
         // Match TypeScript's isIdentifierOrKeyword: Identifier or any keyword
-        token == SyntaxKind::Identifier || crate::scanner::token_is_keyword(token)
+        token == SyntaxKind::Identifier || tsz_scanner::token_is_keyword(token)
     }
 
     /// Check if a token is a valid property name.

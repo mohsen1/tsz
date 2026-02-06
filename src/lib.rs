@@ -89,11 +89,11 @@ mod scanner_impl_tests;
 #[path = "tests/scanner_tests.rs"]
 mod scanner_tests;
 
-// Parser AST types (Phase 3)
-pub mod parser;
+// Parser AST types - re-exported from tsz-parser workspace crate
+pub use tsz_parser::parser;
 
-// Syntax utilities - Shared helpers for AST and transforms
-pub mod syntax;
+// Syntax utilities - re-exported from tsz-parser workspace crate
+pub use tsz_parser::syntax;
 
 // Parser - Cache-optimized parser using NodeArena (Phase 0.1)
 #[cfg(test)]

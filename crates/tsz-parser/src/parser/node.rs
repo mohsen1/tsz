@@ -26,9 +26,9 @@
 //! 4. **O(1) node access**: Direct index into typed pool
 
 use super::base::{NodeIndex, NodeList};
-use crate::interner::{Atom, Interner};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tsz_common::interner::{Atom, Interner};
 
 /// A thin 16-byte node header for cache-efficient AST storage.
 ///
@@ -870,7 +870,7 @@ pub struct SourceFileData {
     pub has_no_default_lib: bool,
     /// Cached comment ranges for the entire file (computed once during parsing).
     /// This avoids O(N) rescanning on every hover/documentation request.
-    pub comments: Vec<crate::comments::CommentRange>,
+    pub comments: Vec<tsz_common::comments::CommentRange>,
     // Extended node info (parent, id, modifiers, transform_flags)
     pub parent: NodeIndex,
     pub id: u32,
