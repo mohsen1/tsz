@@ -837,40 +837,25 @@ Focus on high-impact, low-effort fixes first.
 
 ## Current Session Goal (2025-02-06)
 
-**Primary Goal: Fix Arrow Function `this` Capture to Match tsc Pattern**
+**Status: Ready to Implement Arrow Function `this` Capture Fix**
 
-**Structural Issue Identified (via Gemini consultation):**
+**Issue Identified:**
+tsz uses IIFE capture pattern while tsc uses Class Alias Capture for static members.
 
-tsz uses **IIFE capture pattern** but tsc uses **Class Alias Capture** for static members:
-
-**tsz (actual):**
-```javascript
-Vector.foo = (function (_this) { return function () { log(_this); }; })(this);
-```
-
-**tsc (expected):**
-```javascript
-var _a;
-_a = Vector;
-Vector.foo = function () { log(_a); };
-```
-
-Both are semantically correct but patterns differ. To match tsc exactly, need to implement "Class Alias Capture."
-
-**Implementation Plan (per Gemini):**
+**Implementation Required:**
 1. **LoweringPass**: Detect when ArrowFunction is within a Static member
-2. **TransformDirective**: Pass capture target (class alias) information
-3. **emit_arrow_function_es5** (`src/emitter/es5_helpers.rs` lines 730-815):
-   - Accept optional `alias_override`
-   - Skip IIFE wrapper when alias provided
-   - Substitute `this` with alias string
-
-**Edge Cases:**
-- Class expressions need temporary names
-- Nested arrows must share same alias
-- Multiple classes require nearest enclosing class alias
+2. **TransformDirective**: Pass `class_alias` string through transform chain
+3. **emit_arrow_function_es5** (lines 730-829): Use alias instead of IIFE wrapper
 
 **Current Pass Rate:** 33.9% (148/437)
+
+**Next Step:**
+Per MANDATORY GEMINI CONSULTATION rule (AGENTS.md), must ask Gemini for pre-implementation validation before modifying solver/checker/emitter logic.
+
+**Gemini Guidance Received:**
+- Use Class Alias Capture pattern for static members
+- Store class alias in LoweringPass, emit via TransformDirective
+- Modify emit_arrow_function_es5 to accept `alias_override` parameter
 
 ---
 
