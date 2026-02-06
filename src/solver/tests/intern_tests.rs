@@ -1028,3 +1028,90 @@ fn test_partial_object_and_callable_merging() {
 
     // NOTE: Object order independence should be tested separately
 }
+
+// Task #47: Template Literal Canonicalization Tests
+
+#[test]
+fn test_template_never_absorption() {
+    let interner = TypeInterner::new();
+
+    // `` `${never}` `` should be never
+    let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NEVER)]);
+    assert_eq!(
+        template,
+        TypeId::NEVER,
+        "Template with never should be never"
+    );
+
+    // `` `a${never}b` `` should be never
+    let template2 = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("a")),
+        TemplateSpan::Type(TypeId::NEVER),
+        TemplateSpan::Text(interner.intern_string("b")),
+    ]);
+    assert_eq!(
+        template2,
+        TypeId::NEVER,
+        "Template with never anywhere should be never"
+    );
+}
+
+#[test]
+fn test_template_empty_string_removal() {
+    let interner = TypeInterner::new();
+
+    // `` `${""}` `` should simplify to empty string literal
+    let empty_lit = interner.literal_string("");
+    let template = interner.template_literal(vec![TemplateSpan::Type(empty_lit)]);
+
+    // Should be a literal empty string, not a template with empty type span
+    match interner.lookup(template) {
+        Some(TypeKey::Literal(LiteralValue::String(s))) => {
+            let s = interner.resolve_atom_ref(s);
+            assert!(s.is_empty(), "Should be empty string literal");
+        }
+        _ => panic!("Expected empty string literal"),
+    }
+
+    // `` `a${""}b` `` should become `ab` (text spans merged)
+    let template2 = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("a")),
+        TemplateSpan::Type(empty_lit),
+        TemplateSpan::Text(interner.intern_string("b")),
+    ]);
+
+    // Should be a literal "ab", not a template
+    match interner.lookup(template2) {
+        Some(TypeKey::Literal(LiteralValue::String(s))) => {
+            let s = interner.resolve_atom_ref(s);
+            assert_eq!(s.to_string(), "ab", "Should be merged 'ab' literal");
+        }
+        _ => panic!("Expected 'ab' string literal"),
+    }
+}
+
+#[test]
+fn test_template_unknown_widening() {
+    let interner = TypeInterner::new();
+
+    // `` `${unknown}` `` should widen to string
+    let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::UNKNOWN)]);
+    assert_eq!(
+        template,
+        TypeId::STRING,
+        "Template with unknown should widen to string"
+    );
+}
+
+#[test]
+fn test_template_any_widening() {
+    let interner = TypeInterner::new();
+
+    // `` `${any}` `` should widen to string (any is infectious in templates)
+    let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::ANY)]);
+    assert_eq!(
+        template,
+        TypeId::STRING,
+        "Template with any should widen to string"
+    );
+}

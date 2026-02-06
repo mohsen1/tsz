@@ -222,19 +222,26 @@ Both already use canonical `union()` and `intersection()` methods.
 
 ---
 
-### Priority 3: Task #46 - Instantiation Canonicalization 🚧 NEXT
-**Status**: ⏳ PENDING
+### Priority 3: Task #46 - Instantiation Canonicalization ✅ ALREADY DONE
+**Status**: ✅ ALREADY HANDLED
 **Why**: When a generic is substituted, the resulting TypeKey must be passed through canonical normalization.
 
-**Example**: `List<string>` becoming `string | string` after substitution should collapse to `string`.
+**Findings**: Task #46 is already correctly implemented! The `TypeInstantiator` in `src/solver/instantiate.rs` already uses canonical methods:
+1. ✅ **Union**: Line 302 - calls `self.interner.union(instantiated)` which normalizes
+2. ✅ **Intersection**: Line 310 - calls `self.interner.intersection(instantiated)` which normalizes
+3. ✅ **Mapped**: Line 560 - calls `self.interner.mapped(instantiated)`
+4. ✅ **Array**: Line 316 - calls `self.interner.array(instantiated)`
+5. ✅ **Tuple**: Line 328 - calls `self.interner.tuple(instantiated)`
 
-**Action**: Audit `TypeInstantiator::instantiate_key` to use canonical methods.
+**Example**: `List<string | string>` → When instantiating, each `string` is instantiated (returns `TypeId::STRING`), then `self.interner.union([string, string])` is called, which normalizes to just `string`.
 
-**Files**: `src/solver/instantiate.rs`
+**Meta-types** (`IndexAccess`, `KeyOf`, `ReadonlyType`) use raw `intern()` because they are deferred evaluation - they get normalized later when `evaluate()` is called.
+
+**Files**: `src/solver/instantiate.rs` (already using canonical methods)
 
 ---
 
-### Priority 4: Task #47 - Template Literal Canonicalization
+### Priority 4: Task #47 - Template Literal Canonicalization 🚧 NEXT
 **Status**: ⏳ PENDING
 **Why**: Template literals need normalization for adjacent string constants and `any`/`never` absorption.
 
