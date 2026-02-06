@@ -89,10 +89,15 @@
 ---
 
 #### Priority 3: Task #48 - Primitive-Object Intersection Soundness
-**Status**: ⏳ PENDING
-**File**: `src/solver/intern.rs` (Function: `reduce_intersection_subtypes`)
-**Problem**: TypeScript has "boxing" rules. `string & { length: number }` is valid, but `number & { length: number }` is not.
-**Action**: Refine intersection reduction for primitive-object intersections.
+**Status**: ✅ COMPLETE (commit: 06405e78c)
+**File**: `src/solver/intern.rs`
+**Problem**: TypeScript has "empty object rule" where `string & {} → string`.
+**Action Implemented**:
+1. ✅ Added `is_empty_object()` helper to detect empty object types
+2. ✅ Added `is_non_nullish_type()` helper with recursive union/intersection handling
+3. ✅ Added empty object rule in `normalize_intersection()` to filter {} from intersections
+4. ✅ Fixed `intersection_has_null_undefined_with_object()` to treat {} as disjoint from null
+5. ✅ Added test `test_empty_object_rule_intersection` with 4 cases
 
 ---
 
@@ -310,13 +315,17 @@ Both already use canonical `union()` and `intersection()` methods.
 
 ---
 
-### Priority 5: Task #48 - Primitive-Object Intersection Soundness
-**Status**: ⏳ PENDING
-**Why**: TypeScript has "boxing" rules. `string & { length: number }` is valid, but `number & { length: number }` is not.
+### Priority 5: Task #48 - Primitive-Object Intersection Soundness ✅ COMPLETE
+**Status**: ✅ COMPLETE (commit: 06405e78c)
+**Why**: TypeScript has "empty object rule" where `string & {} → string`.
 
-**Action**: Refine `reduce_intersection_subtypes` for primitive-object intersections.
+**Action Implemented**:
+- Added `is_empty_object()` helper to detect empty object types
+- Added `is_non_nullish_type()` helper with recursive union/intersection handling
+- Added empty object rule in `normalize_intersection()` (intersection-specific, NOT for unions)
+- Fixed `intersection_has_null_undefined_with_object()` to treat {} as disjoint from null
 
-**Files**: `src/solver/intern.rs`
+**Files**: `src/solver/intern.rs`, `src/solver/tests/intern_tests.rs`
 
 ---
 
@@ -338,8 +347,8 @@ Some evaluation functions call `interner.intern()` directly, potentially bypassi
 ### Gap B: Subtype Memoization vs. Coinduction ✅ RESOLVED
 Task #44 confirmed that comprehensive subtype caching is already implemented with correct handling of non-definitive results.
 
-### Gap C: Literal/Primitive Intersection Soundness ⏳ PENDING
-This is now Task #48. The `reduce_intersection_subtypes` function needs refinement for TypeScript's "boxing" rules.
+### Gap C: Literal/Primitive Intersection Soundness ✅ RESOLVED
+Task #48 (Primitive-Object Intersection Soundness) completed. Implemented the "empty object rule" in `normalize_intersection()` where primitives absorb empty objects (e.g., `string & {} → string`).
 
 ---
 
