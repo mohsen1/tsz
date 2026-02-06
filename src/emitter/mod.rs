@@ -1656,11 +1656,22 @@ impl<'a> Printer<'a> {
 
             // Other tokens and keywords - emit their text
             k if k == SyntaxKind::ThisKeyword as u16 => {
-                // In ES5 mode inside an arrow function body, use _this instead of this
-                if self.ctx.arrow_state.this_capture_depth > 0 {
-                    self.write("_this")
+                // Check for SubstituteThis directive from lowering pass (Phase C)
+                // If the lowering pass marked this for substitution, emit _this
+                if self.transforms.has_transform(idx) {
+                    if let Some(TransformDirective::SubstituteThis) = self.transforms.get(idx) {
+                        self.write("_this");
+                    } else {
+                        self.write("this");
+                    }
                 } else {
-                    self.write("this")
+                    // Fallback: use arrow_state if no directive (legacy behavior)
+                    // This will be removed once directive approach is fully validated
+                    if self.ctx.arrow_state.this_capture_depth > 0 {
+                        self.write("_this")
+                    } else {
+                        self.write("this")
+                    }
                 }
             }
             k if k == SyntaxKind::SuperKeyword as u16 => self.write("super"),
