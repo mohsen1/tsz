@@ -186,7 +186,6 @@ impl<'a> CheckerState<'a> {
     /// 4. Recursively evaluating the result
     pub(crate) fn evaluate_application_type(&mut self, type_id: TypeId) -> TypeId {
         use crate::solver::type_queries;
-        use crate::solver::visitor::contains_infer_types;
 
         if !type_queries::is_generic_type(self.ctx.types, type_id) {
             return type_id;
@@ -199,7 +198,7 @@ impl<'a> CheckerState<'a> {
 
         // Safety: Don't cache types containing inference variables since their
         // evaluation can change as inference progresses
-        let is_cacheable = !contains_infer_types(self.ctx.types, type_id);
+        let is_cacheable = !self.contains_infer_types_cached(type_id);
 
         if !self.ctx.application_eval_set.insert(type_id) {
             // Recursion guard for self-referential mapped types.
