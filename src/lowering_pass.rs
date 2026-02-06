@@ -81,6 +81,10 @@ pub struct LoweringPass<'a> {
     current_class_is_derived: bool,
     /// Tracks if we are currently inside a constructor body
     in_constructor: bool,
+    /// Tracks if we are inside a static class member
+    in_static_context: bool,
+    /// Current class alias name (e.g., "_a") for static members
+    current_class_alias: Option<String>,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -98,6 +102,8 @@ impl<'a> LoweringPass<'a> {
             arguments_capture_level: 0,
             current_class_is_derived: false,
             in_constructor: false,
+            in_static_context: false,
+            current_class_alias: None,
         }
     }
 
@@ -522,13 +528,14 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 if let Some(lit) = self.arena.get_literal_expr(node) {
                     // Add ES5ArrayLiteral directive if targeting ES5 and spread elements are present
-                    if self.ctx.target_es5
-                        && self.needs_es5_array_literal_transform(&lit.elements.nodes)
-                    {
+                    let has_spread = self.needs_es5_array_literal_transform(&lit.elements.nodes);
+                    if self.ctx.target_es5 && has_spread {
                         self.transforms.insert(
                             idx,
                             TransformDirective::ES5ArrayLiteral { array_literal: idx },
                         );
+                        // Flag that __spreadArray helper is needed
+                        self.transforms.helpers_mut().spread_array = true;
                     }
 
                     for &elem in &lit.elements.nodes {
@@ -656,26 +663,34 @@ impl<'a> LoweringPass<'a> {
             return;
         };
 
-        // Detect CommonJS helpers: import * as ns from "mod"
+        // Detect CommonJS helpers needed for imports
         if self.is_commonjs()
             && let Some(clause_node) = self.arena.get(import_decl.import_clause)
             && let Some(clause) = self.arena.get_import_clause(clause_node)
             && !clause.is_type_only
-            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
         {
-            // NAMESPACE_IMPORT = 275
-            if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+            // Default import: import d from "mod" -> needs __importDefault
+            if !clause.name.is_none() {
                 let helpers = self.transforms.helpers_mut();
-                helpers.import_star = true;
-                helpers.create_binding = true; // __importStar depends on __createBinding
-            } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-                && !named_imports.name.is_none()
-                && named_imports.elements.nodes.is_empty()
-            {
-                // "default" import with empty named imports (also needs importStar)
-                let helpers = self.transforms.helpers_mut();
-                helpers.import_star = true;
-                helpers.create_binding = true;
+                helpers.import_default = true;
+            }
+
+            // Namespace import: import * as ns from "mod" -> needs __importStar
+            if let Some(bindings_node) = self.arena.get(clause.named_bindings) {
+                // NAMESPACE_IMPORT = 275
+                if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                    let helpers = self.transforms.helpers_mut();
+                    helpers.import_star = true;
+                    helpers.create_binding = true; // __importStar depends on __createBinding
+                } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+                    && !named_imports.name.is_none()
+                    && named_imports.elements.nodes.is_empty()
+                {
+                    // "default" import with empty named imports (also needs importStar)
+                    let helpers = self.transforms.helpers_mut();
+                    helpers.import_star = true;
+                    helpers.create_binding = true;
+                }
             }
         }
 
@@ -943,13 +958,44 @@ impl<'a> LoweringPass<'a> {
         let prev_is_derived = self.current_class_is_derived;
         self.current_class_is_derived = heritage.is_some();
 
-        // Visit children (members)
+        // Generate class alias for static members (e.g., "_a" for "Vector")
+        let class_alias = if self.ctx.target_es5 {
+            self.get_identifier_text_ref(class.name).map(|name| {
+                // Generate a unique alias based on class name
+                // For now, use the first letter + underscore pattern
+                let first_char = name.chars().next().unwrap_or('_');
+                format!("_{}", first_char.to_lowercase().collect::<String>())
+            })
+        } else {
+            None
+        };
+
+        // Save previous static context
+        let prev_in_static = self.in_static_context;
+        let prev_class_alias = self.current_class_alias.take();
+
+        // Visit children (members) with static context tracking
         for &member_idx in &class.members.nodes {
+            // Check if this member is static
+            let is_static = self.is_static_member(member_idx);
+
+            if is_static {
+                self.in_static_context = true;
+                self.current_class_alias = class_alias.clone();
+            }
+
             self.visit(member_idx);
+
+            if is_static {
+                self.in_static_context = false;
+                self.current_class_alias.take();
+            }
         }
 
         // Restore previous state
         self.current_class_is_derived = prev_is_derived;
+        self.in_static_context = prev_in_static;
+        self.current_class_alias = prev_class_alias;
     }
 
     fn lower_function_declaration(
@@ -1222,12 +1268,20 @@ impl<'a> LoweringPass<'a> {
             let captures_this = contains_this_reference(self.arena, idx);
             let captures_arguments = contains_arguments_reference(self.arena, idx);
 
+            // For static members, use class alias capture instead of IIFE
+            let class_alias = if self.in_static_context && captures_this {
+                self.current_class_alias.clone()
+            } else {
+                None
+            };
+
             self.transforms.insert(
                 idx,
                 TransformDirective::ES5ArrowFunction {
                     arrow_node: idx,
                     captures_this,
                     captures_arguments,
+                    class_alias: class_alias.map(|s| s.into()),
                 },
             );
 
@@ -1271,7 +1325,7 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Visit a constructor declaration
-    fn visit_constructor(&mut self, node: &Node, idx: NodeIndex) {
+    fn visit_constructor(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(ctor) = self.arena.get_constructor(node) else {
             return;
         };
@@ -1487,6 +1541,43 @@ impl<'a> LoweringPass<'a> {
             self.arena
                 .get(mod_idx)
                 .map(|n| n.kind == SyntaxKind::DefaultKeyword as u16)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Check if a class member (method, property, accessor) is static
+    fn is_static_member(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+
+        let modifiers = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(member_node)
+                .and_then(|m| m.modifiers.as_ref()),
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                || k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT =>
+            {
+                self.arena
+                    .get_property_assignment(member_node)
+                    .and_then(|p| p.modifiers.as_ref())
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .arena
+                .get_accessor(member_node)
+                .and_then(|a| a.modifiers.as_ref()),
+            _ => None,
+        };
+
+        let Some(mods) = modifiers else {
+            return false;
+        };
+
+        mods.nodes.iter().any(|&mod_idx| {
+            self.arena
+                .get(mod_idx)
+                .map(|n| n.kind == SyntaxKind::StaticKeyword as u16)
                 .unwrap_or(false)
         })
     }

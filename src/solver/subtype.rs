@@ -16,13 +16,13 @@ use crate::solver::AssignabilityChecker;
 use crate::solver::TypeDatabase;
 use crate::solver::db::QueryDatabase;
 use crate::solver::def::DefId;
-use crate::solver::diagnostics::SubtypeFailureReason;
+use crate::solver::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
 use crate::solver::types::*;
 use crate::solver::utils;
 use crate::solver::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
-    enum_components, function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind,
-    is_this_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
+    enum_components, function_shape_id, intersection_list_id, intrinsic_kind, is_this_type,
+    keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
     tuple_list_id, type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
 };
@@ -257,6 +257,18 @@ pub trait TypeResolver {
         None
     }
 
+    /// Check if a DefId represents a user-defined enum (not an intrinsic type).
+    ///
+    /// This is used to distinguish between user-defined enums (like `enum E { A, B }`)
+    /// and intrinsic types from lib.d.ts (like `type string = ...`) that are stored
+    /// as TypeKey::Enum for definition store purposes.
+    ///
+    /// Returns true if the DefId is a user-defined enum.
+    /// Returns false for intrinsic types, type aliases, interfaces, etc.
+    fn is_user_enum_def(&self, _def_id: DefId) -> bool {
+        false
+    }
+
     /// Get the base class type for a class/interface type.
     ///
     /// This is used by the Best Common Type (BCT) algorithm to find common base classes.
@@ -386,6 +398,9 @@ pub struct TypeEnvironment {
     /// Used by the Canonicalizer to distinguish structural types (TypeAlias)
     /// from nominal types (Interface/Class/Enum).
     def_kinds: std::collections::HashMap<u32, crate::solver::def::DefKind>,
+    /// Maps enum member DefIds to their parent enum DefId.
+    /// Used for member-to-parent assignability (e.g., E.A -> E).
+    enum_parents: std::collections::HashMap<u32, DefId>,
 }
 
 impl TypeEnvironment {
@@ -402,6 +417,7 @@ impl TypeEnvironment {
             symbol_to_def: std::collections::HashMap::new(),
             numeric_enums: std::collections::HashSet::new(),
             def_kinds: std::collections::HashMap::new(),
+            enum_parents: std::collections::HashMap::new(),
         }
     }
 
@@ -558,6 +574,25 @@ impl TypeEnvironment {
     pub fn is_numeric_enum(&self, def_id: DefId) -> bool {
         self.numeric_enums.contains(&def_id.0)
     }
+
+    // =========================================================================
+    // Enum Parent Relationships (Task #17: Enum Type Resolution)
+    // =========================================================================
+
+    /// Register an enum member's parent enum DefId.
+    ///
+    /// Used for member-to-parent assignability (e.g., E.A -> E).
+    pub fn register_enum_parent(&mut self, member_def_id: DefId, parent_def_id: DefId) {
+        self.enum_parents.insert(member_def_id.0, parent_def_id);
+    }
+
+    /// Get the parent enum DefId for an enum member DefId.
+    ///
+    /// Returns Some(parent_def_id) if the DefId is an enum member.
+    /// Returns None if the DefId is not an enum member (e.g., it's the enum type itself).
+    pub fn get_enum_parent(&self, member_def_id: DefId) -> Option<DefId> {
+        self.enum_parents.get(&member_def_id.0).copied()
+    }
 }
 
 impl TypeResolver for TypeEnvironment {
@@ -603,6 +638,16 @@ impl TypeResolver for TypeEnvironment {
 
     fn is_numeric_enum(&self, def_id: DefId) -> bool {
         TypeEnvironment::is_numeric_enum(self, def_id)
+    }
+
+    fn get_enum_parent_def_id(&self, member_def_id: DefId) -> Option<DefId> {
+        TypeEnvironment::get_enum_parent(self, member_def_id)
+    }
+
+    fn is_user_enum_def(&self, _def_id: DefId) -> bool {
+        // TypeEnvironment doesn't have access to binder symbol information
+        // Default to false (conservative approach)
+        false
     }
 }
 
@@ -796,6 +841,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         }
     }
 
+    #[allow(deprecated)]
     fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
         // Resolve the legacy Ref(SymbolRef) type using the resolver
         #[allow(deprecated)]
@@ -819,15 +865,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // Readonly types have specific subtyping rules:
         // - Readonly<T> <: Readonly<U> if T <: U
         // - Readonly<T> is NOT assignable to mutable T (safety)
-        // - T <: Readonly<T> is allowed (can add readonly)
+        // - T <: Readonly<T> is allowed (can add readonly) - handled by target peeling in check_subtype_inner
 
-        // If target is also Readonly, we can peel both and check inner types
+        // Case: Readonly<S> <: Readonly<T>
+        // If target is also Readonly, compare inner types
         if let Some(t_inner) = readonly_inner_type(self.checker.interner, self.target) {
             return self.checker.check_subtype(inner_type, t_inner);
         }
 
-        // If target is NOT Readonly (mutable), Readonly source cannot be assigned
-        // UNLESS target is any/unknown (handled by fast paths in check_subtype_inner)
+        // Case: Readonly<S> <: Mutable<T>
+        // Readonly source cannot be assigned to mutable target for safety reasons.
+        // Exception: target is any/unknown (handled by fast paths in check_subtype_inner).
         SubtypeResult::False
     }
 
@@ -975,25 +1023,196 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             MappedTypeId(mapped_id),
         )
     }
-    fn visit_index_access(&mut self, _object_type: TypeId, _key_type: TypeId) -> Self::Output {
+    fn visit_index_access(&mut self, object_type: TypeId, key_type: TypeId) -> Self::Output {
+        use crate::solver::visitor::index_access_parts;
+
+        // S[I] <: T[J]  <=>  S <: T  AND  I <: J
+        // This handles deferred index access types (usually involving type parameters).
+        if let Some((t_obj, t_idx)) = index_access_parts(self.checker.interner, self.target) {
+            // Coinductive check: delegate back to check_subtype for both parts
+            if self.checker.check_subtype(object_type, t_obj).is_true()
+                && self.checker.check_subtype(key_type, t_idx).is_true()
+            {
+                return SubtypeResult::True;
+            }
+        }
+
+        // If target is not an IndexAccess, we cannot prove subtyping.
+        // Note: If S[I] could have been simplified to a concrete type that matches the target,
+        // evaluate_type() in the caller (check_subtype) would have already handled it.
         SubtypeResult::False
     }
-    fn visit_template_literal(&mut self, _template_id: u32) -> Self::Output {
+    fn visit_template_literal(&mut self, template_id: u32) -> Self::Output {
+        use crate::solver::types::IntrinsicKind;
+        use crate::solver::types::TemplateLiteralId;
+        use crate::solver::types::TemplateSpan;
+        use crate::solver::visitor::{intrinsic_kind, template_literal_id};
+
+        // Template literal <: string is always true
+        if intrinsic_kind(self.checker.interner, self.target) == Some(IntrinsicKind::String) {
+            return SubtypeResult::True;
+        }
+
+        // Template literal <: Template literal
+        // Compare spans: Text must match exactly, Type must satisfy subtype
+        if let Some(t_template_id) = template_literal_id(self.checker.interner, self.target) {
+            let s_id = TemplateLiteralId(template_id);
+
+            // Fast path: same template literal
+            if s_id == t_template_id {
+                return SubtypeResult::True;
+            }
+
+            let s_list = self.checker.interner.template_list(s_id);
+            let t_list = self.checker.interner.template_list(t_template_id);
+
+            // Different number of spans - not compatible
+            if s_list.len() != t_list.len() {
+                return SubtypeResult::False;
+            }
+
+            // Compare each span
+            for (s_span, t_span) in s_list.iter().zip(t_list.iter()) {
+                match (s_span, t_span) {
+                    (TemplateSpan::Text(s_text), TemplateSpan::Text(t_text)) => {
+                        if s_text != t_text {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    (TemplateSpan::Type(s_type), TemplateSpan::Type(t_type)) => {
+                        if !self.checker.check_subtype(*s_type, *t_type).is_true() {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    _ => {
+                        // Mismatched span types (Text vs Type)
+                        return SubtypeResult::False;
+                    }
+                }
+            }
+
+            return SubtypeResult::True;
+        }
+
         SubtypeResult::False
     }
-    fn visit_type_query(&mut self, _symbol_ref: u32) -> Self::Output {
-        SubtypeResult::False
+    fn visit_type_query(&mut self, symbol_ref: u32) -> Self::Output {
+        use crate::solver::types::SymbolRef;
+
+        // TypeQuery (typeof X) is a reference to a value symbol.
+        // We need to resolve it to its structural type before comparing.
+        let sym = SymbolRef(symbol_ref);
+
+        // Attempt to resolve the symbol to its structural type.
+        // Prioritize DefId-based resolution (Lazy) over legacy SymbolRef (Ref).
+        let resolved = if let Some(def_id) = self.checker.resolver.symbol_to_def_id(sym) {
+            self.checker
+                .resolver
+                .resolve_lazy(def_id, self.checker.interner)
+        } else {
+            #[allow(deprecated)]
+            self.checker
+                .resolver
+                .resolve_ref(sym, self.checker.interner)
+        }
+        .unwrap_or(self.source);
+
+        // If resolution succeeded and gave us a different type, restart the check.
+        // This recursion is critical for coinductive cycle detection.
+        if resolved != self.source {
+            self.checker.check_subtype(resolved, self.target)
+        } else {
+            // If resolution failed or returned the same ID, we cannot prove subtyping.
+            SubtypeResult::False
+        }
     }
-    fn visit_keyof(&mut self, _type_id: TypeId) -> Self::Output {
+    fn visit_keyof(&mut self, inner_type: TypeId) -> Self::Output {
+        use crate::solver::types::IntrinsicKind;
+        use crate::solver::visitor::{keyof_inner_type, union_list_id};
+
+        // keyof S <: keyof T  <=>  T <: S (Contravariant)
+        // If target is also a keyof type, check inner types in reverse
+        if let Some(t_inner) = keyof_inner_type(self.checker.interner, self.target) {
+            return self.checker.check_subtype(t_inner, inner_type);
+        }
+
+        // If inner_type is a TypeParameter, keyof T is NOT a subtype of primitives
+        // (deferred keyof - we don't know what keys T has)
+        if matches!(
+            self.checker.interner.lookup(inner_type),
+            Some(TypeKey::TypeParameter(_))
+        ) {
+            return SubtypeResult::False;
+        }
+
+        // keyof T is always a subtype of string | number | symbol
+        // Check if target is a union that matches this pattern
+        if let Some(union_id) = union_list_id(self.checker.interner, self.target) {
+            let members = self.checker.interner.type_list(union_id);
+            // Check if all members are string, number, or symbol
+            let all_primitive = members.iter().all(|&m| {
+                matches!(
+                    self.checker.interner.lookup(m),
+                    Some(TypeKey::Intrinsic(
+                        IntrinsicKind::String | IntrinsicKind::Number | IntrinsicKind::Symbol
+                    ))
+                )
+            });
+            if all_primitive && !members.is_empty() {
+                return SubtypeResult::True;
+            }
+        }
+
+        // keyof is also subtype of the specific primitive if it matches
+        if let Some(TypeKey::Intrinsic(
+            IntrinsicKind::String | IntrinsicKind::Number | IntrinsicKind::Symbol,
+        )) = self.checker.interner.lookup(self.target)
+        {
+            return SubtypeResult::True;
+        }
+
         SubtypeResult::False
     }
     fn visit_this_type(&mut self) -> Self::Output {
+        use crate::solver::visitor::is_this_type;
+
+        // If target is also a 'this' type, they are compatible.
+        // This handles cases like comparing two uninstantiated generic methods.
+        if is_this_type(self.checker.interner, self.target) {
+            return SubtypeResult::True;
+        }
+
+        // If we reach here, 'this' is being compared against a non-this type.
+        // In most cases, check_subtype_inner's apparent_primitive_shape_for_type
+        // would have resolved 'this' to its containing class/interface.
+        // If that didn't happen or didn't result in 'True', we return False.
         SubtypeResult::False
     }
-    fn visit_infer(&mut self, _param_info: &TypeParamInfo) -> Self::Output {
-        SubtypeResult::False
+    fn visit_infer(&mut self, param_info: &TypeParamInfo) -> Self::Output {
+        // 'infer R' behaves like a type parameter during structural subtyping.
+        // It is a subtype of the target if its constraint satisfies the target.
+        self.checker
+            .check_type_parameter_subtype(param_info, self.target)
     }
-    fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> Self::Output {
+    fn visit_unique_symbol(&mut self, symbol_ref: u32) -> Self::Output {
+        use crate::solver::visitor::unique_symbol_ref;
+
+        // unique symbol has nominal identity - same symbol ref is subtype
+        if let Some(t_symbol_ref) = unique_symbol_ref(self.checker.interner, self.target) {
+            return if symbol_ref == t_symbol_ref.0 {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        // unique symbol is always a subtype of symbol
+        if let Some(TypeKey::Intrinsic(IntrinsicKind::Symbol)) =
+            self.checker.interner.lookup(self.target)
+        {
+            return SubtypeResult::True;
+        }
+
         SubtypeResult::False
     }
     fn visit_module_namespace(&mut self, _symbol_ref: u32) -> Self::Output {
@@ -1071,6 +1290,10 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// evaluated multiple times across different subtype checks.
     /// Key is (TypeId, no_unchecked_indexed_access) since that flag affects evaluation.
     pub(crate) eval_cache: FxHashMap<(TypeId, bool), TypeId>,
+    /// Optional tracer for collecting subtype failure diagnostics.
+    /// When `Some`, enables detailed failure reason collection for error messages.
+    /// When `None`, disables tracing for maximum performance (default).
+    pub tracer: Option<&'a mut dyn DynSubtypeTracer>,
 }
 
 /// Maximum total subtype checks allowed per SubtypeChecker instance.
@@ -1105,6 +1328,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             eval_cache: FxHashMap::default(),
+            tracer: None,
         }
     }
 }
@@ -1136,6 +1360,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             eval_cache: FxHashMap::default(),
+            tracer: None,
         }
     }
 
@@ -1160,6 +1385,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self
     }
 
+    /// Set the tracer for collecting subtype failure diagnostics.
+    /// When set, enables detailed failure reason collection for error messages.
+    pub fn with_tracer(mut self, tracer: &'a mut dyn DynSubtypeTracer) -> Self {
+        self.tracer = Some(tracer);
+        self
+    }
+
     /// Set the query database for Salsa-backed memoization.
     /// When set, Phase 2/3 will route evaluate_type and is_subtype_of through Salsa.
     pub fn with_query_db(mut self, db: &'a dyn QueryDatabase) -> Self {
@@ -1178,6 +1410,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// When false, null and undefined are assignable to any type.
     pub fn with_strict_null_checks(mut self, strict_null_checks: bool) -> Self {
         self.strict_null_checks = strict_null_checks;
+        self
+    }
+
+    /// Apply compiler flags from a packed u16 bitmask.
+    ///
+    /// This unpacks the flags used by `RelationCacheKey` and applies them to the checker.
+    /// The bit layout matches the cache key definition in types.rs:
+    /// - bit 0: strict_null_checks
+    /// - bit 1: strict_function_types
+    /// - bit 2: exact_optional_property_types
+    /// - bit 3: no_unchecked_indexed_access
+    /// - bit 4: disable_method_bivariance
+    /// - bit 5: allow_void_return
+    /// - bit 6: allow_bivariant_rest
+    /// - bit 7: allow_bivariant_param_count
+    pub(crate) fn apply_flags(mut self, flags: u16) -> Self {
+        self.strict_null_checks = (flags & (1 << 0)) != 0;
+        self.strict_function_types = (flags & (1 << 1)) != 0;
+        self.exact_optional_property_types = (flags & (1 << 2)) != 0;
+        self.no_unchecked_indexed_access = (flags & (1 << 3)) != 0;
+        self.disable_method_bivariance = (flags & (1 << 4)) != 0;
+        self.allow_void_return = (flags & (1 << 5)) != 0;
+        self.allow_bivariant_rest = (flags & (1 << 6)) != 0;
+        self.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
         self
     }
 
@@ -1663,13 +1919,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// This packs the Lawyer-layer flags into a compact cache key to ensure that
     /// results computed under different rules (strict vs non-strict) don't contaminate each other.
     fn make_cache_key(&self, source: TypeId, target: TypeId) -> RelationCacheKey {
-        // Pack boolean flags into a u8 bitmask:
+        // Pack boolean flags into a u16 bitmask:
         // bit 0: strict_null_checks
         // bit 1: strict_function_types
         // bit 2: exact_optional_property_types
         // bit 3: no_unchecked_indexed_access
         // bit 4: disable_method_bivariance
-        let mut flags: u8 = 0;
+        // bit 5: allow_void_return
+        // bit 6: allow_bivariant_rest
+        // bit 7: allow_bivariant_param_count
+        let mut flags: u16 = 0;
         if self.strict_null_checks {
             flags |= 1 << 0;
         }
@@ -1684,6 +1943,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         if self.disable_method_bivariance {
             flags |= 1 << 4;
+        }
+        if self.allow_void_return {
+            flags |= 1 << 5;
+        }
+        if self.allow_bivariant_rest {
+            flags |= 1 << 6;
+        }
+        if self.allow_bivariant_param_count {
+            flags |= 1 << 7;
         }
 
         // CRITICAL: Calculate effective `any_mode` based on depth.
@@ -2401,6 +2669,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if s_def_id == t_def_id {
                 return SubtypeResult::True;
             }
+
+            // Check for member-to-parent relationship (e.g., E.A -> E)
+            // If source is a member of the target enum, it is a subtype
+            if self.resolver.get_enum_parent_def_id(s_def_id) == Some(t_def_id) {
+                // Source is a member of target enum
+                // Only allow if target is the full enum type (not a different member)
+                if self.resolver.is_enum_type(target, self.interner) {
+                    return SubtypeResult::True;
+                }
+            }
+
             // Different enums are NOT compatible (nominal typing)
             return SubtypeResult::False;
         }
@@ -2455,10 +2734,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Check: source is Number, target is numeric enum
+        // Check: source is Number (or numeric literal), target is numeric enum
         if let Some(t_def) = get_enum_def_id(target) {
             if source == TypeId::NUMBER && self.resolver.is_numeric_enum(t_def) {
                 return SubtypeResult::True;
+            }
+            // Also check for numeric literals (subtypes of number)
+            if matches!(
+                self.interner.lookup(source),
+                Some(TypeKey::Literal(LiteralValue::Number(_)))
+            ) {
+                if self.resolver.is_numeric_enum(t_def) {
+                    // For numeric literals, we need to check if they're assignable to the enum
+                    // Fall through to structural check (e.g., 0 -> E.A might succeed if E.A = 0)
+                    return self.check_subtype(source, self.resolve_lazy_type(target));
+                }
             }
         }
 
@@ -2499,19 +2789,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_to_ref_subtype(source, target, &t_sym);
         }
 
-        if let (Some((s_obj, s_idx)), Some((t_obj, t_idx))) = (
-            index_access_parts(self.interner, source),
-            index_access_parts(self.interner, target),
-        ) {
-            return if self.check_subtype(s_obj, t_obj).is_true()
-                && self.check_subtype(s_idx, t_idx).is_true()
-            {
-                SubtypeResult::True
-            } else {
-                SubtypeResult::False
-            };
-        }
-
         if let (Some(s_sym), Some(t_sym)) = (
             type_query_symbol(self.interner, source),
             type_query_symbol(self.interner, target),
@@ -2541,20 +2818,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_subtype(s_inner, t_inner);
         }
 
-        if readonly_inner_type(self.interner, source).is_some()
-            && (array_element_type(self.interner, target).is_some()
-                || tuple_list_id(self.interner, target).is_some())
-        {
-            return SubtypeResult::False;
-        }
-
+        // Readonly target peeling: T <: Readonly<U> if T <: U
+        // A mutable type can always be treated as readonly (readonly is a supertype)
+        // CRITICAL: Only peel if source is NOT Readonly. If source IS Readonly, we must
+        // fall through to the visitor to compare Readonly<S> vs Readonly<T>.
         if let Some(t_inner) = readonly_inner_type(self.interner, target) {
-            if array_element_type(self.interner, source).is_some()
-                || tuple_list_id(self.interner, source).is_some()
-            {
+            if readonly_inner_type(self.interner, source).is_none() {
                 return self.check_subtype(source, t_inner);
             }
         }
+
+        // Readonly source to mutable target case is handled by SubtypeVisitor::visit_readonly_type
+        // which returns False (correctly, because Readonly is not assignable to Mutable)
 
         if let (Some(s_sym), Some(t_sym)) = (
             unique_symbol_ref(self.interner, source),
@@ -3839,6 +4114,18 @@ pub fn are_types_structurally_identical<R: TypeResolver>(
 /// The QueryDatabase enables Salsa memoization when available.
 pub fn is_subtype_of_with_db(db: &dyn QueryDatabase, source: TypeId, target: TypeId) -> bool {
     let mut checker = SubtypeChecker::new(db.as_type_database()).with_query_db(db);
+    checker.is_subtype_of(source, target)
+}
+
+/// Convenience function for one-off subtype checks with compiler flags.
+/// The flags are a packed u16 bitmask matching RelationCacheKey.flags.
+pub fn is_subtype_of_with_flags(
+    interner: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+    flags: u16,
+) -> bool {
+    let mut checker = SubtypeChecker::new(interner).apply_flags(flags);
     checker.is_subtype_of(source, target)
 }
 

@@ -1152,6 +1152,68 @@ impl TypeInterner {
         )
     }
 
+    /// Check if a type is an empty object type (no properties, no index signatures).
+    ///
+    /// Empty objects like `{}` represent "any non-nullish value" in TypeScript.
+    /// In intersections like `string & {}`, the empty object is redundant and can be removed.
+    fn is_empty_object(&self, id: TypeId) -> bool {
+        match self.lookup(id) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.object_shape(shape_id);
+                shape.properties.is_empty()
+                    && shape.string_index.is_none()
+                    && shape.number_index.is_none()
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a type is non-nullish (i.e., not null, undefined, void, or never).
+    ///
+    /// This is used to determine if an intersection has non-nullish members that
+    /// make empty objects redundant.
+    ///
+    /// For unions: returns true only if ALL members are non-nullish (conservative).
+    /// For intersections: returns true if ANY member is non-nullish (permissive).
+    fn is_non_nullish_type(&self, id: TypeId) -> bool {
+        match id {
+            TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID | TypeId::NEVER => false,
+            TypeId::STRING
+            | TypeId::NUMBER
+            | TypeId::BOOLEAN
+            | TypeId::BIGINT
+            | TypeId::SYMBOL
+            | TypeId::OBJECT => true,
+            _ => match self.lookup(id) {
+                Some(TypeKey::Literal(_))
+                | Some(TypeKey::Object(_))
+                | Some(TypeKey::ObjectWithIndex(_))
+                | Some(TypeKey::Array(_))
+                | Some(TypeKey::Tuple(_))
+                | Some(TypeKey::Function(_))
+                | Some(TypeKey::Callable(_))
+                | Some(TypeKey::TemplateLiteral(_))
+                | Some(TypeKey::UniqueSymbol(_)) => true,
+
+                // Union is non-nullish only if ALL members are non-nullish
+                // (conservative: don't remove {} if any member might be nullish)
+                Some(TypeKey::Union(list_id)) => {
+                    let members = self.type_list(list_id);
+                    members.iter().all(|&m| self.is_non_nullish_type(m))
+                }
+
+                // Intersection is non-nullish if ANY member is non-nullish
+                // (permissive: string & T is non-nullish regardless of T)
+                Some(TypeKey::Intersection(list_id)) => {
+                    let members = self.type_list(list_id);
+                    members.iter().any(|&m| self.is_non_nullish_type(m))
+                }
+
+                _ => false,
+            },
+        }
+    }
+
     fn normalize_intersection(&self, mut flat: TypeListBuffer) -> TypeId {
         // FIX: Do not blindly sort all members. Callables must preserve order
         // for correct overload resolution. Non-callables should be sorted for
@@ -1214,6 +1276,25 @@ impl TypeInterner {
         }
         // Remove `unknown` from intersections (identity element)
         flat.retain(|id| *id != TypeId::UNKNOWN);
+
+        // =========================================================
+        // Task #48: Empty Object Rule for Intersections
+        // =========================================================
+        // Remove {} from intersections if other non-nullish types are present.
+        // In TypeScript, {} represents "any non-nullish value", which is redundant
+        // when we already have a non-nullish type like string, number, etc.
+        // Example: `string & {}` → `string` (correct)
+        // Note: This is INTERSECTION-SPECIFIC. For unions, we DO NOT remove {}
+        //       because `string | {}` should stay as `string | {}` (weak type rule).
+        if flat.len() > 1 && flat.iter().any(|&id| self.is_empty_object(id)) {
+            let has_non_nullish = flat
+                .iter()
+                .any(|&id| !self.is_empty_object(id) && self.is_non_nullish_type(id));
+
+            if has_non_nullish {
+                flat.retain(|id| !self.is_empty_object(*id));
+            }
+        }
 
         // Abort reduction if any member is a Lazy type.
         // The interner (Judge) cannot resolve symbols, so if we have unresolved types,
@@ -1714,17 +1795,12 @@ impl TypeInterner {
             if member == TypeId::NULL || member == TypeId::UNDEFINED || member == TypeId::VOID {
                 has_null_or_undefined = true;
             } else {
-                // Check if this is an object type (not empty object)
+                // Check if this is an object type
                 match self.lookup(member) {
-                    Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                        // Empty objects {} do NOT count - `null & {}` is valid in some contexts
-                        let shape = self.object_shape(shape_id);
-                        if !shape.properties.is_empty()
-                            || shape.string_index.is_some()
-                            || shape.number_index.is_some()
-                        {
-                            has_object_type = true;
-                        }
+                    // Task #48: Empty objects ARE object types and are disjoint from null/undefined
+                    // null & {} = never (null is not a non-nullish value)
+                    Some(TypeKey::Object(_)) | Some(TypeKey::ObjectWithIndex(_)) => {
+                        has_object_type = true;
                     }
                     // Array, tuple, function, callable are all object types that are disjoint from null/undefined
                     Some(TypeKey::Array(_))
@@ -2529,19 +2605,46 @@ impl TypeInterner {
     }
 
     fn template_span_cardinality(&self, type_id: TypeId) -> Option<usize> {
+        // Handle BOOLEAN intrinsic (expands to 2 values: true | false)
+        if type_id == TypeId::BOOLEAN {
+            return Some(2);
+        }
+
+        // Handle intrinsic types that expand to string literals
+        if type_id == TypeId::BOOLEAN_TRUE
+            || type_id == TypeId::BOOLEAN_FALSE
+            || type_id == TypeId::NULL
+            || type_id == TypeId::UNDEFINED
+            || type_id == TypeId::VOID
+        {
+            return Some(1);
+        }
+
         match self.lookup(type_id) {
-            Some(TypeKey::Literal(LiteralValue::String(_))) => Some(1),
+            // Accept all literal types (String, Number, Boolean, BigInt) - they all stringify
+            Some(TypeKey::Literal(_)) => Some(1),
             Some(TypeKey::Union(list_id)) => {
                 let members = self.type_list(list_id);
                 let mut count = 0usize;
                 for member in members.iter() {
-                    if let Some(TypeKey::Literal(LiteralValue::String(_))) = self.lookup(*member) {
-                        count += 1;
-                    } else {
-                        return None;
-                    }
+                    // Recurse to handle all cases uniformly (literals, intrinsics, nested unions)
+                    let member_count = self.template_span_cardinality(*member)?;
+                    count = count.checked_add(member_count)?;
                 }
                 Some(count)
+            }
+            // Task #47: Handle nested template literals
+            Some(TypeKey::TemplateLiteral(list_id)) => {
+                let spans = self.template_list(list_id);
+                let mut total = 1usize;
+                for span in spans.iter() {
+                    let span_count = match span {
+                        TemplateSpan::Text(_) => 1,
+                        TemplateSpan::Type(t) => self.template_span_cardinality(*t)?,
+                    };
+                    total = total.saturating_mul(span_count);
+                }
+                Some(total)
             }
             _ => None,
         }
@@ -2581,6 +2684,11 @@ impl TypeInterner {
     /// Get the string literal values from a type (single literal or union of literals).
     /// Returns None if the type is not a string literal or union of string literals.
     fn get_string_literal_values(&self, type_id: TypeId) -> Option<Vec<String>> {
+        // Handle BOOLEAN intrinsic (expands to two string literals)
+        if type_id == TypeId::BOOLEAN {
+            return Some(vec!["true".to_string(), "false".to_string()]);
+        }
+
         // Helper to convert a single type to a string value if possible
         let to_string_val = |id: TypeId| -> Option<String> {
             // Handle intrinsics that stringify to text
@@ -2623,16 +2731,31 @@ impl TypeInterner {
         match self.lookup(type_id) {
             Some(TypeKey::Union(list_id)) => {
                 let members = self.type_list(list_id);
-                let mut values = Vec::with_capacity(members.len());
+                let mut values = Vec::new();
                 for member in members.iter() {
-                    if let Some(val) = to_string_val(*member) {
-                        values.push(val);
-                    } else {
-                        // If any member cannot be stringified, the whole union cannot be expanded
-                        return None;
-                    }
+                    // RECURSIVE CALL: Handle boolean-in-union and nested unions correctly
+                    let member_values = self.get_string_literal_values(*member)?;
+                    values.extend(member_values);
                 }
                 Some(values)
+            }
+            // Task #47: Handle nested template literals by expanding them recursively
+            Some(TypeKey::TemplateLiteral(list_id)) => {
+                let spans = self.template_list(list_id);
+                // Check if all spans are text-only (can return a single string)
+                if spans.iter().all(|s| matches!(s, TemplateSpan::Text(_))) {
+                    let mut combined = String::new();
+                    for span in spans.iter() {
+                        if let TemplateSpan::Text(atom) = span {
+                            combined.push_str(&self.resolve_atom_ref(*atom));
+                        }
+                    }
+                    return Some(vec![combined]);
+                }
+                // Otherwise, try to expand via Cartesian product (recursively call expand_template_literal_to_union)
+                // But we need to be careful not to cause infinite recursion
+                // For now, return None to indicate this template cannot be expanded as simple string literals
+                None
             }
             _ => None,
         }
@@ -2720,6 +2843,39 @@ impl TypeInterner {
                     }
                 }
                 TemplateSpan::Type(type_id) => {
+                    // Task #47: Flatten nested template literals
+                    // If a Type(type_id) refers to another TemplateLiteral, splice its spans into the parent
+                    if let Some(TypeKey::TemplateLiteral(nested_list_id)) = self.lookup(*type_id) {
+                        let nested_spans = self.template_list(nested_list_id);
+                        // Process each nested span as if it were part of the parent template
+                        for nested_span in nested_spans.iter() {
+                            match nested_span {
+                                TemplateSpan::Text(atom) => {
+                                    let text = self.resolve_atom_ref(*atom).to_string();
+                                    if let Some(ref mut pt) = pending_text {
+                                        pt.push_str(&text);
+                                        has_consecutive_texts = true;
+                                    } else {
+                                        pending_text = Some(text);
+                                    }
+                                }
+                                TemplateSpan::Type(nested_type_id) => {
+                                    // Flush pending text before adding the nested type
+                                    if let Some(text) = pending_text.take() {
+                                        if !text.is_empty() {
+                                            normalized.push(TemplateSpan::Text(
+                                                self.intern_string(&text),
+                                            ));
+                                        }
+                                    }
+                                    normalized.push(TemplateSpan::Type(*nested_type_id));
+                                }
+                            }
+                        }
+                        // Continue to the next span in the parent template
+                        continue;
+                    }
+
                     // Task #47: Intrinsic stringification/expansion rules
                     match *type_id {
                         TypeId::NULL => {
@@ -2744,21 +2900,8 @@ impl TypeInterner {
                             }
                             continue;
                         }
-                        TypeId::BOOLEAN => {
-                            // boolean expands to union of "true" | "false"
-                            // Flush pending text first
-                            if let Some(text) = pending_text.take() {
-                                if !text.is_empty() {
-                                    normalized.push(TemplateSpan::Text(self.intern_string(&text)));
-                                }
-                            }
-                            // Add the boolean union type
-                            let bool_union =
-                                self.union2(TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE);
-                            normalized.push(TemplateSpan::Type(bool_union));
-                            continue;
-                        }
                         // number, bigint, string intrinsics do NOT widen - they're kept as-is for pattern matching
+                        // BOOLEAN is also kept as-is for pattern matching - the general expansion logic handles it
                         _ => {}
                     }
 

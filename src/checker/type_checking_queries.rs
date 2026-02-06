@@ -1183,7 +1183,129 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            _ => {}
+            // Function and Constructor Types: check parameters and return type
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                if let Some(func_type) = self.ctx.arena.get_function_type(node) {
+                    // Check type parameters (they may have infer in constraints)
+                    if let Some(ref tps) = func_type.type_parameters {
+                        for &tp_idx in &tps.nodes {
+                            self.collect_infer_type_parameters_inner(tp_idx, params);
+                        }
+                    }
+                    // Check parameters
+                    for &param_idx in &func_type.parameters.nodes {
+                        self.collect_infer_type_parameters_inner(param_idx, params);
+                    }
+                    // Check return type
+                    if !func_type.type_annotation.is_none() {
+                        self.collect_infer_type_parameters_inner(func_type.type_annotation, params);
+                    }
+                }
+            }
+            // Array Types: check element type
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                if let Some(array_type) = self.ctx.arena.get_array_type(node) {
+                    self.collect_infer_type_parameters_inner(array_type.element_type, params);
+                }
+            }
+            // Tuple Types: check all elements
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                if let Some(tuple_type) = self.ctx.arena.get_tuple_type(node) {
+                    for &elem_idx in &tuple_type.elements.nodes {
+                        self.collect_infer_type_parameters_inner(elem_idx, params);
+                    }
+                }
+            }
+            // Type Literals (Object types): check all members
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
+                    for &member_idx in &type_lit.members.nodes {
+                        self.collect_infer_type_parameters_inner(member_idx, params);
+                    }
+                }
+            }
+            // Type Operators: keyof, readonly, unique - check operand
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                if let Some(op) = self.ctx.arena.get_type_operator(node) {
+                    self.collect_infer_type_parameters_inner(op.type_node, params);
+                }
+            }
+            // Indexed Access Types: T[K] - check both object and index
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                if let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) {
+                    self.collect_infer_type_parameters_inner(indexed.object_type, params);
+                    self.collect_infer_type_parameters_inner(indexed.index_type, params);
+                }
+            }
+            // Mapped Types: check type parameter (constraint) and type template
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
+                    self.collect_infer_type_parameters_inner(mapped.type_parameter, params);
+                    if !mapped.type_node.is_none() {
+                        self.collect_infer_type_parameters_inner(mapped.type_node, params);
+                    }
+                    if !mapped.name_type.is_none() {
+                        self.collect_infer_type_parameters_inner(mapped.name_type, params);
+                    }
+                }
+            }
+            // Conditional Types: check check_type, extends_type, true_type, false_type
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+                if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
+                    self.collect_infer_type_parameters_inner(cond.check_type, params);
+                    self.collect_infer_type_parameters_inner(cond.extends_type, params);
+                    self.collect_infer_type_parameters_inner(cond.true_type, params);
+                    self.collect_infer_type_parameters_inner(cond.false_type, params);
+                }
+            }
+            // Template Literal Types: check all type spans
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
+                if let Some(template) = self.ctx.arena.get_template_literal_type(node) {
+                    for &span_idx in &template.template_spans.nodes {
+                        self.collect_infer_type_parameters_inner(span_idx, params);
+                    }
+                }
+            }
+            // Parenthesized Types: unwrap and check inner type
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                if let Some(wrapped) = self.ctx.arena.get_parenthesized(node) {
+                    self.collect_infer_type_parameters_inner(wrapped.expression, params);
+                }
+            }
+            // Optional, Rest Types: unwrap and check inner type
+            k if k == syntax_kind_ext::OPTIONAL_TYPE || k == syntax_kind_ext::REST_TYPE => {
+                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                    self.collect_infer_type_parameters_inner(wrapped.type_node, params);
+                }
+            }
+            // Named Tuple Members: check the type annotation
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
+                if let Some(member) = self.ctx.arena.get_named_tuple_member(node) {
+                    self.collect_infer_type_parameters_inner(member.type_node, params);
+                }
+            }
+            // Type Parameters: check constraint and default for nested infer
+            k if k == syntax_kind_ext::TYPE_PARAMETER => {
+                if let Some(type_param) = self.ctx.arena.get_type_parameter(node) {
+                    // Check constraint: <T extends infer U>
+                    if type_param.constraint != NodeIndex::NONE {
+                        self.collect_infer_type_parameters_inner(type_param.constraint, params);
+                    }
+                    // Check default: <T = infer U>
+                    if type_param.default != NodeIndex::NONE {
+                        self.collect_infer_type_parameters_inner(type_param.default, params);
+                    }
+                }
+            }
+            _ => {
+                // Parameters: check the type annotation (handled via node.kind directly)
+                if let Some(param) = self.ctx.arena.get_parameter(node) {
+                    // Check type annotation if present
+                    if param.type_annotation != NodeIndex::NONE {
+                        self.collect_infer_type_parameters_inner(param.type_annotation, params);
+                    }
+                }
+            }
         }
     }
 

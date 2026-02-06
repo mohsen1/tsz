@@ -504,6 +504,25 @@ impl<'a> ES5ClassTransformer<'a> {
         result
     }
 
+    /// Transform arrow function body to IR
+    fn transform_arrow_body(&self, body_idx: NodeIndex, _is_async: bool) -> Vec<IRNode> {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return vec![IRNode::ret(Some(IRNode::id("undefined")))];
+        };
+
+        // Check if body is a block (concise body)
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            self.transform_block_contents(body_idx)
+        } else {
+            // Concise arrow: x => x + 1  ->  { return x + 1; }
+            if let Some(expr) = self.transform_expression(body_idx) {
+                vec![IRNode::ret(Some(expr))]
+            } else {
+                vec![IRNode::ret(Some(IRNode::id("undefined")))]
+            }
+        }
+    }
+
     /// Transform block contents to IR
     fn transform_block_contents(&self, body_idx: NodeIndex) -> Vec<IRNode> {
         let Some(body_node) = self.arena.get(body_idx) else {
@@ -541,9 +560,33 @@ impl<'a> ES5ClassTransformer<'a> {
                 };
                 Some(IRNode::ret(expr))
             }
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                // For now, emit as AST reference (printer handles this)
-                Some(IRNode::ASTRef(stmt_idx))
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST =>
+            {
+                // Transform variable statements to handle nested arrow functions
+                let var_data = self.arena.get_variable(stmt_node)?;
+                let mut declarations = Vec::new();
+                for &decl_idx in &var_data.declarations.nodes {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(var_decl) = self.arena.get_variable_declaration(decl_node)
+                    {
+                        let name = self.get_identifier_text(var_decl.name);
+                        let initializer = if var_decl.initializer.is_none() {
+                            None
+                        } else {
+                            self.transform_expression(var_decl.initializer)
+                        };
+                        declarations.push(IRNode::VarDecl {
+                            name,
+                            initializer: initializer.map(Box::new),
+                        });
+                    }
+                }
+                if declarations.len() == 1 {
+                    Some(declarations.into_iter().next().unwrap())
+                } else {
+                    Some(IRNode::VarDeclList(declarations))
+                }
             }
             k if k == syntax_kind_ext::IF_STATEMENT => {
                 let if_stmt = self.arena.get_if_statement(stmt_node)?;
@@ -636,6 +679,13 @@ impl<'a> ES5ClassTransformer<'a> {
                 let paren = self.arena.get_parenthesized(expr_node)?;
                 let expr = self.transform_expression(paren.expression)?;
                 Some(expr.paren())
+            }
+            k if k == syntax_kind_ext::ARROW_FUNCTION => {
+                // Transform arrow functions to ES5
+                let func = self.arena.get_function(expr_node)?;
+                let params = self.transform_parameters(&func.parameters);
+                let body = self.transform_arrow_body(func.body, func.is_async);
+                Some(IRNode::func_expr(None, params, body))
             }
             _ => {
                 // Fallback to AST reference

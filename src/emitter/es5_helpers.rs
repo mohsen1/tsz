@@ -6,6 +6,7 @@ use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transform_context::TransformDirective;
 use crate::transforms::ClassES5Emitter;
+use std::sync::Arc;
 
 /// Segment of an array literal for ES5 spread transformation
 enum ArraySegment<'a> {
@@ -15,11 +16,21 @@ enum ArraySegment<'a> {
     Spread(NodeIndex),
 }
 
+/// Segment of an object literal for ES5 spread transformation
+enum ObjectSegment<'a> {
+    /// Non-spread elements: regular and computed properties
+    Elements(&'a [NodeIndex]),
+    /// Spread element: ...obj
+    Spread(NodeIndex),
+}
+
 impl<'a> Printer<'a> {
     /// Emit an array literal with ES5 spread transformation.
-    /// Pattern: [1, ...a, 2] -> [1].concat(a, [2])
-    /// Pattern: [...a, 1] -> a.concat([1])
-    /// Pattern: [1, ...a] -> [1].concat(a)
+    /// Uses TypeScript's __spreadArray helper for exact tsc matching.
+    /// Pattern: [...a] -> __spreadArray([], a, true)
+    /// Pattern: [...a, 1] -> __spreadArray(a, [1], false)
+    /// Pattern: [1, ...a] -> __spreadArray([1], a, false)
+    /// Pattern: [1, ...a, 2] -> __spreadArray([1], a, false).concat([2])
     pub(super) fn emit_array_literal_es5(&mut self, elements: &[NodeIndex]) {
         if elements.is_empty() {
             self.write("[]");
@@ -47,7 +58,7 @@ impl<'a> Printer<'a> {
             segments.push(ArraySegment::Elements(&elements[current_start..]));
         }
 
-        // Emit the concat chain
+        // Emit using __spreadArray for exact tsc matching
         match segments.as_slice() {
             [] => {
                 // Should not happen due to empty check above
@@ -59,30 +70,70 @@ impl<'a> Printer<'a> {
                 self.emit_comma_separated(elems);
                 self.write("]");
             }
+            [ArraySegment::Spread(spread_idx)] => {
+                // Only a spread element: [...a] -> __spreadArray([], a, true)
+                self.write("__spreadArray([], ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(", true)");
+            }
             [
                 ArraySegment::Spread(spread_idx),
                 ArraySegment::Elements(elems),
             ] => {
-                // Spread first, then elements: [...a, 1, 2] -> a.concat([1, 2])
+                // Spread first, then elements: [...a, 1, 2] -> __spreadArray(a, [1, 2], false)
+                self.write("__spreadArray(");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
                     self.emit_spread_expression(spread_node);
                 }
-                self.write(".concat(");
+                self.write(", ");
                 self.write("[");
                 self.emit_comma_separated(elems);
                 self.write("]");
-                self.write(")");
+                self.write(", false)");
             }
-            [ArraySegment::Spread(spread_idx)] => {
-                // Only a spread element: [...a]
-                // This is a complex case - emit as-is for now since spread can work
-                // with iterables in ES5 (arrays are iterable)
+            [
+                ArraySegment::Elements(elems),
+                ArraySegment::Spread(spread_idx),
+            ] => {
+                // Elements first, then spread: [1, 2, ...a] -> __spreadArray([1, 2], a, false)
+                self.write("__spreadArray(");
                 self.write("[");
-                self.emit(*spread_idx);
+                self.emit_comma_separated(elems);
                 self.write("]");
+                self.write(", ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(", false)");
+            }
+            [
+                ArraySegment::Elements(prefix_elems),
+                ArraySegment::Spread(spread_idx),
+                ArraySegment::Elements(suffix_elems),
+            ] => {
+                // Elements, spread, elements: [1, ...a, 2] -> __spreadArray([1], a, false).concat([2])
+                self.write("__spreadArray(");
+                self.write("[");
+                self.emit_comma_separated(prefix_elems);
+                self.write("]");
+                self.write(", ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(", false)");
+                // Append suffix with concat
+                if !suffix_elems.is_empty() {
+                    self.write(".concat(");
+                    self.write("[");
+                    self.emit_comma_separated(suffix_elems);
+                    self.write("]");
+                    self.write(")");
+                }
             }
             [first, rest @ ..] => {
-                // Elements first, then rest (spreads or elements)
+                // Fallback for more complex patterns: use concat chain
                 self.emit_array_segment(first);
                 for segment in rest {
                     self.write(".concat(");
@@ -238,29 +289,45 @@ impl<'a> Printer<'a> {
         false
     }
 
-    /// Emit ES5-compatible object literal with computed properties
-    /// Pattern: { [k]: v } → (_a = {}, _a[k] = v, _a)
-    /// Pattern: { a: 1, [k]: v, b: 2 } → (_a = { a: 1 }, _a[k] = v, _a.b = 2, _a)
+    /// Emit ES5-compatible object literal with computed properties and spread
+    /// Uses TypeScript's __assign helper for exact tsc matching.
+    ///
+    /// Spread patterns:
+    /// - { ...a } → __assign({}, a)
+    /// - { a: 1, ...b } → __assign({ a: 1 }, b)
+    /// - { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })
+    /// - { a: 1, ...b, c: 2 } → __assign(__assign({ a: 1 }, b), { c: 2 })
+    ///
+    /// Computed properties (without spread):
+    /// - { [k]: v } → (_a = {}, _a[k] = v, _a)
+    /// - { a: 1, [k]: v } → (_a = { a: 1 }, _a[k] = v, _a)
+    ///
+    /// Mixed computed and spread:
+    /// - { [k]: v, ...a } → __assign((_a = {}, _a[k] = v, _a), a)
     pub(super) fn emit_object_literal_es5(&mut self, elements: &[NodeIndex]) {
         if elements.is_empty() {
             self.write("{}");
             return;
         }
 
-        // Find the index of the first computed property
+        // Check if we have any spread elements
+        let has_spread = elements.iter().any(|&idx| self.is_spread_element(idx));
+
+        if !has_spread {
+            // No spread - use the old computed property logic
+            self.emit_object_literal_without_spread_es5(elements);
+            return;
+        }
+
+        // Has spread - use __assign pattern
+        self.emit_object_literal_with_spread_es5(elements);
+    }
+
+    /// Emit object literal without spread (computed properties only)
+    fn emit_object_literal_without_spread_es5(&mut self, elements: &[NodeIndex]) {
         let first_computed_idx = elements
             .iter()
-            .position(|&idx| {
-                self.is_computed_property_member(idx) || {
-                    self.arena
-                        .get(idx)
-                        .map(|n| {
-                            n.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
-                                || n.kind == syntax_kind_ext::SPREAD_ELEMENT
-                        })
-                        .unwrap_or(false)
-                }
-            })
+            .position(|&idx| self.is_computed_property_member(idx))
             .unwrap_or(elements.len());
 
         if first_computed_idx == elements.len() {
@@ -293,6 +360,228 @@ impl<'a> Printer<'a> {
         self.write(", ");
         self.write(&temp_var);
         self.write(")");
+    }
+
+    /// Emit object literal with spread using __assign pattern
+    fn emit_object_literal_with_spread_es5(&mut self, elements: &[NodeIndex]) {
+        // Split into segments
+        let mut segments: Vec<ObjectSegment> = Vec::new();
+        let mut current_start = 0;
+
+        for (i, &elem_idx) in elements.iter().enumerate() {
+            if self.is_spread_element(elem_idx) {
+                // Add non-spread segment before this spread
+                if current_start < i {
+                    segments.push(ObjectSegment::Elements(&elements[current_start..i]));
+                }
+                // Add the spread element
+                segments.push(ObjectSegment::Spread(elem_idx));
+                current_start = i + 1;
+            }
+        }
+
+        // Add remaining elements after last spread
+        if current_start < elements.len() {
+            segments.push(ObjectSegment::Elements(&elements[current_start..]));
+        }
+
+        // Emit using __assign for exact tsc matching
+        match segments.as_slice() {
+            [] => {
+                // Should not happen due to empty check above
+                self.write("{}");
+            }
+            [ObjectSegment::Elements(elems)] => {
+                // No spreads - emit without __assign
+                // But check if we have computed properties
+                let has_computed = elems
+                    .iter()
+                    .any(|&idx| self.is_computed_property_member(idx));
+                if has_computed {
+                    self.emit_object_literal_without_spread_es5(elems);
+                } else {
+                    self.emit_object_literal_entries_es5(elems);
+                }
+            }
+            [ObjectSegment::Spread(spread_idx)] => {
+                // Only a spread element: { ...a } → __assign({}, a)
+                self.write("__assign({}, ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(")");
+            }
+            [
+                ObjectSegment::Elements(elems),
+                ObjectSegment::Spread(spread_idx),
+            ] => {
+                // Elements then spread: { a: 1, ...b } → __assign({ a: 1 }, b)
+                let has_computed = elems
+                    .iter()
+                    .any(|&idx| self.is_computed_property_member(idx));
+                if has_computed {
+                    // Need temp var for computed properties
+                    let temp_var = self.ctx.destructuring_state.next_temp_var();
+                    self.write("__assign((");
+                    self.write(&temp_var);
+                    self.write(" = ");
+                    self.emit_object_literal_entries_es5(elems);
+                    self.write(", ");
+                    self.write(&temp_var);
+                    self.write("), ");
+                } else {
+                    self.write("__assign(");
+                    self.emit_object_literal_entries_es5(elems);
+                    self.write(", ");
+                }
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                if has_computed {
+                    self.write(")");
+                }
+                self.write(")");
+            }
+            [
+                ObjectSegment::Spread(spread_idx),
+                ObjectSegment::Elements(elems),
+            ] => {
+                // Spread then elements: { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })
+                self.write("__assign(__assign({}, ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write("), ");
+                self.emit_object_literal_entries_es5(elems);
+                self.write(")");
+            }
+            [first, rest @ ..] => {
+                // Complex pattern: use Prefix-Wrap strategy for proper nested __assign
+                // Example: { a: 1, ...b, c: 2, ...d }
+                // Result: __assign(__assign(__assign({ a: 1 }, b), { c: 2 }), d)
+
+                let total_segments = 1 + rest.len();
+                let first_is_spread = matches!(first, ObjectSegment::Spread(_));
+
+                // 1. Emit the necessary number of __assign( calls
+                let num_assigns = if first_is_spread {
+                    total_segments
+                } else {
+                    total_segments - 1
+                };
+
+                for _ in 0..num_assigns {
+                    self.write("__assign(");
+                }
+
+                // 2. Handle the first segment
+                match first {
+                    ObjectSegment::Elements(elems) => {
+                        let has_computed = elems
+                            .iter()
+                            .any(|&idx| self.is_computed_property_member(idx));
+                        if has_computed {
+                            // Use temp var for computed properties
+                            let temp_var = self.ctx.destructuring_state.next_temp_var();
+                            self.write("(");
+                            self.write(&temp_var);
+                            self.write(" = ");
+                            self.emit_object_literal_entries_es5(elems);
+                            for elem in elems.iter() {
+                                if self.is_computed_property_member(*elem) {
+                                    self.write(", ");
+                                    self.emit_property_assignment_es5(*elem, &temp_var);
+                                }
+                            }
+                            self.write(", ");
+                            self.write(&temp_var);
+                            self.write(")");
+                        } else {
+                            self.emit_object_literal_entries_es5(elems);
+                        }
+                    }
+                    ObjectSegment::Spread(spread_idx) => {
+                        self.write("{}, ");
+                        if let Some(spread_node) = self.arena.get(*spread_idx) {
+                            self.emit_spread_expression(spread_node);
+                        }
+                        self.write(")");
+                    }
+                }
+
+                // 3. Handle subsequent segments
+                for segment in rest {
+                    self.write(", ");
+                    match segment {
+                        ObjectSegment::Elements(elems) => {
+                            let has_computed = elems
+                                .iter()
+                                .any(|&idx| self.is_computed_property_member(idx));
+                            if has_computed {
+                                let temp_var = self.ctx.destructuring_state.next_temp_var();
+                                self.write("(");
+                                self.write(&temp_var);
+                                self.write(" = ");
+                                self.emit_object_literal_entries_es5(elems);
+                                for elem in elems.iter() {
+                                    if self.is_computed_property_member(*elem) {
+                                        self.write(", ");
+                                        self.emit_property_assignment_es5(*elem, &temp_var);
+                                    }
+                                }
+                                self.write(", ");
+                                self.write(&temp_var);
+                                self.write(")");
+                            } else if !elems.is_empty() {
+                                self.emit_object_literal_entries_es5(elems);
+                            } else {
+                                self.write("{}");
+                            }
+                        }
+                        ObjectSegment::Spread(spread_idx) => {
+                            if let Some(spread_node) = self.arena.get(*spread_idx) {
+                                self.emit_spread_expression(spread_node);
+                            }
+                        }
+                    }
+                    self.write(")");
+                }
+            }
+        }
+    }
+
+    /// Emit an object segment (elements or spread)
+    #[allow(dead_code)]
+    fn emit_object_segment(&mut self, segment: &ObjectSegment) {
+        match segment {
+            ObjectSegment::Elements(elems) => {
+                let has_computed = elems
+                    .iter()
+                    .any(|&idx| self.is_computed_property_member(idx));
+                if has_computed {
+                    let temp_var = self.ctx.destructuring_state.next_temp_var();
+                    self.write("(");
+                    self.write(&temp_var);
+                    self.write(" = ");
+                    self.emit_object_literal_entries_es5(elems);
+                    for elem in elems.iter() {
+                        if self.is_computed_property_member(*elem) {
+                            self.write(", ");
+                            self.emit_property_assignment_es5(*elem, &temp_var);
+                        }
+                    }
+                    self.write(", ");
+                    self.write(&temp_var);
+                    self.write(")");
+                } else {
+                    self.emit_object_literal_entries_es5(elems);
+                }
+            }
+            ObjectSegment::Spread(_) => {
+                // Spread handled specially in emit_object_literal_with_spread_es5
+                self.write("{}");
+            }
+        }
     }
 
     /// Emit a property assignment in ES5 computed property transform
@@ -441,16 +730,29 @@ impl<'a> Printer<'a> {
 
     /// Emit ES5-compatible function expression for arrow function
     /// Arrow: (x) => x + 1  →  function (x) { return x + 1; }
+    ///
+    /// When `class_alias` is Some (arrow in static member), use class alias capture:
+    /// var _a = Vector; _a.foo = () => _a;
+    ///
+    /// Otherwise use IIFE capture:
+    /// (function (_this) { return _this.x; })(this)
     pub(super) fn emit_arrow_function_es5(
         &mut self,
         _node: &Node,
         func: &crate::parser::node::FunctionData,
         captures_this: bool,
         captures_arguments: bool,
+        class_alias: &Option<Arc<str>>,
     ) {
+        // When class_alias is Some (arrow in static member), use class alias capture pattern:
+        // - Don't use IIFE wrapper
+        // - this references are substituted with the class alias via SubstituteThis directive
+        // Example: var _a = Vector; _a.foo = () => _a;
+        let use_class_alias_capture = class_alias.is_some() && captures_this;
+
         // Determine capture wrapper: (function (_this, _arguments) { ... })
         let captures_any = captures_this || captures_arguments;
-        if captures_any {
+        if captures_any && !use_class_alias_capture {
             self.write("(function (");
             if captures_this {
                 self.write("_this");
@@ -535,7 +837,7 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if captures_any {
+        if captures_any && !use_class_alias_capture {
             // Close the (function (_this, _arguments) { ... }) wrapper
             self.write("; })");
             self.write("(");
@@ -823,6 +1125,8 @@ impl<'a> Printer<'a> {
 
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_indent_level(0);
+        // Pass transform directives to the ClassES5Emitter
+        es5_emitter.set_transforms(self.transforms.clone());
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());

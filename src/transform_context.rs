@@ -149,6 +149,9 @@ pub enum TransformDirective {
         captures_this: bool,
         /// Whether this captures 'arguments' (needs _arguments = arguments)
         captures_arguments: bool,
+        /// Class alias for static members (e.g., "_a" for static class foo)
+        /// When set, 'this' in the arrow function refers to this class alias
+        class_alias: Option<Arc<str>>,
     },
 
     /// ES5 Async/Await: Transform to __awaiter helper

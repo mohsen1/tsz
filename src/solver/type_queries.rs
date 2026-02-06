@@ -2000,6 +2000,10 @@ pub enum TypeTraversalKind {
     },
     /// Symbol reference - resolve the symbol
     SymbolRef(crate::solver::types::SymbolRef),
+    /// Lazy type reference (DefId) - needs resolution before traversal
+    Lazy(crate::solver::def::DefId),
+    /// Type query (typeof X) - value-space reference that needs resolution
+    TypeQuery(crate::solver::types::SymbolRef),
     /// Type parameter - recurse into constraint and default if present
     TypeParameter {
         constraint: Option<TypeId>,
@@ -2027,6 +2031,10 @@ pub enum TypeTraversalKind {
     IndexAccess { object: TypeId, index: TypeId },
     /// KeyOf - recurse into inner type
     KeyOf(TypeId),
+    /// Template literal - extract types from spans
+    TemplateLiteral(Vec<TypeId>),
+    /// String intrinsic - traverse the type argument
+    StringIntrinsic(TypeId),
     /// Terminal type - no further traversal needed
     Terminal,
 }
@@ -2073,17 +2081,35 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
         TypeKey::ReadonlyType(inner) => TypeTraversalKind::Readonly(inner),
         TypeKey::IndexAccess(object, index) => TypeTraversalKind::IndexAccess { object, index },
         TypeKey::KeyOf(inner) => TypeTraversalKind::KeyOf(inner),
-        // Terminal types - no nested types to traverse (Lazy needs resolution for traversal)
+        // Template literal - extract types from spans for traversal
+        TypeKey::TemplateLiteral(list_id) => {
+            let spans = db.template_list(list_id);
+            let types: Vec<TypeId> = spans
+                .iter()
+                .filter_map(|span| match span {
+                    crate::solver::types::TemplateSpan::Type(id) => Some(*id),
+                    _ => None,
+                })
+                .collect();
+            if types.is_empty() {
+                TypeTraversalKind::Terminal
+            } else {
+                TypeTraversalKind::TemplateLiteral(types)
+            }
+        }
+        // String intrinsic - traverse the type argument
+        TypeKey::StringIntrinsic { type_arg, .. } => TypeTraversalKind::StringIntrinsic(type_arg),
+        // Lazy type reference - needs resolution before traversal
+        TypeKey::Lazy(def_id) => TypeTraversalKind::Lazy(def_id),
+        // Type query (typeof X) - value-space reference
+        TypeKey::TypeQuery(symbol_ref) => TypeTraversalKind::TypeQuery(symbol_ref),
+        // Terminal types - no nested types to traverse
         TypeKey::BoundParameter(_)
         | TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
-        | TypeKey::TemplateLiteral(_)
-        | TypeKey::Lazy(_)
         | TypeKey::Recursive(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
-        | TypeKey::TypeQuery(_)
-        | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
         | TypeKey::Error
         | TypeKey::Enum(_, _) => TypeTraversalKind::Terminal,

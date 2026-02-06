@@ -293,19 +293,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             // Create substitution: type_param.name -> literal key type
-            // First intern the Atom as a literal string type
-            let key_literal = self
-                .interner()
-                .intern(TypeKey::Literal(LiteralValue::String(key_name)));
+            // Use canonical constructor for O(1) equality
+            let key_literal = self.interner().literal_string_atom(key_name);
             let remapped = match self.remap_key_type_for_mapped(mapped, key_literal) {
                 Ok(Some(remapped)) => remapped,
                 Ok(None) => continue,
                 Err(()) => return self.interner().mapped(mapped.clone()),
             };
-            let remapped_name = match self.interner().lookup(remapped) {
-                Some(TypeKey::Literal(LiteralValue::String(name))) => name,
-                _ => return self.interner().mapped(mapped.clone()),
-            };
+            // Use visitor helper instead of lookup + match (North Star Rule 3)
+            let remapped_name =
+                match crate::solver::visitor::literal_string(self.interner(), remapped) {
+                    Some(name) => name,
+                    None => return self.interner().mapped(mapped.clone()),
+                };
 
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
@@ -494,8 +494,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // We don't model symbol index signatures yet; ignore symbol keys.
                         continue;
                     }
-                    if let Some(TypeKey::Literal(LiteralValue::String(s))) =
-                        self.interner().lookup(member)
+                    // Use visitor helper for data extraction (North Star Rule 3)
+                    if let Some(s) = crate::solver::visitor::literal_string(self.interner(), member)
                     {
                         keys.string_literals.push(s);
                     } else {

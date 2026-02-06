@@ -78,150 +78,177 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Evaluate keyof T - extract the keys of an object type
     pub fn evaluate_keyof(&mut self, operand: TypeId) -> TypeId {
-        // First evaluate the operand in case it's a meta-type
-        let evaluated_operand = self.evaluate(operand);
+        // CRITICAL: Handle TemplateLiteral BEFORE Union to avoid incorrect intersection.
+        // Template literals that expand to unions should return apparent keys of string,
+        // not the intersection of individual literal keys.
+        if let Some(TypeKey::TemplateLiteral(_)) = self.interner().lookup(operand) {
+            return self.apparent_primitive_keyof(IntrinsicKind::String);
+        }
 
-        let key = match self.interner().lookup(evaluated_operand) {
-            Some(k) => k,
-            None => return TypeId::NEVER,
-        };
+        // CRITICAL: Handle Union types BEFORE general evaluation to avoid union simplification.
+        // keyof (A | B) = keyof A & keyof B (distributive contravariance)
+        // If we call evaluate(operand) first, unions get simplified and we lose members.
+        // See test_keyof_union_string_index_and_literal_narrows
+        if let Some(TypeKey::Union(members)) = self.interner().lookup(operand) {
+            let member_list = self.interner().type_list(members);
 
-        match key {
-            TypeKey::ReadonlyType(inner) => self.recurse_keyof(inner),
-            TypeKey::TypeQuery(sym) => {
-                // Resolve typeof query before computing keyof
-                let resolved = if let Some(def_id) = self.resolver().symbol_to_def_id(sym) {
-                    self.resolver().resolve_lazy(def_id, self.interner())
-                } else {
-                    #[allow(deprecated)]
-                    let r = self.resolver().resolve_ref(sym, self.interner());
-                    r
-                };
-                if let Some(resolved) = resolved {
-                    self.recurse_keyof(resolved)
-                } else {
-                    TypeId::ERROR
-                }
+            // Recursively compute keyof for each member (this resolves Lazy/Ref/etc.)
+            let mut key_types: Vec<TypeId> = Vec::with_capacity(member_list.len());
+            for &member in member_list.iter() {
+                key_types.push(self.recurse_keyof(member));
             }
-            TypeKey::TypeParameter(param) | TypeKey::Infer(param) => {
-                if let Some(constraint) = param.constraint {
-                    if constraint == evaluated_operand {
-                        self.interner().intern(TypeKey::KeyOf(operand))
+
+            // keyof (A | B) = keyof A & keyof B - compute intersection of all key sets
+            // Prefer explicit key-set intersection to avoid opaque literal intersections
+            if let Some(intersection) = self.intersect_keyof_sets(&key_types) {
+                intersection
+            } else {
+                // Fallback: use general intersection
+                self.interner().intersection(key_types)
+            }
+        } else {
+            // For non-union types, evaluate normally
+            let evaluated_operand = self.evaluate(operand);
+
+            let key = match self.interner().lookup(evaluated_operand) {
+                Some(k) => k,
+                None => return TypeId::NEVER,
+            };
+
+            match key {
+                TypeKey::ReadonlyType(inner) => self.recurse_keyof(inner),
+                TypeKey::TypeQuery(sym) => {
+                    // Resolve typeof query before computing keyof
+                    let resolved = if let Some(def_id) = self.resolver().symbol_to_def_id(sym) {
+                        self.resolver().resolve_lazy(def_id, self.interner())
                     } else {
-                        self.recurse_keyof(constraint)
+                        #[allow(deprecated)]
+                        let r = self.resolver().resolve_ref(sym, self.interner());
+                        r
+                    };
+                    if let Some(resolved) = resolved {
+                        self.recurse_keyof(resolved)
+                    } else {
+                        TypeId::ERROR
                     }
-                } else {
-                    self.interner().intern(TypeKey::KeyOf(operand))
                 }
-            }
-            TypeKey::Object(shape_id) => {
-                let shape = self.interner().object_shape(shape_id);
-                if shape.properties.is_empty() {
-                    return TypeId::NEVER;
+                TypeKey::TypeParameter(param) | TypeKey::Infer(param) => {
+                    if let Some(constraint) = param.constraint {
+                        if constraint == evaluated_operand {
+                            self.interner().intern(TypeKey::KeyOf(operand))
+                        } else {
+                            self.recurse_keyof(constraint)
+                        }
+                    } else {
+                        self.interner().intern(TypeKey::KeyOf(operand))
+                    }
                 }
-                let key_types: Vec<TypeId> = shape
-                    .properties
-                    .iter()
-                    .map(|p| {
-                        self.interner()
-                            .intern(TypeKey::Literal(LiteralValue::String(p.name)))
-                    })
-                    .collect();
-                self.interner().union(key_types)
-            }
-            TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.interner().object_shape(shape_id);
-                let mut key_types: Vec<TypeId> = shape
-                    .properties
-                    .iter()
-                    .map(|p| {
-                        self.interner()
-                            .intern(TypeKey::Literal(LiteralValue::String(p.name)))
-                    })
-                    .collect();
-
-                if shape.string_index.is_some() {
-                    key_types.push(TypeId::STRING);
-                    key_types.push(TypeId::NUMBER);
-                } else if shape.number_index.is_some() {
-                    key_types.push(TypeId::NUMBER);
-                }
-
-                if key_types.is_empty() {
-                    TypeId::NEVER
-                } else {
+                TypeKey::Object(shape_id) => {
+                    let shape = self.interner().object_shape(shape_id);
+                    if shape.properties.is_empty() {
+                        return TypeId::NEVER;
+                    }
+                    let key_types: Vec<TypeId> = shape
+                        .properties
+                        .iter()
+                        .map(|p| self.interner().literal_string_atom(p.name))
+                        .collect();
                     self.interner().union(key_types)
                 }
-            }
-            TypeKey::Array(_) => self.interner().union(self.array_keyof_keys()),
-            TypeKey::Tuple(elements) => {
-                let elements = self.interner().tuple_list(elements);
-                let mut key_types: Vec<TypeId> = Vec::new();
-                self.append_tuple_indices(&elements, 0, &mut key_types);
-                let mut array_keys = self.array_keyof_keys();
-                key_types.append(&mut array_keys);
-                if key_types.is_empty() {
-                    return TypeId::NEVER;
-                }
-                self.interner().union(key_types)
-            }
-            TypeKey::Intrinsic(kind) => match kind {
-                IntrinsicKind::Any => {
-                    // keyof any = string | number | symbol
-                    self.interner()
-                        .union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL)
-                }
-                IntrinsicKind::Unknown => {
-                    // keyof unknown = never
-                    TypeId::NEVER
-                }
-                IntrinsicKind::Never
-                | IntrinsicKind::Void
-                | IntrinsicKind::Null
-                | IntrinsicKind::Undefined
-                | IntrinsicKind::Object
-                | IntrinsicKind::Function => TypeId::NEVER,
-                IntrinsicKind::String
-                | IntrinsicKind::Number
-                | IntrinsicKind::Boolean
-                | IntrinsicKind::Bigint
-                | IntrinsicKind::Symbol => self.apparent_primitive_keyof(kind),
-            },
-            TypeKey::Literal(literal) => {
-                if let Some(kind) = self.apparent_literal_kind(&literal) {
-                    self.apparent_primitive_keyof(kind)
-                } else {
-                    self.interner().intern(TypeKey::KeyOf(operand))
-                }
-            }
-            TypeKey::TemplateLiteral(_) => self.apparent_primitive_keyof(IntrinsicKind::String),
-            TypeKey::Union(members) => {
-                // keyof (A | B) = keyof A & keyof B (distributive contravariance)
-                self.keyof_union(members, operand)
-            }
-            TypeKey::Intersection(members) => {
-                // keyof (A & B) = keyof A | keyof B (covariance)
-                self.keyof_intersection(members, operand)
-            }
-            // For other types (type parameters, etc.), keep as KeyOf (deferred)
-            _ => self.interner().intern(TypeKey::KeyOf(operand)),
-        }
-    }
+                TypeKey::ObjectWithIndex(shape_id) => {
+                    let shape = self.interner().object_shape(shape_id);
+                    let mut key_types: Vec<TypeId> = shape
+                        .properties
+                        .iter()
+                        .map(|p| {
+                            self.interner()
+                                .intern(TypeKey::Literal(LiteralValue::String(p.name)))
+                        })
+                        .collect();
 
-    /// Compute keyof for a union type: keyof (A | B) = keyof A & keyof B
-    pub(crate) fn keyof_union(&mut self, members: TypeListId, _operand: TypeId) -> TypeId {
-        let members = self.interner().type_list(members);
-        // Use recurse_keyof to respect depth limits
-        // Use loop instead of closure to allow mutable self access
-        let mut key_sets: Vec<TypeId> = Vec::with_capacity(members.len());
-        for &m in members.iter() {
-            key_sets.push(self.recurse_keyof(m));
-        }
-        // Prefer explicit key-set intersection to avoid opaque literal intersections.
-        if let Some(intersection) = self.intersect_keyof_sets(&key_sets) {
-            intersection
-        } else {
-            self.interner().intersection(key_sets)
+                    if shape.string_index.is_some() {
+                        key_types.push(TypeId::STRING);
+                        key_types.push(TypeId::NUMBER);
+                    } else if shape.number_index.is_some() {
+                        key_types.push(TypeId::NUMBER);
+                    }
+
+                    if key_types.is_empty() {
+                        TypeId::NEVER
+                    } else {
+                        self.interner().union(key_types)
+                    }
+                }
+                TypeKey::Array(_) => self.interner().union(self.array_keyof_keys()),
+                TypeKey::Tuple(elements) => {
+                    let elements = self.interner().tuple_list(elements);
+                    let mut key_types: Vec<TypeId> = Vec::new();
+                    self.append_tuple_indices(&elements, 0, &mut key_types);
+                    let mut array_keys = self.array_keyof_keys();
+                    key_types.append(&mut array_keys);
+                    if key_types.is_empty() {
+                        return TypeId::NEVER;
+                    }
+                    self.interner().union(key_types)
+                }
+                TypeKey::Intrinsic(kind) => match kind {
+                    IntrinsicKind::Any => {
+                        // keyof any = string | number | symbol
+                        self.interner()
+                            .union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL)
+                    }
+                    IntrinsicKind::Unknown => {
+                        // keyof unknown = never
+                        TypeId::NEVER
+                    }
+                    IntrinsicKind::Never
+                    | IntrinsicKind::Void
+                    | IntrinsicKind::Null
+                    | IntrinsicKind::Undefined
+                    | IntrinsicKind::Object
+                    | IntrinsicKind::Function => TypeId::NEVER,
+                    IntrinsicKind::String
+                    | IntrinsicKind::Number
+                    | IntrinsicKind::Boolean
+                    | IntrinsicKind::Bigint
+                    | IntrinsicKind::Symbol => self.apparent_primitive_keyof(kind),
+                },
+                TypeKey::Literal(literal) => {
+                    if let Some(kind) = self.apparent_literal_kind(&literal) {
+                        self.apparent_primitive_keyof(kind)
+                    } else {
+                        self.interner().intern(TypeKey::KeyOf(operand))
+                    }
+                }
+                TypeKey::TemplateLiteral(_) => self.apparent_primitive_keyof(IntrinsicKind::String),
+                // NOTE: Union is handled at the top of this function to avoid union simplification
+                TypeKey::Intersection(members) => {
+                    // keyof (A & B) = keyof A | keyof B (covariance)
+                    self.keyof_intersection(members, operand)
+                }
+                // CRITICAL: Handle Lazy (type aliases) by attempting resolution via resolver
+                TypeKey::Lazy(def_id) => {
+                    match self.resolver().resolve_lazy(def_id, self.interner()) {
+                        Some(resolved) => {
+                            // Recursively compute keyof of the resolved type
+                            self.recurse_keyof(resolved)
+                        }
+                        None => {
+                            // Keep as deferred KeyOf if resolution fails
+                            self.interner().intern(TypeKey::KeyOf(operand))
+                        }
+                    }
+                }
+                // CRITICAL: Handle Application (generic types) by evaluating them first
+                TypeKey::Application(_app_id) => {
+                    // Evaluate the application to get the instantiated type
+                    let evaluated = self.evaluate(evaluated_operand);
+                    // Then compute keyof of the evaluated result
+                    self.recurse_keyof(evaluated)
+                }
+                // For other types (type parameters, etc.), keep as KeyOf (deferred)
+                _ => self.interner().intern(TypeKey::KeyOf(operand)),
+            }
         }
     }
 
@@ -345,10 +372,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 result_keys.push(TypeId::STRING);
             } else if let Some(common) = common_literals {
                 for atom in common {
-                    result_keys.push(
-                        self.interner()
-                            .intern(TypeKey::Literal(LiteralValue::String(atom))),
-                    );
+                    result_keys.push(self.interner().literal_string_atom(atom));
                 }
             }
         }

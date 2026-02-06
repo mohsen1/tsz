@@ -17,7 +17,7 @@ impl<'a> Printer<'a> {
         if self.ctx.target_es5 {
             let captures_this = contains_this_reference(self.arena, _idx);
             let captures_arguments = contains_arguments_reference(self.arena, _idx);
-            self.emit_arrow_function_es5(node, func, captures_this, captures_arguments);
+            self.emit_arrow_function_es5(node, func, captures_this, captures_arguments, &None);
             return;
         }
 

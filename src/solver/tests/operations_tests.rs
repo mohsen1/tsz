@@ -2737,7 +2737,10 @@ fn test_infer_generic_index_access_param_from_index_access_arg() {
     let index_access_arg = interner.intern(TypeKey::IndexAccess(obj, key_literal));
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[index_access_arg]);
-    assert_eq!(result, index_access_arg);
+    // IndexAccess is eagerly evaluated during instantiation (Task #46: O(1) equality)
+    // The expected result is the evaluated property type, not the IndexAccess structure
+    let expected = crate::solver::evaluate::evaluate_index_access(&interner, obj, key_literal);
+    assert_eq!(result, expected);
 }
 
 #[test]

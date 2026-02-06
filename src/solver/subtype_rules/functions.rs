@@ -268,93 +268,115 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Count non-rest parameters
-        let target_fixed_count = if target_has_rest {
-            target.params.len().saturating_sub(1)
-        } else {
-            target.params.len()
-        };
-        let source_fixed_count = if source_has_rest {
-            source.params.len().saturating_sub(1)
-        } else {
-            source.params.len()
-        };
+        // Check parameter types
+        // In strict function mode, temporarily use TopLevelOnly for any propagation
+        // to prevent any from silencing structural mismatches in function parameters
+        use crate::solver::subtype::AnyPropagationMode;
 
-        // Compare fixed parameters
-        let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
-        for i in 0..fixed_compare_count {
-            let s_param = &source.params[i];
-            let t_param = &target.params[i];
-
-            // Check optional compatibility
-            if s_param.optional && !t_param.optional {
-                if !self
-                    .check_subtype(TypeId::UNDEFINED, t_param.type_id)
-                    .is_true()
-                {
-                    return SubtypeResult::False;
-                }
-            }
-
-            // Check parameter compatibility
-            if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) {
-                return SubtypeResult::False;
-            }
+        let old_mode = self.any_propagation;
+        if self.strict_function_types {
+            self.any_propagation = AnyPropagationMode::TopLevelOnly;
         }
 
-        // If target has rest parameter, check source's extra params against the rest type
-        if target_has_rest {
-            let Some(rest_elem_type) = rest_elem_type else {
-                return SubtypeResult::False;
+        let param_check_result = (|| -> SubtypeResult {
+            // Count non-rest parameters
+            let target_fixed_count = if target_has_rest {
+                target.params.len().saturating_sub(1)
+            } else {
+                target.params.len()
             };
-            if rest_is_top {
-                return SubtypeResult::True;
-            }
+            let source_fixed_count = if source_has_rest {
+                source.params.len().saturating_sub(1)
+            } else {
+                source.params.len()
+            };
 
-            for i in target_fixed_count..source_fixed_count {
+            // Compare fixed parameters
+            let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
+            for i in 0..fixed_compare_count {
                 let s_param = &source.params[i];
-                if !self.are_parameters_compatible_impl(s_param.type_id, rest_elem_type, is_method)
+                let t_param = &target.params[i];
+
+                // Check optional compatibility
+                if s_param.optional && !t_param.optional {
+                    if !self
+                        .check_subtype(TypeId::UNDEFINED, t_param.type_id)
+                        .is_true()
+                    {
+                        return SubtypeResult::False;
+                    }
+                }
+
+                // Check parameter compatibility
+                if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method)
                 {
                     return SubtypeResult::False;
                 }
             }
 
-            if source_has_rest {
-                let Some(s_rest_param) = source.params.last() else {
+            // If target has rest parameter, check source's extra params against the rest type
+            if target_has_rest {
+                let Some(rest_elem_type) = rest_elem_type else {
                     return SubtypeResult::False;
                 };
-                let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
-                if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method) {
-                    return SubtypeResult::False;
+                if rest_is_top {
+                    return SubtypeResult::True;
                 }
-            }
-        }
 
-        if source_has_rest {
-            let rest_param = if let Some(rest_param) = source.params.last() {
-                rest_param
-            } else {
-                return SubtypeResult::False;
-            };
-            let rest_elem_type = self.get_array_element_type(rest_param.type_id);
-            let rest_is_top = self.allow_bivariant_rest
-                && (rest_elem_type == TypeId::ANY || rest_elem_type == TypeId::UNKNOWN);
-
-            if !rest_is_top {
-                for i in source_fixed_count..target_fixed_count {
-                    let t_param = &target.params[i];
+                for i in target_fixed_count..source_fixed_count {
+                    let s_param = &source.params[i];
                     if !self.are_parameters_compatible_impl(
+                        s_param.type_id,
                         rest_elem_type,
-                        t_param.type_id,
                         is_method,
                     ) {
                         return SubtypeResult::False;
                     }
                 }
-            }
-        }
 
-        SubtypeResult::True
+                if source_has_rest {
+                    let Some(s_rest_param) = source.params.last() else {
+                        return SubtypeResult::False;
+                    };
+                    let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
+                    if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method)
+                    {
+                        return SubtypeResult::False;
+                    }
+                }
+            }
+
+            if source_has_rest {
+                let rest_param = if let Some(rest_param) = source.params.last() {
+                    rest_param
+                } else {
+                    return SubtypeResult::False;
+                };
+                let rest_elem_type = self.get_array_element_type(rest_param.type_id);
+                let rest_is_top = self.allow_bivariant_rest
+                    && (rest_elem_type == TypeId::ANY || rest_elem_type == TypeId::UNKNOWN);
+
+                if !rest_is_top {
+                    for i in source_fixed_count..target_fixed_count {
+                        let t_param = &target.params[i];
+                        if !self.are_parameters_compatible_impl(
+                            rest_elem_type,
+                            t_param.type_id,
+                            is_method,
+                        ) {
+                            return SubtypeResult::False;
+                        }
+                    }
+                }
+            }
+
+            SubtypeResult::True
+        })();
+
+        // Restore the original any_propagation mode
+        self.any_propagation = old_mode;
+
+        param_check_result
     }
 
     /// Check if a single function type is a subtype of a callable type with overloads.

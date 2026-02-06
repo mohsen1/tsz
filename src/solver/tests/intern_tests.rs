@@ -1115,3 +1115,52 @@ fn test_template_any_widening() {
         "Template with any should widen to string"
     );
 }
+
+#[test]
+fn test_empty_object_rule_intersection() {
+    let interner = TypeInterner::new();
+
+    // Task #48: Empty Object Rule for Intersections
+    // Primitives should absorb empty objects in intersections
+
+    // Case 1: string & empty_object → string
+    let empty_obj = interner.object(vec![]);
+    let string_and_empty = interner.intersection(vec![TypeId::STRING, empty_obj]);
+    assert_eq!(
+        string_and_empty,
+        TypeId::STRING,
+        "string & empty_object should normalize to string"
+    );
+
+    // Case 2: number & empty_object → number
+    let number_and_empty = interner.intersection(vec![TypeId::NUMBER, empty_obj]);
+    assert_eq!(
+        number_and_empty,
+        TypeId::NUMBER,
+        "number & empty_object should normalize to number"
+    );
+
+    // Case 3: (string | null) & empty_object
+    // Due to distributivity: (string | null) & {} → (string & {}) | (null & {})
+    // string & {} → string
+    // null & {} → never (null is disjoint from objects)
+    // Result: string | never → string
+    let string_or_null = interner.union(vec![TypeId::STRING, TypeId::NULL]);
+    let union_and_empty = interner.intersection(vec![string_or_null, empty_obj]);
+
+    // The result should be string (null is filtered out by the empty object constraint)
+    assert_eq!(
+        union_and_empty,
+        TypeId::STRING,
+        "(string | null) & empty_object should normalize to string"
+    );
+
+    // Case 4: string & empty_object & number → never (disjoint primitives still detected)
+    let string_and_empty_and_number =
+        interner.intersection(vec![TypeId::STRING, empty_obj, TypeId::NUMBER]);
+    assert_eq!(
+        string_and_empty_and_number,
+        TypeId::NEVER,
+        "string & empty_object & number should be never (disjoint primitives)"
+    );
+}
