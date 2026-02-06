@@ -98,4 +98,27 @@ type T1 = GetReturnType<() => string>; // Error: Cannot find name 'R'
 - 2026-02-06: Initial Application Type Expansion investigation - found working correctly
 - 2026-02-06: Identified actual issue is with conditional type `infer` inference
 - 2026-02-06: Discovered `match_infer_function_pattern` already exists
-- 2026-02-06: Investigated type lowering - need to find where `InferType` → `TypeKey::Infer`
+- 2026-02-06: **ROOT CAUSE FOUND**: `collect_infer_type_parameters_inner` in `type_checking_queries.rs` did not check for InferType nodes inside nested type structures
+- 2026-02-06: **FIX IMPLEMENTED**: Added recursive checking for InferType in function types, arrays, tuples, type literals, type operators, indexed access, mapped types, conditional types, template literals, parenthesized/optional/rest types, named tuple members, parameters, and type parameters
+- 2026-02-06: **VERIFIED**: Test cases passing, Redux test "Cannot find name" errors eliminated
+- 2026-02-06: **CODE REVIEW**: Gemini reviewed implementation, suggested adding TYPE_PARAMETER handling for constraints/defaults
+- 2026-02-06: **COMPLETE**: All fixes implemented and committed
+
+### Commits
+
+- `2c238b893`: feat(checker): fix infer type collection in nested types
+- `4eab170d1`: fix(checker): add TYPE_PARAMETER handling for infer collection
+
+### Test Results
+
+**Before Fix**:
+```typescript
+type GetReturnType<T> = T extends () => infer R ? R : never;
+// Error: TS2304: Cannot find name 'R'
+```
+
+**After Fix**:
+```typescript
+type GetReturnType<T> = T extends () => infer R ? R : never;
+type T1 = GetReturnType<() => string>; // ✅ Works - T1 is string
+```
