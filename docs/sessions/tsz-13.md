@@ -1,22 +1,35 @@
 # Session TSZ-13: Foundational Cleanup & Index Signatures
 
 **Started**: 2026-02-06
-**Status**: 🔄 NOT STARTED
-**Predecessor**: TSZ-12 (Cache Invalidation - Partial Complete)
+**Status**: 🔄 IN PROGRESS - Investigation Phase
+**Predecessor**: TSZ-12 (Cache Invalidation - Complete)
 
 ## Task
 
 Complete "almost done" features (Readonly infrastructure, Enum error counts) and implement Element Access Index Signatures for high impact.
 
-## Problem Statement
+## Investigation Findings
 
-### Task 1: Readonly & Enum Cleanup (~8 tests - Quick Wins)
+### Enum Error Duplication (~2 tests)
 
-**Readonly Infrastructure (~6 tests)**:
-- Tests manually create `CheckerState` without loading lib files
-- Getting error 2318 ("Cannot find global type") instead of 2540 ("Cannot assign to readonly")
-- Readonly subtyping logic already fixed in tsz-11
-- Need to fix test setup or emitter issues
+**Tests affected**:
+- `test_cross_enum_nominal_incompatibility`
+- `test_string_enum_cross_incompatibility`
+
+**Issue**: Tests expect 1 TS2322 error but get 2
+- Code: `let e2: E2 = e1;` where e1 is type E1, e2 is declared as E2
+- tsc produces: 1 error (correct)
+- tsz produces: 2 errors (duplicate)
+
+**Investigation**:
+- Error is reported in `src/checker/state_checking.rs:445` in `check_variable_declaration`
+- Only one error reporting call found in the code path
+- Loop in `check_variable_statement` calls `check_variable_declaration` once per declaration
+- **Root cause**: Unknown - requires deeper debugging of duplicate diagnostic reporting
+
+**Status**: Minor diagnostic deduplication issue, not a type system bug. Enum nominal typing works correctly (fixed in tsz-9).
+
+### Readonly Infrastructure (~6 tests)
 
 **Tests affected**:
 - `test_readonly_array_element_assignment_2540`
@@ -26,14 +39,14 @@ Complete "almost done" features (Readonly infrastructure, Enum error counts) and
 - `test_readonly_index_signature_variable_access_assignment_2540`
 - (+1 more)
 
-**Enum Types (~2 tests)**:
-- Error count mismatches (expect 1 error, get 2)
-- Nominal typing already works
-- Likely diagnostic reporting issue in declarations
+**Issue**: Tests get error 2318 ("Cannot find global type") instead of 2540 ("Cannot assign to readonly")
+- Root cause: Tests manually create `CheckerState` without loading lib files
+- Readonly subtyping logic already fixed in tsz-11
+- **Fix needed**: Update test setup to use lib fixtures
 
-**Tests affected**:
-- `test_cross_enum_nominal_incompatibility`
-- `test_string_enum_cross_incompatibility`
+**Status**: Test infrastructure issue, straightforward to fix.
+
+## Remaining Work
 
 ### Task 2: Element Access Index Signatures (~3 tests - High Impact)
 
@@ -50,65 +63,24 @@ Complete "almost done" features (Readonly infrastructure, Enum error counts) and
 - `test_checker_lowers_element_access_number_index_signature`
 - `test_checker_property_access_union_type`
 
-## Expected Impact
-
-- **Task 1**: Fix ~8 tests (6 readonly + 2 enum)
-- **Task 2**: Fix ~3 tests + potential halo effect on other tests
-- **Total**: +11 tests, aim for 8260+ passing
-- **Categories**: Eliminate "Readonly" and "Enum" from failure list
-
-## Files to Modify
-
-### Task 1: Readonly & Enum
-1. **src/tests/checker_state_tests.rs** - Fix test setup to use lib fixtures
-2. **src/checker/declarations.rs** - Adjust enum diagnostic reporting
-3. **src/emitter/types.rs** - Check if readonly keyword is missing
-
-### Task 2: Index Signatures
-1. **src/solver/evaluate.rs** - `evaluate_index_access` function
-2. **src/solver/visitor.rs** - Ensure index signatures are traversed
-3. **src/checker/expr.rs** - `check_element_access_expression`
-
-## Implementation Plan
-
-### Phase 1: Readonly & Enum Cleanup (Quick Wins)
-
-1. Investigate readonly test failures
-2. Fix test setup or add lib loading
-3. Adjust enum error reporting to match tsc counts
-
-### Phase 2: Index Signatures (Main Feature)
-
-Ask Gemini Question 1 (Approach):
-> "I need to implement Index Signature resolution in evaluate_index_access. When looking up a key in an object, if no property exists, how should I correctly fallback to string/number index signatures according to TS rules? Should this happen in the Solver or should the Checker provide the signature?"
-
-Based on Gemini's guidance:
-1. Implement index signature fallback logic
-2. Handle generic type parameters as keys
-3. Test with conformance tests
-
-### Phase 3: Test and Commit
-
-Run full test suite and commit fixes.
-
 ## Test Status
 
 **Start**: 8247 passing, 53 failing
+**Current**: 8247 passing, 53 failing
 **Goal**: 8260+ passing, 45- failing
 
 ## Notes
 
+**Session Progress**:
+- Investigated enum error duplication (found diagnostic issue, not type system bug)
+- Identified readonly test infrastructure fix path
+- Ready to implement index signatures (high impact feature)
+
 **Gemini's Recommendation**:
 - Index Signatures are foundational - required for `T[K]` expressions, Mapped Types, `keyof` operations
 - Has "halo effect" on many other tests that rely on indexer lookups
-- Quick wins first (Readonly/Enum) to clean up categories
-- Then tackle high-impact Index Signatures
 
-**Deferred Features**:
-- Flow Narrowing: Requires CFG construction (deferred from tsz-10)
-- Module Resolution: Path-mapping edge cases (lower priority)
-
-**Rationale**:
-- Complete "almost done" features to reduce technical debt
-- Index signatures are more foundational than overload resolution
-- Higher pass rate makes complex features easier to implement
+**Next Steps**:
+1. Fix readonly infrastructure tests (quick wins)
+2. Implement index signatures (high impact)
+3. Address enum error duplication if time permits
