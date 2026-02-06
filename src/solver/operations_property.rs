@@ -2379,7 +2379,14 @@ pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_n
             property_is_readonly(interner, inner, prop_name)
         }
         Some(TypeKey::Object(shape_id)) => {
-            object_property_is_readonly(interner, shape_id, prop_name)
+            tracing::trace!(
+                "property_is_readonly: Object shape {:?} for prop {}",
+                shape_id,
+                prop_name
+            );
+            let result = object_property_is_readonly(interner, shape_id, prop_name);
+            tracing::trace!("property_is_readonly: Object result = {}", result);
+            result
         }
         Some(TypeKey::ObjectWithIndex(shape_id)) => {
             indexed_object_property_is_readonly(interner, shape_id, prop_name)
