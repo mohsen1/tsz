@@ -1,5 +1,7 @@
 use super::config::{
-    JsxEmit, ModuleResolutionKind, load_tsconfig, parse_tsconfig, resolve_compiler_options,
+    JsxEmit, ModuleResolutionKind, default_lib_name_for_target, load_tsconfig, parse_tsconfig,
+    resolve_compiler_options, resolve_default_lib_files_from_dir, resolve_lib_files_from_dir,
+    resolve_lib_files_from_dir_with_options,
 };
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -253,7 +255,7 @@ fn resolve_compiler_options_resolves_lib_files() {
         return;
     };
 
-    // If lib_files is empty, it means we're falling back to embedded libs (valid scenario)
+    // Some CI environments may not provide TypeScript lib files; skip in that case.
     if resolved.lib_files.is_empty() {
         return;
     }
@@ -290,6 +292,162 @@ fn resolve_compiler_options_resolves_lib_files() {
 }
 
 #[test]
+fn resolve_default_lib_files_from_dir_follows_root_references() {
+    let temp = TempDir::new().expect("temp dir");
+    write_file(
+        &temp.path,
+        "lib.d.ts",
+        "/// <reference lib=\"es5\" />\ninterface Console { log(...args: any[]): void; }\n",
+    );
+    write_file(
+        &temp.path,
+        "lib.es5.d.ts",
+        "interface Array<T> { length: number; }\n",
+    );
+
+    let resolved = resolve_default_lib_files_from_dir(ScriptTarget::ES5, &temp.path)
+        .expect("default libs should resolve from provided directory");
+    let names: Vec<String> = resolved
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+
+    assert_eq!(names.first().map(|s| s.as_str()), Some("lib.d.ts"));
+    assert!(
+        names.iter().any(|name| name == "lib.es5.d.ts"),
+        "resolved libs should include transitive es5 reference: {names:?}"
+    );
+}
+
+#[test]
+fn resolve_default_lib_files_from_dir_does_not_fallback_to_core_libs() {
+    let temp = TempDir::new().expect("temp dir");
+    write_file(
+        &temp.path,
+        "lib.es5.d.ts",
+        "interface Array<T> { length: number; }\n",
+    );
+
+    let err = resolve_default_lib_files_from_dir(ScriptTarget::ES5, &temp.path)
+        .expect_err("missing lib.d.ts should fail instead of falling back to core libs");
+    let message = err.to_string();
+    assert!(
+        message.contains("compilerOptions.lib") && message.contains("es5.full"),
+        "{message}"
+    );
+}
+
+#[test]
+fn resolve_lib_files_from_dir_with_options_can_disable_transitive_references() {
+    let temp = TempDir::new().expect("temp dir");
+    write_file(
+        &temp.path,
+        "lib.es2015.d.ts",
+        "/// <reference lib=\"es5\" />\ninterface Promise<T> {}\n",
+    );
+    write_file(
+        &temp.path,
+        "lib.es5.d.ts",
+        "interface Array<T> { length: number; }\n",
+    );
+
+    let no_follow =
+        resolve_lib_files_from_dir_with_options(&["es2015".to_string()], false, &temp.path)
+            .expect("explicit libs should resolve without references");
+    let names: Vec<String> = no_follow
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+
+    assert_eq!(names, vec!["lib.es2015.d.ts".to_string()]);
+}
+
+#[test]
+fn resolve_lib_files_from_dir_follows_transitive_references_by_default() {
+    let temp = TempDir::new().expect("temp dir");
+    write_file(
+        &temp.path,
+        "lib.es2015.d.ts",
+        "/// <reference lib=\"es5\" />\ninterface Promise<T> {}\n",
+    );
+    write_file(
+        &temp.path,
+        "lib.es5.d.ts",
+        "interface Array<T> { length: number; }\n",
+    );
+
+    let resolved = resolve_lib_files_from_dir(&["es2015".to_string()], &temp.path)
+        .expect("explicit lib resolution should follow references");
+    let names: Vec<String> = resolved
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+
+    assert_eq!(names.first().map(|s| s.as_str()), Some("lib.es2015.d.ts"));
+    assert!(
+        names.iter().any(|name| name == "lib.es5.d.ts"),
+        "expected transitive es5 from es2015: {names:?}"
+    );
+}
+
+#[test]
+fn resolve_default_lib_files_from_dir_uses_es6_root_for_es2015_target() {
+    let temp = TempDir::new().expect("temp dir");
+    write_file(
+        &temp.path,
+        "lib.es6.d.ts",
+        "/// <reference lib=\"es2015\" />\ninterface SymbolConstructor {}\n",
+    );
+    write_file(
+        &temp.path,
+        "lib.es2015.d.ts",
+        "/// <reference lib=\"es5\" />\ninterface Promise<T> {}\n",
+    );
+    write_file(
+        &temp.path,
+        "lib.es5.d.ts",
+        "interface Array<T> { length: number; }\n",
+    );
+
+    let resolved = resolve_default_lib_files_from_dir(ScriptTarget::ES2015, &temp.path)
+        .expect("ES2015 target should resolve through lib.es6.d.ts root");
+    let names: Vec<String> = resolved
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+
+    assert_eq!(names.first().map(|s| s.as_str()), Some("lib.es6.d.ts"));
+    assert!(
+        names.iter().any(|name| name == "lib.es2015.d.ts"),
+        "expected es2015 to be included transitively: {names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name == "lib.es5.d.ts"),
+        "expected es5 to be included transitively: {names:?}"
+    );
+}
+
+#[test]
 fn resolve_compiler_options_rejects_unknown_lib() {
     let config = parse_tsconfig(
         r#"{
@@ -303,8 +461,140 @@ fn resolve_compiler_options_rejects_unknown_lib() {
     let err = resolve_compiler_options(config.compiler_options.as_ref())
         .expect_err("unsupported lib should error");
     let message = err.to_string();
-    // With embedded libs, we always get a "compilerOptions.lib" error for unknown libs
+    // Preserve the normalized compilerOptions.lib error envelope.
     assert!(message.contains("compilerOptions.lib"), "{message}");
+}
+
+#[test]
+fn default_lib_name_for_target_matches_tsc_spec() {
+    assert_eq!(default_lib_name_for_target(ScriptTarget::ES5), "lib");
+    assert_eq!(default_lib_name_for_target(ScriptTarget::ES2015), "es6");
+    assert_eq!(
+        default_lib_name_for_target(ScriptTarget::ES2016),
+        "es2016.full"
+    );
+    assert_eq!(
+        default_lib_name_for_target(ScriptTarget::ES2017),
+        "es2017.full"
+    );
+    assert_eq!(
+        default_lib_name_for_target(ScriptTarget::ES2018),
+        "es2018.full"
+    );
+    assert_eq!(
+        default_lib_name_for_target(ScriptTarget::ES2019),
+        "es2019.full"
+    );
+    assert_eq!(
+        default_lib_name_for_target(ScriptTarget::ES2020),
+        "es2020.full"
+    );
+    assert_eq!(
+        default_lib_name_for_target(ScriptTarget::ES2021),
+        "es2021.full"
+    );
+    assert_eq!(
+        default_lib_name_for_target(ScriptTarget::ES2022),
+        "es2022.full"
+    );
+    assert_eq!(
+        default_lib_name_for_target(ScriptTarget::ESNext),
+        "esnext.full"
+    );
+}
+
+#[test]
+fn resolve_lib_files_from_dir_supports_tsc_aliases() {
+    let temp = TempDir::new().expect("temp dir");
+    write_file(&temp.path, "lib.es5.full.d.ts", "interface A {}\n");
+    write_file(&temp.path, "lib.es2015.full.d.ts", "interface B {}\n");
+    write_file(&temp.path, "lib.es2016.d.ts", "interface C {}\n");
+
+    let resolved = resolve_lib_files_from_dir(
+        &["lib".to_string(), "es6".to_string(), "es7".to_string()],
+        &temp.path,
+    )
+    .expect("aliases should resolve");
+    let names: Vec<String> = resolved
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+
+    assert_eq!(names[0], "lib.es5.full.d.ts");
+    assert_eq!(names[1], "lib.es2015.full.d.ts");
+    assert_eq!(names[2], "lib.es2016.d.ts");
+}
+
+#[test]
+fn resolve_lib_files_from_dir_dedupes_recursive_references() {
+    let temp = TempDir::new().expect("temp dir");
+    write_file(
+        &temp.path,
+        "lib.custom.d.ts",
+        "/// <reference lib=\"es2015\" />\n/// <reference lib=\"es5\" />\n",
+    );
+    write_file(
+        &temp.path,
+        "lib.es2015.d.ts",
+        "/// <reference lib=\"es5\" />\ninterface Promise<T> {}\n",
+    );
+    write_file(
+        &temp.path,
+        "lib.es5.d.ts",
+        "interface Array<T> { length: number; }\n",
+    );
+
+    let resolved = resolve_lib_files_from_dir(&["custom".to_string()], &temp.path)
+        .expect("recursive refs should resolve");
+    let names: Vec<&str> = resolved
+        .iter()
+        .map(|p| p.file_name().and_then(|name| name.to_str()).unwrap_or(""))
+        .collect();
+
+    let es5_count = names.iter().filter(|&&name| name == "lib.es5.d.ts").count();
+    assert_eq!(es5_count, 1, "es5 should only appear once: {names:?}");
+}
+
+#[test]
+fn resolve_compiler_options_rejects_no_lib_with_lib() {
+    let config = parse_tsconfig(
+        r#"{
+          "compilerOptions": {
+            "noLib": true,
+            "lib": ["es2015"]
+          }
+        }"#,
+    )
+    .expect("should parse config");
+
+    let err = resolve_compiler_options(config.compiler_options.as_ref())
+        .expect_err("noLib + lib should fail");
+    let message = err.to_string();
+    assert!(message.contains("Option 'lib'"), "{message}");
+    assert!(message.contains("option 'noLib'"), "{message}");
+}
+
+#[test]
+fn resolve_compiler_options_no_lib_disables_lib_loading() {
+    let config = parse_tsconfig(
+        r#"{
+          "compilerOptions": {
+            "noLib": true
+          }
+        }"#,
+    )
+    .expect("should parse config");
+
+    let resolved =
+        resolve_compiler_options(config.compiler_options.as_ref()).expect("should resolve");
+    assert!(resolved.checker.no_lib);
+    assert!(resolved.lib_files.is_empty());
+    assert!(!resolved.lib_is_default);
 }
 
 #[allow(dead_code)]
