@@ -637,6 +637,8 @@ impl<'a> GoToDefinition<'a> {
                 let (container_name, container_kind) = self.get_container_info(symbol_id);
                 let is_local = if kind == "parameter" {
                     false
+                } else if self.is_class_or_interface_member(decl_idx) {
+                    true
                 } else {
                     !self.is_top_level_declaration(decl_idx)
                 };
@@ -773,10 +775,33 @@ impl<'a> GoToDefinition<'a> {
             skip_trailing(pos, end)
         };
 
+        // For declarations that end with a body (class, enum, function, etc.),
+        // find the closing } and use that as the end (don't include trailing ;).
+        let find_brace_end = |pos: u32, end: u32| -> u32 {
+            let start = pos as usize;
+            let e = end.min(source_len) as usize;
+            // Scan backwards for the closing }
+            for i in (start..e).rev() {
+                if source_bytes[i] == b'}' {
+                    return (i + 1) as u32;
+                }
+            }
+            // Fall back to find_real_end
+            find_real_end(pos, end)
+        };
+
         // Clean span: strip leading trivia, find real end
         let clean = |pos: u32, end: u32| -> (u32, u32) {
             let s = skip_leading(pos, end);
             let e = find_real_end(s, end);
+            (s, e)
+        };
+
+        // Clean span for brace-terminated declarations (class, enum, etc.):
+        // strip leading trivia, find closing }
+        let clean_brace = |pos: u32, end: u32| -> (u32, u32) {
+            let s = skip_leading(pos, end);
+            let e = find_brace_end(s, end);
             (s, e)
         };
 
@@ -860,7 +885,13 @@ impl<'a> GoToDefinition<'a> {
                     decl_node.pos
                 };
 
-                clean(start_pos, decl_node.end)
+                // Type aliases end with ; (e.g., `type T = ...;`), other declarations
+                // end with } and should NOT include trailing ;
+                if decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                    clean(start_pos, decl_node.end)
+                } else {
+                    clean_brace(start_pos, decl_node.end)
+                }
             }
             syntax_kind_ext::METHOD_SIGNATURE
             | syntax_kind_ext::PROPERTY_SIGNATURE
@@ -1228,6 +1259,22 @@ impl<'a> GoToDefinition<'a> {
 
     /// Check if a declaration is at the top level of the source file.
     /// Top-level declarations have isLocal = false.
+    /// Check if a declaration is a member of a class or interface.
+    fn is_class_or_interface_member(&self, decl_idx: NodeIndex) -> bool {
+        if let Some(ext) = self.arena.get_extended(decl_idx) {
+            let parent = ext.parent;
+            if !parent.is_none() {
+                if let Some(parent_node) = self.arena.get(parent) {
+                    let k = parent_node.kind;
+                    return k == syntax_kind_ext::CLASS_DECLARATION
+                        || k == syntax_kind_ext::CLASS_EXPRESSION
+                        || k == syntax_kind_ext::INTERFACE_DECLARATION;
+                }
+            }
+        }
+        false
+    }
+
     fn is_top_level_declaration(&self, decl_idx: NodeIndex) -> bool {
         let mut current = decl_idx;
         // Walk up through the parent chain looking for source file

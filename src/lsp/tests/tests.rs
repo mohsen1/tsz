@@ -319,6 +319,10 @@ fn test_definition_info_class_member_container_name() {
         infos[0].container_kind, "class",
         "Class method containerKind should be 'class'"
     );
+    assert_eq!(
+        infos[0].is_local, true,
+        "Class member should have is_local = true"
+    );
 }
 
 #[test]
@@ -397,5 +401,37 @@ fn test_definition_info_local_var_is_local() {
     assert_eq!(
         infos[0].is_local, true,
         "Function-scoped variable should have is_local = true"
+    );
+}
+
+#[test]
+fn test_definition_info_enum_context_span_excludes_semicolon() {
+    // Enum contextSpan should end at } not include trailing ;
+    let source = "enum E { A, B };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = position::LineMap::build(source);
+
+    let goto_def =
+        definition::GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on 'E' (line 0, col 5)
+    let infos = goto_def.get_definition_info(root, Position::new(0, 5));
+    assert!(infos.is_some(), "Should find definition info for enum");
+    let infos = infos.unwrap();
+    assert_eq!(infos.len(), 1);
+    // The context span should cover "enum E { A, B }" (ending at }) not "enum E { A, B };"
+    let ctx = infos[0].context_span.as_ref().unwrap();
+    let ctx_end_offset = line_map.position_to_offset(ctx.end, source).unwrap();
+    let ctx_start_offset = line_map.position_to_offset(ctx.start, source).unwrap();
+    let ctx_text = &source[ctx_start_offset as usize..ctx_end_offset as usize];
+    assert!(
+        ctx_text.ends_with('}'),
+        "Enum contextSpan should end with '}}', got: {:?}",
+        ctx_text
     );
 }
