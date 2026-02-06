@@ -1941,7 +1941,7 @@ impl Server {
                     if let Some(rest) = after_close.strip_prefix(':') {
                         let ret_type = rest.trim_start();
                         let ret_type = ret_type
-                            .split(|c: char| c == '{' || c == '\n')
+                            .split(['{', '\n'])
                             .next()
                             .unwrap_or("")
                             .trim();
@@ -2001,7 +2001,7 @@ impl Server {
                 if let Some(rest) = after_name.strip_prefix(':') {
                     let type_text = rest.trim_start();
                     let type_text = type_text
-                        .split(|c: char| c == '=' || c == ';' || c == '\n')
+                        .split(['=', ';', '\n'])
                         .next()
                         .unwrap_or("")
                         .trim();
@@ -3018,7 +3018,7 @@ impl Server {
     fn parse_name_and_type(s: &str, name_kind: &str, parts: &mut Vec<serde_json::Value>) {
         // Find where the name ends - it could be followed by ':', '(', '<', '=', or end of string
         let name_end = s
-            .find(|c: char| c == ':' || c == '(' || c == '<' || c == '=')
+            .find([':', '(', '<', '='])
             .unwrap_or(s.len());
         let name_part = s[..name_end].trim_end();
 
