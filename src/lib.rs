@@ -131,22 +131,6 @@ pub mod module_resolution_debug;
 // Lib Loader - Load and merge lib.d.ts symbols into the binder (BIND-10)
 pub mod lib_loader;
 
-// Embedded TypeScript Library Files - Only compiled when embedded_libs feature is enabled
-// Not used at runtime - lib files are loaded from disk like tsgo
-#[cfg(feature = "embedded_libs")]
-pub mod embedded_libs;
-#[cfg(feature = "embedded_libs")]
-pub use embedded_libs::{EmbeddedLib, get_default_libs_for_target, get_lib, get_libs_for_target};
-
-// Pre-parsed TypeScript Library Files - For faster startup (requires embedded_libs)
-#[cfg(all(feature = "preparsed_libs", feature = "embedded_libs"))]
-pub mod preparsed_libs;
-#[cfg(all(feature = "preparsed_libs", feature = "embedded_libs"))]
-pub use preparsed_libs::{
-    PreParsedLib, PreParsedLibs, generate_and_write_cache, get_preparsed_libs, has_preparsed_libs,
-    load_preparsed_libs_for_target,
-};
-
 // Checker types and implementation (Phase 5)
 pub mod checker;
 

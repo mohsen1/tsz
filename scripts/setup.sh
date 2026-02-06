@@ -99,18 +99,7 @@ install_npm "$SCRIPT_DIR"            "scripts/"
 install_npm "$SCRIPT_DIR/emit"       "scripts/emit/"
 install_npm "$SCRIPT_DIR/fourslash"  "scripts/fourslash/"
 
-# ── 4. Embedded lib-assets ───────────────────────────────────────────────────
-step "Embedded lib-assets"
-
-LIB_VERSION_FILE="$ROOT_DIR/src/lib-assets/lib_version.json"
-if [ "$FORCE" = false ] && [ -f "$LIB_VERSION_FILE" ]; then
-  skip "Already generated (use --force or LIB_ASSETS_FORCE=1 to regenerate)."
-else
-  node "$SCRIPT_DIR/generate-lib-assets.mjs"
-  echo "  $(green "Lib-assets generated.")"
-fi
-
-# ── 5. Git hooks ─────────────────────────────────────────────────────────────
+# ── 4. Git hooks ──────────────────────────────────────────────────────────────
 step "Git hooks"
 
 CURRENT_HOOKS_PATH=$(git config --get core.hooksPath 2>/dev/null || true)

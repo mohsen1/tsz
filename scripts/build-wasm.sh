@@ -19,9 +19,6 @@ cd "$PROJECT_ROOT"
 
 wasm-pack build --target nodejs --out-dir pkg
 
-# Note: TypeScript lib files are now embedded in the WASM binary.
-# They are fetched from npm by scripts/generate-lib-assets.mjs and
-# compiled into the binary via src/embedded_libs.rs.
-# No separate lib file copying is needed.
+# Note: Lib files are loaded at runtime from the TypeScript submodule's built/local/ directory.
 
 echo "WASM built successfully to $PROJECT_ROOT/pkg/"

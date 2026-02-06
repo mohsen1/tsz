@@ -31,7 +31,7 @@ node scripts/help.mjs
 | `scripts/test.sh` | Run Rust unit tests |
 | `scripts/bench.sh` | Run benchmarks |
 | `scripts/build-wasm.sh` | Build WASM module |
-| `scripts/setup.sh` | One-stop setup (submodule, deps, lib-assets, hooks) |
+| `scripts/setup.sh` | One-stop setup (submodule, deps, hooks) |
 | `scripts/run-single-test.mjs` | Debug single file (host) |
 | `scripts/validate-wasm.mjs` | Validate WASM loads |
 | `scripts/help.mjs` | Show all commands |
