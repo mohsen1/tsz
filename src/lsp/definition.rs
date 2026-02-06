@@ -258,6 +258,11 @@ impl<'a> GoToDefinition<'a> {
             return None;
         }
 
+        // 2a. Skip keyword literals and built-in identifiers with no user definition
+        if self.is_builtin_node(node_idx) {
+            return None;
+        }
+
         // 3. Resolve the node to a symbol via scope walking
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let symbol_id_opt = if let Some(scope_cache) = scope_cache {
@@ -313,6 +318,11 @@ impl<'a> GoToDefinition<'a> {
             return None;
         }
 
+        // Skip keyword literals and built-in identifiers
+        if self.is_builtin_node(node_idx) {
+            return None;
+        }
+
         // Resolve the node to a symbol
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let symbol_id_opt = if let Some(scope_cache) = scope_cache {
@@ -358,6 +368,11 @@ impl<'a> GoToDefinition<'a> {
                     return None;
                 }
                 if decl_node.end < decl_node.pos {
+                    return None;
+                }
+                // Skip zero-width declarations - these are synthetic/placeholder
+                // declarations for built-in globals (undefined, null, etc.)
+                if decl_node.pos == decl_node.end {
                     return None;
                 }
 
@@ -412,6 +427,35 @@ impl<'a> GoToDefinition<'a> {
         self.locations_from_symbol(symbol_id)
     }
 
+    /// Check if a node is a built-in keyword literal or built-in identifier
+    /// that has no user-navigable definition (e.g., null, true, false, undefined, arguments).
+    fn is_builtin_node(&self, node_idx: NodeIndex) -> bool {
+        if let Some(node) = self.arena.get(node_idx) {
+            use crate::scanner::SyntaxKind;
+            let kind = node.kind;
+            // Keyword literals never have user-navigable definitions
+            if kind == SyntaxKind::NullKeyword as u16
+                || kind == SyntaxKind::TrueKeyword as u16
+                || kind == SyntaxKind::FalseKeyword as u16
+                || kind == SyntaxKind::VoidKeyword as u16
+            {
+                return true;
+            }
+            // Check identifier text against built-in globals without definitions
+            if kind == SyntaxKind::Identifier as u16 {
+                let pos = node.pos as usize;
+                let end = node.end as usize;
+                if end <= self.source_text.len() && pos <= end {
+                    let text = &self.source_text[pos..end];
+                    if text == "undefined" || text == "arguments" {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     // -----------------------------------------------------------------------
     // Rich definition info (for tsserver compatibility)
     // -----------------------------------------------------------------------
@@ -428,6 +472,11 @@ impl<'a> GoToDefinition<'a> {
 
         let node_idx = find_node_at_offset(self.arena, offset);
         if node_idx.is_none() {
+            return None;
+        }
+
+        // Skip keyword literals and built-in identifiers
+        if self.is_builtin_node(node_idx) {
             return None;
         }
 
@@ -463,6 +512,10 @@ impl<'a> GoToDefinition<'a> {
                     return None;
                 }
                 if decl_node.end < decl_node.pos {
+                    return None;
+                }
+                // Skip zero-width declarations (synthetic builtins)
+                if decl_node.pos == decl_node.end {
                     return None;
                 }
 
