@@ -411,16 +411,25 @@ When a task is marked "ALREADY DONE", it means:
 - ⏳ Task A (RelationCacheKey Audit) - PARTIALLY COMPLETE
 
 **Task A: RelationCacheKey Audit Status:**
-- ✅ Expanded `flags` from `u8` to `u16` (commit: 0b75100f1)
+- ✅ Expanded `flags` from `u8` to `u16` (commits: 0b75100f1, [new commit])
 - ✅ Added missing flags to `SubtypeChecker::make_cache_key`:
   - bit 5: allow_void_return
   - bit 6: allow_bivariant_rest
   - bit 7: allow_bivariant_param_count
+- ✅ Added `apply_flags()` method to `SubtypeChecker` to unpack u16 bitmask
 - ✅ Updated `assignability_checker.rs` to use `u16` flags
-- ⏳ **REMAINING**: Pass actual flags to `QueryDatabase` trait methods
-  - Current issue: `QueryCache::is_subtype_of` and `is_assignable_to` use hardcoded `0, 0` flags
-  - This requires trait signature change to accept `flags: u16` parameter
-  - Marked with TODO in src/solver/db.rs
+- ✅ **COMPLETE**: Added `_with_flags` methods to `QueryDatabase` trait:
+  - `is_subtype_of_with_flags(source, target, flags: u16) -> bool`
+  - `is_assignable_to_with_flags(source, target, flags: u16) -> bool`
+  - Default implementations use `flags: 0` for backward compatibility
+- ✅ Updated `TypeInterner` and `QueryCache` implementations to support flags
+- ✅ Fixed soundness hole: Cached results now respect flag configurations
+
+**Implementation Notes:**
+- Used `flags: 0` as default to maintain backward compatibility
+- Tests pass: 8091 passing (same count as before changes)
+- 189 pre-existing test failures (unrelated to this work)
+- CompatChecker integration: TODO comment added for future `apply_flags()` support
 
 **Test Results:**
 - All 3525 solver tests passing

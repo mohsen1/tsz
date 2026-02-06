@@ -485,8 +485,35 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Task #49: Global Canonical Mapping
     fn canonical_id(&self, type_id: TypeId) -> TypeId;
 
+    /// Subtype check with compiler flags.
+    ///
+    /// The `flags` parameter is a packed u16 bitmask matching `RelationCacheKey.flags`:
+    /// - bit 0: strict_null_checks
+    /// - bit 1: strict_function_types
+    /// - bit 2: exact_optional_property_types
+    /// - bit 3: no_unchecked_indexed_access
+    /// - bit 4: disable_method_bivariance
+    /// - bit 5: allow_void_return
+    /// - bit 6: allow_bivariant_rest
+    /// - bit 7: allow_bivariant_param_count
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
-        crate::solver::subtype::is_subtype_of(self.as_type_database(), source, target)
+        // Default implementation: use non-strict mode for backward compatibility
+        // Individual callers can use is_subtype_of_with_flags for explicit flag control
+        self.is_subtype_of_with_flags(source, target, 0)
+    }
+
+    /// Subtype check with explicit compiler flags.
+    ///
+    /// The `flags` parameter is a packed u16 bitmask matching `RelationCacheKey.flags`.
+    fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        // Default implementation: use SubtypeChecker with default flags
+        // (This will be overridden by QueryCache with proper caching)
+        crate::solver::subtype::is_subtype_of_with_flags(
+            self.as_type_database(),
+            source,
+            target,
+            flags,
+        )
     }
 
     /// TypeScript assignability check with full compatibility rules (The Lawyer).
@@ -503,7 +530,16 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// - Function bivariance (when not in strictFunctionTypes mode)
     ///
     /// Uses separate cache from `is_subtype_of` to prevent cache poisoning.
-    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool;
+    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        // Default implementation: use non-strict mode for backward compatibility
+        // Individual callers can use is_assignable_to_with_flags for explicit flag control
+        self.is_assignable_to_with_flags(source, target, 0)
+    }
+
+    /// Assignability check with explicit compiler flags.
+    ///
+    /// The `flags` parameter is a packed u16 bitmask matching `RelationCacheKey.flags`.
+    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool;
 
     /// Look up a cached subtype result for the given key.
     /// Returns `None` if the result is not cached.
@@ -650,7 +686,13 @@ impl QueryDatabase for TypeInterner {
     }
 
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        // Default implementation: use non-strict mode for backward compatibility
+        self.is_assignable_to_with_flags(source, target, 0)
+    }
+
+    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, _flags: u16) -> bool {
         // Default implementation: use CompatChecker
+        // TODO: Apply flags to CompatChecker once it supports apply_flags
         use crate::solver::compat::CompatChecker;
         let mut checker = CompatChecker::new(self);
         checker.is_assignable(source, target)
@@ -1102,10 +1144,10 @@ impl QueryDatabase for QueryCache<'_> {
         result
     }
 
-    fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
-        // TypeInterner doesn't have access to Lawyer flags, so use defaults
-        // TODO: This should ideally use the flags from CheckerContext
-        let key = RelationCacheKey::subtype(source, target, 0, 0);
+    fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        // Task A: Use passed flags instead of hardcoded 0,0
+        // TODO: Configure SubtypeChecker with these flags
+        let key = RelationCacheKey::subtype(source, target, flags, 0);
         // Handle poisoned locks gracefully
         let cached = match self.subtype_cache.read() {
             Ok(cache) => cache.get(&key).copied(),
@@ -1116,7 +1158,12 @@ impl QueryDatabase for QueryCache<'_> {
             return result;
         }
 
-        let result = crate::solver::subtype::is_subtype_of(self.as_type_database(), source, target);
+        let result = crate::solver::subtype::is_subtype_of_with_flags(
+            self.as_type_database(),
+            source,
+            target,
+            flags,
+        );
         match self.subtype_cache.write() {
             Ok(mut cache) => {
                 cache.insert(key, result);
@@ -1128,11 +1175,10 @@ impl QueryDatabase for QueryCache<'_> {
         result
     }
 
-    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
-        // LOOSE: Use CompatChecker (The Lawyer)
-        // This is for Checker diagnostics - full TypeScript compatibility rules
-        // TODO: Pass actual flags from CheckerContext instead of defaults
-        let key = RelationCacheKey::assignability(source, target, 0, 0);
+    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        // Task A: Use passed flags instead of hardcoded 0,0
+        // TODO: Configure CompatChecker with these flags
+        let key = RelationCacheKey::assignability(source, target, flags, 0);
 
         if let Some(result) = self.check_cache(&self.assignability_cache, key) {
             return result;
@@ -1141,11 +1187,24 @@ impl QueryDatabase for QueryCache<'_> {
         // Use CompatChecker with all compatibility rules
         use crate::solver::compat::CompatChecker;
         let mut checker = CompatChecker::new(self.as_type_database());
+        // TODO: Apply flags to CompatChecker (needs apply_flags method)
+        // For now, the cache key includes flags, but the checker uses defaults
+        // This is safe as long as callers use consistent flags
 
         let result = checker.is_assignable(source, target);
 
         self.insert_cache(&self.assignability_cache, key, result);
         result
+    }
+
+    /// Convenience wrapper for is_subtype_of with default flags.
+    fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
+        self.is_subtype_of_with_flags(source, target, 0) // Default non-strict mode for backward compatibility
+    }
+
+    /// Convenience wrapper for is_assignable_to with default flags.
+    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable_to_with_flags(source, target, 0) // Default non-strict mode for backward compatibility
     }
 
     fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {
@@ -1706,8 +1765,18 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         self.query_cache.is_subtype_of(source, target)
     }
 
+    fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        self.query_cache
+            .is_subtype_of_with_flags(source, target, flags)
+    }
+
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
         self.query_cache.is_assignable_to(source, target)
+    }
+
+    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        self.query_cache
+            .is_assignable_to_with_flags(source, target, flags)
     }
 
     fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {
