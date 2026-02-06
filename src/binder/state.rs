@@ -2002,11 +2002,17 @@ impl BinderState {
             k if k == syntax_kind_ext::IF_STATEMENT => {
                 self.record_flow(idx);
                 if let Some(if_stmt) = arena.get_if_statement(node) {
+                    use tracing::trace;
+
                     // Bind the condition expression (record identifiers in it)
                     self.bind_expression(arena, if_stmt.expression);
 
                     // Save the pre-condition flow
                     let pre_condition_flow = self.current_flow;
+                    trace!(
+                        pre_condition_flow = pre_condition_flow.0,
+                        "if statement: pre_condition_flow",
+                    );
 
                     // Create TRUE_CONDITION flow for the then branch
                     let true_flow = self.create_flow_condition(
@@ -2014,11 +2020,20 @@ impl BinderState {
                         pre_condition_flow,
                         if_stmt.expression,
                     );
+                    trace!(
+                        true_flow = true_flow.0,
+                        "if statement: created TRUE_CONDITION flow",
+                    );
 
                     // Bind the then branch with narrowed flow
                     self.current_flow = true_flow;
+                    trace!("if statement: binding then branch with TRUE_CONDITION flow");
                     self.bind_node(arena, if_stmt.then_statement);
                     let after_then_flow = self.current_flow;
+                    trace!(
+                        after_then_flow = after_then_flow.0,
+                        "if statement: after_then_flow",
+                    );
 
                     // Handle else branch if present
                     let after_else_flow = if !if_stmt.else_statement.is_none() {
@@ -2028,11 +2043,18 @@ impl BinderState {
                             pre_condition_flow,
                             if_stmt.expression,
                         );
+                        trace!(
+                            false_flow = false_flow.0,
+                            "if statement: created FALSE_CONDITION flow",
+                        );
 
                         // Bind the else branch with narrowed flow
                         self.current_flow = false_flow;
+                        trace!("if statement: binding else branch with FALSE_CONDITION flow");
                         self.bind_node(arena, if_stmt.else_statement);
-                        self.current_flow
+                        let result = self.current_flow;
+                        trace!(result = result.0, "if statement: after_else_flow",);
+                        result
                     } else {
                         // No else branch - false condition goes directly to merge
                         self.create_flow_condition(
@@ -2044,6 +2066,10 @@ impl BinderState {
 
                     // Create merge point for branches
                     let merge_label = self.create_branch_label();
+                    trace!(
+                        merge_label = merge_label.0,
+                        "if statement: created merge label",
+                    );
                     self.add_antecedent(merge_label, after_then_flow);
                     self.add_antecedent(merge_label, after_else_flow);
                     self.current_flow = merge_label;

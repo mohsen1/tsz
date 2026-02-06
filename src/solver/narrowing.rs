@@ -1112,20 +1112,10 @@ impl<'a> NarrowingContext<'a> {
                     if present {
                         // Positive: "prop" in member
                         if has_property {
-                            // Property exists: Promote to required
-                            let prop_type = self.get_property_type(resolved_member, property_name);
-                            let required_prop = PropertyInfo {
-                                name: property_name,
-                                type_id: prop_type.unwrap_or(TypeId::UNKNOWN),
-                                write_type: prop_type.unwrap_or(TypeId::UNKNOWN),
-                                optional: false,
-                                readonly: false,
-                                is_method: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                            };
-                            let filter_obj = self.db.object(vec![required_prop]);
-                            self.db.intersection2(member, filter_obj)
+                            // Property exists: Keep the member as-is
+                            // CRITICAL: For union narrowing, we don't modify the member type
+                            // We just filter to keep only members that have the property
+                            member
                         } else {
                             // Property not found: Exclude member (return NEVER)
                             // Per TypeScript: "prop in x" being true means x MUST have the property
@@ -1144,15 +1134,26 @@ impl<'a> NarrowingContext<'a> {
                 })
                 .collect();
 
-            if matching.is_empty() {
-                trace!("No members in union, returning NEVER");
+            // CRITICAL FIX: Filter out NEVER types before creating the union
+            // When a union member doesn't have the required property, it becomes NEVER
+            // and should be EXCLUDED from the result, not included in the union
+            let matching_non_never: Vec<TypeId> = matching
+                .into_iter()
+                .filter(|&t| t != TypeId::NEVER)
+                .collect();
+
+            if matching_non_never.is_empty() {
+                trace!("All members were NEVER, returning NEVER");
                 return TypeId::NEVER;
-            } else if matching.len() == 1 {
-                trace!("Found single member, returning {}", matching[0].0);
-                return matching[0];
+            } else if matching_non_never.len() == 1 {
+                trace!(
+                    "Found single member after filtering, returning {}",
+                    matching_non_never[0].0
+                );
+                return matching_non_never[0];
             } else {
-                trace!("Created union with {} members", matching.len());
-                return self.db.union(matching);
+                trace!("Created union with {} members", matching_non_never.len());
+                return self.db.union(matching_non_never);
             }
         }
 
