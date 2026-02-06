@@ -98,6 +98,71 @@ fn check_with_module_exports(
         .collect()
 }
 
+/// Helper similar to check_with_module_exports but allows specifying custom source
+/// for each module. This is useful for testing with class exports, namespace patterns, etc.
+fn check_with_module_sources(
+    source: &str,
+    file_name: &str,
+    module_sources: Vec<(&str, &str)>,
+) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors in {}: {:?}",
+        file_name,
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+
+    // Pre-populate module_exports by parsing the provided module sources
+    for (module_name, module_source) in &module_sources {
+        let mut export_parser =
+            ParserState::new(format!("{}.ts", module_name), module_source.to_string());
+        let export_root = export_parser.parse_source_file();
+        assert!(
+            export_parser.get_diagnostics().is_empty(),
+            "Parse errors in {}.ts: {:?}",
+            module_name,
+            export_parser.get_diagnostics()
+        );
+        let mut export_binder = BinderState::new();
+        merge_shared_lib_symbols(&mut export_binder);
+        export_binder.bind_source_file(export_parser.get_arena(), export_root);
+
+        let mut table = crate::binder::SymbolTable::new();
+        for (name, &sym_id) in export_binder.file_locals.iter() {
+            table.set(name.clone(), sym_id);
+        }
+        binder.module_exports.insert(module_name.to_string(), table);
+    }
+
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut options = CheckerOptions::default();
+    options.module = crate::common::ModuleKind::CommonJS;
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 /// Helper to parse, bind, and check a single file with resolved_modules set.
 /// This simulates the CLI driver having resolved certain module specifiers.
 fn check_with_resolved_modules(
@@ -1672,5 +1737,76 @@ fn test_resolution_maps_only_single_file() {
     assert!(
         modules.is_empty(),
         "Single file should have no resolved modules"
+    );
+}
+
+// =============================================================================
+// Heritage Clause with Import = Require Tests
+// =============================================================================
+
+#[test]
+fn test_import_equals_require_extends_no_ts2304() {
+    // Regression test: `class X extends Backbone.Model` should not produce
+    // TS2304 when Backbone comes from `import Backbone = require("./backbone")`
+    let source = r#"
+import Backbone = require("./backbone");
+class MyModel extends Backbone.Model {
+    public age: number = 0;
+}
+"#;
+    let module_source = r#"
+export class Model {
+    public name: string = "";
+}
+"#;
+    let diags = check_with_module_sources(source, "main.ts", vec![("./backbone", module_source)]);
+    let ts2304_errors: Vec<_> = diags.iter().filter(|(c, _)| *c == 2304).collect();
+    assert!(
+        ts2304_errors.is_empty(),
+        "Should not emit TS2304 for 'extends Backbone.Model' with import = require, got: {:?}",
+        ts2304_errors
+    );
+}
+
+#[test]
+fn test_import_equals_require_new_expression_no_ts2304() {
+    // Test that `new Backbone.Model()` works when Backbone is from import = require
+    let source = r#"
+import Backbone = require("./backbone");
+const m = new Backbone.Model();
+"#;
+    let module_source = r#"
+export class Model {
+    public name: string = "";
+}
+"#;
+    let diags = check_with_module_sources(source, "main.ts", vec![("./backbone", module_source)]);
+    let ts2304_errors: Vec<_> = diags.iter().filter(|(c, _)| *c == 2304).collect();
+    assert!(
+        ts2304_errors.is_empty(),
+        "Should not emit TS2304 for 'new Backbone.Model()' with import = require, got: {:?}",
+        ts2304_errors
+    );
+}
+
+#[test]
+fn test_import_equals_require_extends_nonexistent_still_errors() {
+    // Negative test: extends with non-existent export should still produce an error
+    let source = r#"
+import Backbone = require("./backbone");
+class Bad extends Backbone.NonExistent {
+    x: number = 0;
+}
+"#;
+    let module_source = r#"
+export class Model {
+    public name: string = "";
+}
+"#;
+    let diags = check_with_module_sources(source, "main.ts", vec![("./backbone", module_source)]);
+    // Should have some error (TS2304 for unresolved name or TS2339 for missing property)
+    assert!(
+        !diags.is_empty(),
+        "Should emit error for extends Backbone.NonExistent, got no diagnostics"
     );
 }
