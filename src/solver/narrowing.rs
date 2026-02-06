@@ -44,6 +44,54 @@ use tracing::{Level, span, trace};
 #[cfg(test)]
 use crate::solver::TypeInterner;
 
+/// The result of a `typeof` expression, restricted to the 8 standard JavaScript types.
+///
+/// Using an enum instead of `String` eliminates heap allocation per typeof guard.
+/// TypeScript's `typeof` operator only returns these 8 values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TypeofKind {
+    String,
+    Number,
+    Boolean,
+    BigInt,
+    Symbol,
+    Undefined,
+    Object,
+    Function,
+}
+
+impl TypeofKind {
+    /// Parse a typeof result string into a TypeofKind.
+    /// Returns None for non-standard typeof strings (which don't narrow).
+    pub fn from_str(s: &str) -> Option<TypeofKind> {
+        match s {
+            "string" => Some(TypeofKind::String),
+            "number" => Some(TypeofKind::Number),
+            "boolean" => Some(TypeofKind::Boolean),
+            "bigint" => Some(TypeofKind::BigInt),
+            "symbol" => Some(TypeofKind::Symbol),
+            "undefined" => Some(TypeofKind::Undefined),
+            "object" => Some(TypeofKind::Object),
+            "function" => Some(TypeofKind::Function),
+            _ => None,
+        }
+    }
+
+    /// Get the string representation of this typeof kind.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TypeofKind::String => "string",
+            TypeofKind::Number => "number",
+            TypeofKind::Boolean => "boolean",
+            TypeofKind::BigInt => "bigint",
+            TypeofKind::Symbol => "symbol",
+            TypeofKind::Undefined => "undefined",
+            TypeofKind::Object => "object",
+            TypeofKind::Function => "function",
+        }
+    }
+}
+
 /// AST-agnostic representation of a type narrowing condition.
 ///
 /// This enum represents various guards that can narrow a type, without
@@ -51,7 +99,7 @@ use crate::solver::TypeInterner;
 ///
 /// # Examples
 /// ```typescript
-/// typeof x === "string"     -> TypeGuard::Typeof("string")
+/// typeof x === "string"     -> TypeGuard::Typeof(TypeofKind::String)
 /// x instanceof MyClass      -> TypeGuard::Instanceof(MyClass_type)
 /// x === null                -> TypeGuard::NullishEquality
 /// x                         -> TypeGuard::Truthy
@@ -62,8 +110,8 @@ pub enum TypeGuard {
     /// `typeof x === "typename"`
     ///
     /// Narrows a union to only members matching the typeof result.
-    /// For example, narrowing `string | number` with `Typeof("string")` yields `string`.
-    Typeof(String),
+    /// For example, narrowing `string | number` with `Typeof(TypeofKind::String)` yields `string`.
+    Typeof(TypeofKind),
 
     /// `x instanceof Class`
     ///
@@ -2005,7 +2053,7 @@ impl<'a> NarrowingContext<'a> {
     /// # Examples
     /// ```ignore
     /// // typeof x === "string"
-    /// let guard = TypeGuard::Typeof("string".to_string());
+    /// let guard = TypeGuard::Typeof(TypeofKind::String);
     /// let narrowed = narrowing.narrow_type(string_or_number, &guard, true);
     /// assert_eq!(narrowed, TypeId::STRING);
     ///
@@ -2016,7 +2064,8 @@ impl<'a> NarrowingContext<'a> {
     /// ```
     pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: bool) -> TypeId {
         match guard {
-            TypeGuard::Typeof(type_name) => {
+            TypeGuard::Typeof(typeof_kind) => {
+                let type_name = typeof_kind.as_str();
                 if sense {
                     self.narrow_by_typeof(source_type, type_name)
                 } else {
@@ -2697,16 +2746,16 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                 }
                 // Case 2: type_id is subtype of narrower (e.g., narrow("foo", string))
                 // Result: type_id (the original)
-                else if {
-                    self.checker.reset();
-                    self.checker.is_subtype_of(type_id, self.narrower)
-                } {
-                    type_id
-                }
-                // Case 3: Disjoint types (e.g., narrow(string, number))
-                // Result: never
                 else {
-                    TypeId::NEVER
+                    self.checker.reset();
+                    if self.checker.is_subtype_of(type_id, self.narrower) {
+                        type_id
+                    }
+                    // Case 3: Disjoint types (e.g., narrow(string, number))
+                    // Result: never
+                    else {
+                        TypeId::NEVER
+                    }
                 }
             }
         }
