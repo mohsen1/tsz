@@ -796,6 +796,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return;
         }
 
+        // OPTIMIZATION: Skip deep simplification if all members are unit types.
+        // Unit types are disjoint - no member can be a subtype of another, so the
+        // O(n²) SubtypeChecker loop would find nothing. The interner's
+        // reduce_union_subtypes already handles shallow cases (literal<:primitive).
+        if members.iter().all(|&id| self.interner.is_unit_type(id)) {
+            return;
+        }
+
         // Skip simplification if union contains types that require full resolution
         // These types are "complex" because their identity depends on evaluation context
         if members.iter().any(|&id| self.is_complex_type(id)) {
