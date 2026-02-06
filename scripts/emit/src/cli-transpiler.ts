@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { execFile as execFileCb, execSync } from 'child_process';
+import { execFile as execFileCb, execSync, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 
@@ -97,6 +97,7 @@ export class CliTranspiler {
   private counter = 0;
   private tempDir: string;
   private timeoutMs: number;
+  private activeChildren = new Set<ChildProcess>();
 
   constructor(timeoutMs: number = DEFAULT_TIMEOUT_MS) {
     this.tszPath = findTszBinary();
@@ -136,12 +137,18 @@ export class CliTranspiler {
       if (alwaysStrict) args.push('--alwaysStrict', 'true');
       args.push('--target', targetArg, '--module', moduleArg, inputFile);
 
-      // Run CLI asynchronously without shell overhead
-      await execFile(this.tszPath, args, {
+      // Run CLI asynchronously without shell overhead.
+      // Use SIGKILL for timeout so the child can't ignore the signal and linger.
+      const promise = execFile(this.tszPath, args, {
         cwd: this.tempDir,
         encoding: 'utf-8',
         timeout: this.timeoutMs,
+        killSignal: 'SIGKILL',
       });
+      const child = promise.child;
+      this.activeChildren.add(child);
+      child.on('exit', () => this.activeChildren.delete(child));
+      await promise;
 
       // Read output files
       const jsFile = inputFile.replace('.ts', '.js');
@@ -164,8 +171,8 @@ export class CliTranspiler {
 
       return { js, dts };
     } catch (e) {
-      // Handle timeout (execFile sends SIGTERM on timeout)
-      if (e instanceof Error && 'killed' in e && (e as any).signal === 'SIGTERM') {
+      // Handle timeout (execFile sends SIGKILL on timeout)
+      if (e instanceof Error && 'killed' in e && ((e as any).signal === 'SIGKILL' || (e as any).signal === 'SIGTERM')) {
         throw new Error('TIMEOUT');
       }
       throw e;
@@ -175,9 +182,14 @@ export class CliTranspiler {
   }
 
   /**
-   * Clean up temp directory
+   * Kill all in-flight child processes and clean up temp directory.
    */
   terminate(): void {
+    for (const child of this.activeChildren) {
+      try { child.kill('SIGKILL'); } catch {}
+    }
+    this.activeChildren.clear();
+
     if (fs.existsSync(this.tempDir)) {
       fs.rmSync(this.tempDir, { recursive: true, force: true });
     }
