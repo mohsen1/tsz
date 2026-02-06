@@ -298,6 +298,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Check parameter compatibility
             if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) {
+                // Trace: Parameter type mismatch
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(
+                        crate::solver::diagnostics::SubtypeFailureReason::ParameterTypeMismatch {
+                            param_index: i,
+                            source_param: s_param.type_id,
+                            target_param: t_param.type_id,
+                        },
+                    ) {
+                        return SubtypeResult::False;
+                    }
+                }
                 return SubtypeResult::False;
             }
         }

@@ -247,22 +247,64 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Rule: Private and Protected properties are nominal.
         if target.visibility != Visibility::Public {
             if source.parent_id != target.parent_id {
+                // Trace: Property nominal mismatch
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(
+                        crate::solver::diagnostics::SubtypeFailureReason::PropertyNominalMismatch {
+                            property_name: source.name,
+                        },
+                    ) {
+                        return SubtypeResult::False;
+                    }
+                }
                 return SubtypeResult::False;
             }
         } else if source.visibility != Visibility::Public {
             // Cannot assign private/protected source to public target
+            // Trace: Property visibility mismatch
+            if let Some(tracer) = &mut self.tracer {
+                if !tracer.on_mismatch_dyn(
+                    crate::solver::diagnostics::SubtypeFailureReason::PropertyVisibilityMismatch {
+                        property_name: source.name,
+                        source_visibility: source.visibility,
+                        target_visibility: target.visibility,
+                    },
+                ) {
+                    return SubtypeResult::False;
+                }
+            }
             return SubtypeResult::False;
         }
 
         // Check optional compatibility
         // Optional in source can't satisfy required in target
         if source.optional && !target.optional {
+            // Trace: Optional property cannot satisfy required property
+            if let Some(tracer) = &mut self.tracer {
+                if !tracer.on_mismatch_dyn(
+                    crate::solver::diagnostics::SubtypeFailureReason::OptionalPropertyRequired {
+                        property_name: source.name,
+                    },
+                ) {
+                    return SubtypeResult::False;
+                }
+            }
             return SubtypeResult::False;
         }
 
         // Readonly compatibility: source readonly cannot satisfy target mutable
         // This is required for mapped type modifier tests (readonly_add/remove)
         if source.readonly && !target.readonly {
+            // Trace: Readonly property cannot satisfy mutable property
+            if let Some(tracer) = &mut self.tracer {
+                if !tracer.on_mismatch_dyn(
+                    crate::solver::diagnostics::SubtypeFailureReason::ReadonlyPropertyMismatch {
+                        property_name: source.name,
+                    },
+                ) {
+                    return SubtypeResult::False;
+                }
+            }
             return SubtypeResult::False;
         }
 
