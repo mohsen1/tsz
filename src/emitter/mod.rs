@@ -82,6 +82,8 @@ pub struct PrinterOptions {
     pub module: ModuleKind,
     /// New line character
     pub new_line: NewLineKind,
+    /// Downlevel iteration (for-of with full iterator protocol)
+    pub downlevel_iteration: bool,
 }
 
 impl Default for PrinterOptions {
@@ -94,6 +96,7 @@ impl Default for PrinterOptions {
             no_emit_helpers: false,
             module: ModuleKind::None,
             new_line: NewLineKind::LineFeed,
+            downlevel_iteration: false,
         }
     }
 }
@@ -156,6 +159,7 @@ enum EmitDirective {
         arrow_node: NodeIndex,
         captures_this: bool,
         captures_arguments: bool,
+        class_alias: Option<Arc<str>>,
     },
     ES5AsyncFunction {
         function_node: NodeIndex,
@@ -464,10 +468,12 @@ impl<'a> Printer<'a> {
                 arrow_node,
                 captures_this,
                 captures_arguments,
+                class_alias,
             } => EmitDirective::ES5ArrowFunction {
                 arrow_node: *arrow_node,
                 captures_this: *captures_this,
                 captures_arguments: *captures_arguments,
+                class_alias: class_alias.clone(),
             },
             TransformDirective::ES5AsyncFunction { function_node } => {
                 EmitDirective::ES5AsyncFunction {
@@ -555,6 +561,7 @@ impl<'a> Printer<'a> {
                 // Delegate to existing ClassES5Emitter
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_indent_level(self.writer.indent_level());
+                es5_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     if self.writer.has_source_map() {
                         es5_emitter
@@ -642,6 +649,7 @@ impl<'a> Printer<'a> {
                 arrow_node,
                 captures_this,
                 captures_arguments,
+                class_alias,
             } => {
                 if let Some(arrow_node) = self.arena.get(arrow_node)
                     && let Some(func) = self.arena.get_function(arrow_node)
@@ -651,6 +659,7 @@ impl<'a> Printer<'a> {
                         func,
                         captures_this,
                         captures_arguments,
+                        &class_alias,
                     );
                     return;
                 }
@@ -786,6 +795,7 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Class { class_node } => {
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_indent_level(self.writer.indent_level());
+                es5_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     if self.writer.has_source_map() {
                         es5_emitter
@@ -851,6 +861,7 @@ impl<'a> Printer<'a> {
                 arrow_node,
                 captures_this,
                 captures_arguments,
+                class_alias,
             } => {
                 if let Some(arrow_node) = self.arena.get(*arrow_node)
                     && let Some(func) = self.arena.get_function(arrow_node)
@@ -860,6 +871,7 @@ impl<'a> Printer<'a> {
                         func,
                         *captures_this,
                         *captures_arguments,
+                        class_alias,
                     );
                 }
             }
@@ -918,6 +930,7 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Class { class_node } => {
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_indent_level(self.writer.indent_level());
+                es5_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     if self.writer.has_source_map() {
                         es5_emitter
@@ -991,6 +1004,7 @@ impl<'a> Printer<'a> {
                 arrow_node,
                 captures_this,
                 captures_arguments,
+                class_alias,
             } => {
                 if let Some(arrow_node) = self.arena.get(*arrow_node)
                     && let Some(func) = self.arena.get_function(arrow_node)
@@ -1000,6 +1014,7 @@ impl<'a> Printer<'a> {
                         func,
                         *captures_this,
                         *captures_arguments,
+                        class_alias,
                     );
                     return;
                 }

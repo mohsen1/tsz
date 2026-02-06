@@ -34,6 +34,7 @@
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::source_map::Mapping;
+use crate::transform_context::TransformContext;
 use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::ir_printer::IRPrinter;
 
@@ -57,6 +58,8 @@ pub struct ClassES5Emitter<'a> {
     /// Mappings for source maps (currently empty in IR-based approach)
     mappings: Vec<Mapping>,
     transformer: ES5ClassTransformer<'a>,
+    /// Transform directives for ASTRef nodes
+    transforms: Option<TransformContext>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -68,7 +71,13 @@ impl<'a> ClassES5Emitter<'a> {
             source_index: 0,
             mappings: Vec::new(),
             transformer: ES5ClassTransformer::new(arena),
+            transforms: None,
         }
+    }
+
+    /// Set transform directives for ASTRef nodes
+    pub fn set_transforms(&mut self, transforms: TransformContext) {
+        self.transforms = Some(transforms);
     }
 
     /// Set the initial indentation level (to match the parent context)
@@ -125,6 +134,9 @@ impl<'a> ClassES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         if let Some(source_text) = self.source_text {
             printer.set_source_text(source_text);
+        }
+        if let Some(ref transforms) = self.transforms {
+            printer.set_transforms(transforms.clone());
         }
         printer.emit(&ir).to_string()
     }

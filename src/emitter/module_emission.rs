@@ -101,6 +101,8 @@ impl<'a> Printer<'a> {
         let temp_name = format!("{}_default", self.get_temp_var_name());
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_indent_level(self.writer.indent_level());
+        // Pass transform directives to the ClassES5Emitter
+        es5_emitter.set_transforms(self.transforms.clone());
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());
@@ -293,7 +295,7 @@ impl<'a> Printer<'a> {
         let is_namespace_only = bindings.len() == 1
             && bindings[0].contains("__importStar(")
             && !bindings[0].contains(".default");
-        let is_default_only = bindings.len() == 1 && bindings[0].contains(".default");
+        let is_default_only = bindings.len() == 1 && bindings[0].contains("__importDefault(");
 
         if is_namespace_only {
             // Inline: var ns = __importStar(require("mod"));

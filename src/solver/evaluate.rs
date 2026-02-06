@@ -298,103 +298,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return type_id;
         }
 
-        let result = match &key {
-            TypeKey::Conditional(cond_id) => {
-                let cond = self.interner.conditional_type(*cond_id);
-                let result = self.evaluate_conditional(cond.as_ref());
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
-            TypeKey::IndexAccess(obj, idx) => {
-                let result = self.evaluate_index_access(*obj, *idx);
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
-            TypeKey::Mapped(mapped_id) => {
-                let mapped = self.interner.mapped_type(*mapped_id);
-                let result = self.evaluate_mapped(mapped.as_ref());
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
-            TypeKey::KeyOf(operand) => {
-                let result = self.evaluate_keyof(*operand);
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
-            TypeKey::TypeQuery(symbol) => {
-                let result = if let Some(def_id) = self.resolver.symbol_to_def_id(*symbol) {
-                    match self.resolver.resolve_lazy(def_id, self.interner) {
-                        Some(resolved) => resolved,
-                        None => type_id,
-                    }
-                } else {
-                    #[allow(deprecated)]
-                    match self.resolver.resolve_ref(*symbol, self.interner) {
-                        Some(resolved) => resolved,
-                        None => type_id,
-                    }
-                };
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
-            TypeKey::Application(app_id) => {
-                let result = self.evaluate_application(*app_id);
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
-            TypeKey::TemplateLiteral(spans) => {
-                let result = self.evaluate_template_literal(*spans);
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
-            // Resolve Lazy(DefId) types to their structural form (Phase 4.3)
-            TypeKey::Lazy(def_id) => {
-                let result =
-                    if let Some(resolved) = self.resolver.resolve_lazy(*def_id, self.interner) {
-                        // Re-evaluate the resolved type in case it's a compound type
-                        // (e.g., IndexAccess, KeyOf) that needs further evaluation.
-                        self.evaluate(resolved)
-                    } else {
-                        // Lazy type not resolved - return as-is so downstream
-                        // code can still use the Lazy type for display purposes
-                        type_id
-                    };
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
-            TypeKey::StringIntrinsic { kind, type_arg } => {
-                let result = self.evaluate_string_intrinsic(*kind, *type_arg);
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
-            TypeKey::Intersection(list_id) => {
-                let result = self.evaluate_intersection(*list_id);
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
-            TypeKey::Union(list_id) => {
-                let result = self.evaluate_union(*list_id);
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
-            // Other types pass through unchanged
-            _ => {
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, type_id);
-                type_id
-            }
-        };
+        // Visitor pattern: dispatch to appropriate visit_* method
+        let result = self.visit_type_key(type_id, &key);
+
+        // Symmetric cleanup: remove from visiting set and cache result
+        self.visiting.remove(&type_id);
+        self.cache.insert(type_id, result);
 
         self.depth -= 1;
         result
@@ -416,8 +325,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None => return self.interner.application(app.base, app.args.clone()),
         };
 
-        // If the base is a Lazy(DefId), try to resolve and instantiate (Phase 4.3)
-        if let TypeKey::Lazy(def_id) = base_key {
+        // Task B: Resolve TypeQuery bases to DefId for expansion
+        // This fixes the "Ref(5)<error>" diagnostic issue where generic types
+        // aren't expanded to their underlying function/object types
+        // Note: Ref(SymbolRef) was migrated to Lazy(DefId) in Phase 4.2
+        let def_id = match base_key {
+            TypeKey::Lazy(def_id) => Some(def_id),
+            TypeKey::TypeQuery(sym_ref) => self.resolver.symbol_to_def_id(sym_ref),
+            _ => None,
+        };
+
+        // If the base is a DefId (Lazy, Ref, or TypeQuery), try to resolve and instantiate
+        if let Some(def_id) = def_id {
             // =======================================================================
             // DEFD-LEVEL CYCLE DETECTION (before resolution!)
             // =======================================================================
@@ -922,6 +841,112 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 i += 1;
             }
         }
+    }
+
+    // =========================================================================
+    // Visitor Pattern Implementation (North Star Rule 2)
+    // =========================================================================
+
+    /// Visit a TypeKey and return its evaluated form.
+    ///
+    /// This is the visitor dispatch method that routes to specific visit_* methods.
+    /// The visiting.remove() and cache.insert() are handled in evaluate() for symmetry.
+    fn visit_type_key(&mut self, type_id: TypeId, key: &TypeKey) -> TypeId {
+        match key {
+            TypeKey::Conditional(cond_id) => self.visit_conditional(*cond_id),
+            TypeKey::IndexAccess(obj, idx) => self.visit_index_access(*obj, *idx),
+            TypeKey::Mapped(mapped_id) => self.visit_mapped(*mapped_id),
+            TypeKey::KeyOf(operand) => self.visit_keyof(*operand),
+            TypeKey::TypeQuery(symbol) => self.visit_type_query(symbol.0, type_id),
+            TypeKey::Application(app_id) => self.visit_application(*app_id),
+            TypeKey::TemplateLiteral(spans) => self.visit_template_literal(*spans),
+            TypeKey::Lazy(def_id) => self.visit_lazy(*def_id, type_id),
+            TypeKey::StringIntrinsic { kind, type_arg } => {
+                self.visit_string_intrinsic(*kind, *type_arg)
+            }
+            TypeKey::Intersection(list_id) => self.visit_intersection(*list_id),
+            TypeKey::Union(list_id) => self.visit_union(*list_id),
+            // All other types pass through unchanged (default behavior)
+            _ => type_id,
+        }
+    }
+
+    /// Visit a conditional type: T extends U ? X : Y
+    fn visit_conditional(&mut self, cond_id: ConditionalTypeId) -> TypeId {
+        let cond = self.interner.conditional_type(cond_id);
+        self.evaluate_conditional(cond.as_ref())
+    }
+
+    /// Visit an index access type: T[K]
+    fn visit_index_access(&mut self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        self.evaluate_index_access(object_type, index_type)
+    }
+
+    /// Visit a mapped type: { [K in Keys]: V }
+    fn visit_mapped(&mut self, mapped_id: MappedTypeId) -> TypeId {
+        let mapped = self.interner.mapped_type(mapped_id);
+        self.evaluate_mapped(mapped.as_ref())
+    }
+
+    /// Visit a keyof type: keyof T
+    fn visit_keyof(&mut self, operand: TypeId) -> TypeId {
+        self.evaluate_keyof(operand)
+    }
+
+    /// Visit a type query: typeof expr
+    fn visit_type_query(&mut self, symbol_ref: u32, original_type_id: TypeId) -> TypeId {
+        use crate::solver::types::SymbolRef;
+        let symbol = SymbolRef(symbol_ref);
+
+        // Try to resolve via DefId (type alias, interface, class)
+        if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
+            if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
+                return resolved;
+            }
+        }
+
+        // Fallback to legacy Ref resolution
+        #[allow(deprecated)]
+        if let Some(resolved) = self.resolver.resolve_ref(symbol, self.interner) {
+            return resolved;
+        }
+
+        original_type_id
+    }
+
+    /// Visit a generic type application: Base<Args>
+    fn visit_application(&mut self, app_id: TypeApplicationId) -> TypeId {
+        self.evaluate_application(app_id)
+    }
+
+    /// Visit a template literal type: `hello${T}world`
+    fn visit_template_literal(&mut self, spans: TemplateLiteralId) -> TypeId {
+        self.evaluate_template_literal(spans)
+    }
+
+    /// Visit a lazy type reference: Lazy(DefId)
+    fn visit_lazy(&mut self, def_id: DefId, original_type_id: TypeId) -> TypeId {
+        if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
+            // Re-evaluate the resolved type in case it needs further evaluation
+            self.evaluate(resolved)
+        } else {
+            original_type_id
+        }
+    }
+
+    /// Visit a string manipulation intrinsic type: Uppercase<T>, Lowercase<T>, etc.
+    fn visit_string_intrinsic(&mut self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId {
+        self.evaluate_string_intrinsic(kind, type_arg)
+    }
+
+    /// Visit an intersection type: A & B & C
+    fn visit_intersection(&mut self, list_id: TypeListId) -> TypeId {
+        self.evaluate_intersection(list_id)
+    }
+
+    /// Visit a union type: A | B | C
+    fn visit_union(&mut self, list_id: TypeListId) -> TypeId {
+        self.evaluate_union(list_id)
     }
 }
 

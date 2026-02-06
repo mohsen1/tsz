@@ -69,6 +69,29 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         }
     }
 
+    /// Check if the index type is generic (deferrable).
+    ///
+    /// When evaluating an index access during generic instantiation,
+    /// if the index is still a generic type (like a type parameter),
+    /// we must defer evaluation instead of returning UNDEFINED.
+    fn is_generic_index(&self) -> bool {
+        let key = match self.evaluator.interner().lookup(self.index_type) {
+            Some(k) => k,
+            None => return false,
+        };
+
+        matches!(
+            key,
+            TypeKey::TypeParameter(_)
+                | TypeKey::Infer(_)
+                | TypeKey::KeyOf(_)
+                | TypeKey::IndexAccess(_, _)
+                | TypeKey::Conditional(_)
+                | TypeKey::TemplateLiteral(_) // Templates might resolve to generic strings
+                | TypeKey::Intersection(_)
+        )
+    }
+
     fn evaluate_type_param(&mut self, param: &TypeParamInfo) -> Option<TypeId> {
         if let Some(constraint) = param.constraint {
             if constraint == self.object_type {
@@ -111,10 +134,20 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .evaluator
             .interner()
             .object_shape(ObjectShapeId(shape_id));
-        Some(
-            self.evaluator
-                .evaluate_object_index(&shape.properties, self.index_type),
-        )
+
+        let result = self
+            .evaluator
+            .evaluate_object_index(&shape.properties, self.index_type);
+
+        // CRITICAL FIX: If we can't find the property, but the index is generic,
+        // we must defer evaluation (return None) instead of returning UNDEFINED.
+        // This prevents mapped type template evaluation from hardcoding UNDEFINED
+        // during generic instantiation.
+        if result == TypeId::UNDEFINED && self.is_generic_index() {
+            return None;
+        }
+
+        Some(result)
     }
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
@@ -122,10 +155,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .evaluator
             .interner()
             .object_shape(ObjectShapeId(shape_id));
-        Some(
-            self.evaluator
-                .evaluate_object_with_index(&shape, self.index_type),
-        )
+
+        let result = self
+            .evaluator
+            .evaluate_object_with_index(&shape, self.index_type);
+
+        // CRITICAL FIX: Same deferral logic for objects with index signatures
+        if result == TypeId::UNDEFINED && self.is_generic_index() {
+            return None;
+        }
+
+        Some(result)
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
@@ -152,6 +192,39 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             return Some(TypeId::UNDEFINED);
         }
         Some(self.evaluator.interner().union(results))
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        // For intersection types, try each member and return the first successful result.
+        // This handles cases where a class is intersected with a mixin or interface.
+        let members = self.evaluator.interner().type_list(TypeListId(list_id));
+        for &member in members.iter() {
+            let result = self.evaluator.recurse_index_access(member, self.index_type);
+            if result != TypeId::UNDEFINED {
+                return Some(result);
+            }
+        }
+        // If no member had the property, return UNDEFINED (not None which would defer evaluation)
+        Some(TypeId::UNDEFINED)
+    }
+
+    fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+        // CRITICAL: Classes and interfaces are represented as Lazy types.
+        // We must resolve them and then perform the index access lookup.
+        let def_id = crate::solver::def::DefId(def_id);
+        if let Some(resolved) = self
+            .evaluator
+            .resolver()
+            .resolve_lazy(def_id, self.evaluator.interner())
+        {
+            // CRITICAL: Use evaluate_index_access directly (not recurse) to perform property lookup
+            // This resolves the class C and then finds the "foo" property within it
+            return Some(
+                self.evaluator
+                    .evaluate_index_access(resolved, self.index_type),
+            );
+        }
+        None
     }
 
     fn visit_array(&mut self, element_type: TypeId) -> Self::Output {

@@ -51,45 +51,154 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        use crate::solver::TypeKey;
-        use crate::solver::visitor;
+        use crate::solver::type_queries::{TypeTraversalKind, classify_for_traversal};
 
-        let Some(type_key) = self.ctx.types.lookup(type_id) else {
-            return;
-        };
+        // Classify the type to determine how to traverse it
+        let traversal_kind = classify_for_traversal(self.ctx.types, type_id);
 
-        // 1. Handle the specific "WHERE" logic (Lazy resolution)
-        if let TypeKey::Lazy(def_id) = type_key {
-            if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                let result = self.get_type_of_symbol(sym_id);
-                // Explicitly insert the DefId→TypeId mapping into type_env.
-                // get_type_of_symbol may return a cached result, skipping the
-                // insert_def code path. We must ensure the mapping exists so
-                // the SubtypeChecker's TypeEnvironment resolver can resolve
-                // Lazy(DefId) types during assignability checks.
-                if result != TypeId::ERROR && result != TypeId::ANY {
-                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                        env.insert_def(def_id, result);
+        match traversal_kind {
+            // 1. Handle the specific "WHERE" logic (Lazy resolution)
+            TypeTraversalKind::Lazy(def_id) => {
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    let result = self.get_type_of_symbol(sym_id);
+                    // Explicitly insert the DefId→TypeId mapping into type_env.
+                    // get_type_of_symbol may return a cached result, skipping the
+                    // insert_def code path. We must ensure the mapping exists so
+                    // the SubtypeChecker's TypeEnvironment resolver can resolve
+                    // Lazy(DefId) types during assignability checks.
+                    if result != TypeId::ERROR && result != TypeId::ANY {
+                        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                            env.insert_def(def_id, result);
+                        }
+                        // Recurse into the resolved type to ensure nested Lazy types
+                        // are also resolved.
+                        self.ensure_refs_resolved_inner(result, visited);
                     }
-                    // Recurse into the resolved type to ensure nested Lazy types
-                    // are also resolved.
-                    self.ensure_refs_resolved_inner(result, visited);
+                }
+                return; // Lazy is a leaf in terms of children, the resolved type is handled above
+            }
+
+            // 2. Handle TypeQuery (value-space references)
+            TypeTraversalKind::TypeQuery(symbol_ref) => {
+                let sym_id = crate::binder::SymbolId(symbol_ref.0);
+                let _ = self.get_type_of_symbol(sym_id);
+                return;
+            }
+
+            // 3. Handle structured types - delegate the "WHAT" (traversal) to the Solver
+            TypeTraversalKind::Application { base, args, .. } => {
+                // Recurse into base type and arguments
+                self.ensure_refs_resolved_inner(base, visited);
+                for arg in args {
+                    self.ensure_refs_resolved_inner(arg, visited);
                 }
             }
-            return; // Lazy is a leaf in terms of children, the resolved type is handled above
+            TypeTraversalKind::Members(members) => {
+                for member in members {
+                    self.ensure_refs_resolved_inner(member, visited);
+                }
+            }
+            TypeTraversalKind::Function(shape_id) => {
+                let shape = self.ctx.types.function_shape(shape_id);
+                for param in &shape.params {
+                    self.ensure_refs_resolved_inner(param.type_id, visited);
+                }
+                self.ensure_refs_resolved_inner(shape.return_type, visited);
+            }
+            TypeTraversalKind::Callable(shape_id) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                // Handle call signatures
+                for sig in &shape.call_signatures {
+                    for param in &sig.params {
+                        self.ensure_refs_resolved_inner(param.type_id, visited);
+                    }
+                    if let Some(this_type) = sig.this_type {
+                        self.ensure_refs_resolved_inner(this_type, visited);
+                    }
+                    self.ensure_refs_resolved_inner(sig.return_type, visited);
+                }
+                // Handle construct signatures
+                for sig in &shape.construct_signatures {
+                    for param in &sig.params {
+                        self.ensure_refs_resolved_inner(param.type_id, visited);
+                    }
+                    if let Some(this_type) = sig.this_type {
+                        self.ensure_refs_resolved_inner(this_type, visited);
+                    }
+                    self.ensure_refs_resolved_inner(sig.return_type, visited);
+                }
+                // Handle properties
+                for prop in &shape.properties {
+                    self.ensure_refs_resolved_inner(prop.type_id, visited);
+                }
+            }
+            TypeTraversalKind::Object(shape_id) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                for prop in &shape.properties {
+                    self.ensure_refs_resolved_inner(prop.type_id, visited);
+                }
+            }
+            TypeTraversalKind::Array(elem) => {
+                self.ensure_refs_resolved_inner(elem, visited);
+            }
+            TypeTraversalKind::Tuple(list_id) => {
+                let list = self.ctx.types.tuple_list(list_id);
+                for elem in list.iter() {
+                    self.ensure_refs_resolved_inner(elem.type_id, visited);
+                }
+            }
+            TypeTraversalKind::Conditional(cond_id) => {
+                let cond = self.ctx.types.conditional_type(cond_id);
+                self.ensure_refs_resolved_inner(cond.check_type, visited);
+                self.ensure_refs_resolved_inner(cond.extends_type, visited);
+                self.ensure_refs_resolved_inner(cond.true_type, visited);
+                self.ensure_refs_resolved_inner(cond.false_type, visited);
+            }
+            TypeTraversalKind::Mapped(mapped_id) => {
+                let mapped = self.ctx.types.mapped_type(mapped_id);
+                self.ensure_refs_resolved_inner(mapped.constraint, visited);
+                self.ensure_refs_resolved_inner(mapped.template, visited);
+                if let Some(name_type) = mapped.name_type {
+                    self.ensure_refs_resolved_inner(name_type, visited);
+                }
+            }
+            TypeTraversalKind::TypeParameter {
+                constraint,
+                default,
+            } => {
+                if let Some(c) = constraint {
+                    self.ensure_refs_resolved_inner(c, visited);
+                }
+                if let Some(d) = default {
+                    self.ensure_refs_resolved_inner(d, visited);
+                }
+            }
+            TypeTraversalKind::Readonly(inner) => {
+                self.ensure_refs_resolved_inner(inner, visited);
+            }
+            TypeTraversalKind::TemplateLiteral(types) => {
+                for t in types {
+                    self.ensure_refs_resolved_inner(t, visited);
+                }
+            }
+            TypeTraversalKind::StringIntrinsic(inner) => {
+                self.ensure_refs_resolved_inner(inner, visited);
+            }
+            TypeTraversalKind::IndexAccess { object, index } => {
+                self.ensure_refs_resolved_inner(object, visited);
+                self.ensure_refs_resolved_inner(index, visited);
+            }
+            TypeTraversalKind::KeyOf(inner) => {
+                self.ensure_refs_resolved_inner(inner, visited);
+            }
+            TypeTraversalKind::SymbolRef(symbol_ref) => {
+                let sym_id = crate::binder::SymbolId(symbol_ref.0);
+                let _ = self.get_type_of_symbol(sym_id);
+            }
+            TypeTraversalKind::Terminal => {
+                // No further traversal needed
+            }
         }
-
-        // 2. Handle TypeQuery (value-space references)
-        if let TypeKey::TypeQuery(symbol_ref) = type_key {
-            let sym_id = crate::binder::SymbolId(symbol_ref.0);
-            let _ = self.get_type_of_symbol(sym_id);
-            return;
-        }
-
-        // 3. Delegate the "WHAT" (traversal) to the Solver
-        visitor::for_each_child(self.ctx.types, &type_key, |child_id| {
-            self.ensure_refs_resolved_inner(child_id, visited);
-        });
     }
 
     /// Evaluate a type for assignability checking.
@@ -106,48 +215,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Build relation-cache flags for assignability/subtype checks.
-    ///
-    /// Bit assignments must match `RelationCacheKey` docs in `solver/types.rs`.
-    #[inline]
-    fn relation_cache_flags(&self) -> u8 {
-        let mut flags = 0;
-        if self.ctx.strict_null_checks() {
-            flags |= 1 << 0;
-        }
-        if self.ctx.strict_function_types() {
-            flags |= 1 << 1;
-        }
-        if self.ctx.exact_optional_property_types() {
-            flags |= 1 << 2;
-        }
-        if self.ctx.no_unchecked_indexed_access() {
-            flags |= 1 << 3;
-        }
-        if self.ctx.compiler_options.sound_mode {
-            flags |= 1 << 4;
-        }
-        flags
-    }
-
-    /// Encode assignability cache mode.
-    ///
-    /// Layout:
-    /// - bit 0: strict any propagation (Sound Mode)
-    /// - bit 1: bivariant callback mode
-    #[inline]
-    fn assignability_cache_mode(&self, bivariant: bool) -> u8 {
-        let mut mode = if self.ctx.compiler_options.sound_mode {
-            1
-        } else {
-            0
-        };
-        if bivariant {
-            mode |= 1 << 1;
-        }
-        mode
-    }
-
     // =========================================================================
     // Main Assignability Check
     // =========================================================================
@@ -159,12 +226,7 @@ impl<'a> CheckerState<'a> {
     /// Assignability is more permissive than subtyping.
     pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::solver::CompatChecker;
-        use crate::solver::visitor::contains_infer_types;
 
-        // Fast path: identity check
-        if source == target {
-            return true;
-        }
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.
@@ -177,42 +239,10 @@ impl<'a> CheckerState<'a> {
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
-        // Cache only normalized relation pairs. Raw TypeQuery/Application inputs can
-        // change meaning as symbol environments are populated during checking.
-        let cache_key = if !contains_infer_types(self.ctx.types, source)
-            && !contains_infer_types(self.ctx.types, target)
-        {
-            Some(RelationCacheKey::assignability(
-                source,
-                target,
-                self.relation_cache_flags(),
-                self.assignability_cache_mode(false),
-            ))
-        } else {
-            None
-        };
-
-        if let Some(cache_key) = cache_key
-            && let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key)
-        {
-            return cached;
-        }
-
-        // Fast path: if source is exactly a member of the target union, assignability is true.
-        // This avoids constructing CompatChecker for large return unions with many exact members.
-        if let Some(crate::solver::TypeKey::Union(list_id)) = self.ctx.types.lookup(target) {
-            let members = self.ctx.types.type_list(list_id);
-            if members.iter().any(|&member| member == source) {
-                if let Some(cache_key) = cache_key {
-                    self.ctx.relation_cache.borrow_mut().insert(cache_key, true);
-                }
-                return true;
-            }
-        }
-
-        let env = self.ctx.type_env.borrow();
-        let overrides = CheckerOverrideProvider::new(self, Some(&*env));
-        let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+        // Use CheckerContext as the resolver instead of TypeEnvironment
+        // This enables access to symbol information for enum type detection
+        let overrides = CheckerOverrideProvider::new(self, None);
+        let mut checker = CompatChecker::with_resolver(self.ctx.types, &self.ctx);
         self.ctx.configure_compat_checker(&mut checker);
 
         let result = checker.is_assignable_with_overrides(source, target, &overrides);
@@ -222,12 +252,6 @@ impl<'a> CheckerState<'a> {
             result,
             "is_assignable_to"
         );
-        if let Some(cache_key) = cache_key {
-            self.ctx
-                .relation_cache
-                .borrow_mut()
-                .insert(cache_key, result);
-        }
         result
     }
 
@@ -257,12 +281,7 @@ impl<'a> CheckerState<'a> {
     /// which disables strict_function_types for the check.
     pub fn is_assignable_to_bivariant(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::solver::CompatChecker;
-        use crate::solver::visitor::contains_infer_types;
 
-        // Fast path: identity check
-        if source == target {
-            return true;
-        }
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.
@@ -274,39 +293,6 @@ impl<'a> CheckerState<'a> {
 
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
-
-        // Cache only normalized relation pairs. Raw TypeQuery/Application inputs can
-        // change meaning as symbol environments are populated during checking.
-        let cache_key = if !contains_infer_types(self.ctx.types, source)
-            && !contains_infer_types(self.ctx.types, target)
-        {
-            Some(RelationCacheKey::assignability(
-                source,
-                target,
-                self.relation_cache_flags(),
-                self.assignability_cache_mode(true),
-            ))
-        } else {
-            None
-        };
-
-        if let Some(cache_key) = cache_key
-            && let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key)
-        {
-            return cached;
-        }
-
-        // Fast path: if source is exactly a member of the target union, assignability is true.
-        // Reused for bivariant mode to skip expensive checker setup in callback-heavy paths.
-        if let Some(crate::solver::TypeKey::Union(list_id)) = self.ctx.types.lookup(target) {
-            let members = self.ctx.types.type_list(list_id);
-            if members.iter().any(|&member| member == source) {
-                if let Some(cache_key) = cache_key {
-                    self.ctx.relation_cache.borrow_mut().insert(cache_key, true);
-                }
-                return true;
-            }
-        }
 
         let env = self.ctx.type_env.borrow();
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
@@ -320,12 +306,6 @@ impl<'a> CheckerState<'a> {
             result,
             "is_assignable_to_bivariant"
         );
-        if let Some(cache_key) = cache_key {
-            self.ctx
-                .relation_cache
-                .borrow_mut()
-                .insert(cache_key, result);
-        }
         result
     }
 
@@ -547,13 +527,16 @@ impl<'a> CheckerState<'a> {
             && !contains_infer_types(self.ctx.types, target);
 
         if is_cacheable {
-            // Pack boolean flags into a u8 bitmask for the cache key:
+            // Pack boolean flags into a u16 bitmask for the cache key:
             // bit 0: strict_null_checks
             // bit 1: strict_function_types
             // bit 2: exact_optional_property_types
             // bit 3: no_unchecked_indexed_access
             // bit 4: disable_method_bivariance
-            let mut flags: u8 = 0;
+            // bit 5: allow_void_return
+            // bit 6: allow_bivariant_rest
+            // bit 7: allow_bivariant_param_count
+            let mut flags: u16 = 0;
             if self.ctx.strict_null_checks() {
                 flags |= 1 << 0;
             }
@@ -562,6 +545,9 @@ impl<'a> CheckerState<'a> {
             }
             if self.ctx.exact_optional_property_types() {
                 flags |= 1 << 2;
+            }
+            if self.ctx.no_unchecked_indexed_access() {
+                flags |= 1 << 3;
             }
             // Note: For subtype checks in the checker, we use AnyPropagationMode::All (0)
             // since the checker doesn't track depth like SubtypeChecker does
@@ -614,7 +600,7 @@ impl<'a> CheckerState<'a> {
         // Cache the result for non-inference types
         if is_cacheable {
             // Reconstruct the cache key with the same flags as the lookup
-            let mut flags: u8 = 0;
+            let mut flags: u16 = 0;
             if self.ctx.strict_null_checks() {
                 flags |= 1 << 0;
             }
@@ -623,6 +609,9 @@ impl<'a> CheckerState<'a> {
             }
             if self.ctx.exact_optional_property_types() {
                 flags |= 1 << 2;
+            }
+            if self.ctx.no_unchecked_indexed_access() {
+                flags |= 1 << 3;
             }
             let cache_key = RelationCacheKey::subtype(source, target, flags, 0);
 

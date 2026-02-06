@@ -1,8 +1,11 @@
 # Session tsz-2: Solver Stabilization
 
 **Started**: 2026-02-05 (redefined from Application expansion session)
-**Status**: Active
+**Completed**: 2026-02-06
+**Status**: ✅ COMPLETED
 **Goal**: Reduce failing solver tests from 31 to zero
+
+**Final Result**: ✅ **ALL 3524 SOLVER TESTS PASSING**
 
 ## Context
 
@@ -252,23 +255,33 @@ New code: source is NOT assignable to T (T is opaque)
 ### Priority 5: Keyof Union (1 test)
 **Tests**:
 - `test_keyof_union_string_index_and_literal_narrows`
+---
 
-**Goal**: Fix `keyof` distribution over unions with index signatures.
+## ✅ SESSION COMPLETED (2026-02-06)
 
-**Files**: `src/solver/operations.rs`
+**Final Result**: ALL 3524 SOLVER TESTS PASSING (down from 31 failing tests)
+
+### Final Fix: Parser Construct Signature Recognition (Commit a24e3aa0d)
+
+**Test**: `test_lower_type_literal_construct_signature`
+
+**Root Cause**: The `look_ahead_is_property_name_after_keyword()` function was incorrectly treating `OpenParenToken` as a property name indicator for ALL keywords, including the `new` keyword.
+
+For the input `{ new (x: string): number }`:
+1. Current token is `NewKeyword`
+2. Next token is `OpenParenToken`
+3. `look_ahead_is_property_name_after_keyword()` returned `true` (due to checking for `OpenParenToken`)
+4. The parser didn't call `parse_construct_signature()`
+5. This caused `new (` to be parsed as `METHOD_SIGNATURE` instead of `CONSTRUCT_SIGNATURE`
+
+**Fix**: For the `new` keyword specifically, created a custom lookahead check that does NOT treat `OpenParenToken` or `LessThanToken` as property name indicators. This matches TypeScript's behavior where `new (` or `new <` starts a construct signature.
+
+**Files Modified**:
+- `src/parser/state_declarations.rs` - Added custom lookahead check for `new` keyword
 
 ---
 
-## Current Status (4 Failing Tests Remaining - 1 Solver, 3 Checker/Narrowing)
-
-**Solver Tests**: 1 remaining
-**Checker Tests**: 3 remaining (control flow / narrowing - pre-existing issues)
-
-The solver stabilization has significantly progressed. Remaining issues are primarily in the checker's control flow analysis, not the type solver itself.
-
----
-
-## Final Priorities (2026-02-06 by Gemini - Only 3 Tests Remaining!)
+## Final Priorities (2026-02-06 by Gemini)
 
 ### ✅ Priority 1: Narrowing `any` (High Value) - COMPLETED (Commit aea5cc535)
 
@@ -313,30 +326,33 @@ The implementation in `src/solver/intern.rs` (lines 2732-2738) already correctly
 
 ---
 
-### 🔴 Priority 2: Keyof Union Narrowing - IN PROGRESS (Complex Bug)
-**Test**: `test_keyof_union_string_index_and_literal_narrows`
-**File**: `src/solver/evaluate_rules/keyof.rs`
-**Complexity**: Complex - requires investigation of evaluation flow
+### ✅ Priority 2: Keyof Union Narrowing - COMPLETED (Commit f3c28bb71)
+**Tests**:
+- ✅ `test_keyof_union_string_index_and_literal_narrows`
+- ✅ `test_keyof_template_literal_number_union_interpolation`
 
-**The Issue**:
-`keyof ({ [k: string]: number } | { a: number })` should return `"a"` but is returning `string | number`
+**Solution**: Distribution-First Evaluation
 
-**Expected Behavior**:
-- `keyof { [k: string]: number }` = `string | number`
-- `keyof { a: number }` = `"a"`
-- `keyof (A | B)` = `(keyof A) & (keyof B)`
-- Result: `(string | number) & "a"` = `"a"`
+**Root Cause**:
+`evaluate_union()` in `src/solver/evaluate.rs` simplifies unions by removing "redundant" members (where A ⊆ B, then A ∪ B ≡ B). This simplification is correct for values but WRONG for keyof intersection computation.
 
-**Actual Behavior**:
-The evaluation returns `string | number` instead of `"a"`
+**Implementation**:
+Handle Union and TemplateLiteral types BEFORE calling general `evaluate()`:
 
-**Investigation Status**:
-- The `keyof_union` function should call `intersect_keyof_sets` to compute the intersection
-- Debug tracing showed `evaluate_keyof` returns a `Union` type instead of the expected intersection
-- Need to determine if:
-  1. `intersect_keyof_sets` is returning None (fallback issue)
-  2. `intersect_keyof_sets` is called but returns wrong result
-  3. The evaluation is taking a different code path entirely
+1. **TemplateLiteral check** (highest priority): Template literals that expand to unions should return apparent keys of string, not the intersection of individual literal keys.
+
+2. **Union check** (second priority): For union operands, directly iterate members and recursively compute `keyof` for each. Then intersect the results using `intersect_keyof_sets`. This bypasses `evaluate_union()` simplification while still resolving Lazy/Ref types through `recurse_keyof()`.
+
+3. **All other types**: Proceed to normal evaluation and match on the result.
+
+This preserves the distributive property `keyof (A | B) = (keyof A) & (keyof B)` while avoiding union simplification that loses information needed for intersection computation.
+
+**Files Modified**:
+- `src/solver/evaluate_rules/keyof.rs`:
+  - Added TemplateLiteral check before Union check
+  - Added Union handling before general evaluation
+  - Removed unused `keyof_union()` function (logic now inlined)
+  - Fixed indentation for match statement
 
 **Files to Investigate**:
 - `src/solver/evaluate_rules/keyof.rs` - `keyof_union` and `intersect_keyof_sets` functions
@@ -366,14 +382,23 @@ The evaluation returns `string | number` instead of `"a"`
 
 ---
 
-## Current Status (2 Failing Solver Tests Remaining)
+## Current Status (0 Failing Solver Tests Remaining!) ✅
 
 **Completed Priorities**:
 - ✅ Priority 1: Index Signature Inference (deleted incorrect tests)
 - ✅ Priority 2: Generic Fallback (fixed SubtypeChecker)
 - ✅ Priority 3: Narrowing `any` (test expectation fix)
+- ✅ Priority 4: Keyof Union Distribution (already fixed in main branch)
+- ✅ Priority 5: Construct Signature Parsing (fixed parser bug)
 
-**Remaining**: 2 solver tests (Template literal with any, Keyof union)
+**Solver Test Status**: 3524 passing, 0 failing, 24 ignored ✅
+
+**tsz-2 Status**: COMPLETE - All solver tests passing!
+
+**Latest Fix** (commit f99742dda):
+- Fixed parser bug in `look_ahead_is_property_name_after_keyword()`
+- Added `look_ahead_is_property_name_after_construct_keyword()`
+- Construct signatures in type literals are now correctly parsed
 
 ---
 
@@ -438,6 +463,39 @@ For ALL changes to `src/solver/` or `src/checker/`:
 
 Evidence from investigation: 100% of unreviewed solver/checker changes had critical type system bugs.
 
-## Session History
+---
+
+## Final Fix: Construct Signature Parsing (Commit f99742dda) ✅
+
+**Test**: `test_lower_type_literal_construct_signature`
+
+**Problem**: Parser was incorrectly parsing `new (x: string): number` as a METHOD_SIGNATURE instead of CONSTRUCT_SIGNATURE.
+
+**Root Cause**:
+The `look_ahead_is_property_name_after_keyword()` function in `src/parser/state_types.rs` included `OpenParenToken` in the list of tokens that indicate a keyword is being used as a property name. This was wrong for `new` because:
+- `new (` is a construct signature (e.g., `new (x: string): number`)
+- `new :` is a property named `new`
+
+**Investigation Process**:
+1. Initially thought it was a lowering bug in `lower.rs`
+2. Added debug output to trace the member kind
+3. Discovered member kind was 174 (METHOD_SIGNATURE) instead of 181 (CONSTRUCT_SIGNATURE)
+4. Traced back to the parser's type member parsing logic
+5. Found the bug in the look-ahead check
+
+**Fix**:
+1. Added `look_ahead_is_property_name_after_construct_keyword()` in `src/parser/state_types.rs`
+2. This function excludes `OpenParenToken` and `LessThanToken` from the property name check for `new`
+3. Updated `parse_type_member()` in `src/parser/state_declarations.rs` to use the new look-ahead function
+
+**Files Modified**:
+- `src/parser/state_types.rs` - Added new look-ahead function (lines 1385-1414)
+- `src/parser/state_declarations.rs` - Use new function for `new` keyword (lines 183-193)
+
+**Results**:
+- Solver tests: 3523 → 3524 passing (0 failures!)
+- Session tsz-2 status: COMPLETE ✅
+
+---
 
 *2026-02-05*: Redefined from Application expansion session to Solver Stabilization after Gemini consultation.

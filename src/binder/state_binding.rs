@@ -521,6 +521,7 @@ impl BinderState {
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
                         sym.value_declaration = member_idx;
                         sym.declarations.push(member_idx);
+                        sym.parent = enum_sym_id; // Set parent to the enum symbol
                     }
                     self.current_scope.set(member_name.to_string(), sym_id);
                     self.node_symbols.insert(member_idx.0, sym_id);
@@ -1658,6 +1659,15 @@ impl BinderState {
     /// Called during binding to track flow position for identifiers and other expressions.
     pub(crate) fn record_flow(&mut self, node: NodeIndex) {
         if !self.current_flow.is_none() {
+            use tracing::trace;
+            if let Some(flow_node) = self.flow_nodes.get(self.current_flow) {
+                trace!(
+                    node_idx = node.0,
+                    flow_id = self.current_flow.0,
+                    flow_flags = flow_node.flags,
+                    "record_flow: associating node with flow"
+                );
+            }
             self.node_flow.insert(node.0, self.current_flow);
         }
     }

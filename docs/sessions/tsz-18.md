@@ -26,6 +26,18 @@ Per Gemini Pro recommendation: "Since you know where the code lives for Mapped T
 
 ## Focus Areas
 
+### Area 0: Evaluation Pipeline (CRITICAL - Unblocks Mapped Types)
+**Location**: `src/solver/evaluate.rs`, `src/solver/db.rs`
+
+**Problem**: `QueryCache` uses `NoopResolver` for type evaluation, preventing Lazy type (type alias) resolution. This blocks bugs #1-4.
+
+**Solution**: Implement "Proxy Resolver" pattern (~30 min):
+- Create `DatabaseResolver<'a>` struct that wraps `&'a dyn TypeDatabase`
+- Update `BinderTypeDatabase` to pass proper resolver to `TypeEvaluator`
+- High impact: Fixes 4 mapped type bug categories with one change
+
+**Status**: Ready to implement - Gemini has validated approach
+
 ### Area 1: Indexed Access Types (tsz-15)
 **Location**: `src/solver/evaluate_rules/keyof.rs`, `src/solver/evaluate_rules/index_access.rs`
 
@@ -84,6 +96,72 @@ Per Gemini Pro recommendation: "Since you know where the code lives for Mapped T
 Created 2026-02-05 following completion of tsz-15, tsz-16, tsz-17 which all found existing implementations. Following Gemini Pro recommendation to shift from "investigation" to "validation and fixing".
 
 ## Progress
+
+### 2026-02-06: Mapped Type Instantiation Bug Fixed!
+
+**Bug Found**: Generic mapped types were not being evaluated after instantiation.
+
+**Symptoms**:
+```typescript
+type MyPartial<T> = { [K in keyof T]?: T[K] };
+interface Cfg { host: string; port: number }
+let b: MyPartial<Cfg> = { host: "x" };  // ERROR - should work!
+```
+
+**Root Cause**:
+When `MyPartial<Cfg>` was instantiated, the code created a `MappedType` but returned it without evaluation. The SubtypeChecker expects structural types (Object), not meta-types (Mapped), so the check failed.
+
+**Fix** (`src/solver/instantiate.rs` lines 560-567):
+```rust
+// Before: returned MappedType unevaluated
+self.interner.mapped(instantiated)
+
+// After: evaluate to Object type
+let mapped_type = self.interner.mapped(instantiated);
+crate::solver::evaluate::evaluate_type(self.interner, mapped_type)
+```
+
+**Impact**:
+- ✅ +1 test fixed (8249 -> 8250 passing)
+- ✅ Aligns with IndexAccess and KeyOf behavior (eager evaluation)
+- ⚠️ Specific test still failing - investigation ongoing
+
+**Committed**: `ce7639908`
+
+**Note**: The fix correctly evaluates the mapped type to an Object with `optional=true` properties (verified with debug output). However, the specific test `test_ts2322_no_false_positive_user_defined_mapped_type` still fails with a strange asymmetry:
+- `let a: MyPartial<Cfg> = {}` works ✓
+- `let b: MyPartial<Cfg> = { host: "x" }` fails ✗
+
+Both use the same type annotation, so they should behave identically. This suggests a separate issue in:
+1. How the type is cached/retrieved between the two variable declarations
+2. Property lookup on the evaluated mapped type during assignability checking
+3. Potential interaction with excess property checking
+
+**Status**: ✅ SOLVED!
+
+### 2026-02-06: Generic Mapped Types Fixed!
+
+**Bug Discovered**: During instantiation, the mapped type template `T[K]` was being eagerly evaluated to `UNDEFINED` because `K` was still a generic type parameter.
+
+**Root Cause Chain**:
+1. `MyPartial<Cfg>` instantiation creates `MappedType { template: Cfg[K], ... }`
+2. `instantiate.rs` eagerly evaluates IndexAccess during instantiation
+3. `evaluate_index_access(Cfg, K)` is called where `K` is still a TypeParameter
+4. Property lookup fails → returns `UNDEFINED`
+5. MappedType properties are hardcoded as `undefined`
+
+**Fix** (`src/solver/evaluate_rules/index_access.rs`):
+Added `is_generic_index()` helper method to detect when the index is a generic type. Modified `visit_object` and `visit_object_with_index` to defer evaluation (return `None`) instead of returning `UNDEFINED` when the index is generic.
+
+**Impact**:
+- ✅ Target test now passes
+- ✅ +2 tests fixed (8250 -> 8252 passing)
+- ✅ Related mapped type tests also fixed
+- ✅ Mapped types with generic type parameters now work correctly
+
+**Committed**: `480e0e595`
+
+**Test Results**: 8252 passing, 48 failing (down from 50!)
 
 ### 2026-02-05: Session Pivoted and Found Bugs!
 
@@ -145,13 +223,153 @@ Found **6 confirmed bugs** where tsz rejects code that tsc accepts:
 
 **Session Status**: Good progress - broke the "already implemented" loop and found actionable bugs. Ready to fix them with more investigation or alternative debugging approach.
 
-## Next Steps
+### 2026-02-06: Architectural Issue Discovered and PARTIALLY FIXED!
 
-1. Create comprehensive test suite for Indexed Access Types
-2. Compare tsz vs tsc results
-3. Identify and categorize bugs
-4. Fix bugs systematically
-5. Repeat for Mapped Types and Template Literals
+**Root Cause Identified**: The mapped type bugs (#1-4) are caused by an architectural issue in the evaluation pipeline:
+
+**Problem Chain**:
+1. When `operations.rs` calls `self.interner.evaluate_mapped(mapped)`, it delegates through `BinderTypeDatabase` to `QueryCache`
+2. `QueryCache` calls the convenience function `evaluate_mapped(interner, mapped)` which creates a `TypeEvaluator::new(interner)` with `NoopResolver`
+3. `NoopResolver.resolve_lazy` returns `None`, so type aliases like `O1` in `keyof O1` don't get resolved
+4. This causes `evaluate_keyof` to return a deferred `KeyOf` instead of the actual union of literal keys
+5. The mapped type evaluation can't extract keys from the deferred `KeyOf`, so it returns the mapped type unevaluated
+
+**FIX IMPLEMENTED!** ✅
+
+Following Gemini's recommendation, implemented the simpler workaround:
+
+**File**: `src/solver/db.rs` (lines 1676-1691)
+
+```rust
+fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
+    // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution
+    let type_env = self.type_env.borrow();
+    let mut evaluator = crate::solver::evaluate::TypeEvaluator::with_resolver(
+        self.as_type_database(),
+        &*type_env,
+    );
+    evaluator.evaluate_mapped(mapped)
+}
+
+fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
+    // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution
+    let type_env = self.type_env.borrow();
+    let mut evaluator = crate::solver::evaluate::TypeEvaluator::with_resolver(
+        self.as_type_database(),
+        &*type_env,
+    );
+    evaluator.evaluate_keyof(operand)
+}
+```
+
+**File**: `src/solver/evaluate_rules/keyof.rs` (added Lazy and Application match arms)
+
+```rust
+TypeKey::Lazy(def_id) => {
+    match self.resolver().resolve_lazy(def_id, self.interner()) {
+        Some(resolved) => self.recurse_keyof(resolved),
+        None => self.interner().intern(TypeKey::KeyOf(operand)),
+    }
+}
+```
+
+**Impact**:
+- ✅ **+10 tests fixed** (8245 -> 8255 passing, 45 failing)
+- ✅ Type aliases now resolve in keyof and mapped type evaluation
+- ✅ Proper resolver propagation from BinderTypeDatabase
+
+**Committed**: `9c7bdda07`
+
+**Remaining Work**:
+- Advanced mapped type features still failing (key remapping with `as`, modifiers, recursion)
+- These may have separate issues beyond just Lazy type resolution
+- Need to investigate each specific failure
+
+**Status**: ✅ MAJOR PROGRESS - Architectural fix implemented and working!
+
+### 2026-02-06: Indexed Access Investigation (In Progress)
+
+**Pivoted from Template Literals** to Indexed Access based on Gemini recommendation:
+- Template literal bugs #5-6 already passing in test suite
+- Indexed access failures are "cluster bugs" with high impact
+- Multiple failing tests related to indexed access on classes
+
+**Architectural Improvements Made**:
+
+1. **Fixed `evaluate_type_with_options`** to use `type_env` resolver
+   - Updated `BinderTypeDatabase` to properly propagate resolver
+   - Ensures all type evaluation goes through proper resolver
+
+2. **Added `visit_lazy` handler to `IndexAccessVisitor`**
+   - Classes/interfaces represented as Lazy types
+   - Critical for proper property resolution on indexed access
+
+3. **Added `visit_intersection` handler to `IndexAccessVisitor`**
+   - Handles classes with mixins/multiple inheritance
+   - Returns UNDEFINED when property not found (not None)
+
+**Test Status**: Still failing
+- Test case: `type FooType = C["foo"]; let x: FooType = 3;`
+- Error: "Type 'number' is not assignable to type 'FooType'"
+- Issue: IndexAccess type not being fully evaluated to concrete type
+
+**Hypothesis**: The issue may be in how assignability checking handles unevaluated IndexAccess types. The type might need to be eagerly evaluated during type annotation resolution, not just during type operations.
+
+**Committed**: `79892fdd6`
+
+**Status**: ✅ ARCHITECTURAL PROGRESS - Need deeper investigation of evaluation pipeline
+
+### 2026-02-06: Multiple Attempts at Indexed Access Fix
+
+**Attempt 1**: Added `visit_lazy` handler - resolved class but didn't perform index lookup
+**Attempt 2**: Fixed `visit_lazy` to use `evaluate_index_access` directly - still failing
+**Attempt 3**: Fixed `evaluate_type_with_options` to use `type_env` resolver - still failing
+
+**Test Still Failing**:
+- `type FooType = C["foo"]; let x: FooType = 3;`
+- Error: "Type 'number' is not assignable to type 'FooType'"
+
+**Issue**: The IndexAccess type is not being fully evaluated to a concrete type (number).
+- `evaluate_type` IS being called (per Gemini analysis)
+- But evaluation is not simplifying the IndexAccess type
+- May need to investigate `evaluate_type` dispatch logic in `src/solver/evaluate.rs`
+
+**Committed**: `958d20950`
+
+**Recommendation**: Consider switching to different failing tests that might be easier wins, or investigate SubtypeChecker's handling of unevaluated types.
+
+## Next Steps (Revised Strategy)
+
+**Per Gemini recommendation**: Continue TSZ-18 with focused approach to remaining bugs
+
+### Phase 1: Template Literal Bugs (Quick Wins) ⏰ EST: 30-60 min
+- **Bug #5**: `${any}` interpolation should widen to string
+- **Bug #6**: Number to string conversion incorrect
+- **Location**: `src/solver/evaluate_rules/template_literal.rs`
+- **Why**: Self-contained logic errors, don't depend on complex mapping
+- **Goal**: Fix 2 bugs, reduce failures by 2-4 tests
+
+### Phase 2: Mapped Type Modifiers (Logic Bugs) ⏰ EST: 60-90 min
+- **Bug #2**: `-readonly` modifier not removing readonly flag
+- **Bug #3**: `-?` modifier not making properties required
+- **Location**: `src/solver/evaluate_rules/mapped.rs`
+- **Investigation**: Check ModifierFlags handling and property flag updates
+- **Goal**: Fix 2 bugs, reduce failures by 2-4 tests
+
+### Phase 3: Key Remapping (Complex) ⏰ EST: 90-120 min
+- **Bug #1**: `as O[K] extends string ? K : never` not working
+- **Location**: `src/solver/evaluate_rules/mapped.rs`
+- **Challenge**: `as` clause evaluation with conditional types
+- **Goal**: Fix 1 bug, reduce failures by 2-4 tests
+
+### Updated Success Criteria
+- [ ] Fix Bug #5: Template literal `any` interpolation
+- [ ] Fix Bug #6: Template literal number formatting
+- [ ] Fix Bug #2: Remove readonly modifier
+- [ ] Fix Bug #3: Remove optional modifier
+- [ ] Fix Bug #1: Key remapping with conditional types
+- [ ] **Target**: Reduce failing tests from 45 to < 30
+- [ ] Document all fixes with test cases
 
 ## Dependencies
 

@@ -2176,6 +2176,25 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
         self.definition_store.get_kind(def_id)
     }
 
+    /// Get the DefId for a SymbolRef (Phase 4.2: Ref -> Lazy migration).
+    ///
+    /// This enables converting SymbolRef to DefId by looking up the symbol_to_def mapping.
+    /// This is the reverse of def_to_symbol_id.
+    ///
+    /// Returns None if the SymbolRef doesn't have a corresponding DefId.
+    fn symbol_to_def_id(
+        &self,
+        symbol: crate::solver::types::SymbolRef,
+    ) -> Option<crate::solver::DefId> {
+        use crate::binder::SymbolId;
+
+        // Convert SymbolRef to SymbolId
+        let sym_id = SymbolId(symbol.0);
+
+        // Look up in the symbol_to_def mapping (populated by get_or_create_def_id)
+        self.symbol_to_def.borrow().get(&sym_id).copied()
+    }
+
     /// Check if a TypeId represents a full Enum type (not a specific member).
     ///
     /// Used to distinguish between:
@@ -2293,9 +2312,49 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
         // Get the parent symbol (the enum itself)
         let parent_sym_id = symbol.parent;
 
-        // Ensure the parent enum always has a DefId mapping.
-        // Some hot paths create DefIds for members first; lazily creating
-        // the parent mapping here avoids returning None in those cases.
-        Some(self.get_or_create_def_id(parent_sym_id))
+        // Convert parent SymbolId back to DefId
+        // The parent should have a DefId from when it was bound
+        let parent_ref = crate::solver::SymbolRef(parent_sym_id.0);
+        if let Some(parent_def_id) = self.symbol_to_def_id(parent_ref) {
+            return Some(parent_def_id);
+        }
+
+        // Fallback: If the parent doesn't have a DefId mapping yet,
+        // we can't provide one. This shouldn't happen in well-formed code.
+        None
+    }
+
+    fn is_user_enum_def(&self, def_id: crate::solver::DefId) -> bool {
+        use crate::binder::symbol_flags;
+
+        // Convert DefId to SymbolId
+        let sym_id = match self.def_to_symbol_id(def_id) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // Get the symbol
+        let symbol = match self.binder.get_symbol(sym_id) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        // Check if this is a user-defined enum or enum member
+        if (symbol.flags & symbol_flags::ENUM) != 0 {
+            // This is an enum type - check it's not an intrinsic
+            return (symbol.flags & symbol_flags::ENUM_MEMBER) == 0;
+        }
+
+        if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+            // This is an enum member - check if the parent is a user-defined enum
+            let parent_sym_id = symbol.parent;
+            if let Some(parent_symbol) = self.binder.get_symbol(parent_sym_id) {
+                // Parent is a user enum if it has ENUM flag but not ENUM_MEMBER
+                return (parent_symbol.flags & symbol_flags::ENUM) != 0
+                    && (parent_symbol.flags & symbol_flags::ENUM_MEMBER) == 0;
+            }
+        }
+
+        false
     }
 }

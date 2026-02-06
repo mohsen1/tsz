@@ -878,6 +878,21 @@ impl<'a> CheckerState<'a> {
                 if let Some(def_id) = def_id {
                     self.maybe_register_numeric_enum(&mut env, sym_id, def_id);
                 }
+
+                // Register enum parent relationships for Task #17 (Enum Type Resolution)
+                if let Some(def_id) = def_id {
+                    if let Some(symbol) = self.ctx.binder.symbols.get(sym_id) {
+                        use crate::binder::symbol_flags;
+                        if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+                            let parent_sym_id = symbol.parent;
+                            if let Some(&parent_def_id) =
+                                self.ctx.symbol_to_def.borrow().get(&parent_sym_id)
+                            {
+                                env.register_enum_parent(def_id, parent_def_id);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1088,6 +1103,15 @@ impl<'a> CheckerState<'a> {
         // Get the member's DefId for nominal typing
         let member_def_id = self.ctx.get_or_create_def_id(sym_id);
 
+        // CRITICAL: Also ensure the parent enum has a DefId
+        // This is needed for get_enum_parent_def_id to work when checking
+        // member-to-parent assignability (e.g., E.A -> E)
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            let parent_sym_id = symbol.parent;
+            // Call get_or_create_def_id for the parent to populate symbol_to_def mapping
+            self.ctx.get_or_create_def_id(parent_sym_id);
+        }
+
         // Get the literal type from the initializer
         let literal_type = self.enum_member_type_from_decl(value_decl);
 
@@ -1266,8 +1290,16 @@ impl<'a> CheckerState<'a> {
             if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
                 // Create an object type that includes both enum members and namespace exports
                 let merged_type = self.merge_namespace_exports_into_object(sym_id, enum_type);
+                // Register DefId <-> SymbolId mapping for enum type resolution
+                self.ctx
+                    .register_resolved_type(sym_id, merged_type, Vec::new());
                 return (merged_type, Vec::new());
             }
+
+            // Register DefId <-> SymbolId mapping for enum type resolution
+            // This enables get_enum_def_id to distinguish user enums from intrinsic types
+            self.ctx
+                .register_resolved_type(sym_id, enum_type, Vec::new());
 
             return (enum_type, Vec::new());
         }
