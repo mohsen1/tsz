@@ -4,6 +4,7 @@
 //! containing complex type computation methods for new expressions,
 //! call expressions, constructability, union/keyof types, and identifiers.
 
+use crate::binder::SymbolId;
 use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
 use crate::solver::types::Visibility;
