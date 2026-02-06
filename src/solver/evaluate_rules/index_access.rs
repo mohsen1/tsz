@@ -69,6 +69,29 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         }
     }
 
+    /// Check if the index type is generic (deferrable).
+    ///
+    /// When evaluating an index access during generic instantiation,
+    /// if the index is still a generic type (like a type parameter),
+    /// we must defer evaluation instead of returning UNDEFINED.
+    fn is_generic_index(&self) -> bool {
+        let key = match self.evaluator.interner().lookup(self.index_type) {
+            Some(k) => k,
+            None => return false,
+        };
+
+        matches!(
+            key,
+            TypeKey::TypeParameter(_)
+                | TypeKey::Infer(_)
+                | TypeKey::KeyOf(_)
+                | TypeKey::IndexAccess(_, _)
+                | TypeKey::Conditional(_)
+                | TypeKey::TemplateLiteral(_) // Templates might resolve to generic strings
+                | TypeKey::Intersection(_)
+        )
+    }
+
     fn evaluate_type_param(&mut self, param: &TypeParamInfo) -> Option<TypeId> {
         if let Some(constraint) = param.constraint {
             if constraint == self.object_type {
@@ -111,10 +134,20 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .evaluator
             .interner()
             .object_shape(ObjectShapeId(shape_id));
-        Some(
-            self.evaluator
-                .evaluate_object_index(&shape.properties, self.index_type),
-        )
+
+        let result = self
+            .evaluator
+            .evaluate_object_index(&shape.properties, self.index_type);
+
+        // CRITICAL FIX: If we can't find the property, but the index is generic,
+        // we must defer evaluation (return None) instead of returning UNDEFINED.
+        // This prevents mapped type template evaluation from hardcoding UNDEFINED
+        // during generic instantiation.
+        if result == TypeId::UNDEFINED && self.is_generic_index() {
+            return None;
+        }
+
+        Some(result)
     }
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
@@ -122,10 +155,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .evaluator
             .interner()
             .object_shape(ObjectShapeId(shape_id));
-        Some(
-            self.evaluator
-                .evaluate_object_with_index(&shape, self.index_type),
-        )
+
+        let result = self
+            .evaluator
+            .evaluate_object_with_index(&shape, self.index_type);
+
+        // CRITICAL FIX: Same deferral logic for objects with index signatures
+        if result == TypeId::UNDEFINED && self.is_generic_index() {
+            return None;
+        }
+
+        Some(result)
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
