@@ -2381,54 +2381,143 @@ impl Server {
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
-            let provider =
+
+            // Get references with the resolved symbol
+            let ref_provider =
                 FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let locations = provider.find_references(root, position)?;
-            let symbol_name = {
-                let ref_offset = line_map.position_to_offset(position, &source_text)?;
-                let node_idx = wasm::lsp::utils::find_node_at_offset(&arena, ref_offset);
-                if !node_idx.is_none() {
-                    arena.get_identifier_text(node_idx).map(|s| s.to_string())
+            let (symbol_id, ref_infos) =
+                ref_provider.find_references_with_symbol(root, position)?;
+
+            // Get definition metadata using GoToDefinition helpers
+            let def_provider =
+                GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
+            let def_infos = def_provider.definition_infos_from_symbol(symbol_id);
+
+            // Get symbol info for display
+            let symbol = binder.symbols.get(symbol_id)?;
+            let kind_str = def_provider.symbol_flags_to_kind_string(symbol.flags);
+            let symbol_name = symbol.escaped_name.clone();
+
+            // Build definition object using first definition info
+            let definition = if let Some(ref defs) = def_infos {
+                if let Some(first_def) = defs.first() {
+                    let def_start =
+                        line_map.position_to_offset(first_def.location.range.start, &source_text);
+                    let def_end =
+                        line_map.position_to_offset(first_def.location.range.end, &source_text);
+                    let mut def_json = serde_json::json!({
+                        "containerKind": "",
+                        "containerName": first_def.container_name,
+                        "kind": first_def.kind,
+                        "name": format!("{} {}", first_def.kind, first_def.name),
+                        "displayParts": Self::build_simple_display_parts(&first_def.kind, &first_def.name),
+                        "fileName": file,
+                        "textSpan": {
+                            "start": def_start.unwrap_or(0),
+                            "length": def_end.unwrap_or(0).saturating_sub(def_start.unwrap_or(0)),
+                        },
+                    });
+                    if let Some(ref ctx) = first_def.context_span {
+                        let ctx_start = line_map.position_to_offset(ctx.start, &source_text);
+                        let ctx_end = line_map.position_to_offset(ctx.end, &source_text);
+                        def_json["contextSpan"] = serde_json::json!({
+                            "start": ctx_start.unwrap_or(0),
+                            "length": ctx_end.unwrap_or(0).saturating_sub(ctx_start.unwrap_or(0)),
+                        });
+                    }
+                    def_json
                 } else {
-                    None
+                    Self::build_fallback_definition(&file, &kind_str, &symbol_name)
                 }
-            }
-            .unwrap_or_default();
-            let refs: Vec<serde_json::Value> = locations
+            } else {
+                Self::build_fallback_definition(&file, &kind_str, &symbol_name)
+            };
+
+            // Build references array with byte-offset textSpans
+            // Compute cursor offset for isDefinition check
+            let cursor_offset = line_map
+                .position_to_offset(position, &source_text)
+                .unwrap_or(0);
+
+            let references: Vec<serde_json::Value> = ref_infos
                 .iter()
-                .map(|loc| {
-                    let line_text = source_text
-                        .lines()
-                        .nth(loc.range.start.line as usize)
-                        .unwrap_or("")
-                        .to_string();
-                    serde_json::json!({
-                        "file": loc.file_path,
-                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                        "lineText": line_text,
-                        "isWriteAccess": false,
-                        "isDefinition": false,
-                    })
+                .map(|ref_info| {
+                    let start =
+                        line_map.position_to_offset(ref_info.location.range.start, &source_text);
+                    let end =
+                        line_map.position_to_offset(ref_info.location.range.end, &source_text);
+                    let start_off = start.unwrap_or(0);
+                    let end_off = end.unwrap_or(0);
+
+                    // isDefinition is only true when the cursor is AT this definition site
+                    let is_definition = ref_info.is_definition
+                        && cursor_offset >= start_off
+                        && cursor_offset <= end_off;
+
+                    let mut ref_json = serde_json::json!({
+                        "fileName": ref_info.location.file_path,
+                        "textSpan": {
+                            "start": start_off,
+                            "length": end_off.saturating_sub(start_off),
+                        },
+                        "isWriteAccess": ref_info.is_write_access,
+                        "isDefinition": is_definition,
+                    });
+
+                    // Add contextSpan for definition references
+                    if ref_info.is_definition {
+                        if let Some(ref defs) = def_infos {
+                            // Find matching definition and use its context span
+                            for def in defs {
+                                if def.location.range == ref_info.location.range {
+                                    if let Some(ref ctx) = def.context_span {
+                                        let ctx_start = line_map
+                                            .position_to_offset(ctx.start, &source_text);
+                                        let ctx_end = line_map
+                                            .position_to_offset(ctx.end, &source_text);
+                                        ref_json["contextSpan"] = serde_json::json!({
+                                            "start": ctx_start.unwrap_or(0),
+                                            "length": ctx_end.unwrap_or(0).saturating_sub(ctx_start.unwrap_or(0)),
+                                        });
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ref_json
                 })
                 .collect();
-            Some(serde_json::json!({
-                "refs": refs,
-                "symbolName": symbol_name,
-                "symbolStartOffset": offset,
-                "symbolDisplayString": symbol_name,
-            }))
+
+            // Return as ReferencedSymbol array (single entry for single-file)
+            Some(serde_json::json!([{
+                "definition": definition,
+                "references": references,
+            }]))
         })();
-        self.stub_response(
-            seq,
-            request,
-            Some(result.unwrap_or(serde_json::json!({
-                "refs": [],
-                "symbolName": "",
-                "symbolStartOffset": 0,
-                "symbolDisplayString": ""
-            }))),
-        )
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    fn build_fallback_definition(file: &str, kind: &str, name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "containerKind": "",
+            "containerName": "",
+            "kind": kind,
+            "name": format!("{} {}", kind, name),
+            "displayParts": Self::build_simple_display_parts(kind, name),
+            "fileName": file,
+            "textSpan": { "start": 0, "length": 0 },
+        })
+    }
+
+    fn build_simple_display_parts(kind: &str, name: &str) -> Vec<serde_json::Value> {
+        let mut parts = vec![];
+        if !kind.is_empty() {
+            parts.push(serde_json::json!({ "text": kind, "kind": "keyword" }));
+            parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+        }
+        parts.push(serde_json::json!({ "text": name, "kind": "localName" }));
+        parts
     }
 
     fn handle_navto(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
