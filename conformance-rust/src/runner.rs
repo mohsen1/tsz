@@ -205,10 +205,11 @@ impl Runner {
 
         println!();
         println!("{}", "=".repeat(60));
+        let evaluated = stats.evaluated();
         println!(
             "FINAL RESULTS: {}/{} passed ({:.1}%)",
             stats.passed.load(Ordering::SeqCst),
-            stats.total.load(Ordering::SeqCst),
+            evaluated,
             stats.pass_rate()
         );
         println!("  Skipped: {}", stats.skipped.load(Ordering::SeqCst));

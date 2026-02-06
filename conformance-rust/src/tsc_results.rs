@@ -129,13 +129,20 @@ pub struct TestStats {
 }
 
 impl TestStats {
-    pub fn pass_rate(&self) -> f64 {
+    /// Number of tests actually evaluated (total minus skipped)
+    pub fn evaluated(&self) -> usize {
         let total = self.total.load(Ordering::SeqCst);
+        let skipped = self.skipped.load(Ordering::SeqCst);
+        total.saturating_sub(skipped)
+    }
+
+    pub fn pass_rate(&self) -> f64 {
+        let evaluated = self.evaluated();
         let passed = self.passed.load(Ordering::SeqCst);
-        if total == 0 {
+        if evaluated == 0 {
             0.0
         } else {
-            (passed as f64 / total as f64) * 100.0
+            (passed as f64 / evaluated as f64) * 100.0
         }
     }
 }
