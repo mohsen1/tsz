@@ -314,7 +314,6 @@ fn test_undefined_stringification_in_template() {
 }
 
 #[test]
-#[ignore = "TODO: Boolean expansion in templates - requires deeper investigation of expansion logic"]
 fn test_boolean_expansion_in_template() {
     // boolean in template should expand to "true" | "false"
     let interner = create_test_interner();
