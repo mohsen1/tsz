@@ -373,9 +373,18 @@ This is why key remapping fails! When the conditional `K extends "age" ? never :
 
 **Test Results**: 8272 passing, 40 failing (unchanged)
 
-**Session Status**: Made good progress on mapped type modifiers (+17 tests). Identified root cause of key remapping bug (conditional literal preservation), but fix is complex and requires deeper investigation of type parameter substitution and literal type widening in conditional evaluation.
+**Session Status**: Made good progress on mapped type modifiers (+17 tests). Identified root cause of key remapping bug (conditional literal preservation), but investigation revealed complexity:
 
-**Recommendation for next session**: Focus on fixing conditional type literal preservation as it's a high-impact bug that affects multiple features.
+**Further Investigation Findings**:
+- Direct conditional with explicit type arg works: `type T1 = Test<"name">` ✓
+- Mapped type conditional fails: `{ [K in keyof User as K extends "age" ? never : K]: User[K] }` ✗
+- Difference suggests issue in how mapped types create/set up the conditional `name_type`
+
+**Hypothesis**: The type parameter `K` in the mapped type might not be the same as the type parameter in the conditional after type alias lowering, causing substitution to fail.
+
+**Complexity**: This requires understanding how type aliases are lowered to mapped types in the binder, which is outside the solver component.
+
+**Recommendation for next session**: Consider switching to a simpler bug in the 40 failing tests that doesn't require cross-component investigation.
 
 ### 2026-02-06: Indexed Access Investigation (In Progress)
 
