@@ -74,12 +74,12 @@ impl<'a> Printer<'a> {
                 self.write(")");
             }
             [ArraySegment::Spread(spread_idx)] => {
-                // Only a spread element: [...a]
-                // This is a complex case - emit as-is for now since spread can work
-                // with iterables in ES5 (arrays are iterable)
-                self.write("[");
-                self.emit(*spread_idx);
-                self.write("]");
+                // Only a spread element: [...a] -> a.slice() for shallow copy
+                // Note: TypeScript uses __spreadArray([], a, true) but .slice() is simpler ES5
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(".slice()");
             }
             [first, rest @ ..] => {
                 // Elements first, then rest (spreads or elements)

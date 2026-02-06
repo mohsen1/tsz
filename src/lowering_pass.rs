@@ -522,9 +522,8 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 if let Some(lit) = self.arena.get_literal_expr(node) {
                     // Add ES5ArrayLiteral directive if targeting ES5 and spread elements are present
-                    if self.ctx.target_es5
-                        && self.needs_es5_array_literal_transform(&lit.elements.nodes)
-                    {
+                    let has_spread = self.needs_es5_array_literal_transform(&lit.elements.nodes);
+                    if self.ctx.target_es5 && has_spread {
                         self.transforms.insert(
                             idx,
                             TransformDirective::ES5ArrayLiteral { array_literal: idx },
@@ -1271,7 +1270,7 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Visit a constructor declaration
-    fn visit_constructor(&mut self, node: &Node, idx: NodeIndex) {
+    fn visit_constructor(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(ctor) = self.arena.get_constructor(node) else {
             return;
         };
