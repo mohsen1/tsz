@@ -109,6 +109,9 @@ mod any_propagation_tests;
 #[path = "tests/const_assertion_tests.rs"]
 mod const_assertion_tests;
 #[cfg(test)]
+#[path = "tests/enum_member_cache_tests.rs"]
+mod enum_member_cache_tests;
+#[cfg(test)]
 #[path = "tests/freshness_stripping_tests.rs"]
 mod freshness_stripping_tests;
 #[cfg(test)]
