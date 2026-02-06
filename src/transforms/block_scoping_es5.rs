@@ -33,15 +33,14 @@
 use crate::parser::node::{Node, NodeArena};
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use rustc_hash::FxHashSet;
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// State for block scoping transformation
 #[derive(Debug, Default)]
 pub struct BlockScopeState {
     /// Stack of scopes, each containing variable names declared in that scope
     /// Maps original name -> emitted name (e.g., "x" -> "x_1" if renamed)
-    scope_stack: Vec<HashMap<String, String>>,
+    scope_stack: Vec<FxHashMap<String, String>>,
 
     /// Counter for generating unique loop function names (_loop_1, _loop_2, etc.)
     loop_counter: u32,
@@ -57,7 +56,7 @@ impl BlockScopeState {
 
     /// Enter a new block scope
     pub fn enter_scope(&mut self) {
-        self.scope_stack.push(HashMap::new());
+        self.scope_stack.push(FxHashMap::default());
     }
 
     /// Exit the current block scope

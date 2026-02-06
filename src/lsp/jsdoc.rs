@@ -5,12 +5,12 @@
 use crate::comments::{get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment};
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 #[derive(Clone, Debug)]
 pub struct ParsedJsdoc {
     pub summary: Option<String>,
-    pub params: HashMap<String, String>,
+    pub params: FxHashMap<String, String>,
 }
 
 impl ParsedJsdoc {
@@ -94,7 +94,7 @@ pub fn jsdoc_for_node(
 
 pub fn parse_jsdoc(doc: &str) -> ParsedJsdoc {
     let mut summary_lines = Vec::new();
-    let mut params = HashMap::new();
+    let mut params = FxHashMap::default();
     let mut current_param: Option<String> = None;
     let mut current_desc = String::new();
     let mut in_tags = false;

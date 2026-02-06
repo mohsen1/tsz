@@ -543,7 +543,7 @@ pub fn create_ts_program(
     let root_names: Vec<String> = serde_json::from_str(root_names_json)
         .map_err(|e| JsValue::from_str(&format!("Invalid root names: {}", e)))?;
 
-    let files: std::collections::HashMap<String, String> = serde_json::from_str(files_json)
+    let files: rustc_hash::FxHashMap<String, String> = serde_json::from_str(files_json)
         .map_err(|e| JsValue::from_str(&format!("Invalid files: {}", e)))?;
 
     // Create program

@@ -1760,7 +1760,7 @@ impl<'a> Completions<'a> {
 
         // 7. Collect all visible identifiers from the scope chain
         let mut completions = Vec::new();
-        let mut seen_names = std::collections::HashSet::new();
+        let mut seen_names = FxHashSet::default();
 
         // Walk scopes from innermost to outermost
         for scope in scope_chain.iter().rev() {

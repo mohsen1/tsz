@@ -158,7 +158,7 @@ pub fn format_ts_diagnostics_with_color_and_context(
         Err(_) => return String::new(),
     };
 
-    let source_files: std::collections::HashMap<String, String> =
+    let source_files: rustc_hash::FxHashMap<String, String> =
         serde_json::from_str(source_files_json).unwrap_or_default();
 
     let mut output = String::new();
