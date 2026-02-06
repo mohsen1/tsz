@@ -735,6 +735,7 @@ mod call_hierarchy_tests {
     use crate::parser::ParserState;
 
     /// Helper: parse, bind, and create a provider.
+    #[allow(dead_code)]
     fn setup(source: &str) -> (NodeIndex, CallHierarchyProvider<'static>) {
         // We leak the parser/binder to get 'static references for test convenience.
         let source_owned = source.to_string();

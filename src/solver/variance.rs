@@ -123,6 +123,7 @@ impl<'a> VarianceVisitor<'a> {
     /// Visit a type while explicitly tracking polarity.
     ///
     /// This is used when we need to flip polarity for contravariant positions.
+    #[allow(dead_code)]
     fn visit_with_flipped_polarity(&mut self, type_id: TypeId) {
         let current = self.get_current_polarity();
         self.visit_with_polarity(type_id, !current);

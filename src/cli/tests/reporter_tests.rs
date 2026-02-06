@@ -59,7 +59,7 @@ fn plain_mode_formats_diagnostic_with_location() {
     };
 
     let mut reporter = Reporter::new(false);
-    let output = reporter.render(&[diagnostic.clone()]);
+    let output = reporter.render(std::slice::from_ref(&diagnostic));
 
     // Non-pretty: file(line,col): error TScode: message\n (no snippets)
     let expected = format!(
@@ -186,7 +186,7 @@ fn pretty_mode_uses_colon_separated_location() {
 
     let mut reporter = Reporter::new(false);
     reporter.set_pretty(true);
-    let output = reporter.render(&[diagnostic.clone()]);
+    let output = reporter.render(std::slice::from_ref(&diagnostic));
 
     // Pretty mode: file:line:col - error TScode: message
     assert!(
@@ -275,7 +275,7 @@ fn pretty_mode_summary_single_error_single_file() {
 
     let mut reporter = Reporter::new(false);
     reporter.set_pretty(true);
-    let output = reporter.render(&[diagnostic.clone()]);
+    let output = reporter.render(std::slice::from_ref(&diagnostic));
 
     // "Found 1 error in test.ts:1" (relative path)
     assert!(

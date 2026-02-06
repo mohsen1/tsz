@@ -207,7 +207,7 @@ fn test_template_literal_disjointness_detection() {
         TemplateSpan::Type(TypeId::STRING),
     ]);
 
-    let mut checker = SubtypeChecker::new(&interner);
+    let checker = SubtypeChecker::new(&interner);
     assert!(!checker.are_types_overlapping(template1, template2));
 }
 
@@ -227,7 +227,7 @@ fn test_template_literal_overlap_detection() {
         TemplateSpan::Type(TypeId::NUMBER),
     ]);
 
-    let mut checker = SubtypeChecker::new(&interner);
+    let checker = SubtypeChecker::new(&interner);
     assert!(checker.are_types_overlapping(template1, template2));
 }
 
@@ -248,6 +248,6 @@ fn test_template_literal_disjointness_different_suffix() {
         TemplateSpan::Text(interner.intern_string("c")),
     ]);
 
-    let mut checker = SubtypeChecker::new(&interner);
+    let checker = SubtypeChecker::new(&interner);
     assert!(!checker.are_types_overlapping(template1, template2));
 }

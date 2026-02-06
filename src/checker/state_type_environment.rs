@@ -693,13 +693,17 @@ impl<'a> CheckerState<'a> {
         }
 
         // Handle unions and intersections - resolve each member
+        // Only create a new union/intersection if members actually changed
         if let Some(TypeKey::Union(list_id)) = self.ctx.types.lookup(type_id) {
             let members = self.ctx.types.type_list(list_id);
             let resolved_members: Vec<TypeId> = members
                 .iter()
                 .map(|&member| self.resolve_lazy_type_inner(member, visited))
                 .collect();
-            return self.ctx.types.union(resolved_members);
+            // Only create new union if members changed
+            if resolved_members.iter().ne(members.iter()) {
+                return self.ctx.types.union(resolved_members);
+            }
         }
 
         if let Some(TypeKey::Intersection(list_id)) = self.ctx.types.lookup(type_id) {
@@ -708,7 +712,10 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|&member| self.resolve_lazy_type_inner(member, visited))
                 .collect();
-            return self.ctx.types.intersection(resolved_members);
+            // Only create new intersection if members changed
+            if resolved_members.iter().ne(members.iter()) {
+                return self.ctx.types.intersection(resolved_members);
+            }
         }
 
         type_id

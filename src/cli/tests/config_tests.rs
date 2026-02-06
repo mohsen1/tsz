@@ -307,6 +307,7 @@ fn resolve_compiler_options_rejects_unknown_lib() {
     assert!(message.contains("compilerOptions.lib"), "{message}");
 }
 
+#[allow(dead_code)]
 fn canonicalize_or_owned(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }

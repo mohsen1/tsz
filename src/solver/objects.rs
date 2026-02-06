@@ -471,7 +471,7 @@ mod tests {
         if let PropertyCollectionResult::Properties { properties, .. } = result {
             assert_eq!(properties.len(), 1);
             // Required wins (optional && required = required)
-            assert_eq!(properties[0].optional, false);
+            assert!(!properties[0].optional);
         }
     }
 
@@ -516,7 +516,7 @@ mod tests {
         if let PropertyCollectionResult::Properties { properties, .. } = result {
             assert_eq!(properties.len(), 1);
             // Readonly is cumulative (false || true = true)
-            assert_eq!(properties[0].readonly, true);
+            assert!(properties[0].readonly);
         }
     }
 

@@ -1814,7 +1814,7 @@ impl TypeInterner {
             // BigInt is disjoint from string, number, boolean, symbol
             (BigInt, String) | (BigInt, Number) | (BigInt, Boolean) | (BigInt, Symbol) => true,
             // Symbol is disjoint from everything except itself (already handled above)
-            (Symbol, _) | (_, Symbol) => true,
+            (Symbol, String) | (Symbol, Number) | (Symbol, Boolean) | (Symbol, BigInt) => true,
         }
     }
 

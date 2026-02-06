@@ -295,7 +295,7 @@ fn bench_incremental_reparse(c: &mut Criterion) {
 // Parser Benchmarks - Cache-Optimized 16-byte Nodes
 // =============================================================================
 
-/// Simple source for Parser (no classes/interfaces/types yet)
+// Simple source for Parser (no classes/interfaces/types yet)
 criterion_group!(
     benches,
     bench_parse_small,

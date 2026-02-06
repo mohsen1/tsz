@@ -67,7 +67,7 @@ fn bench_concurrent_objects(c: &mut Criterion) {
                     let interner = Arc::new(TypeInterner::new());
                     pool.scope(|_s| {
                         (0..1000).into_par_iter().for_each(|i| {
-                            use wasm::solver::PropertyInfo;
+                            use wasm::solver::{PropertyInfo, Visibility};
                             let name = interner.intern_string(&format!("prop_{}", i % 100));
                             let _ = interner.object(vec![PropertyInfo {
                                 name,
@@ -76,6 +76,8 @@ fn bench_concurrent_objects(c: &mut Criterion) {
                                 optional: false,
                                 readonly: false,
                                 is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
                             }]);
                         });
                     });
@@ -183,7 +185,7 @@ fn bench_property_lookup(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(2));
 
     group.bench_function("small_object", |b| {
-        use wasm::solver::{ObjectShape, PropertyInfo};
+        use wasm::solver::{ObjectShape, PropertyInfo, Visibility};
         let interner = TypeInterner::new();
 
         // Create a small object (under cache threshold)
@@ -195,6 +197,8 @@ fn bench_property_lookup(c: &mut Criterion) {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             })
             .collect::<Vec<_>>();
 
@@ -203,6 +207,7 @@ fn bench_property_lookup(c: &mut Criterion) {
             properties: props,
             string_index: None,
             number_index: None,
+            symbol: None,
         };
         let shape_id = interner.intern_object_shape(shape.clone());
 
@@ -212,7 +217,7 @@ fn bench_property_lookup(c: &mut Criterion) {
     });
 
     group.bench_function("large_object_cached", |b| {
-        use wasm::solver::{ObjectShape, PropertyInfo};
+        use wasm::solver::{ObjectShape, PropertyInfo, Visibility};
         let interner = TypeInterner::new();
 
         // Create a large object (above cache threshold)
@@ -224,6 +229,8 @@ fn bench_property_lookup(c: &mut Criterion) {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             })
             .collect::<Vec<_>>();
 
@@ -232,6 +239,7 @@ fn bench_property_lookup(c: &mut Criterion) {
             properties: props,
             string_index: None,
             number_index: None,
+            symbol: None,
         };
         let shape_id = interner.intern_object_shape(shape.clone());
 

@@ -4338,7 +4338,7 @@ mod tests {
         );
         let resp = server.handle_tsserver_request(req);
         assert!(resp.success);
-        assert_eq!(server.open_files.get("/test.ts").unwrap(), "const x = 2;");
+        assert_eq!(server.open_files["/test.ts"], "const x = 2;");
     }
 
     #[test]
@@ -4539,10 +4539,9 @@ mod tests {
         // Each definition entry in the response must have start/end spans with
         // valid line/offset fields.
         let mut server = make_server();
-        server.open_files.insert(
-            "/test.ts".to_string(),
-            "const x = 1;\nx;".replace("\n", "\n").to_string(),
-        );
+        server
+            .open_files
+            .insert("/test.ts".to_string(), "const x = 1;\nx;".to_string());
         // Open file with actual newline
         server.open_files.insert(
             "/test.ts".to_string(),

@@ -876,10 +876,8 @@ fn test_wildcard_reexport_tracked() {
 
     // Wildcard re-exports should be tracked
     let has_wildcard = !binder.wildcard_reexports.is_empty();
-    assert!(
-        has_wildcard || true, // Wildcard reexport tracking may not be implemented yet
-        "Wildcard re-exports should be tracked"
-    );
+    // Wildcard reexport tracking may not be implemented yet
+    let _ = has_wildcard;
 }
 
 // =============================================================================

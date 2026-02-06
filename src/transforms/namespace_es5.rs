@@ -160,9 +160,6 @@ mod tests {
     #[test]
     fn test_namespace_with_function() {
         let output = emit_namespace("namespace M { export function foo() { return 1; } }");
-        eprintln!("=== Namespace output ===");
-        eprintln!("{}", output);
-        eprintln!("=== End output ===");
         assert!(output.contains("var M;"), "Should declare var M");
         assert!(
             output.contains("function foo()"),

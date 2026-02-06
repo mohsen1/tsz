@@ -1248,7 +1248,7 @@ fn make_array_test_env(
 #[test]
 fn test_property_access_readonly_array() {
     let interner = TypeInterner::new();
-    let (env, _) = make_array_test_env(&interner);
+    let (_env, _) = make_array_test_env(&interner);
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let array = interner.array(TypeId::STRING);
@@ -1264,7 +1264,7 @@ fn test_property_access_readonly_array() {
 #[test]
 fn test_property_access_tuple_length() {
     let interner = TypeInterner::new();
-    let (env, _) = make_array_test_env(&interner);
+    let (_env, _) = make_array_test_env(&interner);
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let tuple = interner.tuple(vec![
@@ -1292,13 +1292,8 @@ fn test_property_access_tuple_length() {
 #[test]
 fn test_property_access_array_map_signature() {
     let interner = TypeInterner::new();
-    let (env, _) = make_array_test_env(&interner);
+    let (_env, _) = make_array_test_env(&interner);
     let evaluator = PropertyAccessEvaluator::new(&interner);
-
-    eprintln!(
-        "DEBUG: Array base type from interner: {:?}",
-        interner.get_array_base_type()
-    );
 
     let array = interner.array(TypeId::NUMBER);
     let result = evaluator.resolve_property_access(array, "map");
@@ -1334,7 +1329,7 @@ fn test_property_access_array_map_signature() {
 #[test]
 fn test_property_access_array_at_returns_optional_element() {
     let interner = TypeInterner::new();
-    let (env, _) = make_array_test_env(&interner);
+    let (_env, _) = make_array_test_env(&interner);
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let array = interner.array(TypeId::NUMBER);
@@ -1355,7 +1350,7 @@ fn test_property_access_array_at_returns_optional_element() {
 #[test]
 fn test_property_access_array_entries_returns_tuple_array() {
     let interner = TypeInterner::new();
-    let (env, _) = make_array_test_env(&interner);
+    let (_env, _) = make_array_test_env(&interner);
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let array = interner.array(TypeId::BOOLEAN);
@@ -1384,7 +1379,7 @@ fn test_property_access_array_entries_returns_tuple_array() {
 #[test]
 fn test_property_access_array_reduce_callable() {
     let interner = TypeInterner::new();
-    let (env, _) = make_array_test_env(&interner);
+    let (_env, _) = make_array_test_env(&interner);
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let array = interner.array(TypeId::STRING);

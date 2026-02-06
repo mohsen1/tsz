@@ -4,7 +4,8 @@ use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use wasm::interner::Atom;
 use wasm::solver::{
     CompatChecker, ConditionalType, FunctionShape, ObjectShapeId, ParamInfo, PropertyInfo, TypeId,
-    TypeInterner, TypeKey, TypeParamInfo, evaluate_type, infer_generic_function, is_subtype_of,
+    TypeInterner, TypeKey, TypeParamInfo, Visibility, evaluate_type, infer_generic_function,
+    is_subtype_of,
 };
 
 fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
@@ -20,6 +21,8 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: name_y,
@@ -28,6 +31,8 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -38,6 +43,8 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let extra_required = interner.object(vec![
@@ -48,6 +55,8 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: name_z,
@@ -56,6 +65,8 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -67,6 +78,8 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: name_y,
@@ -75,6 +88,8 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -101,11 +116,13 @@ fn build_infer_fixture(interner: &TypeInterner) -> (FunctionShape, [TypeId; 1]) 
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
+        is_const: false,
     };
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: Some(TypeId::STRING),
+        is_const: false,
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
     let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
@@ -141,6 +158,8 @@ fn build_property_lookup_fixture(interner: &TypeInterner) -> (ObjectShapeId, Ato
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         });
     }
 
