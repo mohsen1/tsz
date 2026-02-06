@@ -3455,13 +3455,13 @@ impl<'a> InferenceContext<'a> {
     /// For example, if T extends U and U extends T, they should be unified
     /// into a single equivalence class for inference purposes.
     fn unify_circular_constraints(&mut self) -> Result<(), InferenceError> {
-        use std::collections::{HashMap, HashSet};
+        use rustc_hash::{FxHashMap, FxHashSet};
 
         let type_params: Vec<_> = self.type_params.clone();
 
         // Build adjacency list: var -> set of vars it extends (upper bounds)
-        let mut graph: HashMap<InferenceVar, HashSet<InferenceVar>> = HashMap::new();
-        let mut var_for_param: HashMap<Atom, InferenceVar> = HashMap::new();
+        let mut graph: FxHashMap<InferenceVar, FxHashSet<InferenceVar>> = FxHashMap::default();
+        let mut var_for_param: FxHashMap<Atom, InferenceVar> = FxHashMap::default();
 
         for (name, var, _) in type_params.iter() {
             let root = self.table.find(*var);
@@ -3488,20 +3488,20 @@ impl<'a> InferenceContext<'a> {
 
         // Find SCCs using Tarjan's algorithm
         let mut index_counter = 0;
-        let mut indices: HashMap<InferenceVar, usize> = HashMap::new();
-        let mut lowlink: HashMap<InferenceVar, usize> = HashMap::new();
+        let mut indices: FxHashMap<InferenceVar, usize> = FxHashMap::default();
+        let mut lowlink: FxHashMap<InferenceVar, usize> = FxHashMap::default();
         let mut stack: Vec<InferenceVar> = Vec::new();
-        let mut on_stack: HashSet<InferenceVar> = HashSet::new();
+        let mut on_stack: FxHashSet<InferenceVar> = FxHashSet::default();
         let mut sccs: Vec<Vec<InferenceVar>> = Vec::new();
 
         fn strongconnect(
             var: InferenceVar,
-            graph: &HashMap<InferenceVar, HashSet<InferenceVar>>,
+            graph: &FxHashMap<InferenceVar, FxHashSet<InferenceVar>>,
             index_counter: &mut usize,
-            indices: &mut HashMap<InferenceVar, usize>,
-            lowlink: &mut HashMap<InferenceVar, usize>,
+            indices: &mut FxHashMap<InferenceVar, usize>,
+            lowlink: &mut FxHashMap<InferenceVar, usize>,
             stack: &mut Vec<InferenceVar>,
-            on_stack: &mut HashSet<InferenceVar>,
+            on_stack: &mut FxHashSet<InferenceVar>,
             sccs: &mut Vec<Vec<InferenceVar>>,
         ) {
             indices.insert(var, *index_counter);

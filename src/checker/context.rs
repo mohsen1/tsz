@@ -6,7 +6,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -439,11 +439,11 @@ pub struct CheckerContext<'a> {
     /// Stack of symbols being resolved.
     pub symbol_resolution_stack: Vec<SymbolId>,
     /// O(1) lookup set for symbol resolution stack.
-    pub symbol_resolution_set: HashSet<SymbolId>,
+    pub symbol_resolution_set: FxHashSet<SymbolId>,
     /// O(1) lookup set for class instance type resolution to avoid recursion.
-    pub class_instance_resolution_set: HashSet<SymbolId>,
+    pub class_instance_resolution_set: FxHashSet<SymbolId>,
     /// O(1) lookup set for class constructor type resolution to avoid recursion.
-    pub class_constructor_resolution_set: HashSet<SymbolId>,
+    pub class_constructor_resolution_set: FxHashSet<SymbolId>,
 
     /// Inheritance graph tracking class/interface relationships
     pub inheritance_graph: crate::solver::inheritance::InheritanceGraph,
@@ -451,11 +451,11 @@ pub struct CheckerContext<'a> {
     /// Stack of nodes being resolved.
     pub node_resolution_stack: Vec<NodeIndex>,
     /// O(1) lookup set for node resolution stack.
-    pub node_resolution_set: HashSet<NodeIndex>,
+    pub node_resolution_set: FxHashSet<NodeIndex>,
 
     // --- Scopes & Context ---
     /// Current type parameter scope.
-    pub type_parameter_scope: HashMap<String, TypeId>,
+    pub type_parameter_scope: FxHashMap<String, TypeId>,
 
     /// Contextual type for expression being checked.
     pub contextual_type: Option<TypeId>,
@@ -532,7 +532,7 @@ pub struct CheckerContext<'a> {
     pub current_file_idx: usize,
 
     /// Resolved module specifiers for this file (multi-file CLI mode).
-    pub resolved_modules: Option<HashSet<String>>,
+    pub resolved_modules: Option<FxHashSet<String>>,
 
     /// Per-file cache of is_external_module values to preserve state across files.
     /// Maps file path -> whether that file is an external module (has imports/exports).
@@ -678,15 +678,15 @@ impl<'a> CheckerContext<'a> {
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
-            symbol_resolution_set: HashSet::new(),
+            symbol_resolution_set: FxHashSet::default(),
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
-            class_instance_resolution_set: HashSet::new(),
-            class_constructor_resolution_set: HashSet::new(),
+            class_instance_resolution_set: FxHashSet::default(),
+            class_constructor_resolution_set: FxHashSet::default(),
             inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
-            node_resolution_set: HashSet::new(),
-            type_parameter_scope: HashMap::new(),
+            node_resolution_set: FxHashSet::default(),
+            type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
@@ -771,15 +771,15 @@ impl<'a> CheckerContext<'a> {
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
-            symbol_resolution_set: HashSet::new(),
+            symbol_resolution_set: FxHashSet::default(),
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
-            class_instance_resolution_set: HashSet::new(),
-            class_constructor_resolution_set: HashSet::new(),
+            class_instance_resolution_set: FxHashSet::default(),
+            class_constructor_resolution_set: FxHashSet::default(),
             inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
-            node_resolution_set: HashSet::new(),
-            type_parameter_scope: HashMap::new(),
+            node_resolution_set: FxHashSet::default(),
+            type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
@@ -867,15 +867,15 @@ impl<'a> CheckerContext<'a> {
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
-            symbol_resolution_set: HashSet::new(),
+            symbol_resolution_set: FxHashSet::default(),
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
-            class_instance_resolution_set: HashSet::new(),
-            class_constructor_resolution_set: HashSet::new(),
+            class_instance_resolution_set: FxHashSet::default(),
+            class_constructor_resolution_set: FxHashSet::default(),
             inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
-            node_resolution_set: HashSet::new(),
-            type_parameter_scope: HashMap::new(),
+            node_resolution_set: FxHashSet::default(),
+            type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
@@ -962,15 +962,15 @@ impl<'a> CheckerContext<'a> {
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
-            symbol_resolution_set: HashSet::new(),
+            symbol_resolution_set: FxHashSet::default(),
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
-            class_instance_resolution_set: HashSet::new(),
-            class_constructor_resolution_set: HashSet::new(),
+            class_instance_resolution_set: FxHashSet::default(),
+            class_constructor_resolution_set: FxHashSet::default(),
             inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
-            node_resolution_set: HashSet::new(),
-            type_parameter_scope: HashMap::new(),
+            node_resolution_set: FxHashSet::default(),
+            type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
@@ -1065,15 +1065,15 @@ impl<'a> CheckerContext<'a> {
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
-            symbol_resolution_set: HashSet::new(),
+            symbol_resolution_set: FxHashSet::default(),
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
-            class_instance_resolution_set: HashSet::new(),
-            class_constructor_resolution_set: HashSet::new(),
+            class_instance_resolution_set: FxHashSet::default(),
+            class_constructor_resolution_set: FxHashSet::default(),
             inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
-            node_resolution_set: HashSet::new(),
-            type_parameter_scope: HashMap::new(),
+            node_resolution_set: FxHashSet::default(),
+            type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
@@ -1145,7 +1145,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Set resolved module specifiers (module names that exist in the project).
     /// Used to suppress TS2307 errors for known modules.
-    pub fn set_resolved_modules(&mut self, modules: HashSet<String>) {
+    pub fn set_resolved_modules(&mut self, modules: FxHashSet<String>) {
         self.resolved_modules = Some(modules);
     }
 

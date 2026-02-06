@@ -725,9 +725,9 @@ impl<'a> CheckerState<'a> {
     /// Ensure all symbols referenced in Application types are resolved in the type_env.
     /// This walks the type structure and calls get_type_of_symbol for any Application base symbols.
     pub(crate) fn ensure_application_symbols_resolved(&mut self, type_id: TypeId) {
-        use std::collections::HashSet;
+        use rustc_hash::FxHashSet;
 
-        let mut visited: HashSet<TypeId> = HashSet::new();
+        let mut visited: FxHashSet<TypeId> = FxHashSet::default();
         self.ensure_application_symbols_resolved_inner(type_id, &mut visited);
     }
 
@@ -777,7 +777,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn ensure_application_symbols_resolved_inner(
         &mut self,
         type_id: TypeId,
-        visited: &mut std::collections::HashSet<TypeId>,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
         use crate::solver::type_queries::{
             SymbolResolutionTraversalKind, classify_for_symbol_resolution_traversal,

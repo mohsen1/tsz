@@ -215,14 +215,14 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type contains a type parameter.
     pub fn contains_type_parameter(&self, ty: TypeId) -> bool {
-        let mut visited = std::collections::HashSet::new();
+        let mut visited = rustc_hash::FxHashSet::default();
         self.contains_type_parameter_inner(ty, &mut visited)
     }
 
     fn contains_type_parameter_inner(
         &self,
         ty: TypeId,
-        visited: &mut std::collections::HashSet<TypeId>,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> bool {
         use crate::solver::type_queries::{
             TypeParameterContentKind, classify_for_type_parameter_content,
@@ -265,15 +265,11 @@ impl<'a> CheckerState<'a> {
 
     /// Get the depth of type nesting.
     pub fn type_depth(&self, ty: TypeId) -> usize {
-        let mut visited = std::collections::HashSet::new();
+        let mut visited = rustc_hash::FxHashSet::default();
         self.type_depth_inner(ty, &mut visited)
     }
 
-    fn type_depth_inner(
-        &self,
-        ty: TypeId,
-        visited: &mut std::collections::HashSet<TypeId>,
-    ) -> usize {
+    fn type_depth_inner(&self, ty: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> usize {
         use crate::solver::type_queries::{TypeDepthKind, classify_for_type_depth};
 
         if !visited.insert(ty) {

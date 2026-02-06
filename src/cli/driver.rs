@@ -1679,13 +1679,13 @@ fn load_lib_files_for_contexts(
     use crate::binder::BinderState;
     use crate::parser::ParserState;
     use rayon::prelude::*;
-    use std::collections::HashSet;
+    use rustc_hash::FxHashSet;
     use std::sync::Arc;
 
     // Deduplicate lib paths by file stem (lib name)
     // resolve_lib_files already resolved all /// <reference lib="..." /> directives,
     // so we just need to dedupe and read the files.
-    let mut seen_libs = HashSet::new();
+    let mut seen_libs = FxHashSet::default();
     let unique_lib_paths: Vec<_> = lib_files
         .iter()
         .filter(|path| {
@@ -2020,7 +2020,7 @@ fn collect_diagnostics(
 
         // Build resolved_modules set for backward compatibility
         // Only include modules that were successfully resolved (not in error map)
-        let mut resolved_modules = HashSet::new();
+        let mut resolved_modules = rustc_hash::FxHashSet::default();
         for (specifier, _) in &module_specifiers {
             // Check if this specifier is in resolved_module_paths (successfully resolved)
             if resolved_module_paths.contains_key(&(file_idx, specifier.clone())) {
