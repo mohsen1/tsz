@@ -177,6 +177,22 @@ pub enum TransformDirective {
         object_literal: NodeIndex,
     },
 
+    /// ES5 Array Literal: Transform spread elements to ES5 compatible code.
+    ///
+    /// ```typescript
+    /// const arr = [1, ...rest, 2];
+    /// ```
+    ///
+    /// Becomes:
+    ///
+    /// ```javascript
+    /// var arr = [1].concat(rest, [2]);
+    /// ```
+    ES5ArrayLiteral {
+        /// Original array literal node
+        array_literal: NodeIndex,
+    },
+
     /// ES5 Variable Declaration List: Transform destructuring declarations to assignments.
     ES5VariableDeclarationList {
         /// Original variable declaration list node

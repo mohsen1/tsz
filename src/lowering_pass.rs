@@ -473,6 +473,16 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 if let Some(lit) = self.arena.get_literal_expr(node) {
+                    // Add ES5ArrayLiteral directive if targeting ES5 and spread elements are present
+                    if self.ctx.target_es5
+                        && self.needs_es5_array_literal_transform(&lit.elements.nodes)
+                    {
+                        self.transforms.insert(
+                            idx,
+                            TransformDirective::ES5ArrayLiteral { array_literal: idx },
+                        );
+                    }
+
                     for &elem in &lit.elements.nodes {
                         self.visit(elem);
                     }
@@ -1370,6 +1380,11 @@ impl<'a> LoweringPass<'a> {
             node.kind == syntax_kind_ext::METHOD_DECLARATION
                 || node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
         })
+    }
+
+    /// Check if an array literal needs ES5 transformation (has spread elements)
+    fn needs_es5_array_literal_transform(&self, elements: &[NodeIndex]) -> bool {
+        elements.iter().any(|&idx| self.is_spread_element(idx))
     }
 
     fn function_parameters_need_es5_transform(&self, params: &NodeList) -> bool {

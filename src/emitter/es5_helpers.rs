@@ -7,7 +7,134 @@ use crate::scanner::SyntaxKind;
 use crate::transform_context::TransformDirective;
 use crate::transforms::ClassES5Emitter;
 
+/// Segment of an array literal for ES5 spread transformation
+enum ArraySegment<'a> {
+    /// Non-spread elements: [1, 2, 3]
+    Elements(&'a [NodeIndex]),
+    /// Spread element: ...arr
+    Spread(NodeIndex),
+}
+
 impl<'a> Printer<'a> {
+    /// Emit an array literal with ES5 spread transformation.
+    /// Pattern: [1, ...a, 2] -> [1].concat(a, [2])
+    /// Pattern: [...a, 1] -> a.concat([1])
+    /// Pattern: [1, ...a] -> [1].concat(a)
+    pub(super) fn emit_array_literal_es5(&mut self, elements: &[NodeIndex]) {
+        if elements.is_empty() {
+            self.write("[]");
+            return;
+        }
+
+        // Split array into segments by spread elements
+        let mut segments: Vec<ArraySegment> = Vec::new();
+        let mut current_start = 0;
+
+        for (i, &elem_idx) in elements.iter().enumerate() {
+            if self.is_spread_element(elem_idx) {
+                // Add non-spread segment before this spread
+                if current_start < i {
+                    segments.push(ArraySegment::Elements(&elements[current_start..i]));
+                }
+                // Add the spread element
+                segments.push(ArraySegment::Spread(elem_idx));
+                current_start = i + 1;
+            }
+        }
+
+        // Add remaining elements after last spread
+        if current_start < elements.len() {
+            segments.push(ArraySegment::Elements(&elements[current_start..]));
+        }
+
+        // Emit the concat chain
+        match segments.as_slice() {
+            [] => {
+                // Should not happen due to empty check above
+                self.write("[]");
+            }
+            [ArraySegment::Elements(elems)] => {
+                // No spreads, emit normally
+                self.write("[");
+                self.emit_comma_separated(elems);
+                self.write("]");
+            }
+            [
+                ArraySegment::Spread(spread_idx),
+                ArraySegment::Elements(elems),
+            ] => {
+                // Spread first, then elements: [...a, 1, 2] -> a.concat([1, 2])
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(".concat(");
+                self.write("[");
+                self.emit_comma_separated(elems);
+                self.write("]");
+                self.write(")");
+            }
+            [ArraySegment::Spread(spread_idx)] => {
+                // Only a spread element: [...a]
+                // This is a complex case - emit as-is for now since spread can work
+                // with iterables in ES5 (arrays are iterable)
+                self.write("[");
+                self.emit(*spread_idx);
+                self.write("]");
+            }
+            [first, rest @ ..] => {
+                // Elements first, then rest (spreads or elements)
+                self.emit_array_segment(first);
+                for segment in rest {
+                    self.write(".concat(");
+                    match segment {
+                        ArraySegment::Elements(elems) => {
+                            self.write("[");
+                            self.emit_comma_separated(elems);
+                            self.write("]");
+                        }
+                        ArraySegment::Spread(spread_idx) => {
+                            if let Some(spread_node) = self.arena.get(*spread_idx) {
+                                self.emit_spread_expression(spread_node);
+                            }
+                        }
+                    }
+                    self.write(")");
+                }
+            }
+        }
+    }
+
+    fn is_spread_element(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+            || node.kind == syntax_kind_ext::SPREAD_ELEMENT
+    }
+
+    fn emit_spread_expression(&mut self, node: &Node) {
+        // Get the expression inside the spread element
+        if let Some(spread) = self.arena.get_spread(node) {
+            self.emit(spread.expression);
+        }
+    }
+
+    fn emit_array_segment(&mut self, segment: &ArraySegment) {
+        match segment {
+            ArraySegment::Elements(elems) => {
+                self.write("[");
+                self.emit_comma_separated(elems);
+                self.write("]");
+            }
+            ArraySegment::Spread(_) => {
+                // This should not happen as the first segment
+                // [...a] case is handled differently
+                self.write("[]");
+            }
+        }
+    }
+
     pub(super) fn emit_object_literal_entries_es5(&mut self, elements: &[NodeIndex]) {
         if elements.is_empty() {
             self.write("{}");
