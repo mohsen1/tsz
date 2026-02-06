@@ -212,19 +212,23 @@ impl TypeId {
 /// - `source`: The source type being compared
 /// - `target`: The target type being compared
 /// - `relation`: Distinguishes between different relation types (0 = subtype, 1 = assignability, etc.)
-/// - `flags`: Bitmask for boolean compiler options:
+/// - `flags`: Bitmask for boolean compiler options (u16 to support current and future flags):
 ///   - bit 0: strict_null_checks
 ///   - bit 1: strict_function_types
 ///   - bit 2: exact_optional_property_types
 ///   - bit 3: no_unchecked_indexed_access
 ///   - bit 4: disable_method_bivariance (Sound Mode)
+///   - bit 5: allow_void_return
+///   - bit 6: allow_bivariant_rest
+///   - bit 7: allow_bivariant_param_count
+///   - bits 8-15: Reserved for future flags (strict_any_propagation, strict_structural_checking, etc.)
 /// - `any_mode`: Controls how `any` is treated (0 = All, 1 = TopLevelOnly)
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RelationCacheKey {
     pub source: TypeId,
     pub target: TypeId,
     pub relation: u8,
-    pub flags: u8,
+    pub flags: u16,
     pub any_mode: u8,
 }
 
@@ -235,7 +239,7 @@ impl RelationCacheKey {
     pub const IDENTICAL: u8 = 2;
 
     /// Create a new cache key for subtype checking.
-    pub fn subtype(source: TypeId, target: TypeId, flags: u8, any_mode: u8) -> Self {
+    pub fn subtype(source: TypeId, target: TypeId, flags: u16, any_mode: u8) -> Self {
         Self {
             source,
             target,
@@ -246,7 +250,7 @@ impl RelationCacheKey {
     }
 
     /// Create a new cache key for assignability checking.
-    pub fn assignability(source: TypeId, target: TypeId, flags: u8, any_mode: u8) -> Self {
+    pub fn assignability(source: TypeId, target: TypeId, flags: u16, any_mode: u8) -> Self {
         Self {
             source,
             target,
