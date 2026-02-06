@@ -798,6 +798,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
 
     fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
         // Resolve the legacy Ref(SymbolRef) type using the resolver
+        #[allow(deprecated)]
         let resolved = self
             .checker
             .resolver
