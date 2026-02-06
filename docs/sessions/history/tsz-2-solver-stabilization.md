@@ -382,17 +382,23 @@ This preserves the distributive property `keyof (A | B) = (keyof A) & (keyof B)`
 
 ---
 
-## Current Status (1 Failing Solver Test Remaining)
+## Current Status (0 Failing Solver Tests Remaining!) ✅
 
 **Completed Priorities**:
 - ✅ Priority 1: Index Signature Inference (deleted incorrect tests)
 - ✅ Priority 2: Generic Fallback (fixed SubtypeChecker)
 - ✅ Priority 3: Narrowing `any` (test expectation fix)
 - ✅ Priority 4: Keyof Union Distribution (already fixed in main branch)
+- ✅ Priority 5: Construct Signature Parsing (fixed parser bug)
 
-**Remaining**: 1 solver test (lowering test - unrelated to type solver)
+**Solver Test Status**: 3524 passing, 0 failing, 24 ignored ✅
 
-**Solver Test Status**: 3523 passing, 1 failing (pre-existing lowering issue)
+**tsz-2 Status**: COMPLETE - All solver tests passing!
+
+**Latest Fix** (commit f99742dda):
+- Fixed parser bug in `look_ahead_is_property_name_after_keyword()`
+- Added `look_ahead_is_property_name_after_construct_keyword()`
+- Construct signatures in type literals are now correctly parsed
 
 ---
 
@@ -457,6 +463,39 @@ For ALL changes to `src/solver/` or `src/checker/`:
 
 Evidence from investigation: 100% of unreviewed solver/checker changes had critical type system bugs.
 
-## Session History
+---
+
+## Final Fix: Construct Signature Parsing (Commit f99742dda) ✅
+
+**Test**: `test_lower_type_literal_construct_signature`
+
+**Problem**: Parser was incorrectly parsing `new (x: string): number` as a METHOD_SIGNATURE instead of CONSTRUCT_SIGNATURE.
+
+**Root Cause**:
+The `look_ahead_is_property_name_after_keyword()` function in `src/parser/state_types.rs` included `OpenParenToken` in the list of tokens that indicate a keyword is being used as a property name. This was wrong for `new` because:
+- `new (` is a construct signature (e.g., `new (x: string): number`)
+- `new :` is a property named `new`
+
+**Investigation Process**:
+1. Initially thought it was a lowering bug in `lower.rs`
+2. Added debug output to trace the member kind
+3. Discovered member kind was 174 (METHOD_SIGNATURE) instead of 181 (CONSTRUCT_SIGNATURE)
+4. Traced back to the parser's type member parsing logic
+5. Found the bug in the look-ahead check
+
+**Fix**:
+1. Added `look_ahead_is_property_name_after_construct_keyword()` in `src/parser/state_types.rs`
+2. This function excludes `OpenParenToken` and `LessThanToken` from the property name check for `new`
+3. Updated `parse_type_member()` in `src/parser/state_declarations.rs` to use the new look-ahead function
+
+**Files Modified**:
+- `src/parser/state_types.rs` - Added new look-ahead function (lines 1385-1414)
+- `src/parser/state_declarations.rs` - Use new function for `new` keyword (lines 183-193)
+
+**Results**:
+- Solver tests: 3523 → 3524 passing (0 failures!)
+- Session tsz-2 status: COMPLETE ✅
+
+---
 
 *2026-02-05*: Redefined from Application expansion session to Solver Stabilization after Gemini consultation.
