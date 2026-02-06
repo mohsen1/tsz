@@ -975,7 +975,23 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             MappedTypeId(mapped_id),
         )
     }
-    fn visit_index_access(&mut self, _object_type: TypeId, _key_type: TypeId) -> Self::Output {
+    fn visit_index_access(&mut self, object_type: TypeId, key_type: TypeId) -> Self::Output {
+        use crate::solver::visitor::index_access_parts;
+
+        // S[I] <: T[J]  <=>  S <: T  AND  I <: J
+        // This handles deferred index access types (usually involving type parameters).
+        if let Some((t_obj, t_idx)) = index_access_parts(self.checker.interner, self.target) {
+            // Coinductive check: delegate back to check_subtype for both parts
+            if self.checker.check_subtype(object_type, t_obj).is_true()
+                && self.checker.check_subtype(key_type, t_idx).is_true()
+            {
+                return SubtypeResult::True;
+            }
+        }
+
+        // If target is not an IndexAccess, we cannot prove subtyping.
+        // Note: If S[I] could have been simplified to a concrete type that matches the target,
+        // evaluate_type() in the caller (check_subtype) would have already handled it.
         SubtypeResult::False
     }
     fn visit_template_literal(&mut self, template_id: u32) -> Self::Output {
@@ -2686,19 +2702,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(t_sym) = ref_symbol(self.interner, target) {
             return self.check_to_ref_subtype(source, target, &t_sym);
-        }
-
-        if let (Some((s_obj, s_idx)), Some((t_obj, t_idx))) = (
-            index_access_parts(self.interner, source),
-            index_access_parts(self.interner, target),
-        ) {
-            return if self.check_subtype(s_obj, t_obj).is_true()
-                && self.check_subtype(s_idx, t_idx).is_true()
-            {
-                SubtypeResult::True
-            } else {
-                SubtypeResult::False
-            };
         }
 
         if let (Some(s_sym), Some(t_sym)) = (
