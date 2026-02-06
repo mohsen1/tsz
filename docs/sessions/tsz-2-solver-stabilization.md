@@ -148,21 +148,65 @@ This ensures that objects with completely disjoint properties are not considered
 
 ---
 
-### Priority 5: Weak Types & Others (5 tests) - REMAINING ⚪
-**Tests**:
-- `test_constraint_satisfaction_multiple_candidates`
-- `test_resolve_multiple_lower_bounds_union`
+## Redefined Priorities (2026-02-05 by Gemini)
 
-**Context**: Most complex, tackle after property access is stabilized
+### 🔴 Priority 1: Fix Inference Regression (4 tests) - NEW
+**Tests**:
+- `test_infer_generic_missing_property_uses_index_signature`
+- `test_infer_generic_missing_numeric_property_uses_number_index_signature`
+- `test_infer_generic_property_from_number_index_signature_infinity`
+- `test_infer_generic_property_from_source_index_signature`
+
+**Problem**: The fix for strict object subtyping (correctly) rejects assigning index signatures to required properties. However, the inference engine relied on this loose behavior to extract candidates.
+
+**Context**: TypeScript distinguishes between strictness (Checker/Judge) and discovery (Inference/Lawyer). The inference walker needs to be more permissive than the subtype check.
+
+**Approach**: Modify `infer_generic_function` (or its helper) to explicitly allow extracting candidates from index signatures even for required properties, decoupling inference from strict subtype validation.
+
+**Files**: `src/solver/infer.rs` or `src/solver/operations.rs`
 
 ---
 
-### Priority 5: Weak Types & Others (9 tests) ⚪
-**Tests**: Pre-existing weak type failures, conditional types, keyof, narrowing, etc.
+### Priority 2: Object Index Signatures (Complete) - ✅
+**Tests**:
+- ✅ `test_object_with_index_satisfies_named_property_string_index`
+- ✅ `test_object_with_index_satisfies_numeric_property_number_index`
 
-**Strategy**: Leave for last unless blocking other progress
+**Status**: COMPLETED - Added soundness check in SubtypeChecker
 
-## Current Status (5 Failing Tests Remaining)
+---
+
+### Priority 3: Narrowing `any` (1 test)
+**Tests**:
+- `test_narrow_by_typeof_any`
+
+**Goal**: Ensure `typeof any === "typename"` narrows to that type.
+
+**Files**: `src/solver/narrowing.rs`
+
+---
+
+### Priority 4: Generic Fallback (1 test)
+**Tests**:
+- `test_generic_parameter_without_constraint_fallback_to_unknown`
+
+**Goal**: Ensure unconstrained generics default to `unknown` when inference fails.
+
+**Files**: `src/solver/infer.rs`
+
+---
+
+### Priority 5: Keyof Union (1 test)
+**Tests**:
+- `test_keyof_union_string_index_and_literal_narrows`
+
+**Goal**: Fix `keyof` distribution over unions with index signatures.
+
+**Files**: `src/solver/operations.rs`
+
+---
+
+## Current Status (8 Failing Tests Remaining)
 
 ### Fixed: Generic Inference with Callback Functions (commit 28888e435)
 

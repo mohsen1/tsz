@@ -560,6 +560,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &ObjectShape,
         target_prop: &PropertyInfo,
     ) -> SubtypeResult {
+        // Required properties cannot be satisfied by index signatures (soundness).
+        // An index signature { [k: string]: V } admits the empty object {},
+        // but a required property means the target does NOT admit {}.
+        // This is a fundamental set-theoretic mismatch, not just a TS compatibility rule.
+        if !target_prop.optional {
+            return SubtypeResult::False;
+        }
+
         // Private/Protected properties cannot be satisfied by index signatures.
         // They must be explicitly present in the source and match nominally.
         if target_prop.visibility != Visibility::Public {
