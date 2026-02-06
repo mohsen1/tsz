@@ -8,7 +8,7 @@
 
 Original tsz-2 session (Application expansion) was completed successfully. This session is now focused on solver test stabilization.
 
-**Recent Progress** (commit 80e3c1944):
+**Recent Progress** (commit 64be9be59):
 - ✅ Fixed function contravariance in strict mode (AnyPropagationMode::TopLevelOnly)
 - ✅ Fixed interface lowering (Object vs ObjectWithIndex)
 - ✅ **Fixed generic inference in Round 2** - Preserved placeholder connections for unresolved type parameters
@@ -17,7 +17,8 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 - ✅ **Fixed function variance tests** - Fixed test bugs (missing strict_function_types, incorrect any expectation)
 - ✅ **Fixed constraint resolution** - Fixed widen_candidate_types to widen literals with multiple candidates
 - ✅ **Fixed disjoint primitive intersection** - Added `string & number = never` reduction
-- Reduced test failures from 37 → 31 → 22 → 20 → 13 → 11 → 9 → 8
+- ✅ **Fixed weak type detection** - Added disjoint properties check to shallow subtype
+- Reduced test failures from 37 → 31 → 22 → 20 → 13 → 11 → 9 → 8 → 5
 
 ## Redefined Priorities (2026-02-05 by Gemini)
 
@@ -117,7 +118,37 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 
 ---
 
-### Priority 5: Weak Types & Others (8 tests) - REMAINING ⚪
+### ✅ Priority B: Weak Type Detection (2 tests) - COMPLETED
+**Fixed**: Added disjoint properties check to shallow subtype check
+
+**Tests**:
+- ✅ `test_weak_union_rejects_no_common_properties`
+- ✅ `test_weak_union_with_non_weak_member_not_weak`
+
+**Root Cause**: `is_object_shape_subtype_shallow` incorrectly returned `true` for objects with completely disjoint properties:
+- `{ b?: number } <: { a?: number }` returned `true` (wrong!)
+- This caused union `{a?: number} | {b?: number}` to be reduced to just `{a?: number}`, breaking weak union detection
+- The function allowed missing optional properties in source, but didn't check if source had properties that target didn't know about
+
+**Fix**: Added property overlap check in `is_object_shape_subtype_shallow`:
+```rust
+let has_any_property_overlap = s
+    .properties
+    .iter()
+    .any(|sp| t.properties.iter().any(|tp| sp.name == tp.name));
+if !has_any_property_overlap {
+    return false;
+}
+```
+
+This ensures that objects with completely disjoint properties are not considered subtypes, preventing incorrect union reductions while preserving valid reductions like `{a: 1} | {a: 1, b: 2}` → `{a: 1}`.
+
+**Files Modified**:
+- `src/solver/intern.rs` - Added disjoint properties check in `is_object_shape_subtype_shallow`
+
+---
+
+### Priority 5: Weak Types & Others (5 tests) - REMAINING ⚪
 **Tests**:
 - `test_constraint_satisfaction_multiple_candidates`
 - `test_resolve_multiple_lower_bounds_union`
@@ -131,7 +162,7 @@ Original tsz-2 session (Application expansion) was completed successfully. This 
 
 **Strategy**: Leave for last unless blocking other progress
 
-## Current Status (22 Failing Tests Remaining)
+## Current Status (5 Failing Tests Remaining)
 
 ### Fixed: Generic Inference with Callback Functions (commit 28888e435)
 
@@ -170,37 +201,10 @@ Problem: 'null & object' is not reducing to 'never'.
 
 ---
 
-## Remaining Failing Tests (22 tests)
-
-### Still Failing: Generic Inference Tests (2 tests)
-- `test_constraint_satisfaction_multiple_candidates`
-- `test_resolve_multiple_lower_bounds_union`
-
-### Still Failing: Conditional Types (1 test)
-- `test_conditional_infer_optional_property_non_distributive_union_input`
+## Remaining Failing Tests (5 tests)
 
 ### Still Failing: Generic Fallback (1 test)
 - `test_generic_parameter_without_constraint_fallback_to_unknown`
-
-### Still Failing: Intersection/Union (1 test)
-- `test_intersection_object_same_property_intersect_types`
-
-### Still Failing: Property Access (7 tests)
-- `test_property_access_array_at_returns_optional_element`
-- `test_property_access_array_entries_returns_tuple_array`
-- `test_property_access_array_map_signature`
-- `test_property_access_array_push_with_env_resolver`
-- `test_property_access_array_reduce_callable`
-- `test_property_access_readonly_array`
-- `test_property_access_tuple_length`
-
-### Still Failing: Function Variance (2 tests)
-- `test_any_in_function_parameters_strict_mode`
-- `test_function_variance_with_return_types`
-
-### Still Failing: Intersection Normalization (2 tests)
-- `test_intersection_null_with_object_is_never`
-- `test_intersection_undefined_with_object_is_never`
 
 ### Still Failing: Keyof/Narrowing (2 tests)
 - `test_keyof_union_string_index_and_literal_narrows`
@@ -209,38 +213,6 @@ Problem: 'null & object' is not reducing to 'never'.
 ### Still Failing: Object with Index (2 tests)
 - `test_object_with_index_satisfies_named_property_string_index`
 - `test_object_with_index_satisfies_numeric_property_number_index`
-
-### Still Failing: Weak Type Detection (2 tests) - 🟡 PRE-EXISTING
-**Tests**:
-- `test_weak_union_rejects_no_common_properties`
-- `test_weak_union_with_non_weak_member_not_weak`
-
-**Status**: Pre-existing failures, NOT a regression from commit ea1029cf3
-
-**Issue**: `explain_failure` returns `None` instead of `TypeMismatch`
-
-**Files**:
-- `src/solver/compat.rs`
-- `src/solver/lawyer.rs`
-
-### Priority 3: Intersection Normalization (5 tests) - 🟢 PENDING
-**Tests**:
-- `test_intersection_null_with_object_is_never`
-- `test_intersection_undefined_with_object_is_never`
-- And 3 others...
-
-**Issue**: `null & object` should reduce to `never` but doesn't
-
-**Files**:
-- `src/solver/operations.rs` (intersection factory function)
-
-### Other Failing Tests (8 tests)
-- Constraint resolution (2 tests)
-- Narrowing (1 test)
-- Conditional types (1 test)
-- Generic fallback (1 test)
-- Property intersection (1 test)
-- Integration tests (2 tests)
 
 ## MANDATORY: Two-Question Rule
 
