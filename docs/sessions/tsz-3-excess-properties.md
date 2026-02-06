@@ -104,8 +104,50 @@ The issue is in how freshness is handled during variable assignment. The flow sh
 2. `const z: T = y` - should **widen** the type (strip `FRESH_LITERAL`) before checking assignability
 3. Assignability check should NOT trigger excess property checking because source is not fresh
 
-### Next Steps
+### Gemini Consultation (2026-02-06)
 
-1. Investigate where freshness widening should happen during assignment
-2. Check if `widen_freshness()` is being called at the right time
-3. Fix the widening logic to match TypeScript's behavior
+**Question**: Where should widen_freshness() be called during variable assignment?
+
+**Gemini Response** (Pro model):
+- **Location**: `src/checker/declarations.rs` (or state_checking_members.rs which delegates to it)
+- **Function**: `check_variable_declaration` (specifically the part handling initializer type inference)
+- **Fix**: When a variable has no type annotation, widen the inferred type before storing it
+
+```rust
+// Pseudocode for the fix:
+if let Some(initializer) = node.initializer {
+    let inferred_type = self.check_expression(initializer);
+
+    // FIX: Widen freshness so 'y' doesn't trigger excess property checks later
+    let final_type = if node.type_annotation.is_none() {
+        use crate::solver::freshness::widen_freshness;
+        widen_freshness(self.ctx.types, inferred_type)
+    } else {
+        inferred_type
+    };
+
+    self.ctx.register_type_for_symbol(symbol_id, final_type);
+}
+```
+
+**Key Insight**: Freshness is transient - lost immediately upon assignment. The variable `y` itself should not have a fresh type.
+
+### Implementation Status
+
+**Pending**: Need to locate where variable types are registered and add the widening call.
+- Variable declaration checking appears to be in `state_checking_members.rs`
+- Need to find where types are registered for symbols
+- Add `widen_freshness()` call when inferring types from initializers without type annotations
+
+### Test Cases
+
+**Should pass after fix**:
+```typescript
+const y = { a: "hello", b: 42 };
+const z: T = y;  // Should NOT error - y should be widened
+```
+
+**Should still error**:
+```typescript
+const x: T = { a: "hello", b: 42 };  // Should error - direct literal is fresh
+```
