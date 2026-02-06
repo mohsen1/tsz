@@ -77,7 +77,9 @@ impl<'a> ClassES5Emitter<'a> {
 
     /// Set transform directives for ASTRef nodes
     pub fn set_transforms(&mut self, transforms: TransformContext) {
-        self.transforms = Some(transforms);
+        self.transforms = Some(transforms.clone());
+        // Also pass transforms to ES5ClassTransformer for directive-aware conversion
+        self.transformer.set_transforms(transforms);
     }
 
     /// Set the initial indentation level (to match the parent context)
