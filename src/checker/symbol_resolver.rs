@@ -1118,16 +1118,64 @@ impl<'a> CheckerState<'a> {
 
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.ctx.arena.get_access_expr(node)?;
-            let left_sym = self.resolve_heritage_symbol(access.expression)?;
+            let left_sym_raw = self.resolve_heritage_symbol(access.expression)?;
             let name = self
                 .ctx
                 .arena
                 .get(access.name_or_argument)
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                 .map(|ident| ident.escaped_text.clone())?;
-            let left_symbol = self.ctx.binder.get_symbol(left_sym)?;
-            let exports = left_symbol.exports.as_ref()?;
-            return exports.get(&name);
+
+            // First, check the raw symbol's direct exports (for namespace symbols)
+            if let Some(left_symbol) = self.ctx.binder.get_symbol(left_sym_raw) {
+                if let Some(exports) = left_symbol.exports.as_ref() {
+                    if let Some(member_sym) = exports.get(&name) {
+                        return Some(member_sym);
+                    }
+                }
+
+                // For import aliases (import X = require("./module")), X represents
+                // the entire module namespace. Look up the member in module_exports.
+                if let Some(ref module_specifier) = left_symbol.import_module {
+                    let mut visited_aliases = Vec::new();
+                    if let Some(member_sym) = self.resolve_reexported_member_symbol(
+                        module_specifier,
+                        &name,
+                        &mut visited_aliases,
+                    ) {
+                        return Some(member_sym);
+                    }
+                }
+            }
+
+            // Try resolving the alias to get the actual symbol (for non-require aliases
+            // like `import X = SomeNamespace`)
+            let mut visited_aliases = Vec::new();
+            if let Some(resolved_sym) =
+                self.resolve_alias_symbol(left_sym_raw, &mut visited_aliases)
+            {
+                if resolved_sym != left_sym_raw {
+                    if let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym) {
+                        if let Some(exports) = resolved_symbol.exports.as_ref() {
+                            if let Some(member_sym) = exports.get(&name) {
+                                return Some(member_sym);
+                            }
+                        }
+                        // Also check module_exports on the resolved symbol
+                        if let Some(ref module_specifier) = resolved_symbol.import_module {
+                            if let Some(member_sym) = self.resolve_reexported_member_symbol(
+                                module_specifier,
+                                &name,
+                                &mut visited_aliases,
+                            ) {
+                                return Some(member_sym);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return None;
         }
 
         None
