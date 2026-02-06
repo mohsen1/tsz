@@ -772,7 +772,32 @@ impl<'a> CheckerState<'a> {
 
         // Check for circular reference
         if self.ctx.symbol_resolution_set.contains(&sym_id) {
-            // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
+            // CRITICAL: For named entities (Interface, Class, TypeAlias, Enum), return Lazy placeholder
+            // instead of ERROR. This allows circular dependencies to work correctly.
+            //
+            // For example: `interface User { filtered: Filtered } type Filtered = { [K in keyof User]: ... }`
+            // When Filtered evaluates `keyof User` and User is still being checked, we return Lazy(User)
+            // instead of ERROR, allowing the type system to defer evaluation.
+            //
+            // For other symbols (variables, functions, etc.), we still return ERROR to prevent infinite loops.
+            let symbol = self.ctx.binder.get_symbol(sym_id);
+            if let Some(symbol) = symbol {
+                let flags = symbol.flags;
+                if flags
+                    & (symbol_flags::INTERFACE
+                        | symbol_flags::CLASS
+                        | symbol_flags::TYPE_ALIAS
+                        | symbol_flags::ENUM)
+                    != 0
+                {
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    let lazy_type = self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id));
+                    // Don't cache the Lazy type - we want to retry when the circular reference is broken
+                    return lazy_type;
+                }
+            }
+
+            // For non-named entities, cache ERROR to prevent repeated deep recursion
             // This is key for fixing timeout issues with circular class inheritance
             self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
             return TypeId::ERROR; // Circular reference - propagate error
