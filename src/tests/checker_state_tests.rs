@@ -10185,9 +10185,11 @@ fn test_checker_property_access_union_type() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
 
+    // Test union property access WITHOUT narrowing
+    // Using declare prevents CFA narrowing on initialization
     let source = r#"
 type U = { a: number } | { a: string };
-const obj: U = { a: 1 };
+declare const obj: U;
 const value = obj.a;
 "#;
 
