@@ -1461,7 +1461,7 @@ impl<'a> IRPrinter<'a> {
     fn emit_arrow_function_es5(
         &mut self,
         arena: &NodeArena,
-        node: &Node,
+        _node: &Node,
         func: &crate::parser::node::FunctionData,
         node_idx: NodeIndex,
     ) {
@@ -1498,7 +1498,7 @@ impl<'a> IRPrinter<'a> {
                 self.write(", ");
             }
             if let Some(param_node) = arena.get(param_idx) {
-                if let Some(param) = arena.get_parameter(param_node) {
+                if let Some(_param) = arena.get_parameter(param_node) {
                     if let Some(ident) = arena.get_identifier(param_node) {
                         self.write(&ident.escaped_text);
                     }
