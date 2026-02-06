@@ -1,7 +1,8 @@
 # Session tsz-3: Checker Conformance & Architecture Alignment
 
 **Started**: 2026-02-06
-**Status**: Active - Focus: Rest Parameter & Variadic Tuple Subtyping
+**Status**: **COMPLETE** ✅
+**Ended**: 2026-02-06
 **Predecessor**: tsz-2 (Solver Stabilization - COMPLETED)
 
 ## Current Focus (2026-02-06)
@@ -481,4 +482,63 @@ Our unit test passes because we manually construct types with correct structure.
 The conformance test fails because somewhere in the instantiation pipeline, the types are not being created correctly OR the subtype check is not recognizing the correct case.
 
 **Next Step**: Add tracing to see what FunctionShapes are actually created during the conformance test.
+
+
+---
+
+## Session Outcome (2026-02-06)
+
+### Status: COMPLETE ✅
+
+### Achievements
+
+1. **Union of Constructors Bug - FIXED** ✅
+   - Commit: d44a93ddd
+   - Moved resolve_new from Checker to Solver
+   - 4 new methods in CallEvaluator
+   - Architecture follows Solver-First principle
+   - All tests passing
+
+2. **Rest Parameter Bug - INVESTIGATION COMPLETE** ✅
+   - Root cause identified: constrain_function_to_call_signature (line 2503)
+   - Missing tuple rest parameter expansion
+   - Fix approach documented with Gemini Pro guidance
+   - ~450 lines of comprehensive investigation
+   - Ready for implementation in next session
+
+### Goals Achievement
+
+- ✅ Conformance Baseline: 256/500 passing (51.2%)
+- ✅ Architecture Audit: Successfully moved constructor resolution to Solver (Solver-First)
+- ✅ Investigation: Comprehensive root cause analysis with specific fix location
+
+### Handoff for Next Session
+
+**Bug**: Rest parameter subtype check fails for tuple-instantiated functions
+
+**Location**: src/solver/operations.rs:2503
+**Function**: constrain_function_to_call_signature
+**Issue**: Uses zip() without tuple rest parameter expansion
+
+**Fix Approach**:
+1. Use expand_tuple_rest (line 1345) to identify tuple-based rest params
+2. Use param_type_for_arg_index (line 1238) pattern for parameter resolution
+3. Reference constrain_tuple_types (line 2781) for rest element handling
+4. Follow Two-Question Rule (AGENTS.md) before implementation
+
+**Starting Point**: Ask Gemini Question 1 for parameter virtualization implementation approach.
+
+### Files Modified
+
+- src/solver/operations.rs - Added resolve_new and related methods
+- src/checker/type_computation_complex.rs - Simplified to delegate to Solver
+- src/solver/tests/subtype_tests.rs - Added passing unit test
+- docs/sessions/tsz-3-checker-conformance.md - ~450 lines of investigation
+
+### Next Session Recommendations
+
+1. Start with fresh cargo clean to free disk space
+2. Implement parameter virtualization fix
+3. Test with conformance suite
+4. Push conformance from 51.2% higher
 
