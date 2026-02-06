@@ -2293,16 +2293,9 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
         // Get the parent symbol (the enum itself)
         let parent_sym_id = symbol.parent;
 
-        // Convert parent SymbolId back to DefId
-        // The parent should have a DefId from when it was bound
-        if let Some(parent_def_id) =
-            self.symbol_to_def_id(crate::solver::SymbolRef(parent_sym_id.0))
-        {
-            return Some(parent_def_id);
-        }
-
-        // Fallback: If the parent doesn't have a DefId mapping yet,
-        // we can't provide one. This shouldn't happen in well-formed code.
-        None
+        // Ensure the parent enum always has a DefId mapping.
+        // Some hot paths create DefIds for members first; lazily creating
+        // the parent mapping here avoids returning None in those cases.
+        Some(self.get_or_create_def_id(parent_sym_id))
     }
 }
