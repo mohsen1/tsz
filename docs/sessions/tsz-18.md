@@ -287,15 +287,38 @@ TypeKey::Lazy(def_id) => {
 
 **Status**: ✅ MAJOR PROGRESS - Architectural fix implemented and working!
 
-## Next Steps
+## Next Steps (Revised Strategy)
 
-1. **Decide on approach**: Complete architectural fix vs simpler workaround vs pivot to template literal bugs
-2. If continuing with keyof fix: Implement chosen approach
-3. Otherwise: Move to template literal bugs #5-6
-4. Create comprehensive test suite for Indexed Access Types
-5. Compare tsz vs tsc results
-6. Identify and categorize bugs
-7. Fix bugs systematically
+**Per Gemini recommendation**: Continue TSZ-18 with focused approach to remaining bugs
+
+### Phase 1: Template Literal Bugs (Quick Wins) ⏰ EST: 30-60 min
+- **Bug #5**: `${any}` interpolation should widen to string
+- **Bug #6**: Number to string conversion incorrect
+- **Location**: `src/solver/evaluate_rules/template_literal.rs`
+- **Why**: Self-contained logic errors, don't depend on complex mapping
+- **Goal**: Fix 2 bugs, reduce failures by 2-4 tests
+
+### Phase 2: Mapped Type Modifiers (Logic Bugs) ⏰ EST: 60-90 min
+- **Bug #2**: `-readonly` modifier not removing readonly flag
+- **Bug #3**: `-?` modifier not making properties required
+- **Location**: `src/solver/evaluate_rules/mapped.rs`
+- **Investigation**: Check ModifierFlags handling and property flag updates
+- **Goal**: Fix 2 bugs, reduce failures by 2-4 tests
+
+### Phase 3: Key Remapping (Complex) ⏰ EST: 90-120 min
+- **Bug #1**: `as O[K] extends string ? K : never` not working
+- **Location**: `src/solver/evaluate_rules/mapped.rs`
+- **Challenge**: `as` clause evaluation with conditional types
+- **Goal**: Fix 1 bug, reduce failures by 2-4 tests
+
+### Updated Success Criteria
+- [ ] Fix Bug #5: Template literal `any` interpolation
+- [ ] Fix Bug #6: Template literal number formatting
+- [ ] Fix Bug #2: Remove readonly modifier
+- [ ] Fix Bug #3: Remove optional modifier
+- [ ] Fix Bug #1: Key remapping with conditional types
+- [ ] **Target**: Reduce failing tests from 45 to < 30
+- [ ] Document all fixes with test cases
 
 ## Dependencies
 
