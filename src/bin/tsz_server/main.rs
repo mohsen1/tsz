@@ -1721,18 +1721,23 @@ impl Server {
                         .iter()
                         .map(|p| {
                             let display_parts = Self::tokenize_param_label(&p.label);
-                            let mut param = serde_json::json!({
-                                "name": p.name,
-                                "displayParts": display_parts,
-                                "isOptional": p.is_optional,
-                                "isRest": p.is_rest,
-                            });
+                            // Build param JSON with correct field order:
+                            // name, documentation (optional), displayParts, isOptional, isRest
+                            let mut map = serde_json::Map::new();
+                            map.insert("name".to_string(), serde_json::json!(p.name));
                             if let Some(ref doc) = p.documentation {
-                                param["documentation"] =
-                                    serde_json::json!([{"text": doc, "kind": "text"}]);
+                                map.insert(
+                                    "documentation".to_string(),
+                                    serde_json::json!([{"text": doc, "kind": "text"}]),
+                                );
                             }
-                            // Omit "documentation" when empty (TypeScript omits it)
-                            param
+                            map.insert(
+                                "displayParts".to_string(),
+                                serde_json::json!(display_parts),
+                            );
+                            map.insert("isOptional".to_string(), serde_json::json!(p.is_optional));
+                            map.insert("isRest".to_string(), serde_json::json!(p.is_rest));
+                            serde_json::Value::Object(map)
                         })
                         .collect();
                     let name_kind = if sig.is_constructor {
