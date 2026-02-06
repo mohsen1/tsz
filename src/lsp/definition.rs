@@ -278,7 +278,12 @@ impl<'a> GoToDefinition<'a> {
             }
         }
 
-        // 5. Fallback: try file_locals lookup by identifier text
+        // 5. Fallback: try member access resolution (obj.method, Class.staticProp)
+        if let Some(locations) = self.try_member_access_fallback(root, node_idx) {
+            return Some(locations);
+        }
+
+        // 6. Fallback: try file_locals lookup by identifier text
         if let Some(locations) = self.try_file_locals_fallback(node_idx) {
             return Some(locations);
         }
@@ -427,6 +432,97 @@ impl<'a> GoToDefinition<'a> {
         self.locations_from_symbol(symbol_id)
     }
 
+    /// Try to resolve a member access expression (e.g., obj.method, Class.staticProp).
+    /// Returns the symbol ID of the member if found.
+    fn try_resolve_member_access(&self, root: NodeIndex, node_idx: NodeIndex) -> Option<SymbolId> {
+        // Check if the node is the right-hand side of a property access expression
+        let ext = self.arena.get_extended(node_idx)?;
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent_node = self.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.arena.get_access_expr(parent_node)?;
+        // Make sure we're on the name side (right of dot), not the expression side
+        if access.name_or_argument != node_idx {
+            return None;
+        }
+
+        // Get the member name text
+        let node = self.arena.get(node_idx)?;
+        let member_name = &self.source_text[node.pos as usize..node.end as usize];
+
+        // Resolve the expression (left side) to a symbol
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let expr_symbol_id = walker.resolve_node(root, access.expression)?;
+        let expr_symbol = self.binder.symbols.get(expr_symbol_id)?;
+
+        // Look up in members table (instance members)
+        if let Some(ref members) = expr_symbol.members {
+            if let Some(member_id) = members.get(member_name) {
+                return Some(member_id);
+            }
+        }
+
+        // Look up in exports table (static members, namespace exports)
+        if let Some(ref exports) = expr_symbol.exports {
+            if let Some(member_id) = exports.get(member_name) {
+                return Some(member_id);
+            }
+        }
+
+        // For instances: resolve the variable's type by checking its declarations
+        // If the expression resolves to a variable (e.g., var x = new Foo()),
+        // look at the initializer to find the class and its members.
+        for &decl_idx in &expr_symbol.declarations {
+            if let Some(decl_node) = self.arena.get(decl_idx) {
+                if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                    if let Some(var_data) = self.arena.get_variable_declaration(decl_node) {
+                        // Check if the initializer is `new ClassName()`
+                        if !var_data.initializer.is_none() {
+                            if let Some(init_node) = self.arena.get(var_data.initializer) {
+                                if init_node.kind == syntax_kind_ext::NEW_EXPRESSION {
+                                    // The new expression's first child is the class name
+                                    if let Some(new_data) = self.arena.get_call_expr(init_node) {
+                                        // Resolve the class name
+                                        let mut walker2 = ScopeWalker::new(self.arena, self.binder);
+                                        if let Some(class_symbol_id) =
+                                            walker2.resolve_node(root, new_data.expression)
+                                        {
+                                            let class_symbol =
+                                                self.binder.symbols.get(class_symbol_id)?;
+                                            if let Some(ref members) = class_symbol.members {
+                                                if let Some(member_id) = members.get(member_name) {
+                                                    return Some(member_id);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Fallback for member access in get_definition_internal (returns Location objects).
+    fn try_member_access_fallback(
+        &self,
+        root: NodeIndex,
+        node_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let member_symbol_id = self.try_resolve_member_access(root, node_idx)?;
+        self.locations_from_symbol(member_symbol_id)
+    }
+
     /// Check if a node is a built-in keyword literal or built-in identifier
     /// that has no user-navigable definition (e.g., null, true, false, undefined, arguments).
     fn is_builtin_node(&self, node_idx: NodeIndex) -> bool {
@@ -485,6 +581,13 @@ impl<'a> GoToDefinition<'a> {
 
         if let Some(symbol_id) = symbol_id_opt {
             if let Some(infos) = self.definition_infos_from_symbol(symbol_id) {
+                return Some(infos);
+            }
+        }
+
+        // Fallback: try member access resolution
+        if let Some(member_symbol_id) = self.try_resolve_member_access(root, node_idx) {
+            if let Some(infos) = self.definition_infos_from_symbol(member_symbol_id) {
                 return Some(infos);
             }
         }
@@ -749,6 +852,49 @@ impl<'a> GoToDefinition<'a> {
 
                 clean(start_pos, decl_node.end)
             }
+            syntax_kind_ext::METHOD_SIGNATURE
+            | syntax_kind_ext::PROPERTY_SIGNATURE
+            | syntax_kind_ext::METHOD_DECLARATION
+            | syntax_kind_ext::PROPERTY_DECLARATION
+            | syntax_kind_ext::CONSTRUCT_SIGNATURE
+            | syntax_kind_ext::CONSTRUCTOR => {
+                // For member declarations, include modifiers (public, static, etc.)
+                let modifiers = match decl_node.kind {
+                    syntax_kind_ext::METHOD_SIGNATURE | syntax_kind_ext::PROPERTY_SIGNATURE => self
+                        .arena
+                        .get_signature(decl_node)
+                        .and_then(|s| s.modifiers.as_ref()),
+                    syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(decl_node)
+                        .and_then(|m| m.modifiers.as_ref()),
+                    syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .arena
+                        .get_property_decl(decl_node)
+                        .and_then(|p| p.modifiers.as_ref()),
+                    syntax_kind_ext::CONSTRUCTOR => self
+                        .arena
+                        .get_constructor(decl_node)
+                        .and_then(|c| c.modifiers.as_ref()),
+                    _ => None,
+                };
+
+                let start_pos = if let Some(mods) = modifiers {
+                    let mut earliest = decl_node.pos;
+                    for &mod_idx in &mods.nodes {
+                        if let Some(mod_node) = self.arena.get(mod_idx) {
+                            if mod_node.pos < earliest {
+                                earliest = mod_node.pos;
+                            }
+                        }
+                    }
+                    earliest
+                } else {
+                    decl_node.pos
+                };
+
+                clean(start_pos, decl_node.end)
+            }
             _ => (decl_node.pos, decl_node.end),
         }
     }
@@ -808,6 +954,14 @@ impl<'a> GoToDefinition<'a> {
             syntax_kind_ext::IMPORT_SPECIFIER => {
                 let spec = self.arena.get_specifier(node)?;
                 Some(spec.name)
+            }
+            syntax_kind_ext::METHOD_SIGNATURE | syntax_kind_ext::PROPERTY_SIGNATURE => {
+                let sig = self.arena.get_signature(node)?;
+                Some(sig.name)
+            }
+            syntax_kind_ext::CONSTRUCT_SIGNATURE | syntax_kind_ext::CALL_SIGNATURE => {
+                // These don't have meaningful names
+                None
             }
             _ => None,
         }
