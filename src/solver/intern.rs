@@ -2606,26 +2606,25 @@ impl TypeInterner {
 
     fn template_span_cardinality(&self, type_id: TypeId) -> Option<usize> {
         // Handle intrinsic types that expand to string literals
-        if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+        if type_id == TypeId::BOOLEAN_TRUE
+            || type_id == TypeId::BOOLEAN_FALSE
+            || type_id == TypeId::NULL
+            || type_id == TypeId::UNDEFINED
+            || type_id == TypeId::VOID
+        {
             return Some(1);
         }
 
         match self.lookup(type_id) {
-            Some(TypeKey::Literal(LiteralValue::String(_))) => Some(1),
+            // Accept all literal types (String, Number, Boolean, BigInt) - they all stringify
+            Some(TypeKey::Literal(_)) => Some(1),
             Some(TypeKey::Union(list_id)) => {
                 let members = self.type_list(list_id);
                 let mut count = 0usize;
                 for member in members.iter() {
-                    // Check for string literals or boolean intrinsics that stringify
-                    if *member == TypeId::BOOLEAN_TRUE || *member == TypeId::BOOLEAN_FALSE {
-                        count += 1;
-                    } else if let Some(TypeKey::Literal(LiteralValue::String(_))) =
-                        self.lookup(*member)
-                    {
-                        count += 1;
-                    } else {
-                        return None;
-                    }
+                    // Recurse to handle all cases uniformly (literals, intrinsics, nested unions)
+                    let member_count = self.template_span_cardinality(*member)?;
+                    count = count.checked_add(member_count)?;
                 }
                 Some(count)
             }
