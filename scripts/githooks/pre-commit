@@ -1,15 +1,19 @@
 #!/bin/bash
 #
-# Pre-commit hook for tsz
+# Pre-commit hook for tsz — workspace-aware
+#
+# Only tests crates affected by your changes. If you change files in
+# crates/tsz-scanner, it tests tsz-scanner + all dependents (parser,
+# binder, solver, checker, emitter, lsp) but NOT tsz-common.
 #
 # Steps:
 #   1. Block TypeScript submodule changes
-#   2. Clean stale target binaries (cargo clean --doc, old profiles)
+#   2. Detect changed crates
 #   3. cargo fmt -- check & auto-fix
-#   4. cargo clippy -- deny all warnings
-#   5. Run all unit tests
-#   6. Microbenchmark regression check
-#   7. Conformance regression check
+#   4. cargo clippy -- deny warnings (only affected crates)
+#   5. Run unit tests (only affected crates)
+#   6. Microbenchmark regression check (if solver/checker changed)
+#   7. Conformance regression check (if solver/checker changed)
 #
 # Env vars:
 #   TSZ_SKIP_HOOKS=1         Skip the entire hook
@@ -17,11 +21,12 @@
 #   TSZ_SKIP_BENCH=1         Skip microbenchmark regression check
 #   TSZ_SKIP_CLEAN=1         Skip the target cleanup step
 #   TSZ_BENCH_UPDATE_BASELINE=1  Refresh local microbenchmark baseline
+#   TSZ_TEST_ALL=1           Force testing all crates
 
 set -e
 
 # Skip hook entirely if requested
-[[ "${TSZ_SKIP_HOOKS:-}" == "1" ]] && exit 0
+if [ "${TSZ_SKIP_HOOKS:-}" = "1" ]; then exit 0; fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 cd "$ROOT_DIR"
@@ -30,14 +35,14 @@ SKIP_CONFORMANCE="${TSZ_SKIP_CONFORMANCE:-}"
 SKIP_BENCH="${TSZ_SKIP_BENCH:-}"
 SKIP_CLEAN="${TSZ_SKIP_CLEAN:-}"
 
-echo "🔧 Pre-commit checks..."
+echo "Pre-commit checks..."
 
 # ─── 0. Block TypeScript submodule changes ───────────────────────────────────
 
 SUBMODULE_CHANGES=$(git diff --cached --name-only | grep '^TypeScript/' || true)
 if [ -n "$SUBMODULE_CHANGES" ]; then
     echo ""
-    echo "❌ ERROR: Attempting to commit changes to TypeScript submodule!"
+    echo "ERROR: Attempting to commit changes to TypeScript submodule!"
     echo ""
     echo "The TypeScript/ directory is a READ-ONLY git submodule."
     echo "You must NOT modify, add, or commit any files in this directory."
@@ -56,20 +61,21 @@ fi
 SUBMODULE_POINTER=$(git diff --cached --name-only | grep '^TypeScript$' || true)
 if [ -n "$SUBMODULE_POINTER" ]; then
     echo ""
-    echo "❌ ERROR: Attempting to change TypeScript submodule pointer!"
+    echo "ERROR: Attempting to change TypeScript submodule pointer!"
     echo "To unstage: git reset HEAD TypeScript"
     exit 1
 fi
 
 # ─── Prerequisites ───────────────────────────────────────────────────────────
 
-if ! command -v cargo &>/dev/null; then
-    echo "❌ cargo not found"
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "ERROR: cargo not found"
     exit 1
 fi
 
-# Get changed Rust files
-CHANGED_RS=$(git diff --cached --name-only --diff-filter=ACM | grep '\.rs$' || true)
+# Get changed files
+CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+CHANGED_RS=$(echo "$CHANGED_FILES" | grep '\.rs$' || true)
 
 # Nothing to do if no Rust files changed
 if [ -z "$CHANGED_RS" ]; then
@@ -77,178 +83,309 @@ if [ -z "$CHANGED_RS" ]; then
     exit 0
 fi
 
-# ─── 1. Clean stale target artifacts ────────────────────────────────────────
+# ─── 1. Detect affected workspace crates ─────────────────────────────────────
+#
+# Dependency graph (linear pipeline):
+#   common -> scanner -> parser -> binder -> solver -> checker -> emitter, lsp
+#
+# If crate X changed, all crates that depend on X (transitively) need retesting.
+# Uses simple string variable as a set (bash 3.2 compatible, no associative arrays).
 
-if [[ "$SKIP_CLEAN" != "1" ]]; then
-    echo "1️⃣  Cleaning stale target artifacts..."
-    TARGET_DIR="$ROOT_DIR/target"
+AFFECTED=""  # space-separated list of affected crate names
+
+has_crate() { echo " $AFFECTED " | grep -q " $1 "; }
+add_crate() {
+    if has_crate "$1"; then
+        : # already present
+    else
+        AFFECTED="$AFFECTED $1"
+    fi
+}
+
+# Add a crate and all its transitive dependents
+add_with_dependents() {
+    case "$1" in
+        tsz-common)
+            add_crate tsz-common; add_crate tsz-scanner; add_crate tsz-parser
+            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker
+            add_crate tsz-emitter; add_crate tsz-lsp ;;
+        tsz-scanner)
+            add_crate tsz-scanner; add_crate tsz-parser
+            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker
+            add_crate tsz-emitter; add_crate tsz-lsp ;;
+        tsz-parser)
+            add_crate tsz-parser
+            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker
+            add_crate tsz-emitter; add_crate tsz-lsp ;;
+        tsz-binder)
+            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker
+            add_crate tsz-emitter; add_crate tsz-lsp ;;
+        tsz-solver)
+            add_crate tsz-solver; add_crate tsz-checker
+            add_crate tsz-emitter; add_crate tsz-lsp ;;
+        tsz-checker)
+            add_crate tsz-checker; add_crate tsz-emitter; add_crate tsz-lsp ;;
+        tsz-emitter)
+            add_crate tsz-emitter ;;
+        tsz-lsp)
+            add_crate tsz-lsp ;;
+    esac
+}
+
+ROOT_CHANGED=false
+
+for file in $CHANGED_RS; do
+    case "$file" in
+        crates/tsz-common/*)  add_with_dependents tsz-common ;;
+        crates/tsz-scanner/*) add_with_dependents tsz-scanner ;;
+        crates/tsz-parser/*)  add_with_dependents tsz-parser ;;
+        crates/tsz-binder/*)  add_with_dependents tsz-binder ;;
+        crates/tsz-solver/*)  add_with_dependents tsz-solver ;;
+        crates/tsz-checker/*) add_with_dependents tsz-checker ;;
+        crates/tsz-emitter/*) add_with_dependents tsz-emitter ;;
+        crates/tsz-lsp/*)     add_with_dependents tsz-lsp ;;
+        src/*)                 ROOT_CHANGED=true ;;
+    esac
+done
+
+# Cargo.toml changes affect everything
+CHANGED_TOML=$(echo "$CHANGED_FILES" | grep 'Cargo\.toml$' || true)
+if [ -n "$CHANGED_TOML" ]; then
+    ROOT_CHANGED=true
+fi
+
+# Root or force-all: test everything
+if [ "$ROOT_CHANGED" = "true" ] || [ "${TSZ_TEST_ALL:-}" = "1" ]; then
+    AFFECTED="tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-emitter tsz-lsp"
+fi
+
+# Normalize: trim leading/trailing whitespace
+AFFECTED=$(echo $AFFECTED | xargs)
+
+if [ -z "$AFFECTED" ]; then
+    echo "No workspace crates affected, skipping tests."
+    exit 0
+fi
+
+NUM_AFFECTED=$(echo $AFFECTED | wc -w | xargs)
+echo "  Affected crates: $AFFECTED ($NUM_AFFECTED/8)"
+
+# Check if solver/checker changed (needed for bench/conformance)
+SOLVER_OR_CHECKER_CHANGED=false
+if has_crate tsz-solver || has_crate tsz-checker; then
+    SOLVER_OR_CHECKER_CHANGED=true
+fi
+
+# ─── 2. Clean stale target artifacts ─────────────────────────────────────────
+
+if [ "$SKIP_CLEAN" != "1" ]; then
+    echo "1/6 Cleaning stale target artifacts..."
+    TARGET_DIR="$ROOT_DIR/.target"
     if [ -d "$TARGET_DIR" ]; then
-        # Remove doc artifacts (never needed at commit time)
-        if [ -d "$TARGET_DIR/doc" ]; then
-            rm -rf "$TARGET_DIR/doc"
-            echo "   Removed target/doc"
-        fi
-
-        # Remove old nextest caches
-        if [ -d "$TARGET_DIR/nextest" ]; then
-            rm -rf "$TARGET_DIR/nextest"
-            echo "   Removed target/nextest"
-        fi
-
-        echo "   ✅ Target cleanup done"
+        [ -d "$TARGET_DIR/doc" ] && rm -rf "$TARGET_DIR/doc"
+        [ -d "$TARGET_DIR/nextest" ] && rm -rf "$TARGET_DIR/nextest"
     fi
 else
-    echo "1️⃣  Target cleanup skipped (TSZ_SKIP_CLEAN=1)"
+    echo "1/6 Target cleanup skipped (TSZ_SKIP_CLEAN=1)"
 fi
 
-# ─── 2. cargo fmt ───────────────────────────────────────────────────────────
+# ─── 3. cargo fmt ────────────────────────────────────────────────────────────
 
-echo "2️⃣  Formatting (cargo fmt)..."
+echo "2/6 Formatting (cargo fmt)..."
 
-# First, check if there are any formatting issues
 if ! cargo fmt -- --check >/dev/null 2>&1; then
-    # Auto-fix formatting
     cargo fmt
-    echo "   Formatted files — auto-fixed."
+    echo "  Formatted files — auto-fixed."
 else
-    echo "   Already formatted."
+    echo "  Already formatted."
 fi
 
-# ─── 3. Clippy — deny all warnings ──────────────────────────────────────────
+# ─── 4. Clippy — deny all warnings (affected crates only) ────────────────────
 
-echo "3️⃣  Clippy (warnings are errors)..."
+echo "3/6 Clippy (affected crates)..."
+
+# Build clippy args: -p crate1 -p crate2 ...
+CLIPPY_PKGS=""
+for crate in $AFFECTED; do
+    CLIPPY_PKGS="$CLIPPY_PKGS -p $crate"
+done
+
+# Also include root crate if root files changed
+if [ "$ROOT_CHANGED" = "true" ]; then
+    CLIPPY_PKGS="$CLIPPY_PKGS -p wasm"
+fi
 
 # Try auto-fix first, then verify
-if ! cargo clippy --bins --lib --fix --allow-dirty --allow-staged -- -D warnings 2>/dev/null; then
+if ! cargo clippy $CLIPPY_PKGS --lib --fix --allow-dirty --allow-staged -- -D warnings 2>/dev/null; then
     echo ""
-    echo "❌ Clippy found warnings/errors that could not be auto-fixed:"
+    echo "ERROR: Clippy found warnings/errors that could not be auto-fixed:"
     echo ""
-    cargo clippy --bins --lib -- -D warnings 2>&1 | tail -50
+    cargo clippy $CLIPPY_PKGS --lib -- -D warnings 2>&1 | tail -50
     exit 1
 fi
 
-# Verify no warnings remain after auto-fix
-CLIPPY_OUTPUT=$(cargo clippy --bins --lib -- -D warnings 2>&1) || {
+CLIPPY_OUTPUT=$(cargo clippy $CLIPPY_PKGS --lib -- -D warnings 2>&1) || {
     echo ""
-    echo "❌ Clippy warnings remain after auto-fix. Please fix manually:"
+    echo "ERROR: Clippy warnings remain after auto-fix. Please fix manually:"
     echo "$CLIPPY_OUTPUT" | tail -20
     exit 1
 }
-echo "   ✅ Clippy passed (zero warnings)"
+echo "  Clippy passed (zero warnings)"
 
-# ─── Re-stage files modified by fmt / clippy auto-fix ────────────────────────
+# ─── Re-stage files modified by fmt / clippy auto-fix ─────────────────────────
 
 git add -u
 
-# ─── 4. Tests — run all ──────────────────────────────────────────────────────
+# ─── 5. Tests — only affected crates ─────────────────────────────────────────
 
-echo "4️⃣  Running tests..."
-TEST_OUTPUT=$(cargo nextest run --profile precommit 2>&1) || {
-    echo "$TEST_OUTPUT" | tail -20
-    echo "❌ Tests failed. Run 'cargo nextest run' for details."
-    exit 1
-}
-echo "$TEST_OUTPUT" | tail -5
-echo "   ✅ Tests passed"
+echo "4/6 Running tests ($NUM_AFFECTED crate(s))..."
 
-# ─── 5. Microbenchmark regression check ─────────────────────────────────────
+# Build nextest filter expression: -E 'package(crate1) | package(crate2) ...'
+NEXTEST_FILTER=""
+for crate in $AFFECTED; do
+    if [ -z "$NEXTEST_FILTER" ]; then
+        NEXTEST_FILTER="package($crate)"
+    else
+        NEXTEST_FILTER="$NEXTEST_FILTER | package($crate)"
+    fi
+done
 
-if [[ "$SKIP_BENCH" == "1" ]]; then
-    echo "5️⃣  Microbenchmark check skipped (TSZ_SKIP_BENCH=1)"
+# Also test root crate if root changed
+if [ "$ROOT_CHANGED" = "true" ]; then
+    if [ -z "$NEXTEST_FILTER" ]; then
+        NEXTEST_FILTER="package(wasm)"
+    else
+        NEXTEST_FILTER="$NEXTEST_FILTER | package(wasm)"
+    fi
+fi
+
+if cargo nextest --version >/dev/null 2>&1; then
+    TEST_OUTPUT=$(cargo nextest run --profile precommit -E "$NEXTEST_FILTER" 2>&1) || {
+        echo "$TEST_OUTPUT" | tail -20
+        echo "ERROR: Tests failed. Run 'cargo nextest run' for details."
+        exit 1
+    }
+    echo "$TEST_OUTPUT" | tail -5
 else
-    echo "5️⃣  Microbenchmark regression check..."
-    BENCH_CMD=("$ROOT_DIR/scripts/precommit-microbench.sh")
-    if [[ "${TSZ_BENCH_UPDATE_BASELINE:-}" == "1" ]]; then
-        BENCH_CMD+=("--update-baseline")
+    # Fallback to cargo test with package filters
+    TEST_PKGS=""
+    for crate in $AFFECTED; do
+        TEST_PKGS="$TEST_PKGS -p $crate"
+    done
+    if [ "$ROOT_CHANGED" = "true" ]; then
+        TEST_PKGS="$TEST_PKGS -p wasm"
+    fi
+    TEST_OUTPUT=$(cargo test $TEST_PKGS 2>&1) || {
+        echo "$TEST_OUTPUT" | tail -20
+        echo "ERROR: Tests failed."
+        exit 1
+    }
+fi
+echo "  Tests passed"
+
+# ─── 6. Microbenchmark regression check ──────────────────────────────────────
+
+if [ "$SKIP_BENCH" = "1" ]; then
+    echo "5/6 Microbenchmark check skipped (TSZ_SKIP_BENCH=1)"
+elif [ "$SOLVER_OR_CHECKER_CHANGED" = "false" ]; then
+    echo "5/6 Microbenchmark check skipped (solver/checker unchanged)"
+else
+    echo "5/6 Microbenchmark regression check..."
+    BENCH_CMD="$ROOT_DIR/scripts/precommit-microbench.sh"
+    BENCH_ARGS=""
+    if [ "${TSZ_BENCH_UPDATE_BASELINE:-}" = "1" ]; then
+        BENCH_ARGS="--update-baseline"
     fi
 
-    BENCH_OUTPUT=$("${BENCH_CMD[@]}" 2>&1) || {
+    BENCH_OUTPUT=$("$BENCH_CMD" $BENCH_ARGS 2>&1) || {
         echo "$BENCH_OUTPUT" | tail -30
         echo ""
-        echo "❌ Microbenchmark regression gate failed."
-        echo "   To bypass (not recommended): TSZ_SKIP_BENCH=1 git commit ..."
-        echo "   To refresh local baseline: TSZ_BENCH_UPDATE_BASELINE=1 git commit ..."
+        echo "ERROR: Microbenchmark regression gate failed."
+        echo "  To bypass: TSZ_SKIP_BENCH=1 git commit ..."
+        echo "  To refresh baseline: TSZ_BENCH_UPDATE_BASELINE=1 git commit ..."
         exit 1
     }
     echo "$BENCH_OUTPUT" | tail -12
-    echo "   ✅ Microbenchmark gate passed"
+    echo "  Microbenchmark gate passed"
 fi
 
-# ─── 6. Conformance regression check ────────────────────────────────────────
+# ─── 7. Conformance regression check ─────────────────────────────────────────
 
-if [[ "$SKIP_CONFORMANCE" == "1" ]]; then
-    echo "6️⃣  Conformance check skipped (TSZ_SKIP_CONFORMANCE=1)"
+if [ "$SKIP_CONFORMANCE" = "1" ]; then
+    echo "6/6 Conformance check skipped (TSZ_SKIP_CONFORMANCE=1)"
+elif [ "$SOLVER_OR_CHECKER_CHANGED" = "false" ]; then
+    echo "6/6 Conformance check skipped (solver/checker unchanged)"
 else
-    echo "6️⃣  Conformance regression check..."
+    echo "6/6 Conformance regression check..."
 
     LAST_CONFORMANCE=""
     if LAST_CONFORMANCE=$("$ROOT_DIR/scripts/get-last-conformance.sh" 2>/dev/null); then
-        echo "   Last recorded: ${LAST_CONFORMANCE}%"
+        echo "  Last recorded: ${LAST_CONFORMANCE}%"
     else
-        echo "   No previous conformance found — skipping regression check."
+        echo "  No previous conformance found — skipping regression check."
         SKIP_CONFORMANCE=1
     fi
 
-    if [[ "$SKIP_CONFORMANCE" != "1" ]]; then
+    if [ "$SKIP_CONFORMANCE" != "1" ]; then
         TEMP_OUTPUT=$(mktemp)
         trap 'rm -f "$TEMP_OUTPUT"' EXIT
 
-        echo "   Running full conformance test suite..."
+        echo "  Running full conformance test suite..."
         if ! "$ROOT_DIR/scripts/conformance/run.sh" --pass-rate-only > "$TEMP_OUTPUT" 2>&1; then
-            echo "❌ Conformance tests failed to run"
+            echo "ERROR: Conformance tests failed to run"
             tail -20 "$TEMP_OUTPUT"
             exit 1
         fi
 
         # Extract current pass rate
         CURRENT_CONFORMANCE=$(sed -n '/===PASS_RATE_START===/,/===PASS_RATE_END===/p' "$TEMP_OUTPUT" | grep -oE '[0-9]+\.[0-9]+' | head -1)
-        if [[ -z "$CURRENT_CONFORMANCE" ]]; then
+        if [ -z "$CURRENT_CONFORMANCE" ]; then
             PASS_LINE=$(grep -E "^Pass Rate:" "$TEMP_OUTPUT" | tail -1)
             CURRENT_CONFORMANCE=$(echo "$PASS_LINE" | grep -oE '[0-9]+\.[0-9]+' | head -1)
         fi
 
-        if [[ -z "$CURRENT_CONFORMANCE" ]]; then
-            echo "❌ Could not extract pass rate from conformance output"
+        if [ -z "$CURRENT_CONFORMANCE" ]; then
+            echo "ERROR: Could not extract pass rate from conformance output"
             exit 1
         fi
-        echo "   Current: ${CURRENT_CONFORMANCE}%"
+        echo "  Current: ${CURRENT_CONFORMANCE}%"
 
         # Float comparison
-        if command -v bc &>/dev/null; then
+        if command -v bc >/dev/null 2>&1; then
             IS_REGRESSION=$(echo "$CURRENT_CONFORMANCE < $LAST_CONFORMANCE" | bc -l)
         else
             CURRENT_INT=$(echo "$CURRENT_CONFORMANCE" | tr -d '.' | sed 's/^0*//')
             LAST_INT=$(echo "$LAST_CONFORMANCE" | tr -d '.' | sed 's/^0*//')
-            [[ -z "$CURRENT_INT" ]] && CURRENT_INT=0
-            [[ -z "$LAST_INT" ]] && LAST_INT=0
-            if [[ "$CURRENT_INT" -lt "$LAST_INT" ]]; then
+            [ -z "$CURRENT_INT" ] && CURRENT_INT=0
+            [ -z "$LAST_INT" ] && LAST_INT=0
+            if [ "$CURRENT_INT" -lt "$LAST_INT" ]; then
                 IS_REGRESSION=1
             else
                 IS_REGRESSION=0
             fi
         fi
 
-        if [[ "$IS_REGRESSION" == "1" ]]; then
+        if [ "$IS_REGRESSION" = "1" ]; then
             echo ""
-            echo "❌ CONFORMANCE REGRESSION DETECTED!"
+            echo "CONFORMANCE REGRESSION DETECTED!"
             echo ""
-            echo "   Previous: ${LAST_CONFORMANCE}%"
-            echo "   Current:  ${CURRENT_CONFORMANCE}%"
-            echo "   Delta:    -$(echo "$LAST_CONFORMANCE - $CURRENT_CONFORMANCE" | bc -l 2>/dev/null || echo "?")%"
+            echo "  Previous: ${LAST_CONFORMANCE}%"
+            echo "  Current:  ${CURRENT_CONFORMANCE}%"
+            echo "  Delta:    -$(echo "$LAST_CONFORMANCE - $CURRENT_CONFORMANCE" | bc -l 2>/dev/null || echo "?")%"
             echo ""
-            echo "   Your changes caused a drop in conformance test pass rate."
-            echo "   Please fix the regression before committing."
+            echo "  Your changes caused a drop in conformance test pass rate."
+            echo "  Please fix the regression before committing."
             echo ""
-            echo "   To investigate:"
-            echo "     ./scripts/conformance/run.sh --filter=<pattern> --print-test"
+            echo "  To investigate:"
+            echo "    ./scripts/conformance/run.sh --filter=<pattern> --print-test"
             echo ""
-            echo "   To bypass (not recommended):"
-            echo "     TSZ_SKIP_CONFORMANCE=1 git commit ..."
+            echo "  To bypass (not recommended):"
+            echo "    TSZ_SKIP_CONFORMANCE=1 git commit ..."
             echo ""
             exit 1
         fi
 
-        echo "   ✅ Conformance: ${CURRENT_CONFORMANCE}% (no regression from ${LAST_CONFORMANCE}%)"
+        echo "  Conformance: ${CURRENT_CONFORMANCE}% (no regression from ${LAST_CONFORMANCE}%)"
 
         # Store for prepare-commit-msg hook
         echo "$CURRENT_CONFORMANCE" > "$ROOT_DIR/.conformance-value"
@@ -256,4 +393,4 @@ else
 fi
 
 echo ""
-echo "✅ All pre-commit checks passed!"
+echo "All pre-commit checks passed!"

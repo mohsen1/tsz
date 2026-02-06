@@ -11,18 +11,62 @@ env:
   RUST_TEST_TIMEOUT: 300
 
 jobs:
-  # Fast checks - run in parallel with build
+  # ─── Detect which workspace crates changed ──────────────────────────────────
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      common: ${{ steps.filter.outputs.common }}
+      scanner: ${{ steps.filter.outputs.scanner }}
+      parser: ${{ steps.filter.outputs.parser }}
+      binder: ${{ steps.filter.outputs.binder }}
+      solver: ${{ steps.filter.outputs.solver }}
+      checker: ${{ steps.filter.outputs.checker }}
+      emitter: ${{ steps.filter.outputs.emitter }}
+      lsp: ${{ steps.filter.outputs.lsp }}
+      root: ${{ steps.filter.outputs.root }}
+      any_rust: ${{ steps.filter.outputs.any_rust }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            common:
+              - 'crates/tsz-common/**'
+            scanner:
+              - 'crates/tsz-scanner/**'
+            parser:
+              - 'crates/tsz-parser/**'
+            binder:
+              - 'crates/tsz-binder/**'
+            solver:
+              - 'crates/tsz-solver/**'
+            checker:
+              - 'crates/tsz-checker/**'
+            emitter:
+              - 'crates/tsz-emitter/**'
+            lsp:
+              - 'crates/tsz-lsp/**'
+            root:
+              - 'src/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            any_rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+
+  # ─── Lint (fast, always runs) ──────────────────────────────────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: changes
+    if: needs.changes.outputs.any_rust == 'true'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -48,18 +92,15 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings || echo "Clippy warnings found (not failing build)"
 
-  # Build release only (debug not needed)
+  # ─── Build (needed for conformance + wasm tests) ──────────────────────────
   build:
     name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: changes
+    if: needs.changes.outputs.any_rust == 'true'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -87,23 +128,20 @@ jobs:
           path: target/release/
           retention-days: 1
 
-  # Unit tests - uses cached build with nextest partitioning
-  test:
-    name: Unit Tests (${{ matrix.partition }}/4)
+  # ─── Test: Foundation crates (common, scanner, parser) ─────────────────────
+  # These are fast (~seconds) and run if any of them or their deps changed.
+  test-foundation:
+    name: "Test: Foundation (common, scanner, parser)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        partition: [1, 2, 3, 4]
+    timeout-minutes: 5
+    needs: changes
+    if: >-
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.root == 'true'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -124,15 +162,212 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Run unit tests (partition ${{ matrix.partition }}/4)
-        run: |
-          cargo nextest run --profile ci --release --partition count:${{ matrix.partition }}/4
+      - name: Test tsz-common
+        run: cargo nextest run --profile ci -p tsz-common
 
-  # WASM build - parallel with native build
+      - name: Test tsz-scanner
+        run: cargo nextest run --profile ci -p tsz-scanner
+
+      - name: Test tsz-parser
+        run: cargo nextest run --profile ci -p tsz-parser
+
+  # ─── Test: Binder ──────────────────────────────────────────────────────────
+  test-binder:
+    name: "Test: Binder"
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    needs: changes
+    if: >-
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Test tsz-binder
+        run: cargo nextest run --profile ci -p tsz-binder
+
+  # ─── Test: Solver (largest crate, ~195K lines) ─────────────────────────────
+  test-solver:
+    name: "Test: Solver"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: >-
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Test tsz-solver
+        run: cargo nextest run --profile ci -p tsz-solver
+
+  # ─── Test: Checker (82K lines, depends on solver) ──────────────────────────
+  test-checker:
+    name: "Test: Checker"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: >-
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.checker == 'true' ||
+      needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Test tsz-checker
+        run: cargo nextest run --profile ci -p tsz-checker
+
+  # ─── Test: Emitter + LSP (leaf crates) ─────────────────────────────────────
+  test-leaf:
+    name: "Test: Emitter + LSP"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: changes
+    if: >-
+      needs.changes.outputs.emitter == 'true' ||
+      needs.changes.outputs.lsp == 'true' ||
+      needs.changes.outputs.checker == 'true' ||
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Test tsz-emitter
+        run: cargo nextest run --profile ci -p tsz-emitter
+
+      - name: Test tsz-lsp
+        run: cargo nextest run --profile ci -p tsz-lsp
+
+  # ─── Test: Root crate (wasm - integration tests) ──────────────────────────
+  test-root:
+    name: "Test: Root (wasm)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [changes, build]
+    if: needs.changes.outputs.root == 'true' || needs.changes.outputs.any_rust == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Test root crate
+        run: cargo nextest run --profile ci -p wasm
+
+  # ─── WASM build ────────────────────────────────────────────────────────────
   wasm-build:
     name: WASM Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: changes
+    if: needs.changes.outputs.any_rust == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -183,12 +418,18 @@ jobs:
           path: pkg/
           retention-days: 1
 
-  # Conformance - uses native Rust conformance runner
+  # ─── Conformance ───────────────────────────────────────────────────────────
   conformance:
     name: Conformance Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: build
+    needs: [changes, build]
+    if: >-
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.checker == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.root == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -256,25 +497,33 @@ jobs:
             exit 0
           }
 
-  # Summary - simplified
+  # ─── Summary ───────────────────────────────────────────────────────────────
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [lint, build, test, wasm-build]
+    needs: [lint, build, test-foundation, test-binder, test-solver, test-checker, test-leaf, test-root, wasm-build]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.build.result }}" == "failure" ]; then
-            echo "::error::Build failed"
-            exit 1
-          fi
-          if [ "${{ needs.test.result }}" == "failure" ]; then
-            echo "::error::Tests failed"
-            exit 1
-          fi
-          if [ "${{ needs.wasm-build.result }}" == "failure" ]; then
-            echo "::error::WASM build failed"
-            exit 1
-          fi
-          echo "All critical jobs passed!"
+          # Only check jobs that actually ran (skip if skipped due to no changes)
+          check_job() {
+            local name="$1"
+            local result="$2"
+            if [ "$result" == "failure" ]; then
+              echo "::error::$name failed"
+              exit 1
+            fi
+          }
+
+          check_job "Build" "${{ needs.build.result }}"
+          check_job "Lint" "${{ needs.lint.result }}"
+          check_job "Foundation Tests" "${{ needs.test-foundation.result }}"
+          check_job "Binder Tests" "${{ needs.test-binder.result }}"
+          check_job "Solver Tests" "${{ needs.test-solver.result }}"
+          check_job "Checker Tests" "${{ needs.test-checker.result }}"
+          check_job "Leaf Tests" "${{ needs.test-leaf.result }}"
+          check_job "Root Tests" "${{ needs.test-root.result }}"
+          check_job "WASM Build" "${{ needs.wasm-build.result }}"
+
+          echo "All critical jobs passed (or were skipped because no relevant changes)!"
