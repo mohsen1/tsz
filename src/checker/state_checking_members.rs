@@ -448,6 +448,8 @@ impl<'a> CheckerState<'a> {
             return MemberLookup::NotFound;
         };
 
+        let mut accessor_access: Option<MemberAccessLevel> = None;
+
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -514,10 +516,21 @@ impl<'a> CheckerState<'a> {
                         } else {
                             self.member_access_level_from_modifiers(&accessor.modifiers)
                         };
-                        return match access_level {
-                            Some(level) => MemberLookup::Restricted(level),
-                            None => MemberLookup::Public,
-                        };
+                        // Don't return immediately - a getter/setter pair may have
+                        // different visibility. Use the most permissive level (tsc
+                        // allows reads when getter is public even if setter is private).
+                        match access_level {
+                            None => return MemberLookup::Public,
+                            Some(level) => {
+                                accessor_access = Some(match accessor_access {
+                                    // First accessor found
+                                    None => level,
+                                    // Second accessor: use the more permissive level
+                                    Some(MemberAccessLevel::Private) => level,
+                                    Some(prev) => prev,
+                                });
+                            }
+                        }
                     }
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
@@ -553,6 +566,12 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => {}
             }
+        }
+
+        // If we found accessor(s) but didn't early-return Public, return
+        // the most permissive access level across getter/setter pair.
+        if let Some(level) = accessor_access {
+            return MemberLookup::Restricted(level);
         }
 
         MemberLookup::NotFound
