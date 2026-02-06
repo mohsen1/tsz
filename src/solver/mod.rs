@@ -149,6 +149,9 @@ mod type_law_tests;
 #[path = "tests/isomorphism_tests.rs"]
 mod isomorphism_tests;
 #[cfg(test)]
+#[path = "tests/isomorphism_validation.rs"]
+mod isomorphism_validation;
+#[cfg(test)]
 #[path = "tests/solver_refactoring_tests.rs"]
 mod solver_refactoring_tests;
 #[cfg(test)]
