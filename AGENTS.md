@@ -457,3 +457,5 @@ See [Mandatory Skill Activation Hook for Claude Code](https://gist.github.com/um
 4. **Skills Available**: Use `tsz-gemini` skill which wraps `ask-gemini.mjs`
 
 **When in doubt: ASK GEMINI. It's faster than fixing broken code later.**
+
+Now, make sure repo is setup properly. Run `scripts/setup.sh`

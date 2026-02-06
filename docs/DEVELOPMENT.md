@@ -25,7 +25,7 @@ Pre-commit hooks are automatically installed on first build. They run:
 
 To manually install hooks:
 ```bash
-./scripts/install-hooks.sh
+./scripts/setup.sh
 ```
 
 To skip hooks for a single commit (not recommended):
