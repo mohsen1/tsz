@@ -329,7 +329,31 @@ fn get_property_modifiers_for_key(...) -> (bool, bool) {
 
 **Committed**: `63b85da3a`
 
-**Status**: ✅ BUGS #2-3 FIXED! Moving to remaining bugs.
+**Status**: ✅ BUGS #2-3 FIXED! Moving to Bug #1 (key remapping).
+
+### 2026-02-06: Key Remapping Investigation (In Progress)
+
+**Bug #1**: Key remapping with conditional types not working.
+
+**Test Case**:
+```typescript
+type WithoutAge = {
+    [K in keyof User as K extends "age" ? never : K]: User[K]
+};
+let w: WithoutAge = { name: "Alice" }; // tsz errors, tsc accepts
+```
+
+**Investigation Findings**:
+1. The `remap_key_type_for_mapped()` function exists and looks correct
+2. It substitutes `K` with the literal key and evaluates the conditional
+3. Conditional evaluation should work: `"name" extends "age" ? never : "name"` → `"name"`
+4. But the type is not assignable - mapped type might not be fully evaluated
+
+**Hypothesis**: The issue is likely in how the conditional type result is being handled. If `literal_string()` can't extract a string from the result, the mapped type is returned unevaluated (line 265).
+
+**Current Status**: Debugging in progress. Need to trace what type the conditional actually returns.
+
+**Test Results**: 8272 passing, 40 failing (unchanged)
 
 ### 2026-02-06: Indexed Access Investigation (In Progress)
 
