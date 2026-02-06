@@ -154,24 +154,26 @@
 
 **Goal**: Ensure that no operation in `src/solver/` can ever produce a `TypeId` that is structurally equivalent to another `TypeId` but has a different integer value. This is the prerequisite for the Checker (tsz-2) to rely entirely on `==` for type comparisons.
 
-### Priority 1: Task #44 - Subtype Result Caching 🚧 NEXT
-**Status**: 🚧 IN PROGRESS
+### Priority 1: Task #44 - Subtype Result Caching ✅ ALREADY DONE
+**Status**: ✅ ALREADY IMPLEMENTED
 **Why**: Every time the Checker asks `is_subtype_of(A, B)` where `A != B`, we perform a full structural walk. Memoizing these results is the biggest remaining performance win.
 
-**Implementation Plan**:
-1. ✅ Review existing cycle_stack in `src/solver/subtype.rs` for GFP semantics
-2. 🚧 Implement `SubtypeCache` that stores `(TypeId, TypeId) -> SubtypeResult`
-3. ⏳ Add cache lookup before structural walk
-4. ⏳ Add cache storage after successful check
-5. ⏳ Handle cache invalidation for recursive types (coinduction)
+**Findings**: Task #44 is already implemented! The `SubtypeChecker` in `src/solver/subtype.rs` already has comprehensive subtype result caching:
+1. ✅ **Cache Lookup**: Lines 1398-1407 - checks `QueryDatabase` cache before structural walk
+2. ✅ **Cache Insertion**: Lines 1580-1589 - stores only definitive results (True/False)
+3. ✅ **Non-Definitive Results**: CycleDetected and DepthExceeded are NOT cached (correct!)
+4. ✅ **RelationCacheKey**: Uses `make_cache_key()` which includes compiler flags
+5. ✅ **QueryDatabase Integration**: Fully integrated with `lookup_subtype_cache` and `insert_subtype_cache`
 
-**Key Challenge**: The cache must work correctly with coinductive semantics for recursive types. The `cycle_stack` prevents infinite loops, but the cache must distinguish "currently checking" from "already checked".
+**Key Implementation Detail**: The cache correctly distinguishes definitive from non-definitive results:
+- `True` and `False` → Cached
+- `CycleDetected` and `DepthExceeded` → NOT cached (prevents unsoundness)
 
-**Files**: `src/solver/subtype.rs`, `src/solver/types.rs`
+**Files**: `src/solver/subtype.rs` (already implemented), `src/solver/db.rs` (QueryCache with subtype_cache)
 
 ---
 
-### Priority 2: Task #45 - Index Access & Keyof Simplification
+### Priority 2: Task #45 - Index Access & Keyof Simplification 🚧 NEXT
 **Status**: ⏳ PENDING
 **Why**: `evaluate_index_access` and `evaluate_keyof` must return the most simplified canonical form.
 
