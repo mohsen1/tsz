@@ -2761,6 +2761,23 @@ impl Server {
             let kind_str = def_provider.symbol_flags_to_kind_string(symbol.flags);
             let symbol_name = symbol.escaped_name.clone();
 
+            // Use HoverProvider to get the display string with type info
+            let interner = TypeInterner::new();
+            let hover_provider = HoverProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                &interner,
+                &source_text,
+                file.clone(),
+            );
+            let mut type_cache = None;
+            let hover_info = hover_provider.get_hover(root, position, &mut type_cache);
+            let display_string = hover_info
+                .as_ref()
+                .map(|h| h.display_string.clone())
+                .unwrap_or_default();
+
             // Build definition object using first definition info
             let definition = if let Some(ref defs) = def_infos {
                 if let Some(first_def) = defs.first() {
@@ -2768,12 +2785,29 @@ impl Server {
                         line_map.position_to_offset(first_def.location.range.start, &source_text);
                     let def_end =
                         line_map.position_to_offset(first_def.location.range.end, &source_text);
+
+                    // Use display_string from HoverProvider if available for proper type info
+                    let name = if !display_string.is_empty() {
+                        display_string.clone()
+                    } else {
+                        format!("{} {}", first_def.kind, first_def.name)
+                    };
+                    let display_parts = if !display_string.is_empty() {
+                        Self::parse_display_string_to_parts(
+                            &display_string,
+                            &first_def.kind,
+                            &first_def.name,
+                        )
+                    } else {
+                        Self::build_simple_display_parts(&first_def.kind, &first_def.name)
+                    };
+
                     let mut def_json = serde_json::json!({
                         "containerKind": "",
                         "containerName": first_def.container_name,
                         "kind": first_def.kind,
-                        "name": format!("{} {}", first_def.kind, first_def.name),
-                        "displayParts": Self::build_simple_display_parts(&first_def.kind, &first_def.name),
+                        "name": name,
+                        "displayParts": display_parts,
                         "fileName": file,
                         "textSpan": {
                             "start": def_start.unwrap_or(0),
@@ -2783,10 +2817,17 @@ impl Server {
                     if let Some(ref ctx) = first_def.context_span {
                         let ctx_start = line_map.position_to_offset(ctx.start, &source_text);
                         let ctx_end = line_map.position_to_offset(ctx.end, &source_text);
-                        def_json["contextSpan"] = serde_json::json!({
-                            "start": ctx_start.unwrap_or(0),
-                            "length": ctx_end.unwrap_or(0).saturating_sub(ctx_start.unwrap_or(0)),
-                        });
+                        let ctx_start_off = ctx_start.unwrap_or(0);
+                        let ctx_end_off = ctx_end.unwrap_or(0);
+                        let def_start_off = def_start.unwrap_or(0);
+                        let def_end_off = def_end.unwrap_or(0);
+                        // Skip contextSpan when it matches textSpan (e.g., catch clause vars)
+                        if ctx_start_off != def_start_off || ctx_end_off != def_end_off {
+                            def_json["contextSpan"] = serde_json::json!({
+                                "start": ctx_start_off,
+                                "length": ctx_end_off.saturating_sub(ctx_start_off),
+                            });
+                        }
                     }
                     def_json
                 } else {
@@ -2797,6 +2838,12 @@ impl Server {
             };
 
             // Build references array with byte-offset textSpans
+            // Compute cursor offset for isDefinition check - TypeScript only sets
+            // isDefinition=true when the cursor is ON the definition reference
+            let cursor_offset = line_map
+                .position_to_offset(position, &source_text)
+                .unwrap_or(0);
+
             let references: Vec<serde_json::Value> = ref_infos
                 .iter()
                 .map(|ref_info| {
@@ -2807,7 +2854,11 @@ impl Server {
                     let start_off = start.unwrap_or(0);
                     let end_off = end.unwrap_or(0);
 
-                    let is_definition = ref_info.is_definition;
+                    // isDefinition is only true when: (1) the reference IS a definition,
+                    // AND (2) the cursor is at that reference's position
+                    let is_definition = ref_info.is_definition
+                        && cursor_offset >= start_off
+                        && cursor_offset < end_off;
 
                     let mut ref_json = serde_json::json!({
                         "fileName": ref_info.location.file_path,
@@ -2820,20 +2871,25 @@ impl Server {
                     });
 
                     // Add contextSpan for definition references
+                    // Skip when contextSpan matches textSpan (e.g., catch clause variables)
                     if ref_info.is_definition {
                         if let Some(ref defs) = def_infos {
-                            // Find matching definition and use its context span
                             for def in defs {
                                 if def.location.range == ref_info.location.range {
                                     if let Some(ref ctx) = def.context_span {
-                                        let ctx_start = line_map
-                                            .position_to_offset(ctx.start, &source_text);
-                                        let ctx_end = line_map
-                                            .position_to_offset(ctx.end, &source_text);
-                                        ref_json["contextSpan"] = serde_json::json!({
-                                            "start": ctx_start.unwrap_or(0),
-                                            "length": ctx_end.unwrap_or(0).saturating_sub(ctx_start.unwrap_or(0)),
-                                        });
+                                        let ctx_start =
+                                            line_map.position_to_offset(ctx.start, &source_text);
+                                        let ctx_end =
+                                            line_map.position_to_offset(ctx.end, &source_text);
+                                        let ctx_start_off = ctx_start.unwrap_or(0);
+                                        let ctx_end_off = ctx_end.unwrap_or(0);
+                                        // Only add contextSpan if it differs from the textSpan
+                                        if ctx_start_off != start_off || ctx_end_off != end_off {
+                                            ref_json["contextSpan"] = serde_json::json!({
+                                                "start": ctx_start_off,
+                                                "length": ctx_end_off.saturating_sub(ctx_start_off),
+                                            });
+                                        }
                                         break;
                                     }
                                 }
@@ -2889,6 +2945,173 @@ impl Server {
             "property" => "propertyName",
             _ => "localName",
         }
+    }
+
+    /// Parse a display string (e.g. "const x: number") into structured displayParts.
+    /// This handles common patterns from the HoverProvider.
+    fn parse_display_string_to_parts(
+        display_string: &str,
+        kind: &str,
+        name: &str,
+    ) -> Vec<serde_json::Value> {
+        let name_kind = Self::symbol_kind_to_display_part_kind(kind);
+
+        // Handle prefixed forms like "(local var) x: type" or "(parameter) x: type"
+        let s = display_string;
+
+        // Check for parenthesized prefix like "(local var)" or "(parameter)"
+        if let Some(rest) = s.strip_prefix('(') {
+            if let Some(paren_end) = rest.find(')') {
+                let prefix = &rest[..paren_end];
+                let after_paren = rest[paren_end + 1..].trim_start();
+
+                let mut parts = vec![];
+                parts.push(serde_json::json!({ "text": "(", "kind": "punctuation" }));
+
+                // Split prefix words
+                let prefix_words: Vec<&str> = prefix.split_whitespace().collect();
+                for (i, word) in prefix_words.iter().enumerate() {
+                    if i > 0 {
+                        parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+                    }
+                    parts.push(serde_json::json!({ "text": *word, "kind": "keyword" }));
+                }
+                parts.push(serde_json::json!({ "text": ")", "kind": "punctuation" }));
+                parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+
+                // Parse the rest: "name: type" or "name(sig): type"
+                Self::parse_name_and_type(after_paren, name_kind, &mut parts);
+                return parts;
+            }
+        }
+
+        // Handle "keyword name: type" or "keyword name" patterns
+        let keywords = [
+            "const",
+            "let",
+            "var",
+            "function",
+            "class",
+            "interface",
+            "enum",
+            "type",
+            "namespace",
+        ];
+        for kw in &keywords {
+            if let Some(rest) = s.strip_prefix(kw) {
+                if rest.starts_with(' ') {
+                    let mut parts = vec![];
+                    parts.push(serde_json::json!({ "text": *kw, "kind": "keyword" }));
+                    parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+                    let rest = rest.trim_start();
+                    Self::parse_name_and_type(rest, name_kind, &mut parts);
+                    return parts;
+                }
+            }
+        }
+
+        // Fallback: just use the display_string as-is
+        Self::build_simple_display_parts(kind, name)
+    }
+
+    /// Parse "name: type" or "name(params): type" or just "name" from a string.
+    fn parse_name_and_type(s: &str, name_kind: &str, parts: &mut Vec<serde_json::Value>) {
+        // Find where the name ends - it could be followed by ':', '(', '<', '=', or end of string
+        let name_end = s
+            .find(|c: char| c == ':' || c == '(' || c == '<' || c == '=')
+            .unwrap_or(s.len());
+        let name_part = s[..name_end].trim_end();
+
+        if !name_part.is_empty() {
+            // Check if name contains '.' for qualified names like "Foo.bar"
+            if let Some(dot_pos) = name_part.rfind('.') {
+                let container = &name_part[..dot_pos];
+                let member = &name_part[dot_pos + 1..];
+                parts.push(serde_json::json!({ "text": container, "kind": "className" }));
+                parts.push(serde_json::json!({ "text": ".", "kind": "punctuation" }));
+                parts.push(serde_json::json!({ "text": member, "kind": name_kind }));
+            } else {
+                parts.push(serde_json::json!({ "text": name_part, "kind": name_kind }));
+            }
+        }
+
+        let remaining = &s[name_end..];
+        if remaining.is_empty() {
+            return;
+        }
+
+        // Handle signature parts like "(params): type" or "= type" or ": type"
+        if remaining.starts_with('(') {
+            // Function signature - add everything as-is for now with punctuation
+            Self::parse_signature(remaining, parts);
+        } else if let Some(rest) = remaining.strip_prefix(": ") {
+            parts.push(serde_json::json!({ "text": ":", "kind": "punctuation" }));
+            parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+            Self::parse_type_string(rest, parts);
+        } else if let Some(rest) = remaining.strip_prefix(":") {
+            parts.push(serde_json::json!({ "text": ":", "kind": "punctuation" }));
+            parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+            Self::parse_type_string(rest.trim_start(), parts);
+        } else if let Some(rest) = remaining.strip_prefix(" = ") {
+            parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+            parts.push(serde_json::json!({ "text": "=", "kind": "operator" }));
+            parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+            Self::parse_type_string(rest, parts);
+        }
+    }
+
+    /// Parse a type string into display parts.
+    fn parse_type_string(type_str: &str, parts: &mut Vec<serde_json::Value>) {
+        let type_str = type_str.trim();
+        if type_str.is_empty() {
+            return;
+        }
+
+        // Check for TypeScript keyword types
+        let keyword_types = [
+            "any",
+            "boolean",
+            "bigint",
+            "never",
+            "null",
+            "number",
+            "object",
+            "string",
+            "symbol",
+            "undefined",
+            "unknown",
+            "void",
+            "true",
+            "false",
+        ];
+        if keyword_types.contains(&type_str) {
+            parts.push(serde_json::json!({ "text": type_str, "kind": "keyword" }));
+            return;
+        }
+
+        // Check for numeric literal
+        if type_str.parse::<f64>().is_ok() {
+            parts.push(serde_json::json!({ "text": type_str, "kind": "stringLiteral" }));
+            return;
+        }
+
+        // Check for string literal (starts and ends with quotes)
+        if (type_str.starts_with('"') && type_str.ends_with('"'))
+            || (type_str.starts_with('\'') && type_str.ends_with('\''))
+        {
+            parts.push(serde_json::json!({ "text": type_str, "kind": "stringLiteral" }));
+            return;
+        }
+
+        // Default: treat as text (could be a complex type, interface name, etc.)
+        parts.push(serde_json::json!({ "text": type_str, "kind": "text" }));
+    }
+
+    /// Parse a function signature like "(x: number): string" into parts.
+    fn parse_signature(sig: &str, parts: &mut Vec<serde_json::Value>) {
+        // For now, add the whole signature as text parts
+        // This handles the common case of function signatures
+        parts.push(serde_json::json!({ "text": sig, "kind": "text" }));
     }
 
     fn handle_navto(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
