@@ -712,15 +712,15 @@ impl<'a> GoToDefinition<'a> {
                     syntax_kind_ext::FUNCTION_DECLARATION => self
                         .arena
                         .get_function(node)
-                        .map_or(false, |f| !f.body.is_none()),
+                        .is_some_and(|f| !f.body.is_none()),
                     syntax_kind_ext::METHOD_DECLARATION => self
                         .arena
                         .get_method_decl(node)
-                        .map_or(false, |m| !m.body.is_none()),
+                        .is_some_and(|m| !m.body.is_none()),
                     syntax_kind_ext::CONSTRUCTOR => self
                         .arena
                         .get_constructor(node)
-                        .map_or(false, |c| !c.body.is_none()),
+                        .is_some_and(|c| !c.body.is_none()),
                     _ => false,
                 };
                 if has_body {
