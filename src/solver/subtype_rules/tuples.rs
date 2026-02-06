@@ -369,10 +369,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Get the element type of an array type, or return the type itself for any[].
     ///
     /// Used for extracting the element type when checking rest parameters.
+    /// For tuples used as rest parameters (e.g., [...args: [any]]), extracts the first element's type.
     pub(crate) fn get_array_element_type(&self, type_id: TypeId) -> TypeId {
         if type_id == TypeId::ANY {
             return TypeId::ANY;
         }
-        array_element_type(self.interner, type_id).unwrap_or(type_id)
+
+        // First try array element type
+        if let Some(elem) = array_element_type(self.interner, type_id) {
+            return elem;
+        }
+
+        // For tuples used as rest parameters, extract the first element's type
+        // This handles cases like [...args: [any]] being compatible with [...args: any[]]
+        if let Some(list_id) = tuple_list_id(self.interner, type_id) {
+            let elements = self.interner.tuple_list(list_id);
+            if let Some(first) = elements.first() {
+                return first.type_id;
+            }
+        }
+
+        type_id
     }
 }
