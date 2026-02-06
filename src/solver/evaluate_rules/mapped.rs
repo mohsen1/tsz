@@ -469,6 +469,46 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         match key {
+            // NEW: Handle KeyOf types directly if evaluate_keyof deferred
+            // This fixes Bug #1: Key Remapping with conditionals
+            TypeKey::KeyOf(operand) => {
+                tracing::trace!(
+                    operand_lookup = ?self.interner().lookup(operand),
+                    "extract_mapped_keys: handling KeyOf type"
+                );
+                // NORTH STAR: Use collect_properties to extract keys from KeyOf operand.
+                // This handles interfaces, classes, intersections, and type parameters.
+                match collect_properties(operand, self.interner(), self.resolver()) {
+                    PropertyCollectionResult::Properties {
+                        properties,
+                        string_index,
+                        number_index,
+                    } => {
+                        for prop in properties {
+                            keys.string_literals.push(prop.name);
+                        }
+                        keys.has_string = string_index.is_some();
+                        keys.has_number = number_index.is_some();
+                        tracing::trace!(
+                            string_literals = ?keys.string_literals,
+                            has_string = keys.has_string,
+                            has_number = keys.has_number,
+                            "extract_mapped_keys: extracted keys from KeyOf"
+                        );
+                        Some(keys)
+                    }
+                    PropertyCollectionResult::Any => {
+                        keys.has_string = true;
+                        keys.has_number = true;
+                        tracing::trace!("extract_mapped_keys: KeyOf is Any type");
+                        Some(keys)
+                    }
+                    PropertyCollectionResult::NonObject => {
+                        tracing::trace!("extract_mapped_keys: KeyOf operand is not an object");
+                        None
+                    }
+                }
+            }
             TypeKey::Literal(LiteralValue::String(s)) => {
                 keys.string_literals.push(s);
                 Some(keys)
