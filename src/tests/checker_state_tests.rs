@@ -18354,9 +18354,9 @@ const animalHandler: HandlerWithAnimalProp = dogHandler;
 /// The classic use case: event handlers with specific event types
 /// must be assignable to generic event handlers.
 ///
-/// EXPECTED FAILURE: Method bivariance is not yet implemented. This is the
-/// most important use case for method bivariance - passing a MouseEvent handler
-/// to a function that expects an Event handler. Once implemented, expect 0 errors.
+/// This test verifies that method bivariance is working correctly, allowing
+/// a MouseEvent handler to be passed to a function expecting an Event handler.
+/// This relies on methods being bivariant (not contravariant) in TypeScript.
 #[test]
 fn test_method_bivariance_event_handler_pattern() {
     use crate::parser::ParserState;
@@ -18406,12 +18406,13 @@ elem.addEventListener(handleMouse);
 
     let error_count = checker.ctx.diagnostics.len();
 
-    // Method bivariance is implemented, but this test requires interface inheritance resolution
-    // which is a separate issue. The checker needs to recognize that MouseEvent extends Event.
-    if error_count != 1 {
+    // Method bivariance is implemented! This test now passes with 0 errors.
+    // The event handler pattern relies on method bivariance to allow passing
+    // a MouseEvent handler to a function expecting an Event handler.
+    if error_count != 0 {
         eprintln!("=== Event Handler Pattern Diagnostics ===");
         eprintln!(
-            "Expected 1 error (interface inheritance not yet resolved), got {}",
+            "Expected 0 errors (method bivariance implemented), got {}",
             error_count
         );
         for diag in &checker.ctx.diagnostics {
@@ -18420,8 +18421,8 @@ elem.addEventListener(handleMouse);
     }
 
     assert_eq!(
-        error_count, 1,
-        "Expected 1 error - interface inheritance resolution needed: {:?}",
+        error_count, 0,
+        "Expected 0 errors - method bivariance allows event handler pattern: {:?}",
         checker.ctx.diagnostics
     );
 }
