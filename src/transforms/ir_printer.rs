@@ -26,6 +26,7 @@ use crate::transforms::ir::*;
 /// Find the end of a statement in source text by scanning for ';' at depth 0
 /// or a balanced closing '}' that returns brace depth to 0.
 /// Handles strings, parens, and brace nesting.
+#[allow(dead_code)]
 fn find_statement_end(text: &str) -> usize {
     let bytes = text.as_bytes();
     let mut brace_depth: i32 = 0;

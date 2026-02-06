@@ -76,6 +76,7 @@ fn test_no_errors(source: &str) {
     );
 }
 
+#[allow(dead_code)]
 fn test_expect_error(source: &str, expected_error_code: u32) {
     let source = format!(
         "// @strictFunctionTypes: true\n{}\n{}",

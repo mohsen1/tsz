@@ -328,8 +328,9 @@ impl TypeResolver for NoopResolver {
 /// // resolver can now be passed to functions expecting R: TypeResolver
 /// ```
 impl<T: TypeResolver + ?Sized> TypeResolver for &T {
-    fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
-        (**self).resolve_ref(symbol, interner)
+    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        // This method is deprecated - use resolve_lazy instead
+        None
     }
 
     fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {

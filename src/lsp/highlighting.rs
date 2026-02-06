@@ -1059,6 +1059,7 @@ mod highlighting_tests {
     use crate::parser::ParserState;
 
     /// Helper to create a provider from source text.
+    #[allow(dead_code)]
     fn make_provider(source: &str) -> (ParserState, BinderState, NodeIndex) {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();

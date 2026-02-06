@@ -2136,7 +2136,6 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
             return false;
         };
 
-        /// Check if any member has a string literal initializer
         let mut has_string_member = false;
 
         for &member_idx in &enum_decl.members.nodes {

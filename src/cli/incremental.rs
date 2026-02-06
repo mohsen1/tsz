@@ -694,14 +694,7 @@ mod tests {
 
         assert_eq!(build_info.root_files, vec!["test.ts"]);
         assert!(build_info.file_infos.contains_key("test.ts"));
-        assert!(
-            build_info
-                .file_infos
-                .get("test.ts")
-                .unwrap()
-                .signature
-                .is_some()
-        );
+        assert!(build_info.file_infos["test.ts"].signature.is_some());
     }
 
     #[test]

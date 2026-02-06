@@ -141,6 +141,7 @@ fn generate_large_source(lines: usize) -> String {
 }
 
 /// Count tokens in source
+#[allow(dead_code)]
 fn count_tokens(source: &str) -> usize {
     let mut scanner = ScannerState::new(source.to_string(), true);
     let mut count = 0;

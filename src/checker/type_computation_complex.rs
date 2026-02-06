@@ -522,10 +522,23 @@ impl<'a> CheckerState<'a> {
     /// This handles union types like `typeof AbstractA | typeof ConcreteB`.
     /// Recursively checks union and intersection types for abstract class members.
     pub(crate) fn type_contains_abstract_class(&self, type_id: TypeId) -> bool {
+        self.type_contains_abstract_class_inner(type_id, &mut rustc_hash::FxHashSet::default())
+    }
+
+    fn type_contains_abstract_class_inner(
+        &self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> bool {
         use crate::binder::SymbolId;
         use crate::binder::symbol_flags;
         use crate::solver::type_queries::{AbstractClassCheckKind, classify_for_abstract_check};
         use crate::solver::types::TypeKey;
+
+        // Prevent infinite loops in circular type references
+        if !visited.insert(type_id) {
+            return false;
+        }
 
         // Special handling for Callable types - check if the symbol is abstract
         if let Some(TypeKey::Callable(shape_id)) = self.ctx.types.lookup(type_id) {
@@ -554,7 +567,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(def) = self.ctx.definition_store.get(def_id) {
                             if let Some(body_type) = def.body {
                                 // Recursively check the body (which may be a union, another lazy, etc.)
-                                return self.type_contains_abstract_class(body_type);
+                                return self.type_contains_abstract_class_inner(body_type, visited);
                             }
                         }
                     }
@@ -577,11 +590,11 @@ impl<'a> CheckerState<'a> {
             // Union type - check if ANY constituent is abstract
             AbstractClassCheckKind::Union(members) => members
                 .iter()
-                .any(|&member| self.type_contains_abstract_class(member)),
+                .any(|&member| self.type_contains_abstract_class_inner(member, visited)),
             // Intersection type - check if ANY constituent is abstract
             AbstractClassCheckKind::Intersection(members) => members
                 .iter()
-                .any(|&member| self.type_contains_abstract_class(member)),
+                .any(|&member| self.type_contains_abstract_class_inner(member, visited)),
             AbstractClassCheckKind::NotAbstract => false,
         }
     }
