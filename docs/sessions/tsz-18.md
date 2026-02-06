@@ -287,6 +287,48 @@ TypeKey::Lazy(def_id) => {
 
 **Status**: ✅ MAJOR PROGRESS - Architectural fix implemented and working!
 
+### 2026-02-06: Mapped Type Modifiers Investigation (In Progress)
+
+**Pivot**: Following Gemini recommendation, shifted focus to mapped type modifiers (Bugs #2-3) as "easier wins"
+
+**Test Cases Created**:
+```typescript
+interface ReadonlyObj {
+    readonly x: number;
+    readonly y: string;
+}
+type Mutable = { -readonly [K in keyof ReadonlyObj]: ReadonlyObj[K] };
+let m: Mutable = { x: 1, y: "hello" }; // tsz errors but tsc accepts
+
+interface OptionalObj {
+    a?: number;
+    b?: string;
+}
+type RequiredObj = { [K in keyof OptionalObj]-?: OptionalObj[K] };
+let r: RequiredObj = { a: 1, b: "hello" }; // tsz errors but tsc accepts
+```
+
+**Fix Attempted**:
+1. Added `Lazy` type resolution to `resolve_type_for_property_lookup()`
+   - Uses `resolver.resolve_lazy(def_id, ...)` to get actual Object type
+   - Should return the Object with property modifiers (readonly, optional)
+2. Fixed tuple mapping modifier logic (lines 751-758)
+   - Was treating modifiers non-orthogonally (Add ? → readonly + optional)
+   - Changed to handle optional and readonly independently
+
+**Current Status**: Tests still failing. The architecture is correct but the resolver is not returning the expected types.
+
+**Hypothesis**: The `resolver.resolve_lazy(def_id, ...)` returns `None` for interfaces, meaning the interface type isn't registered in the type_env yet when the mapped type is evaluated.
+
+**Next Steps**:
+1. Debug why `resolver.resolve_lazy` returns None for interface types
+2. Check if interfaces are being registered in type_env before type evaluation
+3. Consider alternative approach: use `evaluate()` to get the structure, then extract modifiers
+
+**Test Results**: 8255 passing, 45 failing (unchanged)
+
+**Committed**: Partial fix (not working yet)
+
 ### 2026-02-06: Indexed Access Investigation (In Progress)
 
 **Pivoted from Template Literals** to Indexed Access based on Gemini recommendation:
@@ -338,38 +380,37 @@ TypeKey::Lazy(def_id) => {
 
 **Recommendation**: Consider switching to different failing tests that might be easier wins, or investigate SubtypeChecker's handling of unevaluated types.
 
-## Next Steps (Revised Strategy)
+## Next Steps (Revised Strategy - 2026-02-06)
 
-**Per Gemini recommendation**: Continue TSZ-18 with focused approach to remaining bugs
+**Per Gemini recommendation**: Pivoted to Mapped Type Modifiers as "easier wins"
 
-### Phase 1: Template Literal Bugs (Quick Wins) ⏰ EST: 30-60 min
-- **Bug #5**: `${any}` interpolation should widen to string
-- **Bug #6**: Number to string conversion incorrect
-- **Location**: `src/solver/evaluate_rules/template_literal.rs`
-- **Why**: Self-contained logic errors, don't depend on complex mapping
-- **Goal**: Fix 2 bugs, reduce failures by 2-4 tests
-
-### Phase 2: Mapped Type Modifiers (Logic Bugs) ⏰ EST: 60-90 min
+### Phase 1: Mapped Type Modifiers (Priority - Quick Wins) ⏰ EST: 30-60 min
 - **Bug #2**: `-readonly` modifier not removing readonly flag
 - **Bug #3**: `-?` modifier not making properties required
 - **Location**: `src/solver/evaluate_rules/mapped.rs`
-- **Investigation**: Check ModifierFlags handling and property flag updates
+- **Investigation**: Check if `get_mapped_modifiers()` is correctly handling `MappedModifier::Remove`
+- **Why**: Simple logic errors - modifiers should just flip the flag
 - **Goal**: Fix 2 bugs, reduce failures by 2-4 tests
 
-### Phase 3: Key Remapping (Complex) ⏰ EST: 90-120 min
+### Phase 2: Key Remapping (Complex) ⏰ EST: 90-120 min
 - **Bug #1**: `as O[K] extends string ? K : never` not working
 - **Location**: `src/solver/evaluate_rules/mapped.rs`
 - **Challenge**: `as` clause evaluation with conditional types
 - **Goal**: Fix 1 bug, reduce failures by 2-4 tests
 
+### Phase 3: Template Literal Bugs (If needed)
+- **Bug #5**: `${any}` interpolation should widen to string
+- **Bug #6**: Number to string conversion incorrect
+- **Note**: These may already be passing in test suite (verify first)
+
 ### Updated Success Criteria
-- [ ] Fix Bug #5: Template literal `any` interpolation
-- [ ] Fix Bug #6: Template literal number formatting
-- [ ] Fix Bug #2: Remove readonly modifier
-- [ ] Fix Bug #3: Remove optional modifier
+- [ ] Fix Bug #2: Remove readonly modifier (`-readonly`)
+- [ ] Fix Bug #3: Remove optional modifier (`-?`)
 - [ ] Fix Bug #1: Key remapping with conditional types
 - [ ] **Target**: Reduce failing tests from 45 to < 30
 - [ ] Document all fixes with test cases
+
+**Test Results**: 8255 passing, 45 failing (current status)
 
 ## Dependencies
 
