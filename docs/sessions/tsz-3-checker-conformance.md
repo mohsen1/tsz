@@ -169,3 +169,36 @@ When declaring `type F<T extends any[]> = (...args: T) => void`:
 
 Add debug output to see actual FunctionShape.params structure for both instantiations.
 
+
+## 2026-02-06 Critical Discovery
+
+### Found Root Cause Location!
+
+In `src/solver/evaluate_rules/conditional.rs` lines 199-200:
+```rust
+let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+checker.allow_bivariant_rest = true;
+```
+
+**Key Finding**: `allow_bivariant_rest` IS already set to true!
+
+This means the fix at lines 310-312 in functions.rs SHOULD work:
+```rust
+if rest_is_top {
+    return SubtypeResult::True;
+}
+```
+
+### New Hypothesis
+
+The problem is NOT in the subtype checking logic. The problem must be:
+1. The target type doesn't actually have `rest: true` set
+2. OR `rest_elem_type` is not `Some(any)` as expected
+
+### Next Investigation Step
+
+Add debug output to verify:
+1. Does target.params.last() have `rest: true`?
+2. What does `get_array_element_type(target.params.last().type_id)` return?
+3. Is the issue in how generic types are instantiated?
+

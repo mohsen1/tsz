@@ -30784,3 +30784,50 @@ fn test_this_type_with_constrained_generic() {
     // Base with constrained this method should be valid
     assert_ne!(base_class, TypeId::ERROR);
 }
+
+#[test]
+fn test_rest_param_flag_is_preserved() {
+    let interner = TypeInterner::new();
+
+    // Create target function with rest parameter
+    let any_array = interner.array(TypeId::ANY);
+    let target = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("name")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("mixed")),
+                type_id: TypeId::ANY,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("args")),
+                type_id: any_array,
+                optional: false,
+                rest: true,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Verify the rest flag is preserved
+    if let Some(TypeKey::Function(shape_id)) = interner.lookup(target) {
+        let shape = interner.function_shape(shape_id);
+        assert_eq!(shape.params.len(), 3, "Should have 3 params");
+        assert!(!shape.params[0].rest, "First param should not be rest");
+        assert!(!shape.params[1].rest, "Second param should not be rest");
+        assert!(shape.params[2].rest, "Third param SHOULD be rest");
+    } else {
+        panic!("Target is not a function type");
+    }
+}
