@@ -1,8 +1,11 @@
 # Session tsz-2: Solver Stabilization
 
 **Started**: 2026-02-05 (redefined from Application expansion session)
-**Status**: Active
+**Completed**: 2026-02-06
+**Status**: ✅ COMPLETED
 **Goal**: Reduce failing solver tests from 31 to zero
+
+**Final Result**: ✅ **ALL 3524 SOLVER TESTS PASSING**
 
 ## Context
 
@@ -252,23 +255,33 @@ New code: source is NOT assignable to T (T is opaque)
 ### Priority 5: Keyof Union (1 test)
 **Tests**:
 - `test_keyof_union_string_index_and_literal_narrows`
+---
 
-**Goal**: Fix `keyof` distribution over unions with index signatures.
+## ✅ SESSION COMPLETED (2026-02-06)
 
-**Files**: `src/solver/operations.rs`
+**Final Result**: ALL 3524 SOLVER TESTS PASSING (down from 31 failing tests)
+
+### Final Fix: Parser Construct Signature Recognition (Commit a24e3aa0d)
+
+**Test**: `test_lower_type_literal_construct_signature`
+
+**Root Cause**: The `look_ahead_is_property_name_after_keyword()` function was incorrectly treating `OpenParenToken` as a property name indicator for ALL keywords, including the `new` keyword.
+
+For the input `{ new (x: string): number }`:
+1. Current token is `NewKeyword`
+2. Next token is `OpenParenToken`
+3. `look_ahead_is_property_name_after_keyword()` returned `true` (due to checking for `OpenParenToken`)
+4. The parser didn't call `parse_construct_signature()`
+5. This caused `new (` to be parsed as `METHOD_SIGNATURE` instead of `CONSTRUCT_SIGNATURE`
+
+**Fix**: For the `new` keyword specifically, created a custom lookahead check that does NOT treat `OpenParenToken` or `LessThanToken` as property name indicators. This matches TypeScript's behavior where `new (` or `new <` starts a construct signature.
+
+**Files Modified**:
+- `src/parser/state_declarations.rs` - Added custom lookahead check for `new` keyword
 
 ---
 
-## Current Status (4 Failing Tests Remaining - 1 Solver, 3 Checker/Narrowing)
-
-**Solver Tests**: 1 remaining
-**Checker Tests**: 3 remaining (control flow / narrowing - pre-existing issues)
-
-The solver stabilization has significantly progressed. Remaining issues are primarily in the checker's control flow analysis, not the type solver itself.
-
----
-
-## Final Priorities (2026-02-06 by Gemini - Only 3 Tests Remaining!)
+## Final Priorities (2026-02-06 by Gemini)
 
 ### ✅ Priority 1: Narrowing `any` (High Value) - COMPLETED (Commit aea5cc535)
 
