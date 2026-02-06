@@ -420,6 +420,12 @@ pub struct CheckerContext<'a> {
     /// Recursion guard for application symbol resolution traversal.
     pub application_symbols_resolution_set: FxHashSet<TypeId>,
 
+    /// TypeIds known to contain inference variables (memoizes contains_infer_types).
+    pub contains_infer_types_true: FxHashSet<TypeId>,
+
+    /// TypeIds known not to contain inference variables (memoizes contains_infer_types).
+    pub contains_infer_types_false: FxHashSet<TypeId>,
+
     /// Maps class instance TypeIds to their class declaration NodeIndex.
     /// Used by `get_class_decl_from_type` to correctly identify the class
     /// for derived classes that have no private/protected members (and thus no brand).
@@ -705,6 +711,8 @@ impl<'a> CheckerContext<'a> {
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
+            contains_infer_types_true: FxHashSet::default(),
+            contains_infer_types_false: FxHashSet::default(),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
@@ -804,6 +812,8 @@ impl<'a> CheckerContext<'a> {
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
+            contains_infer_types_true: FxHashSet::default(),
+            contains_infer_types_false: FxHashSet::default(),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
@@ -906,6 +916,8 @@ impl<'a> CheckerContext<'a> {
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
+            contains_infer_types_true: FxHashSet::default(),
+            contains_infer_types_false: FxHashSet::default(),
             class_instance_type_to_decl: cache.class_instance_type_to_decl,
             class_instance_type_cache: cache.class_instance_type_cache,
             symbol_dependencies: cache.symbol_dependencies,
@@ -1007,6 +1019,8 @@ impl<'a> CheckerContext<'a> {
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
+            contains_infer_types_true: FxHashSet::default(),
+            contains_infer_types_false: FxHashSet::default(),
             class_instance_type_to_decl: cache.class_instance_type_to_decl,
             class_instance_type_cache: cache.class_instance_type_cache,
             symbol_dependencies: cache.symbol_dependencies,
@@ -1116,6 +1130,8 @@ impl<'a> CheckerContext<'a> {
             flow_analysis_cache: parent.flow_analysis_cache.clone(),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
+            contains_infer_types_true: FxHashSet::default(),
+            contains_infer_types_false: FxHashSet::default(),
             class_instance_type_to_decl: parent.class_instance_type_to_decl.clone(),
             class_instance_type_cache: parent.class_instance_type_cache.clone(),
             symbol_dependencies: parent.symbol_dependencies.clone(),
