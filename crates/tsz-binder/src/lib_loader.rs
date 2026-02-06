@@ -4,14 +4,14 @@
 //! Lib files (like lib.d.ts, lib.es2015.d.ts) must be provided externally - either
 //! loaded from disk (CLI) or via `addLibFile()` in WASM.
 
-use crate::binder::BinderState;
-use crate::binder::SymbolTable;
-use crate::checker::types::diagnostics::Diagnostic;
-use crate::parser::ParserState;
-use crate::parser::node::NodeArena;
+use crate::BinderState;
+use crate::SymbolTable;
 use rustc_hash::FxHashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tsz_common::diagnostics::Diagnostic;
+use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::state::ParserState;
 
 // =============================================================================
 // LibLoader - Cached lib file loading from disk
@@ -139,7 +139,7 @@ impl LibFile {
 /// and merges them into a single LibFile where all symbols are in one binder
 /// with remapped SymbolIds to avoid collisions.
 pub fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>> {
-    use crate::binder::state::LibContext as BinderLibContext;
+    use crate::state::LibContext as BinderLibContext;
 
     if lib_files.is_empty() {
         return lib_files;
@@ -320,7 +320,7 @@ pub fn is_es2015_plus_type(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binder::{SymbolArena, symbol_flags};
+    use crate::{SymbolArena, symbol_flags};
 
     #[test]
     fn test_lib_file_from_source() {

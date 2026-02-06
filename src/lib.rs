@@ -115,19 +115,19 @@ mod control_flow_validation_tests;
 #[path = "tests/regex_flag_tests.rs"]
 mod regex_flag_tests;
 
-// Binder types and implementation (Phase 4)
-pub mod binder;
+// Binder types and implementation - re-exported from tsz-binder workspace crate
+pub use tsz_binder as binder;
 
 // BinderState - Binder using NodeArena (Phase 0.1)
 #[cfg(test)]
 #[path = "tests/binder_state_tests.rs"]
 mod binder_state_tests;
 
-// Module Resolution Debugging - Logging for symbol table operations and scope lookups
-pub mod module_resolution_debug;
+// Module Resolution Debugging - re-exported from tsz-binder
+pub use tsz_binder::module_resolution_debug;
 
-// Lib Loader - Load and merge lib.d.ts symbols into the binder (BIND-10)
-pub mod lib_loader;
+// Lib Loader - re-exported from tsz-binder
+pub use tsz_binder::lib_loader;
 
 // Checker types and implementation (Phase 5)
 pub mod checker;
