@@ -1789,7 +1789,20 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_resolution_depth
             .set(self.ctx.symbol_resolution_depth.get());
-        checker.type_of_value_declaration(decl_idx)
+        let result = checker.type_of_value_declaration(decl_idx);
+
+        // Propagate delegated symbol caches back to the parent context.
+        for (&cached_sym, &cached_ty) in &checker.ctx.symbol_types {
+            self.ctx.symbol_types.entry(cached_sym).or_insert(cached_ty);
+        }
+        for (&cached_sym, &cached_ty) in &checker.ctx.symbol_instance_types {
+            self.ctx
+                .symbol_instance_types
+                .entry(cached_sym)
+                .or_insert(cached_ty);
+        }
+
+        result
     }
 
     /// Resolve a value-side type by global name, preferring value declarations.
