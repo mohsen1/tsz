@@ -449,7 +449,7 @@ impl<'a> GoToDefinition<'a> {
     }
 
     /// Convert a symbol's declarations into rich DefinitionInfo objects.
-    fn definition_infos_from_symbol(&self, symbol_id: SymbolId) -> Option<Vec<DefinitionInfo>> {
+    pub fn definition_infos_from_symbol(&self, symbol_id: SymbolId) -> Option<Vec<DefinitionInfo>> {
         let symbol = self.binder.symbols.get(symbol_id)?;
         let source_len = self.source_text.len() as u32;
 
@@ -476,7 +476,7 @@ impl<'a> GoToDefinition<'a> {
                 }
 
                 // Determine kind, name, and other metadata
-                let kind = self.symbol_flags_to_kind_string(symbol.flags);
+                let kind = self.get_declaration_kind(decl_idx, symbol.flags);
                 let name = symbol.escaped_name.clone();
                 let (container_name, container_kind) = self.get_container_info(symbol_id);
                 let is_local = !self.is_top_level_declaration(decl_idx);
@@ -713,8 +713,34 @@ impl<'a> GoToDefinition<'a> {
         }
     }
 
+    /// Get the declaration kind string for a specific declaration,
+    /// using node info to distinguish const/let/var when needed.
+    fn get_declaration_kind(&self, decl_idx: NodeIndex, flags: u32) -> String {
+        use crate::parser::flags::node_flags;
+
+        // For block-scoped variables, check if const
+        if flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
+            // Walk up to VariableDeclarationList to check CONST flag
+            if let Some(ext) = self.arena.get_extended(decl_idx) {
+                let parent_idx = ext.parent; // VariableDeclarationList
+                if !parent_idx.is_none() {
+                    if let Some(parent_node) = self.arena.get(parent_idx) {
+                        if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                            if parent_node.flags as u32 & node_flags::CONST != 0 {
+                                return "const".to_string();
+                            }
+                        }
+                    }
+                }
+            }
+            return "let".to_string();
+        }
+
+        self.symbol_flags_to_kind_string(flags)
+    }
+
     /// Convert symbol flags to a tsserver-compatible kind string.
-    fn symbol_flags_to_kind_string(&self, flags: u32) -> String {
+    pub fn symbol_flags_to_kind_string(&self, flags: u32) -> String {
         if flags & symbol_flags::FUNCTION != 0 {
             "function".to_string()
         } else if flags & symbol_flags::CLASS != 0 {

@@ -353,6 +353,72 @@ impl<'a> FindReferences<'a> {
         }
     }
 
+    /// Find references with resolved symbol info for the full references protocol.
+    /// Returns the resolved SymbolId along with detailed reference info,
+    /// which allows the caller to build definition metadata.
+    pub fn find_references_with_symbol(
+        &self,
+        root: NodeIndex,
+        position: Position,
+    ) -> Option<(SymbolId, Vec<ReferenceInfo>)> {
+        let offset = self
+            .line_map
+            .position_to_offset(position, self.source_text)?;
+        let node_idx = find_node_at_offset(self.arena, offset);
+        if node_idx.is_none() {
+            return None;
+        }
+
+        let symbol_id = self.resolve_symbol_internal(root, node_idx, None, None)?;
+        let symbol = self.binder.symbols.get(symbol_id)?;
+        let declaration_set: std::collections::HashSet<u32> =
+            symbol.declarations.iter().map(|n| n.0).collect();
+
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let ref_nodes = walker.find_references(root, symbol_id);
+
+        let mut all_nodes = ref_nodes;
+        all_nodes.extend(symbol.declarations.iter().copied());
+        all_nodes.sort_by_key(|n| n.0);
+        all_nodes.dedup();
+
+        let mut results: Vec<ReferenceInfo> = all_nodes
+            .iter()
+            .filter_map(|&idx| {
+                let target_idx = self.name_node_for(idx).unwrap_or(idx);
+                let location = self.location_for_node(idx)?;
+                let is_def = self.is_definition_node(idx, &declaration_set);
+                let is_write = is_def || self.is_write_access_node(target_idx);
+                let line_text = self.get_line_text(location.range.start.line);
+                Some(ReferenceInfo::new(location, is_write, is_def, line_text))
+            })
+            .collect();
+
+        // Deduplicate by location - when declaration node and identifier node
+        // resolve to the same position, keep the one with is_definition=true
+        results.sort_by(|a, b| {
+            a.location
+                .range
+                .start
+                .line
+                .cmp(&b.location.range.start.line)
+                .then(
+                    a.location
+                        .range
+                        .start
+                        .character
+                        .cmp(&b.location.range.start.character),
+                )
+        });
+        results.dedup_by(|a, b| a.location.range == b.location.range);
+
+        if results.is_empty() {
+            None
+        } else {
+            Some((symbol_id, results))
+        }
+    }
+
     /// Find rename locations for the symbol at the given position.
     ///
     /// Returns all locations where the symbol name appears and should be renamed.
