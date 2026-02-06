@@ -3762,6 +3762,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if a == b {
             return true;
         }
+
+        // Task #49: Use cached canonical_id when query_db is available (O(1) path)
+        if let Some(db) = self.query_db {
+            return db.canonical_id(a) == db.canonical_id(b);
+        }
+
+        // Fallback for cases without query_db: compute directly (O(N) path)
         let mut canonicalizer =
             crate::solver::canonicalize::Canonicalizer::new(self.interner, self.resolver);
         let canon_a = canonicalizer.canonicalize(a);
