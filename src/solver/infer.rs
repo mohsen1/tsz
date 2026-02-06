@@ -1070,6 +1070,15 @@ impl<'a> InferenceContext<'a> {
                 self.infer_applications(source_app, target_app, priority)?;
             }
 
+            // Index access types: infer both object and index types
+            (
+                Some(TypeKey::IndexAccess(source_obj, source_idx)),
+                Some(TypeKey::IndexAccess(target_obj, target_idx)),
+            ) => {
+                self.infer_from_types(source_obj, target_obj, priority)?;
+                self.infer_from_types(source_idx, target_idx, priority)?;
+            }
+
             // Task #40: Template literal deconstruction for infer patterns
             // Handles: source extends `prefix${infer T}suffix` ? true : false
             (Some(source_key), Some(TypeKey::TemplateLiteral(target_id))) => {
