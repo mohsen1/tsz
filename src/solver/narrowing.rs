@@ -1127,20 +1127,10 @@ impl<'a> NarrowingContext<'a> {
                             let filter_obj = self.db.object(vec![required_prop]);
                             self.db.intersection2(member, filter_obj)
                         } else {
-                            // Property not found: Intersect with { prop: unknown }
-                            // This handles open objects and unresolved Lazy types
-                            let required_prop = PropertyInfo {
-                                name: property_name,
-                                type_id: TypeId::UNKNOWN,
-                                write_type: TypeId::UNKNOWN,
-                                optional: false,
-                                readonly: false,
-                                is_method: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                            };
-                            let filter_obj = self.db.object(vec![required_prop]);
-                            self.db.intersection2(member, filter_obj)
+                            // Property not found: Exclude member (return NEVER)
+                            // Per TypeScript: "prop in x" being true means x MUST have the property
+                            // If x doesn't have it (and no index signature), narrow to never
+                            TypeId::NEVER
                         }
                     } else {
                         // Negative: !("prop" in member)
@@ -1189,20 +1179,10 @@ impl<'a> NarrowingContext<'a> {
                 let filter_obj = self.db.object(vec![required_prop]);
                 self.db.intersection2(source_type, filter_obj)
             } else {
-                // Property not found (or Lazy type): Intersect with { prop: unknown }
-                // This handles open objects and unresolved Lazy types safely
-                let required_prop = PropertyInfo {
-                    name: property_name,
-                    type_id: TypeId::UNKNOWN,
-                    write_type: TypeId::UNKNOWN,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                };
-                let filter_obj = self.db.object(vec![required_prop]);
-                self.db.intersection2(source_type, filter_obj)
+                // Property not found: Narrow to never
+                // Per TypeScript: "prop in x" being true means x MUST have the property
+                // If x doesn't have it (and no index signature), narrow to never
+                TypeId::NEVER
             }
         } else {
             // Negative: !("prop" in x)

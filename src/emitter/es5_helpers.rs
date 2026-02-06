@@ -940,6 +940,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if a class has an extends clause
+    #[allow(dead_code)]
     pub(super) fn class_has_extends(&self, heritage_clauses: &Option<NodeList>) -> bool {
         let Some(clauses) = heritage_clauses else {
             return false;
