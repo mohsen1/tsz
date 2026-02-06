@@ -305,6 +305,96 @@ TSZ_LOG="wasm::solver::subtype=trace" cargo test ...
 
 ---
 
+## 2026-02-06 Root Cause Identified: Tuple Instantiation Behavior
+
+### Key Insight from Gemini
+
+When a generic rest parameter `...args: T` is instantiated with a **tuple** `[any]`:
+- TypeScript spreads the tuple into fixed parameters
+- `(...args: [any])` becomes `(args_0: any)` - a FIXED parameter
+
+When instantiated with an **array** `any[]`:
+- It remains a rest parameter
+- `(...args: any[])` stays as a rest parameter
+
+### The Actual Types
+
+**`type a = ExtendedMapper<any, any, [any]>`:**
+```rust
+FunctionShape {
+  params: [
+    { name: "name", type: string, rest: false },
+    { name: "mixed", type: any, rest: false },
+    { name: "args_0", type: any, rest: false }  // FIXED!
+  ]
+}
+```
+
+**`type b = ExtendedMapper<any, any, any[]>`:**
+```rust
+FunctionShape {
+  params: [
+    { name: "name", type: string, rest: false },
+    { name: "mixed", type: any, rest: false },
+    { name: "args", type: any[], rest: true }  // REST!
+  ]
+}
+```
+
+### Why TypeScript Allows This
+
+The "Infinite Expansion Rule": A target with a rest parameter `(a, b, ...args: T[])` can accept any source with 2+ parameters because the rest acts as an infinite supply of `T`-typed parameters.
+
+This is intentional unsoundness for JS patterns where extra arguments are ignored.
+
+### The Bug
+
+Our unit test passes because we manually construct types with correct structure.
+The conformance test fails because somewhere in the instantiation pipeline, the types are not being created correctly OR the subtype check is not recognizing the correct case.
+
+**Next Step**: Add tracing to see what FunctionShapes are actually created during the conformance test.
+
+---
+
+## 2026-02-06 Bug Location Identified
+
+Gemini Pro identified potential bug in `constrain_function_to_call_signature` (src/solver/operations.rs:2503).
+
+**Current code uses simple zip():**
+```rust
+for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
+    self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
+}
+```
+
+This doesn't expand tuple rest parameters!
+
+**Recommended fix approach from Gemini:**
+- Use `expand_tuple_rest` to identify tuple-based rest parameters
+- Use `param_type_for_arg_index` pattern for parameter resolution
+- Reference `constrain_tuple_types` for handling rest elements
+- Remember contravariance: target <: source for parameters
+
+**Status**: Need to implement parameter virtualization to expand tuple rest params before comparison.
+
+---
+
+## 2026-02-06 Further Analysis: Conditional Type Path
+
+**Discovery**: The failing test uses `type test = a extends b ? "y" : "n"`
+
+This goes through conditional type evaluation:
+- `src/checker/conditional_type.rs:173` uses `is_assignable_to(check_type, extends_type)`
+- This should call the same Solver subtype checking that our unit test uses
+
+**Question**: If the unit test passes and `is_assignable_to` uses the same path, why does the conformance test fail?
+
+**Hypothesis**: The FunctionShapes created during conformance test might differ from our manually constructed unit test shapes.
+
+**Need**: Tracing to see actual FunctionShape structures during conformance test execution.
+
+---
+
 ## 2026-02-06 MAJOR DISCOVERY: Unit Test Passes!
 
 ### Test Results
