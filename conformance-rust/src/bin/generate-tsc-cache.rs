@@ -89,6 +89,33 @@ const LIST_OPTIONS: &[&str] = &[
     "customConditions",
 ];
 
+fn resolve_tsc_path() -> Result<String> {
+    // Try to find tsc without npx overhead
+    // 1. Check node_modules/.bin/tsc (local install)
+    if let Ok(output) = Command::new("node")
+        .args(["-e", "console.log(require.resolve('typescript/lib/tsc.js'))"])
+        .output()
+    {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if std::path::Path::new(&path).exists() {
+                return Ok(path);
+            }
+        }
+    }
+    // 2. Try `which tsc`
+    if let Ok(output) = Command::new("which").arg("tsc").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(path);
+            }
+        }
+    }
+    // 3. Fall back to npx (slow)
+    Ok("npx:tsc".to_string())
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -97,6 +124,10 @@ fn main() -> Result<()> {
         .num_threads(args.workers)
         .build_global()
         .ok();
+
+    // Resolve tsc path once at startup (avoids npx overhead per file)
+    let tsc_path = resolve_tsc_path()?;
+    println!("📍 Using tsc: {}", tsc_path);
 
     println!("🔍 Discovering test files in: {}", args.test_dir);
     let test_files = discover_tests(&args.test_dir, args.max)?;
@@ -116,10 +147,11 @@ fn main() -> Result<()> {
     let total = test_files.len();
     let verbose = args.verbose;
     let timeout = args.timeout;
+    let tsc_path_ref = &tsc_path;
 
     // Process tests in parallel
     test_files.par_iter().for_each(|path| {
-        match process_test_file(path, timeout) {
+        match process_test_file(path, timeout, tsc_path_ref) {
             Ok(Some((hash, entry))) => {
                 cache.lock().unwrap().insert(hash, entry);
             }
@@ -208,7 +240,7 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn process_test_file(path: &Path, _timeout_secs: u64) -> Result<Option<(String, TscCacheEntry)>> {
+fn process_test_file(path: &Path, _timeout_secs: u64, tsc_path: &str) -> Result<Option<(String, TscCacheEntry)>> {
     use std::fs;
 
     // Read file content
@@ -275,16 +307,40 @@ fn process_test_file(path: &Path, _timeout_secs: u64) -> Result<Option<(String, 
         }
     }
 
-    // Run tsc
-    let output = Command::new("npx")
-        .arg("tsc")
-        .arg("--project")
-        .arg(test_dir)
-        .arg("--noEmit")
-        .arg("--pretty")
-        .arg("false")
-        .current_dir(test_dir)
-        .output();
+    // Run tsc (using pre-resolved path to avoid npx overhead)
+    let output = if tsc_path.starts_with("npx:") {
+        // Fallback to npx
+        Command::new("npx")
+            .arg("tsc")
+            .arg("--project")
+            .arg(test_dir)
+            .arg("--noEmit")
+            .arg("--pretty")
+            .arg("false")
+            .current_dir(test_dir)
+            .output()
+    } else if tsc_path.ends_with(".js") {
+        // Direct node invocation of tsc.js
+        Command::new("node")
+            .arg(tsc_path)
+            .arg("--project")
+            .arg(test_dir)
+            .arg("--noEmit")
+            .arg("--pretty")
+            .arg("false")
+            .current_dir(test_dir)
+            .output()
+    } else {
+        // Direct tsc binary
+        Command::new(tsc_path)
+            .arg("--project")
+            .arg(test_dir)
+            .arg("--noEmit")
+            .arg("--pretty")
+            .arg("false")
+            .current_dir(test_dir)
+            .output()
+    };
 
     let output = match output {
         Ok(o) => o,

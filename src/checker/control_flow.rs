@@ -122,6 +122,9 @@ pub struct FlowAnalyzer<'a> {
     /// Cache for switch-reference relevance checks.
     /// Key: (switch_expr_node, reference_node) -> whether switch can narrow reference.
     switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
+    /// Cache numeric atom conversions during a single flow walk.
+    /// Key: normalized f64 bits (with +0 normalized separately from -0).
+    pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +165,7 @@ impl<'a> FlowAnalyzer<'a> {
             type_environment: None,
             loop_mutation_cache: RefCell::new(FxHashMap::default()),
             switch_reference_cache: RefCell::new(FxHashMap::default()),
+            numeric_atom_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -182,6 +186,7 @@ impl<'a> FlowAnalyzer<'a> {
             type_environment: None,
             loop_mutation_cache: RefCell::new(FxHashMap::default()),
             switch_reference_cache: RefCell::new(FxHashMap::default()),
+            numeric_atom_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -3247,6 +3252,35 @@ if (action.type === "add") {}
 
         assert_eq!(narrowed_true, add_member);
         assert_eq!(narrowed_false, remove_member);
+    }
+
+    #[test]
+    fn test_element_access_numeric_and_string_keys_match_reference() {
+        let source = r#"
+let arr: any[] = [];
+if (arr[0] === arr["0"]) {}
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let arena = parser.get_arena();
+        let types = TypeInterner::new();
+        let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+        let condition_idx = get_if_condition(arena, root, 1);
+        let condition_node = arena.get(condition_idx).expect("condition node");
+        let binary = arena
+            .get_binary_expr(condition_node)
+            .expect("binary condition");
+
+        assert!(
+            analyzer.is_matching_reference(binary.left, binary.right),
+            "arr[0] and arr[\"0\"] should resolve to the same reference",
+        );
     }
 
     #[test]

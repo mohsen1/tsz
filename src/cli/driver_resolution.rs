@@ -1702,16 +1702,23 @@ pub(crate) fn emit_outputs(
 
         if let Some(js_path) = js_output_path(base_dir, root_dir, out_dir, options.jsx, &input_path)
         {
+            // Get type_only_nodes from the type cache (if available)
+            let type_only_nodes = type_caches
+                .get(&input_path)
+                .map(|cache| std::sync::Arc::new(cache.type_only_nodes.clone()))
+                .unwrap_or_else(|| std::sync::Arc::new(rustc_hash::FxHashSet::default()));
+
+            // Clone and update printer options with type_only_nodes
+            let mut printer_options = options.printer.clone();
+            printer_options.type_only_nodes = type_only_nodes;
+
             // Run the lowering pass to generate transform directives
-            let ctx = crate::emit_context::EmitContext::with_options(options.printer.clone());
+            let ctx = crate::emit_context::EmitContext::with_options(printer_options.clone());
             let transforms =
                 crate::lowering_pass::LoweringPass::new(&file.arena, &ctx).run(file.source_file);
 
-            let mut printer = Printer::with_transforms_and_options(
-                &file.arena,
-                transforms,
-                options.printer.clone(),
-            );
+            let mut printer =
+                Printer::with_transforms_and_options(&file.arena, transforms, printer_options);
             // Always set source text for comment preservation and single-line detection
             if let Some(source_text) = file
                 .arena

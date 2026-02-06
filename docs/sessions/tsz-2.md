@@ -3,12 +3,13 @@
 Run the following command:
 
 ```
-cargo nextest run --partition count:1/4
+cargo nextest run --partition count:2/4
 ```
 
 Your task is to make this pass 100%.
 
 Once done, look into ignored tests in this batch.
+
 
 While working towards making all tests pass, you can use `--no-verify` to make atomic and meaningful commits
 
