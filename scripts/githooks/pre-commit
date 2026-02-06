@@ -1,25 +1,35 @@
 #!/bin/bash
 #
-# Pre-commit hook for tsz - OPTIMIZED FOR SPEED
-# Runs formatting, clippy, targeted tests, and conformance regression check
+# Pre-commit hook for tsz
 #
+# Steps:
+#   1. Block TypeScript submodule changes
+#   2. Clean stale target binaries (cargo clean --doc, old profiles)
+#   3. cargo fmt -- check & auto-fix
+#   4. cargo clippy -- deny all warnings
+#   5. Run all unit tests
+#   6. Conformance regression check
+#
+# Env vars:
+#   TSZ_SKIP_HOOKS=1         Skip the entire hook
+#   TSZ_SKIP_CONFORMANCE=1   Skip the conformance regression check
+#   TSZ_SKIP_CLEAN=1         Skip the target cleanup step
 
 set -e
 
-# Skip hook if TSZ_SKIP_HOOKS is set (for automated commits)
+# Skip hook entirely if requested
 [[ "${TSZ_SKIP_HOOKS:-}" == "1" ]] && exit 0
 
-# Skip conformance check if TSZ_SKIP_CONFORMANCE is set (for wip commits)
-SKIP_CONFORMANCE="${TSZ_SKIP_CONFORMANCE:-}"
-
-# Get root directory
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+cd "$ROOT_DIR"
+
+SKIP_CONFORMANCE="${TSZ_SKIP_CONFORMANCE:-}"
+SKIP_CLEAN="${TSZ_SKIP_CLEAN:-}"
 
 echo "🔧 Pre-commit checks..."
 
-# ============================================================
-# CRITICAL: Block any changes to TypeScript submodule
-# ============================================================
+# ─── 0. Block TypeScript submodule changes ───────────────────────────────────
+
 SUBMODULE_CHANGES=$(git diff --cached --name-only | grep '^TypeScript/' || true)
 if [ -n "$SUBMODULE_CHANGES" ]; then
     echo ""
@@ -36,127 +46,150 @@ if [ -n "$SUBMODULE_CHANGES" ]; then
     echo ""
     echo "To unstage these changes:"
     echo "  git reset HEAD TypeScript/"
-    echo ""
-    echo "If you need test files, create them in the project root (e.g., test_*.ts)"
     exit 1
 fi
 
-# Also check for submodule pointer changes
 SUBMODULE_POINTER=$(git diff --cached --name-only | grep '^TypeScript$' || true)
 if [ -n "$SUBMODULE_POINTER" ]; then
     echo ""
     echo "❌ ERROR: Attempting to change TypeScript submodule pointer!"
-    echo ""
-    echo "Updating the submodule reference requires explicit approval."
-    echo ""
     echo "To unstage: git reset HEAD TypeScript"
     exit 1
 fi
 
-# Check if cargo is available
-if ! command -v cargo &> /dev/null; then
+# ─── Prerequisites ───────────────────────────────────────────────────────────
+
+if ! command -v cargo &>/dev/null; then
     echo "❌ cargo not found"
     exit 1
 fi
 
-# Get changed Rust files upfront
+# Get changed Rust files
 CHANGED_RS=$(git diff --cached --name-only --diff-filter=ACM | grep '\.rs$' || true)
 
-# Skip all checks if no Rust files changed
+# Nothing to do if no Rust files changed
 if [ -z "$CHANGED_RS" ]; then
-    echo "No Rust files changed, skipping checks"
+    echo "No Rust files changed, skipping checks."
     exit 0
 fi
 
-# 1. Format only changed files (faster than formatting everything)
-echo "1️⃣  Formatting..."
-echo "$CHANGED_RS" | xargs -r rustfmt --edition 2024 2>/dev/null || cargo fmt
-echo "✅ Formatted"
+# ─── 1. Clean stale target artifacts ────────────────────────────────────────
 
-# 2. Run clippy (incremental, uses cached compilation)
-echo "2️⃣  Clippy..."
+if [[ "$SKIP_CLEAN" != "1" ]]; then
+    echo "1️⃣  Cleaning stale target artifacts..."
+    TARGET_DIR="$ROOT_DIR/target"
+    if [ -d "$TARGET_DIR" ]; then
+        # Remove doc artifacts (never needed at commit time)
+        if [ -d "$TARGET_DIR/doc" ]; then
+            rm -rf "$TARGET_DIR/doc"
+            echo "   Removed target/doc"
+        fi
+
+        # Remove old nextest caches
+        if [ -d "$TARGET_DIR/nextest" ]; then
+            rm -rf "$TARGET_DIR/nextest"
+            echo "   Removed target/nextest"
+        fi
+
+        echo "   ✅ Target cleanup done"
+    fi
+else
+    echo "1️⃣  Target cleanup skipped (TSZ_SKIP_CLEAN=1)"
+fi
+
+# ─── 2. cargo fmt ───────────────────────────────────────────────────────────
+
+echo "2️⃣  Formatting (cargo fmt)..."
+
+# First, check if there are any formatting issues
+if ! cargo fmt -- --check >/dev/null 2>&1; then
+    # Auto-fix formatting
+    cargo fmt
+    echo "   Formatted files — auto-fixed."
+else
+    echo "   Already formatted."
+fi
+
+# ─── 3. Clippy — deny all warnings ──────────────────────────────────────────
+
+echo "3️⃣  Clippy (warnings are errors)..."
+
+# Try auto-fix first, then verify
 if ! cargo clippy --bins --lib --fix --allow-dirty --allow-staged -- -D warnings 2>/dev/null; then
-    echo "⚠️  Clippy errors:"
-    cargo clippy --bins --lib -- -D warnings 2>&1 | head -50
+    echo ""
+    echo "❌ Clippy found warnings/errors that could not be auto-fixed:"
+    echo ""
+    cargo clippy --bins --lib -- -D warnings 2>&1 | tail -50
     exit 1
 fi
-echo "✅ Clippy passed"
 
-# Re-add files modified by fmt/clippy
+# Verify no warnings remain after auto-fix
+CLIPPY_OUTPUT=$(cargo clippy --bins --lib -- -D warnings 2>&1) || {
+    echo ""
+    echo "❌ Clippy warnings remain after auto-fix. Please fix manually:"
+    echo "$CLIPPY_OUTPUT" | tail -20
+    exit 1
+}
+echo "   ✅ Clippy passed (zero warnings)"
+
+# ─── Re-stage files modified by fmt / clippy auto-fix ────────────────────────
+
 git add -u
 
-# 3. Run targeted unit tests
-echo "3️⃣  Tests..."
+# ─── 4. Tests — run all ──────────────────────────────────────────────────────
 
-# Extract module names for targeted test filtering
-# e.g., src/checker/foo.rs -> checker, src/parser/bar.rs -> parser
-MODULES=$(echo "$CHANGED_RS" | sed -n 's|^src/\([^/]*\)/.*\.rs$|\1|p' | sort -u | tr '\n' '|' | sed 's/|$//')
+echo "4️⃣  Running tests..."
+TEST_OUTPUT=$(cargo nextest run --profile precommit 2>&1) || {
+    echo "$TEST_OUTPUT" | tail -20
+    echo "❌ Tests failed. Run 'cargo nextest run' for details."
+    exit 1
+}
+echo "$TEST_OUTPUT" | tail -5
+echo "   ✅ Tests passed"
 
-if [ -n "$MODULES" ]; then
-    echo "   Modules: ${MODULES//|/, }"
-    if ! cargo nextest run --profile precommit -E "test(/($MODULES)/)" 2>&1 | tail -15; then
-        echo "❌ Tests failed. Run 'cargo nextest run' for details."
-        exit 1
-    fi
-else
-    # Non-module changes - quick sanity check
-    echo "   Quick sanity check..."
-    if ! cargo nextest run --profile precommit 2>&1 | tail -10; then
-        echo "❌ Tests failed"
-        exit 1
-    fi
-fi
-echo "✅ Tests passed"
+# ─── 5. Conformance regression check ────────────────────────────────────────
 
-# ============================================================
-# 4. Conformance regression check (runs ALL tests)
-# ============================================================
 if [[ "$SKIP_CONFORMANCE" == "1" ]]; then
-    echo "4️⃣  Conformance check skipped (TSZ_SKIP_CONFORMANCE=1)"
+    echo "5️⃣  Conformance check skipped (TSZ_SKIP_CONFORMANCE=1)"
 else
-    echo "4️⃣  Conformance regression check (running ALL tests)..."
-    
-    # Get the last recorded conformance from git history
+    echo "5️⃣  Conformance regression check..."
+
     LAST_CONFORMANCE=""
     if LAST_CONFORMANCE=$("$ROOT_DIR/scripts/get-last-conformance.sh" 2>/dev/null); then
         echo "   Last recorded: ${LAST_CONFORMANCE}%"
     else
-        echo "   No previous conformance found in git history"
-        echo "   Skipping regression check (baseline will be set with this commit)"
+        echo "   No previous conformance found — skipping regression check."
         SKIP_CONFORMANCE=1
     fi
-    
+
     if [[ "$SKIP_CONFORMANCE" != "1" ]]; then
-        # Run FULL conformance check (all tests)
         TEMP_OUTPUT=$(mktemp)
-        trap "rm -f $TEMP_OUTPUT" EXIT
-        
+        trap 'rm -f "$TEMP_OUTPUT"' EXIT
+
         echo "   Running full conformance test suite..."
         if ! "$ROOT_DIR/scripts/conformance/run.sh" --pass-rate-only > "$TEMP_OUTPUT" 2>&1; then
             echo "❌ Conformance tests failed to run"
-            cat "$TEMP_OUTPUT" | tail -20
+            tail -20 "$TEMP_OUTPUT"
             exit 1
         fi
-        
-        # Extract current pass rate from the marked output
+
+        # Extract current pass rate
         CURRENT_CONFORMANCE=$(sed -n '/===PASS_RATE_START===/,/===PASS_RATE_END===/p' "$TEMP_OUTPUT" | grep -oE '[0-9]+\.[0-9]+' | head -1)
         if [[ -z "$CURRENT_CONFORMANCE" ]]; then
-            # Fallback: try to find Pass Rate line directly
             PASS_LINE=$(grep -E "^Pass Rate:" "$TEMP_OUTPUT" | tail -1)
             CURRENT_CONFORMANCE=$(echo "$PASS_LINE" | grep -oE '[0-9]+\.[0-9]+' | head -1)
         fi
-        
+
         if [[ -z "$CURRENT_CONFORMANCE" ]]; then
             echo "❌ Could not extract pass rate from conformance output"
             exit 1
         fi
         echo "   Current: ${CURRENT_CONFORMANCE}%"
-        
-        # Compare using bc for floating point comparison
+
+        # Float comparison
         if command -v bc &>/dev/null; then
             IS_REGRESSION=$(echo "$CURRENT_CONFORMANCE < $LAST_CONFORMANCE" | bc -l)
         else
-            # Fallback: compare as integers (multiply by 10 to preserve one decimal)
             CURRENT_INT=$(echo "$CURRENT_CONFORMANCE" | tr -d '.' | sed 's/^0*//')
             LAST_INT=$(echo "$LAST_CONFORMANCE" | tr -d '.' | sed 's/^0*//')
             [[ -z "$CURRENT_INT" ]] && CURRENT_INT=0
@@ -167,7 +200,7 @@ else
                 IS_REGRESSION=0
             fi
         fi
-        
+
         if [[ "$IS_REGRESSION" == "1" ]]; then
             echo ""
             echo "❌ CONFORMANCE REGRESSION DETECTED!"
@@ -187,12 +220,13 @@ else
             echo ""
             exit 1
         fi
-        
-        echo "✅ Conformance: ${CURRENT_CONFORMANCE}% (no regression from ${LAST_CONFORMANCE}%)"
-        
-        # Store the conformance value for the prepare-commit-msg hook to pick up
+
+        echo "   ✅ Conformance: ${CURRENT_CONFORMANCE}% (no regression from ${LAST_CONFORMANCE}%)"
+
+        # Store for prepare-commit-msg hook
         echo "$CURRENT_CONFORMANCE" > "$ROOT_DIR/.conformance-value"
     fi
 fi
 
-echo "✅ All checks passed!"
+echo ""
+echo "✅ All pre-commit checks passed!"

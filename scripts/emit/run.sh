@@ -74,7 +74,7 @@ main() {
     # Check baselines exist
     local baselines_dir="$ROOT_DIR/TypeScript/tests/baselines/reference"
     if [[ ! -d "$baselines_dir" ]]; then
-        die "TypeScript baselines not found. Run: ./scripts/setup-ts-submodule.sh"
+        die "TypeScript baselines not found. Run: ./scripts/setup.sh"
     fi
 
     check_tsz_binary
