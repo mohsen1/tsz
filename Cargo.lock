@@ -1229,7 +1229,9 @@ name = "tsz-scanner"
 version = "0.1.0"
 dependencies = [
  "memchr",
+ "serde",
  "tsz-common",
+ "wasm-bindgen",
 ]
 
 [[package]]
