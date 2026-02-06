@@ -1413,6 +1413,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self
     }
 
+    /// Reset per-check state so this checker can be reused for another subtype check.
+    ///
+    /// This clears cycle detection sets and counters while preserving configuration
+    /// (strict_function_types, allow_void_return, etc.) and borrowed references
+    /// (interner, resolver, inheritance_graph, etc.).
+    ///
+    /// Uses `.clear()` instead of re-allocating, so hash set memory is reused.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.in_progress.clear();
+        self.seen_refs.clear();
+        self.seen_defs.clear();
+        self.eval_cache.clear();
+        self.depth = 0;
+        self.total_checks = 0;
+        self.depth_exceeded = false;
+    }
+
     /// Apply compiler flags from a packed u16 bitmask.
     ///
     /// This unpacks the flags used by `RelationCacheKey` and applies them to the checker.
