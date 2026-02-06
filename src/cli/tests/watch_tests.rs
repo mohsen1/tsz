@@ -1,5 +1,5 @@
 use super::watch::{Debouncer, WatchFilter};
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -55,7 +55,7 @@ fn watch_filter_ignores_outputs_and_excludes() {
     let output_js = out_dir.join("index.js");
     let tsconfig = base_dir.join("tsconfig.json");
 
-    let mut explicit_set = HashSet::new();
+    let mut explicit_set = FxHashSet::default();
     explicit_set.insert(explicit.clone());
 
     let filter = WatchFilter::new(Some(explicit_set), vec![out_dir], None);

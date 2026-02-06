@@ -29,7 +29,7 @@
 
 use crate::interner::Atom;
 use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
-use crate::solver::subtype::{TypeResolver, is_subtype_of};
+use crate::solver::subtype::{SubtypeChecker, TypeResolver, is_subtype_of};
 use crate::solver::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::solver::types::Visibility;
 use crate::solver::types::*;
@@ -44,6 +44,54 @@ use tracing::{Level, span, trace};
 #[cfg(test)]
 use crate::solver::TypeInterner;
 
+/// The result of a `typeof` expression, restricted to the 8 standard JavaScript types.
+///
+/// Using an enum instead of `String` eliminates heap allocation per typeof guard.
+/// TypeScript's `typeof` operator only returns these 8 values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TypeofKind {
+    String,
+    Number,
+    Boolean,
+    BigInt,
+    Symbol,
+    Undefined,
+    Object,
+    Function,
+}
+
+impl TypeofKind {
+    /// Parse a typeof result string into a TypeofKind.
+    /// Returns None for non-standard typeof strings (which don't narrow).
+    pub fn from_str(s: &str) -> Option<TypeofKind> {
+        match s {
+            "string" => Some(TypeofKind::String),
+            "number" => Some(TypeofKind::Number),
+            "boolean" => Some(TypeofKind::Boolean),
+            "bigint" => Some(TypeofKind::BigInt),
+            "symbol" => Some(TypeofKind::Symbol),
+            "undefined" => Some(TypeofKind::Undefined),
+            "object" => Some(TypeofKind::Object),
+            "function" => Some(TypeofKind::Function),
+            _ => None,
+        }
+    }
+
+    /// Get the string representation of this typeof kind.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TypeofKind::String => "string",
+            TypeofKind::Number => "number",
+            TypeofKind::Boolean => "boolean",
+            TypeofKind::BigInt => "bigint",
+            TypeofKind::Symbol => "symbol",
+            TypeofKind::Undefined => "undefined",
+            TypeofKind::Object => "object",
+            TypeofKind::Function => "function",
+        }
+    }
+}
+
 /// AST-agnostic representation of a type narrowing condition.
 ///
 /// This enum represents various guards that can narrow a type, without
@@ -51,7 +99,7 @@ use crate::solver::TypeInterner;
 ///
 /// # Examples
 /// ```typescript
-/// typeof x === "string"     -> TypeGuard::Typeof("string")
+/// typeof x === "string"     -> TypeGuard::Typeof(TypeofKind::String)
 /// x instanceof MyClass      -> TypeGuard::Instanceof(MyClass_type)
 /// x === null                -> TypeGuard::NullishEquality
 /// x                         -> TypeGuard::Truthy
@@ -62,8 +110,8 @@ pub enum TypeGuard {
     /// `typeof x === "typename"`
     ///
     /// Narrows a union to only members matching the typeof result.
-    /// For example, narrowing `string | number` with `Typeof("string")` yields `string`.
-    Typeof(String),
+    /// For example, narrowing `string | number` with `Typeof(TypeofKind::String)` yields `string`.
+    Typeof(TypeofKind),
 
     /// `x instanceof Class`
     ///
@@ -895,48 +943,47 @@ impl<'a> NarrowingContext<'a> {
             // Handle Union: filter members based on instanceof relationship
             if let Some(members_id) = union_list_id(self.db, resolved_source) {
                 let members = self.db.type_list(members_id);
-                let filtered_members: Vec<TypeId> = members
-                    .iter()
-                    .filter_map(|&member| {
-                        // Check if member is assignable to instance type
-                        if is_subtype_of(self.db, member, instance_type) {
-                            trace!(
-                                "Union member {} is assignable to instance type {}, keeping",
-                                member.0,
-                                instance_type.0
-                            );
-                            return Some(member);
-                        }
-
-                        // Check if instance type is assignable to member (subclass case)
-                        // If we have a Dog and instanceof Animal, Dog is an instance of Animal
-                        if is_subtype_of(self.db, instance_type, member) {
-                            trace!(
-                                "Instance type {} is assignable to union member {} (subclass), narrowing to instance type",
-                                instance_type.0,
-                                member.0
-                            );
-                            return Some(instance_type);
-                        }
-
-                        // Interface overlap: both are object-like but not assignable
-                        // Use intersection to preserve properties from both
-                        if self.are_object_like(member) && self.are_object_like(instance_type) {
-                            trace!(
-                                "Interface overlap between {} and {}, using intersection",
-                                member.0,
-                                instance_type.0
-                            );
-                            return Some(self.db.intersection2(member, instance_type));
-                        }
-
+                // PERF: Reuse a single SubtypeChecker across all member checks
+                // instead of allocating 4 hash sets per is_subtype_of call.
+                let mut checker = SubtypeChecker::new(self.db.as_type_database());
+                let mut filtered_members: Vec<TypeId> = Vec::new();
+                for &member in &*members {
+                    // Check if member is assignable to instance type
+                    checker.reset();
+                    if checker.is_subtype_of(member, instance_type) {
                         trace!(
-                            "Union member {} excluded by instanceof check",
-                            member.0
+                            "Union member {} is assignable to instance type {}, keeping",
+                            member.0, instance_type.0
                         );
-                        None
-                    })
-                    .collect();
+                        filtered_members.push(member);
+                        continue;
+                    }
+
+                    // Check if instance type is assignable to member (subclass case)
+                    // If we have a Dog and instanceof Animal, Dog is an instance of Animal
+                    checker.reset();
+                    if checker.is_subtype_of(instance_type, member) {
+                        trace!(
+                            "Instance type {} is assignable to union member {} (subclass), narrowing to instance type",
+                            instance_type.0, member.0
+                        );
+                        filtered_members.push(instance_type);
+                        continue;
+                    }
+
+                    // Interface overlap: both are object-like but not assignable
+                    // Use intersection to preserve properties from both
+                    if self.are_object_like(member) && self.are_object_like(instance_type) {
+                        trace!(
+                            "Interface overlap between {} and {}, using intersection",
+                            member.0, instance_type.0
+                        );
+                        filtered_members.push(self.db.intersection2(member, instance_type));
+                        continue;
+                    }
+
+                    trace!("Union member {} excluded by instanceof check", member.0);
+                }
 
                 if filtered_members.is_empty() {
                     trace!("All union members excluded, resulting in NEVER");
@@ -970,14 +1017,16 @@ impl<'a> NarrowingContext<'a> {
             // For unions, exclude members that are subtypes of the instance type
             if let Some(members_id) = union_list_id(self.db, resolved_source) {
                 let members = self.db.type_list(members_id);
-                let filtered_members: Vec<TypeId> = members
-                    .iter()
-                    .filter(|&&member| {
-                        // Exclude members that are definitely subtypes of the instance type
-                        !is_subtype_of(self.db, member, instance_type)
-                    })
-                    .copied()
-                    .collect();
+                // PERF: Reuse a single SubtypeChecker across all member checks
+                let mut checker = SubtypeChecker::new(self.db.as_type_database());
+                let mut filtered_members: Vec<TypeId> = Vec::new();
+                for &member in &*members {
+                    // Exclude members that are definitely subtypes of the instance type
+                    checker.reset();
+                    if !checker.is_subtype_of(member, instance_type) {
+                        filtered_members.push(member);
+                    }
+                }
 
                 if filtered_members.is_empty() {
                     trace!("All union members excluded, resulting in NEVER");
@@ -2004,7 +2053,7 @@ impl<'a> NarrowingContext<'a> {
     /// # Examples
     /// ```ignore
     /// // typeof x === "string"
-    /// let guard = TypeGuard::Typeof("string".to_string());
+    /// let guard = TypeGuard::Typeof(TypeofKind::String);
     /// let narrowed = narrowing.narrow_type(string_or_number, &guard, true);
     /// assert_eq!(narrowed, TypeId::STRING);
     ///
@@ -2015,7 +2064,8 @@ impl<'a> NarrowingContext<'a> {
     /// ```
     pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: bool) -> TypeId {
         match guard {
-            TypeGuard::Typeof(type_name) => {
+            TypeGuard::Typeof(typeof_kind) => {
+                let type_name = typeof_kind.as_str();
                 if sense {
                     self.narrow_by_typeof(source_type, type_name)
                 } else {
@@ -2418,6 +2468,7 @@ impl<'a> NarrowingContext<'a> {
         let mut visitor = NarrowingVisitor {
             db: self.db,
             narrower,
+            checker: SubtypeChecker::new(self.db.as_type_database()),
         };
         visitor.visit_type(self.db, type_id)
     }
@@ -2583,6 +2634,8 @@ impl<'a> NarrowingContext<'a> {
 struct NarrowingVisitor<'a> {
     db: &'a dyn QueryDatabase,
     narrower: TypeId,
+    /// PERF: Reusable SubtypeChecker to avoid per-call hash allocations
+    checker: SubtypeChecker<'a>,
 }
 
 impl<'a> TypeVisitor for NarrowingVisitor<'a> {
@@ -2623,12 +2676,14 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                 TypeKey::Object(_) => {
                     // Case 1: type_id is subtype of narrower (e.g., { a: "foo" } narrowed by { a: string })
                     // Result: type_id (keep the more specific type)
-                    if is_subtype_of(self.db, type_id, self.narrower) {
+                    self.checker.reset();
+                    if self.checker.is_subtype_of(type_id, self.narrower) {
                         return type_id;
                     }
                     // Case 2: narrower is subtype of type_id (e.g., { a: string } narrowed by { a: "foo" })
                     // Result: narrower (narrow down to the more specific type)
-                    if is_subtype_of(self.db, self.narrower, type_id) {
+                    self.checker.reset();
+                    if self.checker.is_subtype_of(self.narrower, type_id) {
                         return self.narrower;
                     }
                     // Case 3: Both are object types but not directly related
@@ -2643,11 +2698,13 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                 // Function types: check subtype relationships
                 TypeKey::Function(_) => {
                     // Case 1: type_id is subtype of narrower (keep specific)
-                    if is_subtype_of(self.db, type_id, self.narrower) {
+                    self.checker.reset();
+                    if self.checker.is_subtype_of(type_id, self.narrower) {
                         return type_id;
                     }
                     // Case 2: narrower is subtype of type_id (narrow down)
-                    if is_subtype_of(self.db, self.narrower, type_id) {
+                    self.checker.reset();
+                    if self.checker.is_subtype_of(self.narrower, type_id) {
                         return self.narrower;
                     }
                     // Case 3: Disjoint function types
@@ -2683,18 +2740,22 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
 
                 // Case 1: narrower is subtype of type_id (e.g., narrow(string, "foo"))
                 // Result: narrower
-                if is_subtype_of(self.db, self.narrower, type_id) {
+                self.checker.reset();
+                if self.checker.is_subtype_of(self.narrower, type_id) {
                     self.narrower
                 }
                 // Case 2: type_id is subtype of narrower (e.g., narrow("foo", string))
                 // Result: type_id (the original)
-                else if is_subtype_of(self.db, type_id, self.narrower) {
-                    type_id
-                }
-                // Case 3: Disjoint types (e.g., narrow(string, number))
-                // Result: never
                 else {
-                    TypeId::NEVER
+                    self.checker.reset();
+                    if self.checker.is_subtype_of(type_id, self.narrower) {
+                        type_id
+                    }
+                    // Case 3: Disjoint types (e.g., narrow(string, number))
+                    // Result: never
+                    else {
+                        TypeId::NEVER
+                    }
                 }
             }
         }

@@ -11,7 +11,7 @@ use crate::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{
     LiteralValue, NarrowingContext, ParamInfo, TypeGuard, TypeId, TypePredicate,
-    TypePredicateTarget,
+    TypePredicateTarget, TypeofKind,
     type_queries::{
         ConstructorInstanceKind, FalsyComponentKind, LiteralValueKind, NonObjectKind,
         PredicateSignatureKind, PropertyPresenceKind, TypeParameterConstraintKind,
@@ -1916,7 +1916,9 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Check for typeof comparison: typeof x === "string"
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
-            return Some((TypeGuard::Typeof(type_name.to_string()), target, false));
+            if let Some(typeof_kind) = TypeofKind::from_str(type_name) {
+                return Some((TypeGuard::Typeof(typeof_kind), target, false));
+            }
         }
 
         // Check for loose equality with null/undefined: x == null, x != null, x == undefined, x != undefined

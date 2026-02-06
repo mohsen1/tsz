@@ -786,7 +786,7 @@ impl Parser {
             binder.bind_source_file_with_libs(self.parser.get_arena(), root_idx, &self.lib_files);
 
             // Collect symbol names for the result
-            let symbols: std::collections::HashMap<String, u32> = binder
+            let symbols: FxHashMap<String, u32> = binder
                 .file_locals
                 .iter()
                 .map(|(name, id)| (name.clone(), id.0))
@@ -2194,8 +2194,7 @@ impl WasmProgram {
         };
 
         // Collect parse diagnostic codes
-        let mut file_codes: std::collections::HashMap<String, Vec<u32>> =
-            std::collections::HashMap::new();
+        let mut file_codes: FxHashMap<String, Vec<u32>> = FxHashMap::default();
         for result in &bind_results {
             let codes: Vec<u32> = result.parse_diagnostics.iter().map(|d| d.code).collect();
             file_codes.insert(result.file_name.clone(), codes);
