@@ -3,7 +3,7 @@
 Run the following command:
 
 ```
-cargo nextest run --partition count:3/4
+cargo nextest run --partition count:2/4
 ```
 
 Your task is to make this pass 100%.
