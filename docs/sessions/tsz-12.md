@@ -1,98 +1,84 @@
 # Session TSZ-12: Cache Invalidation & Test Infrastructure Cleanup
 
 **Started**: 2026-02-06
-**Status**: 🔄 NOT STARTED
+**Status**: ✅ PARTIAL COMPLETE - Cache Fix Done
 **Predecessor**: TSZ-11 (Readonly Type Support - Complete)
 
-## Task
+## Accomplishments
 
-Fix cache invalidation issues and test infrastructure problems to resolve ~20 failing tests.
+### Cache Bug Fix ✅ Complete
 
-## Problem Statement
+**Problem**: `compile_with_cache` was not reusing cached compilation results, causing all files to be re-emitted even when unchanged.
 
-### Part A: Cache Invalidation (~14 tests)
+**Root Cause** (found by Gemini):
+- `local_cache` was always initialized to `Some(CompilationCache::default())` at line 663
+- `effective_cache = local_cache_ref.or(cache)` always picked the empty `local_cache`
+- Provided `cache` with previous compilation results was ignored
 
-The `CheckerContext` and `Solver` maintain memoization tables (like `node_types` and `symbol_types`) that may:
-- Persist across test cases when they shouldn't
-- Fail to account for contextual changes (generic instantiations, flow-sensitive states)
-- Return stale data causing incorrect type checking results
+**Fix** (in `src/cli/driver.rs`):
+```rust
+// BEFORE: Always created empty local cache
+let mut local_cache: Option<CompilationCache> = Some(CompilationCache::default());
 
-**Tests affected**:
-- `compile_with_cache_emits_only_dirty_files`
-- `compile_with_cache_invalidates_dependents`
-- `invalidate_paths_with_dependents_symbols_*`
+// AFTER: Only create local_cache when loading from BuildInfo
+let mut local_cache: Option<CompilationCache> = None;
+if cache.is_none() && (resolved.incremental || resolved.ts_build_info_file.is_some()) {
+    // ... load BuildInfo ...
+    local_cache = Some(build_info_to_compilation_cache(&build_info, &base_dir));
+}
+```
 
-### Part B: Readonly Infrastructure (~6 tests)
+**Impact**: +15 tests fixed (8232 → 8247 passing, 68 → 53 failing)
+**Commit**: `2d2f3e22c`
 
-Readonly test failures are due to lib infrastructure issues, not subtyping logic (which was fixed in tsz-11):
+**Tests Fixed**:
+- `compile_with_cache_emits_only_dirty_files` ✅
+- `compile_with_cache_invalidates_paths` ✅
+- `compile_with_cache_skips_dependents_when_exports_unchanged` ✅
+- `compile_with_cache_updates_dependencies_for_changed_files` ✅
+- `compile_with_cache_invalidates_dependents` ✅
+- `compile_with_cache_rechecks_dependents_on_export_change` ✅
+- +9 other cache-related tests ✅
+
+## Remaining Work
+
+### Readonly Test Infrastructure (~6 tests)
+
+These tests fail due to lib infrastructure issues, not subtyping logic (fixed in tsz-11):
 - Tests manually create `CheckerState` without loading lib files
 - Missing `Array`, `ReadonlyArray`, or `readonly` keyword support
-- Test setup incomplete
+- Need to fix test setup to use lib fixtures
 
 **Tests affected**:
 - `test_readonly_array_element_assignment_2540`
 - `test_readonly_element_access_assignment_2540`
 - `test_readonly_index_signature_element_access_assignment_2540`
-
-## Expected Impact
-
-- **Direct**: Fix ~20 tests (14 cache + 6 infrastructure)
-- **Indirect**: Provide clean slate for complex features (overload resolution, flow narrowing)
-- **Percentage**: Resolves ~30% of current 68 failures
-
-## Files to Investigate
-
-### Part A: Cache Invalidation
-1. **src/checker/context.rs** - Review `CheckerContext` cache fields
-2. **src/checker/state.rs** - Ensure caches are properly reset
-3. **src/solver/mod.rs** - Check solver-level caching
-
-### Part B: Readonly Infrastructure
-1. **src/solver/intern.rs** - Ensure `ReadonlyArray` intrinsics are mapped
-2. **src/tests/checker_state_tests.rs** - Fix test setup to use lib fixtures
-
-## Implementation Plan
-
-### Phase 1: Investigate Cache Invalidation
-
-Ask Gemini:
-1. What is the root cause of cache invalidation failures?
-2. Which caches should be global vs local?
-3. How to properly reset caches between test runs?
-4. Are there specific functions that need to invalidate cache entries?
-
-### Phase 2: Fix Cache Logic
-
-Based on Gemini's guidance:
-- Identify stale cache sources
-- Implement proper cache clearing
-- Add cache invalidation on context changes
-
-### Phase 3: Fix Readonly Test Infrastructure
-
-Update failing tests to use proper lib setup:
-- Use test fixtures that load lib files
-- Ensure `ReadonlyArray` types are available
-- Verify tests actually test what they claim to test
-
-### Phase 4: Test and Commit
-
-Run conformance tests and commit fixes.
+- `test_readonly_method_signature_assignment_2540`
+- `test_readonly_index_signature_variable_access_assignment_2540`
+- (+1 more)
 
 ## Test Status
 
 **Start**: 8232 passing, 68 failing
+**Current**: 8247 passing, 53 failing
+**Progress**: +15 tests fixed (22% of remaining failures)
+
+## Next Steps
+
+The 53 remaining failures include:
+- Cache invalidation: ~0 tests (all fixed!)
+- Readonly test infrastructure: ~6 tests
+- Element access index signatures: ~3 tests
+- Flow narrowing: ~5 tests
+- Enum types: ~2 tests (error count mismatches)
+- Module resolution: ~4 tests
+- Overload resolution: ~3 tests
+- Other individual features: ~30 tests
 
 ## Notes
 
-**Gemini's Recommendation**: "Fixing cache invalidation addresses ~14 tests. Combined with the Readonly infrastructure fixes (~6 tests), this single session could resolve 20 out of 68 remaining failures (~30% of the current failure set)."
+**Gemini's Guidance**: This session successfully fixed the cache invalidation bug. The root cause was identified by Gemini as a cache preference issue where `local_cache` was always created (empty) and preferred over the provided cache parameter.
 
-**Rationale**:
-- Highest impact of remaining features
-- More straightforward than overload resolution or flow narrowing
-- Provides clean slate for complex type system features
-- Unblocks other features by removing non-deterministic failures
+**Pattern Recognition**: Following AGENTS.md mandatory workflow (asking Gemini for investigation guidance) led directly to finding the root cause in <5 minutes, vs hours of manual debugging.
 
-**Deferred Features**:
-- Flow Narrowing: Requires robust CFG (deferred from tsz-10)
-- Overload Resolution: High impact but high complexity (recommended for tsz-13)
+**Recommendation**: The readonly infrastructure tests are straightforward to fix (update test setup to use lib fixtures). These should be addressed next for quick wins.
