@@ -147,6 +147,16 @@ pub fn compute_best_common_type<R: TypeResolver>(
     // Example: [1, 2] -> number[], ["a", "b"] -> string[]
     let widened = widen_literals(interner, types);
 
+    // Step 1.5: Enum member widening
+    // If all candidates are enum members from the same parent enum,
+    // infer the parent enum type directly instead of a large union of members.
+    // This matches TypeScript's behavior for expressions like [E.A, E.B] -> E[].
+    if let Some(res) = resolver
+        && let Some(common_enum_type) = common_parent_enum_type(interner, &widened, res)
+    {
+        return common_enum_type;
+    }
+
     // OPTIMIZATION: Unit-type fast-path
     // If ALL types are unit types (tuples of literals/enums, or literals themselves),
     // no single type can be a supertype of the others (unit types are disjoint).
@@ -292,6 +302,35 @@ fn all_types_are_narrower_than_base(
     types.iter().all(|&ty| is_subtype_of(interner, ty, base))
 }
 
+/// Return the common parent enum type if all candidates are members of the same enum.
+fn common_parent_enum_type<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    types: &[TypeId],
+    resolver: &R,
+) -> Option<TypeId> {
+    let mut parent_def = None;
+
+    for &ty in types {
+        let TypeKey::Enum(def_id, _) = interner.lookup(ty)? else {
+            return None;
+        };
+
+        let current_parent = resolver.get_enum_parent_def_id(def_id).unwrap_or(def_id);
+        if let Some(existing) = parent_def {
+            if existing != current_parent {
+                return None;
+            }
+        } else {
+            parent_def = Some(current_parent);
+        }
+    }
+
+    let parent_def = parent_def?;
+    resolver
+        .resolve_lazy(parent_def, interner)
+        .or_else(|| Some(interner.intern(TypeKey::Lazy(parent_def))))
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -324,8 +363,42 @@ fn is_definitely_falsy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::solver::def::DefId;
     use crate::solver::intern::TypeInterner;
-    use crate::solver::subtype::NoopResolver;
+    use crate::solver::subtype::{NoopResolver, TypeResolver};
+    use rustc_hash::FxHashMap;
+
+    struct EnumParentResolver {
+        parent_map: FxHashMap<DefId, DefId>,
+        lazy_map: FxHashMap<DefId, TypeId>,
+    }
+
+    impl EnumParentResolver {
+        fn new() -> Self {
+            Self {
+                parent_map: FxHashMap::default(),
+                lazy_map: FxHashMap::default(),
+            }
+        }
+    }
+
+    impl TypeResolver for EnumParentResolver {
+        fn resolve_ref(
+            &self,
+            _symbol: crate::solver::types::SymbolRef,
+            _interner: &dyn TypeDatabase,
+        ) -> Option<TypeId> {
+            None
+        }
+
+        fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            self.lazy_map.get(&def_id).copied()
+        }
+
+        fn get_enum_parent_def_id(&self, member_def_id: DefId) -> Option<DefId> {
+            self.parent_map.get(&member_def_id).copied()
+        }
+    }
 
     // =========================================================================
     // Conditional Expression Tests
@@ -529,5 +602,25 @@ mod tests {
             None,
         );
         assert_eq!(result, TypeId::ERROR);
+    }
+
+    #[test]
+    fn test_bct_enum_members_widen_to_parent_enum() {
+        let interner = TypeInterner::new();
+        let parent_def = DefId(100);
+        let member_a_def = DefId(101);
+        let member_b_def = DefId(102);
+
+        let parent_enum_type = interner.intern(TypeKey::Enum(parent_def, TypeId::NUMBER));
+        let member_a = interner.intern(TypeKey::Enum(member_a_def, TypeId::NUMBER));
+        let member_b = interner.intern(TypeKey::Enum(member_b_def, TypeId::NUMBER));
+
+        let mut resolver = EnumParentResolver::new();
+        resolver.parent_map.insert(member_a_def, parent_def);
+        resolver.parent_map.insert(member_b_def, parent_def);
+        resolver.lazy_map.insert(parent_def, parent_enum_type);
+
+        let result = compute_best_common_type(&interner, &[member_a, member_b], Some(&resolver));
+        assert_eq!(result, parent_enum_type);
     }
 }
