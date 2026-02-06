@@ -257,6 +257,18 @@ pub trait TypeResolver {
         None
     }
 
+    /// Check if a DefId represents a user-defined enum (not an intrinsic type).
+    ///
+    /// This is used to distinguish between user-defined enums (like `enum E { A, B }`)
+    /// and intrinsic types from lib.d.ts (like `type string = ...`) that are stored
+    /// as TypeKey::Enum for definition store purposes.
+    ///
+    /// Returns true if the DefId is a user-defined enum.
+    /// Returns false for intrinsic types, type aliases, interfaces, etc.
+    fn is_user_enum_def(&self, _def_id: DefId) -> bool {
+        false
+    }
+
     /// Get the base class type for a class/interface type.
     ///
     /// This is used by the Best Common Type (BCT) algorithm to find common base classes.
@@ -630,6 +642,12 @@ impl TypeResolver for TypeEnvironment {
 
     fn get_enum_parent_def_id(&self, member_def_id: DefId) -> Option<DefId> {
         TypeEnvironment::get_enum_parent(self, member_def_id)
+    }
+
+    fn is_user_enum_def(&self, _def_id: DefId) -> bool {
+        // TypeEnvironment doesn't have access to binder symbol information
+        // Default to false (conservative approach)
+        false
     }
 }
 
