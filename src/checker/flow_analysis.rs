@@ -1339,6 +1339,16 @@ impl<'a> CheckerState<'a> {
             None => return declared_type, // No flow info - use declared type
         };
 
+        // Fast path: types containing `any` cannot be meaningfully narrowed.
+        // Skipping flow traversal here avoids pathological O(N^2) behavior on large
+        // assignment-heavy files (e.g. largeControlFlowGraph.ts with `const data = []`).
+        if declared_type == TypeId::ANY
+            || declared_type == TypeId::ERROR
+            || (!declared_type.is_intrinsic() && self.type_contains_any(declared_type))
+        {
+            return declared_type;
+        }
+
         // Rule #42 only applies inside closures. Avoid symbol resolution work
         // on the common non-closure path.
         if self.is_inside_closure()
