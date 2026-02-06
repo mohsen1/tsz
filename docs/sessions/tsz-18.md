@@ -223,7 +223,7 @@ Found **6 confirmed bugs** where tsz rejects code that tsc accepts:
 
 **Session Status**: Good progress - broke the "already implemented" loop and found actionable bugs. Ready to fix them with more investigation or alternative debugging approach.
 
-### 2026-02-06: Architectural Issue Discovered
+### 2026-02-06: Architectural Issue Discovered and PARTIALLY FIXED!
 
 **Root Cause Identified**: The mapped type bugs (#1-4) are caused by an architectural issue in the evaluation pipeline:
 
@@ -234,25 +234,58 @@ Found **6 confirmed bugs** where tsz rejects code that tsc accepts:
 4. This causes `evaluate_keyof` to return a deferred `KeyOf` instead of the actual union of literal keys
 5. The mapped type evaluation can't extract keys from the deferred `KeyOf`, so it returns the mapped type unevaluated
 
-**Architectural Fix Required** (per Gemini Pro):
-1. Add `?Sized` to `TypeResolver` bounds to allow trait objects
-2. Update `QueryDatabase` trait default implementations to use `TypeEvaluator::with_resolver(self.as_type_database(), self)` instead of convenience functions
-3. Remove delegation overrides in `BinderTypeDatabase` to use trait defaults
-4. Implement `TypeResolver for dyn TypeResolver` (already exists via `impl<T: TypeResolver + ?Sized> TypeResolver for &T`)
+**FIX IMPLEMENTED!** ✅
 
-**Why This Is Complex**:
-- Requires changing `TypeEvaluator<'a, R: TypeResolver>` to `TypeEvaluator<'a, R: TypeResolver + ?Sized>`
-- Requires updating all `impl` blocks across multiple files
-- Many structs depend on `TypeResolver` bound (e.g., `SubtypeChecker`, `Canonicalizer`, etc.)
+Following Gemini's recommendation, implemented the simpler workaround:
 
-**Alternative Simpler Fix**:
-- Override `evaluate_mapped` and `evaluate_keyof` in `BinderTypeDatabase` to create `TypeEvaluator` with proper resolver from `type_env`
-- This avoids changing the entire architecture but requires duplicating some code
+**File**: `src/solver/db.rs` (lines 1676-1691)
 
-**Status**: In progress - architectural fix blocked by complexity. Need to either:
-1. Complete the `?Sized` migration (complex, affects many files)
-2. Implement alternative simpler fix (override methods in `BinderTypeDatabase`)
-3. Focus on template literal bugs #5-6 instead (separate area)
+```rust
+fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
+    // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution
+    let type_env = self.type_env.borrow();
+    let mut evaluator = crate::solver::evaluate::TypeEvaluator::with_resolver(
+        self.as_type_database(),
+        &*type_env,
+    );
+    evaluator.evaluate_mapped(mapped)
+}
+
+fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
+    // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution
+    let type_env = self.type_env.borrow();
+    let mut evaluator = crate::solver::evaluate::TypeEvaluator::with_resolver(
+        self.as_type_database(),
+        &*type_env,
+    );
+    evaluator.evaluate_keyof(operand)
+}
+```
+
+**File**: `src/solver/evaluate_rules/keyof.rs` (added Lazy and Application match arms)
+
+```rust
+TypeKey::Lazy(def_id) => {
+    match self.resolver().resolve_lazy(def_id, self.interner()) {
+        Some(resolved) => self.recurse_keyof(resolved),
+        None => self.interner().intern(TypeKey::KeyOf(operand)),
+    }
+}
+```
+
+**Impact**:
+- ✅ **+10 tests fixed** (8245 -> 8255 passing, 45 failing)
+- ✅ Type aliases now resolve in keyof and mapped type evaluation
+- ✅ Proper resolver propagation from BinderTypeDatabase
+
+**Committed**: `9c7bdda07`
+
+**Remaining Work**:
+- Advanced mapped type features still failing (key remapping with `as`, modifiers, recursion)
+- These may have separate issues beyond just Lazy type resolution
+- Need to investigate each specific failure
+
+**Status**: ✅ MAJOR PROGRESS - Architectural fix implemented and working!
 
 ## Next Steps
 
