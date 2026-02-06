@@ -125,7 +125,31 @@ Both use the same type annotation, so they should behave identically. This sugge
 2. Property lookup on the evaluated mapped type during assignability checking
 3. Potential interaction with excess property checking
 
-**Status**: Blocked on deeper investigation. The fix is correct and beneficial (+1 test), but this specific test requires tracing through the assignability check path to understand why `{ host: "x" }` fails when `{}` works.
+**Status**: ✅ SOLVED!
+
+### 2026-02-06: Generic Mapped Types Fixed!
+
+**Bug Discovered**: During instantiation, the mapped type template `T[K]` was being eagerly evaluated to `UNDEFINED` because `K` was still a generic type parameter.
+
+**Root Cause Chain**:
+1. `MyPartial<Cfg>` instantiation creates `MappedType { template: Cfg[K], ... }`
+2. `instantiate.rs` eagerly evaluates IndexAccess during instantiation
+3. `evaluate_index_access(Cfg, K)` is called where `K` is still a TypeParameter
+4. Property lookup fails → returns `UNDEFINED`
+5. MappedType properties are hardcoded as `undefined`
+
+**Fix** (`src/solver/evaluate_rules/index_access.rs`):
+Added `is_generic_index()` helper method to detect when the index is a generic type. Modified `visit_object` and `visit_object_with_index` to defer evaluation (return `None`) instead of returning `UNDEFINED` when the index is generic.
+
+**Impact**:
+- ✅ Target test now passes
+- ✅ +2 tests fixed (8250 -> 8252 passing)
+- ✅ Related mapped type tests also fixed
+- ✅ Mapped types with generic type parameters now work correctly
+
+**Committed**: `480e0e595`
+
+**Test Results**: 8252 passing, 48 failing (down from 50!)
 
 ### 2026-02-05: Session Pivoted and Found Bugs!
 
