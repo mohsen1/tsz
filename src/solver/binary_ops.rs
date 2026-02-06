@@ -81,6 +81,11 @@ impl<'a> TypeVisitor for NumberLikeVisitor<'a> {
             .unwrap_or(false)
     }
 
+    fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> Self::Output {
+        // Check if the enum member type is number-like
+        self.visit_type(self.db, member_type)
+    }
+
     fn visit_ref(&mut self, _symbol_ref: u32) -> Self::Output {
         true // Conservative: enums might be numeric
     }
@@ -122,6 +127,11 @@ impl<'a> TypeVisitor for StringLikeVisitor<'a> {
             .unwrap_or(false)
     }
 
+    fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> Self::Output {
+        // Check if the enum member type is string-like
+        self.visit_type(self.db, member_type)
+    }
+
     fn default_output() -> Self::Output {
         false
     }
@@ -158,6 +168,11 @@ impl<'a> TypeVisitor for BigIntLikeVisitor<'a> {
         info.constraint
             .map(|c| self.visit_type(self.db, c))
             .unwrap_or(false)
+    }
+
+    fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> Self::Output {
+        // Check if the enum member type is bigint-like
+        self.visit_type(self.db, member_type)
     }
 
     fn visit_ref(&mut self, _symbol_ref: u32) -> Self::Output {

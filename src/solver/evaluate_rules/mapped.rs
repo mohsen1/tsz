@@ -5,6 +5,7 @@
 
 use crate::interner::Atom;
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
+use crate::solver::objects::{PropertyCollectionResult, collect_properties};
 use crate::solver::subtype::TypeResolver;
 use crate::solver::types::Visibility;
 use crate::solver::types::*;
@@ -42,7 +43,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Helper to get property modifiers for a given key in a source object.
-    /// Handles Intersections, Lazy, Ref, and TypeParameter types robustly.
+    ///
+    /// Uses `collect_properties` to handle Lazy (Interfaces), Ref, Intersections,
+    /// and TypeParameter types automatically (North Star Rule 3).
     fn get_property_modifiers_for_key(
         &mut self,
         source_object: Option<TypeId>,
@@ -52,71 +55,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return (false, false);
         };
 
-        // Resolve the type to handle Lazy and Ref
-        let resolved = self.resolve_type_for_property_lookup(source_obj);
-
-        // Handle different type kinds
-        match self.interner().lookup(resolved) {
-            // Direct object types
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner().object_shape(shape_id);
-                for prop in &shape.properties {
+        // NORTH STAR: Use collect_properties instead of manual TypeKey matching.
+        // This handles Lazy (Interfaces), Ref, and Intersections automatically.
+        match collect_properties(source_obj, self.interner(), self.resolver()) {
+            PropertyCollectionResult::Properties { properties, .. } => {
+                for prop in properties {
                     if prop.name == key_name {
                         return (prop.optional, prop.readonly);
                     }
                 }
             }
-
-            // Intersection: check all constituents
-            // If any constituent has the property as readonly, it's readonly
-            // If all constituents have the property as optional, it's optional
-            Some(TypeKey::Intersection(members)) => {
-                let members_list = self.interner().type_list(members);
-                let mut found_optional = None;
-                let mut found_readonly = None;
-
-                for &member in members_list.iter() {
-                    let (opt, ro) = self.get_property_modifiers_for_key(Some(member), key_name);
-                    // Found the property in this constituent
-                    found_optional = Some(found_optional.unwrap_or(true) && opt);
-                    found_readonly = Some(found_readonly.unwrap_or(false) || ro);
-                }
-
-                if let (Some(opt), Some(ro)) = (found_optional, found_readonly) {
-                    return (opt, ro);
-                }
+            PropertyCollectionResult::Any => {
+                // 'any' properties are effectively neither readonly nor optional
+                // in the context of mapped type preservation.
+                return (false, false);
             }
-
-            // TypeParameter: look at the constraint
-            Some(TypeKey::TypeParameter(param)) => {
-                if let Some(constraint) = param.constraint {
-                    return self.get_property_modifiers_for_key(Some(constraint), key_name);
-                }
-            }
-
-            _ => {}
+            PropertyCollectionResult::NonObject => {}
         }
 
-        // Default modifiers when we can't determine
         (false, false)
-    }
-
-    /// Resolve a type for property lookup, handling Lazy types.
-    /// Actually evaluates the type to get the concrete structure.
-    fn resolve_type_for_property_lookup(&mut self, ty: TypeId) -> TypeId {
-        match self.interner().lookup(ty) {
-            Some(TypeKey::Lazy(_)) => {
-                // Actually evaluate it to get the concrete structure
-                let evaluated = self.evaluate(ty);
-                // Protect against infinite loops if evaluate returns self
-                if evaluated != ty {
-                    self.resolve_type_for_property_lookup(evaluated)
-                } else {
-                    ty
-                }
-            }
-            _ => ty,
-        }
     }
 
     /// Helper to compute modifiers for a mapped type property.
@@ -241,7 +198,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Name remapping breaks homomorphism - don't preserve structure
             if mapped.name_type.is_none() {
                 // Resolve the source to check if it's an Array or Tuple
-                let resolved = self.resolve_type_for_property_lookup(source);
+                // Use evaluate() to resolve Lazy types (interfaces/classes)
+                let resolved = self.evaluate(source);
 
                 match self.interner().lookup(resolved) {
                     // Array type: map the element type
@@ -733,12 +691,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Get the modifiers for this element
             // Note: readonly is currently unused for tuple elements, but we preserve the logic
             // in case TypeScript adds readonly tuple element support in the future
-            let (optional, _readonly) = match (mapped.optional_modifier, mapped.readonly_modifier) {
-                (Some(MappedModifier::Add), _) | (_, Some(MappedModifier::Add)) => (true, true),
-                (Some(MappedModifier::Remove), _) | (_, Some(MappedModifier::Remove)) => {
-                    (false, false)
-                }
-                (None, None) => (elem.optional, false), // Preserve original optional
+            // CRITICAL: Handle optional and readonly modifiers independently
+            let optional = match mapped.optional_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => elem.optional, // Preserve original optional
+            };
+            let _readonly = match mapped.readonly_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => false, // Tuple elements don't have readonly in current TypeScript
             };
 
             mapped_elements.push(TupleElement {

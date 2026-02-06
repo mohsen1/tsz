@@ -502,6 +502,17 @@ impl<'a> CheckerState<'a> {
             }
             self.pop_symbol_dependency();
 
+            // FIX: Always cache the widened type, overwriting any fresh type that was
+            // cached during compute_final_type. This prevents "Zombie Freshness" where
+            // get_type_of_symbol returns the stale fresh type instead of the widened type.
+            self.cache_symbol_type(sym_id, final_type);
+
+            // FIX: Update node_types cache with the widened type
+            self.ctx.node_types.insert(decl_idx.0, final_type);
+            if !var_decl.name.is_none() {
+                self.ctx.node_types.insert(var_decl.name.0, final_type);
+            }
+
             // Variables without an initializer/annotation can still get a contextual type in some
             // constructs (notably `for-in` / `for-of` initializers). In those cases, the symbol
             // type may already be cached from the contextual typing logic; prefer that over the
@@ -581,10 +592,6 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 self.ctx.var_decl_types.insert(sym_id, final_type);
-            }
-
-            if !self.ctx.symbol_types.contains_key(&sym_id) {
-                self.cache_symbol_type(sym_id, final_type);
             }
         } else {
             compute_final_type(self);
@@ -1086,15 +1093,17 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         prop_name: &str,
     ) -> crate::solver::operations_property::PropertyAccessResult {
-        use crate::solver::operations_property::PropertyAccessEvaluator;
-
         // Ensure symbols are resolved in the environment
         self.ensure_application_symbols_resolved(object_type);
 
-        // Create evaluator with QueryDatabase (which includes TypeResolver)
-        let evaluator = PropertyAccessEvaluator::new(self.ctx.types);
-
-        evaluator.resolve_property_access(object_type, prop_name)
+        // Route through QueryDatabase so repeated property lookups hit QueryCache.
+        // This is especially important for hot paths like repeated `string[].push`
+        // checks in class-heavy files.
+        self.ctx.types.resolve_property_access_with_options(
+            object_type,
+            prop_name,
+            self.ctx.compiler_options.no_unchecked_indexed_access,
+        )
     }
 
     /// Check if an assignment target is a readonly property.

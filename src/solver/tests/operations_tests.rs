@@ -7805,6 +7805,147 @@ fn test_property_access_array_push_with_env_resolver() {
     }
 }
 
+/// Regression test: QueryCache-backed property access must expose Array<T>
+/// registrations from the interner. Without this, `string[].push` fails with
+/// a false TS2339 in checker paths that use QueryCache as the resolver.
+#[test]
+fn test_property_access_array_push_with_query_cache_resolver() {
+    use crate::solver::db::QueryCache;
+    use crate::solver::types::TypeParamInfo;
+
+    let interner = TypeInterner::new();
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+
+    let push_func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("items")),
+            type_id: interner.array(t_type),
+            optional: false,
+            rest: true,
+        }],
+        return_type: TypeId::NUMBER,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let array_interface = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("push"),
+        type_id: push_func,
+        write_type: push_func,
+        optional: false,
+        readonly: false,
+        is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    interner.set_array_base_type(array_interface, vec![t_param]);
+
+    let cache = QueryCache::new(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&cache);
+
+    let string_array = interner.array(TypeId::STRING);
+    let result = evaluator.resolve_property_access(string_array, "push");
+    match result {
+        PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
+            Some(TypeKey::Function(func_id)) => {
+                let func = interner.function_shape(func_id);
+                assert_eq!(func.return_type, TypeId::NUMBER);
+            }
+            other => panic!("Expected function for push, got {:?}", other),
+        },
+        other => panic!(
+            "Expected Success for array.push with QueryCache resolver, got {:?}",
+            other
+        ),
+    }
+}
+
+/// Regression test: Array<T> from merged lib declarations is represented as an
+/// intersection of interface fragments. Property access on `T[]` must still
+/// find methods like `push` through Application(Array, [T]).
+#[test]
+fn test_property_access_array_push_with_intersection_array_base() {
+    let interner = TypeInterner::new();
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+
+    let push_func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("items")),
+            type_id: interner.array(t_type),
+            optional: false,
+            rest: true,
+        }],
+        return_type: TypeId::NUMBER,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let array_decl_a = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("push"),
+        type_id: push_func,
+        write_type: push_func,
+        optional: false,
+        readonly: false,
+        is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    let array_decl_b = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("length"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: true,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    // Simulate merged lib declarations: Array<T> = DeclA & DeclB
+    let array_base = interner.intersection2(array_decl_a, array_decl_b);
+    interner.set_array_base_type(array_base, vec![t_param]);
+
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+    let string_array = interner.array(TypeId::STRING);
+
+    let result = evaluator.resolve_property_access(string_array, "push");
+    match result {
+        PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
+            Some(TypeKey::Function(func_id)) => {
+                let func = interner.function_shape(func_id);
+                assert_eq!(func.return_type, TypeId::NUMBER);
+            }
+            other => panic!("Expected function for push, got {:?}", other),
+        },
+        other => panic!(
+            "Expected Success for array.push with intersection array base, got {:?}",
+            other
+        ),
+    }
+}
+
 /// Test that array mapped type method resolution works correctly.
 /// When { [P in keyof T]: T[P] } where T extends any[] is accessed with .pop(),
 /// it should resolve to the array method, not map through the template.

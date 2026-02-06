@@ -97,6 +97,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
+        // Fast fail for private/protected members: check these first so unrelated
+        // class instances can fail before expensive public method comparison.
+        for t_prop in &target.properties {
+            if t_prop.visibility == Visibility::Public {
+                continue;
+            }
+
+            let Some(s_prop) =
+                self.lookup_property(&source.properties, source_shape_id, t_prop.name)
+            else {
+                return SubtypeResult::False;
+            };
+
+            let result = self.check_property_compatibility(s_prop, t_prop);
+            if !result.is_true() {
+                return result;
+            }
+        }
+
         let source_len = source.properties.len();
         let target_len = target.properties.len();
         let use_merge_scan =
@@ -108,6 +127,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // For each property in target, source must have a compatible property
         for t_prop in &target.properties {
+            // Private/protected members were handled in the fast-fail prepass.
+            if t_prop.visibility != Visibility::Public {
+                continue;
+            }
             let s_prop = self.lookup_property(&source.properties, source_shape_id, t_prop.name);
 
             let result = match s_prop {
@@ -145,6 +168,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let mut s_idx = 0;
         for t_prop in t_props {
+            if t_prop.visibility != Visibility::Public {
+                continue;
+            }
+
             while s_idx < s_props.len() && s_props[s_idx].name < t_prop.name {
                 s_idx += 1;
             }

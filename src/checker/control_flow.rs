@@ -119,6 +119,9 @@ pub struct FlowAnalyzer<'a> {
     /// This prevents O(N^2) complexity when checking mutations in nested loops
     #[allow(dead_code)]
     loop_mutation_cache: RefCell<FxHashMap<(FlowNodeId, SymbolId), bool>>,
+    /// Cache for switch-reference relevance checks.
+    /// Key: (switch_expr_node, reference_node) -> whether switch can narrow reference.
+    switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,6 +161,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_cache: None,
             type_environment: None,
             loop_mutation_cache: RefCell::new(FxHashMap::default()),
+            switch_reference_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -177,6 +181,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_cache: None,
             type_environment: None,
             loop_mutation_cache: RefCell::new(FxHashMap::default()),
+            switch_reference_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -196,6 +201,25 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> Self {
         self.type_environment = Some(type_env);
         self
+    }
+
+    #[inline]
+    fn switch_can_affect_reference(&self, switch_expr: NodeIndex, reference: NodeIndex) -> bool {
+        let key = (switch_expr.0, reference.0);
+        if let Some(&cached) = self.switch_reference_cache.borrow().get(&key) {
+            return cached;
+        }
+
+        let affects = self.is_matching_reference(switch_expr, reference)
+            || self
+                .discriminant_property_info(switch_expr, reference)
+                .map(|(_, _, base)| self.is_matching_reference(base, reference))
+                .unwrap_or(false);
+
+        self.switch_reference_cache
+            .borrow_mut()
+            .insert(key, affects);
+        affects
     }
 
     /// Get a reference to the flow graph.
@@ -857,6 +881,12 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             current_type
         };
+
+        // Fast path: if this switch cannot narrow the reference at all, avoid
+        // per-clause narrowing setup/work (narrowing context creation, expression checks).
+        if !self.switch_can_affect_reference(switch_data.expression, reference) {
+            return pre_switch_type;
+        }
 
         // Create narrowing context and wire up TypeEnvironment if available
         let env_borrow;
@@ -2001,10 +2031,34 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         };
 
+        // Fast path: if this switch does not reference the target (directly or via discriminant
+        // property access like switch(x.kind) when narrowing x), it cannot affect target's type.
+        let target_is_switch_expr = self.is_matching_reference(switch_expr, target);
+        if !target_is_switch_expr {
+            let switch_targets_base = self
+                .discriminant_property_info(switch_expr, target)
+                .map(|(_, _, base)| self.is_matching_reference(base, target))
+                .unwrap_or(false);
+            if !switch_targets_base {
+                return type_id;
+            }
+        }
+
+        // Excluding finitely many case literals from broad primitive domains does not narrow.
+        // Example: number minus {0, 1, 2, ...} is still number.
+        if target_is_switch_expr
+            && matches!(
+                type_id,
+                TypeId::NUMBER | TypeId::STRING | TypeId::BIGINT | TypeId::SYMBOL | TypeId::OBJECT
+            )
+        {
+            return type_id;
+        }
+
         // OPTIMIZATION: For direct switches on the target (switch(x) {...}),
         // collect all case types first and exclude them in a single O(N) pass.
         // This avoids O(N²) behavior when there are many case clauses.
-        if self.is_matching_reference(switch_expr, target) {
+        if target_is_switch_expr {
             // Collect all case expression types
             let mut excluded_types: Vec<TypeId> = Vec::new();
             for &clause_idx in &case_block.statements.nodes {

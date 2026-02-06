@@ -4,6 +4,7 @@
 //! containing complex type computation methods for new expressions,
 //! call expressions, constructability, union/keyof types, and identifiers.
 
+use crate::binder::SymbolId;
 use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
 use crate::solver::types::Visibility;
@@ -261,6 +262,21 @@ impl<'a> CheckerState<'a> {
         // Resolve Ref types to ensure we get the actual constructor type, not just a symbolic reference
         // This is critical for classes where we need the Callable with construct signatures
         let constructor_type = self.resolve_ref_type(constructor_type);
+
+        // Some constructor interfaces are lowered with a synthetic `"new"` property
+        // instead of explicit construct signatures.
+        let synthetic_new_constructor = self.constructor_type_from_new_property(constructor_type);
+        let constructor_type = synthetic_new_constructor.unwrap_or(constructor_type);
+        // Explicit type arguments on `new` (e.g. `new Promise<number>(...)`) need to
+        // apply to synthetic `"new"` member call signatures as well.
+        let constructor_type = if synthetic_new_constructor.is_some() {
+            self.apply_type_arguments_to_callable_type(
+                constructor_type,
+                new_expr.type_arguments.as_ref(),
+            )
+        } else {
+            constructor_type
+        };
 
         // Collect arguments
         let args = new_expr
@@ -1249,6 +1265,12 @@ impl<'a> CheckerState<'a> {
             let has_type = (flags & crate::binder::symbol_flags::TYPE) != 0;
             let has_value = (flags & crate::binder::symbol_flags::VALUE) != 0;
             let is_type_alias = (flags & crate::binder::symbol_flags::TYPE_ALIAS) != 0;
+            let value_decl = local_symbol
+                .map(|s| s.value_declaration)
+                .unwrap_or(NodeIndex::NONE);
+            let symbol_declarations = local_symbol
+                .map(|s| s.declarations.clone())
+                .unwrap_or_default();
 
             // Check for type-only symbols used as values
             // This includes:
@@ -1263,10 +1285,12 @@ impl<'a> CheckerState<'a> {
             // (e.g., `declare var Promise` in es2015.promise.d.ts). When we find
             // a TYPE-only symbol, check if a VALUE exists elsewhere in libs.
             if is_type_alias || (has_type && !has_value) {
-                // Cross-lib merging: check if a VALUE symbol for this name
-                // exists in a different lib binder before emitting error.
-                if let Some(val_sym_id) = self.find_value_symbol_in_libs(name) {
-                    return self.get_type_of_symbol(val_sym_id);
+                // Cross-lib merging: interface/type may be in one lib while VALUE
+                // declaration is in another. Resolve by declaration node first to
+                // avoid SymbolId collisions across binders.
+                let value_type = self.type_of_value_symbol_by_name(name);
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    return self.check_flow_usage(idx, value_type, sym_id);
                 }
 
                 // Don't emit TS2693 in heritage clause context — the heritage
@@ -1315,15 +1339,77 @@ impl<'a> CheckerState<'a> {
                     let lib_has_type = (lib_flags & crate::binder::symbol_flags::TYPE) != 0;
                     let lib_has_value = (lib_flags & crate::binder::symbol_flags::VALUE) != 0;
                     if lib_has_type && !lib_has_value {
-                        // Cross-lib merging: VALUE may be in a different lib binder
-                        if let Some(val_sym_id) = self.find_value_symbol_in_libs(name) {
-                            return self.get_type_of_symbol(val_sym_id);
+                        // Cross-lib merging: VALUE may be in a different lib binder.
+                        // Resolve by declaration node first to avoid SymbolId collisions.
+                        let value_type = self.type_of_value_symbol_by_name(name);
+                        if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                            return self.check_flow_usage(idx, value_type, sym_id);
                         }
                         self.error_type_only_value_at(name, idx);
                         return TypeId::ERROR;
                     }
                 }
             }
+
+            // Merged interface+value symbols (e.g. `interface Promise<T>` +
+            // `declare var Promise: PromiseConstructor`) must use the VALUE side
+            // in value position. Falling back to interface type here causes
+            // false TS2339/TS2351 on `Promise.resolve` / `new Promise(...)`.
+            if has_type && has_value && (flags & crate::binder::symbol_flags::INTERFACE) != 0 {
+                let mut value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
+                if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
+                    for &decl_idx in &symbol_declarations {
+                        let candidate = self.type_of_value_declaration_for_symbol(sym_id, decl_idx);
+                        if candidate != TypeId::UNKNOWN && candidate != TypeId::ERROR {
+                            value_type = candidate;
+                            break;
+                        }
+                    }
+                }
+                if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
+                    value_type = self.type_of_value_symbol_by_name(name);
+                }
+                // Lib globals often model value-side constructors through a sibling
+                // `*Constructor` interface (Promise -> PromiseConstructor).
+                // Prefer that when available to avoid falling back to the instance interface.
+                if name == "Promise" {
+                    if let Some(constructor_sym_id) =
+                        self.resolve_global_value_symbol("PromiseConstructor")
+                    {
+                        let constructor_type = self.get_type_of_symbol(constructor_sym_id);
+                        if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR
+                        {
+                            value_type = constructor_type;
+                        }
+                    } else if let Some(constructor_type) =
+                        self.resolve_lib_type_by_name("PromiseConstructor")
+                        && constructor_type != TypeId::UNKNOWN
+                        && constructor_type != TypeId::ERROR
+                    {
+                        value_type = constructor_type;
+                    }
+                } else if name == "Error" {
+                    if let Some(constructor_sym_id) =
+                        self.resolve_global_value_symbol("ErrorConstructor")
+                    {
+                        let constructor_type = self.get_type_of_symbol(constructor_sym_id);
+                        if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR
+                        {
+                            value_type = constructor_type;
+                        }
+                    } else if let Some(constructor_type) =
+                        self.resolve_lib_type_by_name("ErrorConstructor")
+                        && constructor_type != TypeId::UNKNOWN
+                        && constructor_type != TypeId::ERROR
+                    {
+                        value_type = constructor_type;
+                    }
+                }
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    return self.check_flow_usage(idx, value_type, sym_id);
+                }
+            }
+
             let declared_type = self.get_type_of_symbol(sym_id);
             // Check for TDZ violations (variable used before declaration in source order)
             // 1. Static block TDZ - variable used in static block before its declaration
@@ -1378,7 +1464,40 @@ impl<'a> CheckerState<'a> {
             }
             // Use check_flow_usage to integrate both DAA and type narrowing
             // This handles TS2454 errors and applies flow-based narrowing
-            return self.check_flow_usage(idx, declared_type, sym_id);
+            let flow_type = self.check_flow_usage(idx, declared_type, sym_id);
+
+            // FIX: If flow analysis returns ANY but the declared type is a valid non-ANY, non-ERROR type,
+            // and the declared type is an ObjectWithIndex (has index signatures), use the declared type.
+            // IMPORTANT: Only apply this fix when there's NO contextual type to avoid interfering
+            // with variance checking and assignability analysis.
+            let result_type = if flow_type == TypeId::ANY
+                && declared_type != TypeId::ANY
+                && declared_type != TypeId::ERROR
+                && self.ctx.contextual_type.is_none()
+            // CRITICAL: Only when no contextual type
+            {
+                // Only preserve declared_type for ObjectWithIndex types (interfaces with index signatures)
+                // This avoids interfering with function types or other variance checking
+                match self.ctx.types.lookup(declared_type) {
+                    Some(crate::solver::TypeKey::ObjectWithIndex(_)) => declared_type,
+                    _ => flow_type,
+                }
+            } else {
+                flow_type
+            };
+
+            // FIX: Flow analysis may return the original fresh type from the initializer expression.
+            // For variable references, we must respect the widening that was applied during variable
+            // declaration. If the symbol was widened (non-fresh), the flow result should also be widened.
+            // This prevents "Zombie Freshness" where CFA bypasses the widened symbol type.
+            if !self.ctx.compiler_options.sound_mode {
+                use crate::solver::freshness::{is_fresh_object_type, widen_freshness};
+                if is_fresh_object_type(self.ctx.types, result_type) {
+                    return widen_freshness(self.ctx.types, result_type);
+                }
+            }
+
+            return result_type;
         }
 
         // Intrinsic names - use constant TypeIds
@@ -1403,9 +1522,10 @@ impl<'a> CheckerState<'a> {
 
                 // Symbol exists in lib - check if it has VALUE flag (is usable as a value)
                 // This distinguishes ES5 (type-only) from ES2015+ (type and value)
-                if let Some(val_sym_id) = self.find_value_symbol_in_libs(name) {
+                let value_type = self.type_of_value_symbol_by_name(name);
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
                     // Symbol has VALUE flag - it's available as a constructor
-                    return self.get_type_of_symbol(val_sym_id);
+                    return value_type;
                 }
 
                 // Symbol exists but only as TYPE (ES5 case) - emit TS2585
@@ -1567,5 +1687,125 @@ impl<'a> CheckerState<'a> {
                 TypeId::ERROR
             }
         }
+    }
+
+    /// Resolve the value-side type from a symbol's value declaration node.
+    ///
+    /// This is used for merged interface+value globals where value position must
+    /// use the constructor/variable declaration type, not the interface type.
+    fn type_of_value_declaration(&mut self, decl_idx: NodeIndex) -> TypeId {
+        if decl_idx.is_none() {
+            return TypeId::UNKNOWN;
+        }
+
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return TypeId::UNKNOWN;
+        };
+
+        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
+            if !var_decl.type_annotation.is_none() {
+                let annotated = self.get_type_from_type_node(var_decl.type_annotation);
+                return self.resolve_ref_type(annotated);
+            }
+            if !var_decl.initializer.is_none() {
+                return self.get_type_of_node(var_decl.initializer);
+            }
+            return TypeId::ANY;
+        }
+
+        if self.ctx.arena.get_function(node).is_some() {
+            return self.get_type_of_function(decl_idx);
+        }
+
+        if let Some(class_data) = self.ctx.arena.get_class(node) {
+            return self.get_class_constructor_type(decl_idx, class_data);
+        }
+
+        TypeId::UNKNOWN
+    }
+
+    /// Resolve a value declaration type, delegating to the declaration's arena
+    /// when the node does not belong to the current checker arena.
+    fn type_of_value_declaration_for_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+    ) -> TypeId {
+        if decl_idx.is_none() {
+            return TypeId::UNKNOWN;
+        }
+
+        if self.ctx.arena.get(decl_idx).is_some() {
+            return self.type_of_value_declaration(decl_idx);
+        }
+
+        let Some(decl_arena) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
+            return TypeId::UNKNOWN;
+        };
+        if std::ptr::eq(decl_arena.as_ref(), self.ctx.arena) {
+            return self.type_of_value_declaration(decl_idx);
+        }
+
+        let mut checker = CheckerState::with_parent_cache(
+            decl_arena.as_ref(),
+            self.ctx.binder,
+            self.ctx.types,
+            self.ctx.file_name.clone(),
+            self.ctx.compiler_options.clone(),
+            self,
+        );
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
+        checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
+        checker
+            .ctx
+            .symbol_resolution_depth
+            .set(self.ctx.symbol_resolution_depth.get());
+        checker.type_of_value_declaration(decl_idx)
+    }
+
+    /// Resolve a value-side type by global name, preferring value declarations.
+    ///
+    /// This avoids incorrect type resolution when symbol IDs collide across
+    /// binders (current file vs. lib files).
+    fn type_of_value_symbol_by_name(&mut self, name: &str) -> TypeId {
+        if let Some(value_decl) = self.find_value_declaration_in_libs(name) {
+            let value_type = self.type_of_value_declaration(value_decl);
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                return value_type;
+            }
+        }
+
+        if let Some(value_sym_id) = self.find_value_symbol_in_libs(name) {
+            let value_type = self.get_type_of_symbol(value_sym_id);
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                return value_type;
+            }
+        }
+
+        TypeId::UNKNOWN
+    }
+
+    /// If `type_id` is an object type with a synthetic `"new"` member, return that member type.
+    /// This supports constructor-like interfaces that lower construct signatures as properties.
+    fn constructor_type_from_new_property(&self, type_id: TypeId) -> Option<TypeId> {
+        use crate::solver::TypeKey;
+
+        let Some(key) = self.ctx.types.lookup(type_id) else {
+            return None;
+        };
+
+        let shape_id = match key {
+            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => shape_id,
+            _ => return None,
+        };
+
+        let new_atom = self.ctx.types.intern_string("new");
+        let shape = self.ctx.types.object_shape(shape_id);
+        shape
+            .properties
+            .iter()
+            .find(|prop| prop.name == new_atom)
+            .map(|prop| prop.type_id)
     }
 }

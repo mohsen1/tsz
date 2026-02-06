@@ -17,7 +17,8 @@ use crate::solver::types::*;
 use crate::solver::utils;
 use crate::solver::visitor::{self, is_literal_type};
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
@@ -301,6 +302,8 @@ pub struct InferenceContext<'a> {
     interner: &'a dyn TypeDatabase,
     /// Type resolver for semantic lookups (e.g., base class queries)
     resolver: Option<&'a dyn crate::solver::TypeResolver>,
+    /// Memoized subtype checks used by BCT and bound validation.
+    subtype_cache: RefCell<FxHashMap<(TypeId, TypeId), bool>>,
     /// Unification table for inference variables
     table: InPlaceUnificationTable<InferenceVar>,
     /// Map from type parameter names to inference variables, with const flag
@@ -312,6 +315,7 @@ impl<'a> InferenceContext<'a> {
         InferenceContext {
             interner,
             resolver: None,
+            subtype_cache: RefCell::new(FxHashMap::default()),
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
         }
@@ -324,6 +328,7 @@ impl<'a> InferenceContext<'a> {
         InferenceContext {
             interner,
             resolver: Some(resolver),
+            subtype_cache: RefCell::new(FxHashMap::default()),
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
         }
@@ -1979,6 +1984,17 @@ impl<'a> InferenceContext<'a> {
     /// Simple subtype check for bounds validation.
     /// Uses a simplified check - for full checking, use SubtypeChecker.
     fn is_subtype(&self, source: TypeId, target: TypeId) -> bool {
+        let key = (source, target);
+        if let Some(&cached) = self.subtype_cache.borrow().get(&key) {
+            return cached;
+        }
+
+        let result = self.is_subtype_uncached(source, target);
+        self.subtype_cache.borrow_mut().insert(key, result);
+        result
+    }
+
+    fn is_subtype_uncached(&self, source: TypeId, target: TypeId) -> bool {
         // Same type
         if source == target {
             return true;

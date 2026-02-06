@@ -214,7 +214,6 @@ fn test_any_to_any() {
 
 /// Test that any works in array types
 #[test]
-#[ignore = "TODO: any[] should be assignable to string[] (any is top type)"]
 fn test_any_in_arrays() {
     // Should pass - any[] can be assigned to string[]
     test_no_errors(

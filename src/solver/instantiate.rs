@@ -557,7 +557,12 @@ impl<'a> TypeInstantiator<'a> {
 
                 self.shadowed.truncate(shadowed_len);
 
-                self.interner.mapped(instantiated)
+                // FIX: Trigger evaluation immediately.
+                // This converts MappedType { constraint: "host"|"port", ... }
+                // into Object { host?: string, port?: number }
+                // Without this, the MappedType is returned unevaluated, causing subtype checks to fail.
+                let mapped_type = self.interner.mapped(instantiated);
+                crate::solver::evaluate::evaluate_type(self.interner, mapped_type)
             }
 
             // Index access: instantiate both parts and evaluate immediately

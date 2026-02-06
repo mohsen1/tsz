@@ -758,6 +758,165 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_for_of_statement_es5(&mut self, for_in_of: &ForInOfData) {
+        // Check if downlevelIteration is enabled
+        if self.ctx.options.downlevel_iteration {
+            self.emit_for_of_statement_es5_iterator(for_in_of);
+        } else {
+            self.emit_for_of_statement_es5_array_indexing(for_in_of);
+        }
+    }
+
+    /// Emit for-of using full iterator protocol (--downlevelIteration enabled)
+    ///
+    /// Transforms:
+    /// ```typescript
+    /// for (const item of iterable) { body }
+    /// ```
+    /// Into:
+    /// ```javascript
+    /// var e_1, _a, e_1_1;
+    /// try {
+    ///     for (e_1 = __values(iterable), _a = e_1.next(); !_a.done; _a = e_1.next()) {
+    ///         var item = _a.value;
+    ///         body
+    ///     }
+    /// }
+    /// catch (e_1_1) { e_1 = { error: e_1_1 }; }
+    /// finally {
+    ///     try {
+    ///         if (_a && !_a.done && (_a = e_1["return"])) _a.call(e_1);
+    ///     }
+    ///     finally { if (e_1) throw e_1.error; }
+    /// }
+    /// ```
+    fn emit_for_of_statement_es5_iterator(&mut self, for_in_of: &ForInOfData) {
+        let counter = self.ctx.destructuring_state.for_of_counter;
+
+        // Generate variable names:
+        // - iterator: e_1, e_2, e_3, ...
+        // - result: _a, _b, _c, ... (temp var)
+        // - error: e_1_1, e_2_1, e_3_1, ...
+        let iterator_name = format!("e_{}", counter + 1);
+        let result_name = self.get_temp_var_name();
+        let error_name = format!("e_{}_1", counter + 1);
+
+        self.ctx.destructuring_state.for_of_counter += 1;
+
+        // Declare variables at the top
+        self.write("var ");
+        self.write(&iterator_name);
+        self.write(", ");
+        self.write(&result_name);
+        self.write(", ");
+        self.write(&error_name);
+        self.write(";");
+        self.write_line();
+
+        // try block
+        self.write("try ");
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+
+        // for loop with iterator protocol
+        self.write("for (");
+        self.write(&iterator_name);
+        self.write(" = __values(");
+        self.emit_expression(for_in_of.expression);
+        self.write("), ");
+        self.write(&result_name);
+        self.write(" = ");
+        self.write(&iterator_name);
+        self.write(".next(); !");
+        self.write(&result_name);
+        self.write(".done; ");
+        self.write(&result_name);
+        self.write(" = ");
+        self.write(&iterator_name);
+        self.write(".next()) ");
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+
+        // Emit the value binding: var item = _a.value;
+        self.emit_for_of_value_binding_iterator_es5(for_in_of.initializer, &result_name);
+        self.write_line();
+
+        // Emit the loop body
+        self.emit_for_of_body(for_in_of.statement);
+
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+
+        self.decrease_indent();
+        self.write("}");
+
+        // catch block
+        self.write(" catch (");
+        self.write(&error_name);
+        self.write(") { ");
+        self.write(&iterator_name);
+        self.write(" = { error: ");
+        self.write(&error_name);
+        self.write(" }; }");
+
+        // finally block
+        self.write(" finally ");
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+
+        self.write("try ");
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+
+        self.write("if (");
+        self.write(&result_name);
+        self.write(" && !");
+        self.write(&result_name);
+        self.write(".done && (");
+        self.write(&result_name);
+        self.write(" = ");
+        self.write(&iterator_name);
+        self.write("[\"return\"])) ");
+        self.write(&result_name);
+        self.write(".call(");
+        self.write(&iterator_name);
+        self.write(");");
+
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+
+        self.write("finally { if (");
+        self.write(&iterator_name);
+        self.write(") throw ");
+        self.write(&iterator_name);
+        self.write(".error; }");
+
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    /// Emit for-of using simple array indexing (default, --downlevelIteration disabled)
+    ///
+    /// Transforms:
+    /// ```typescript
+    /// for (const item of arr) { body }
+    /// ```
+    /// Into:
+    /// ```javascript
+    /// for (var _i = 0, arr_1 = arr; _i < arr_1.length; _i++) {
+    ///     var item = arr_1[_i];
+    ///     body
+    /// }
+    /// ```
+    /// Note: This only works for arrays, not for Sets, Maps, Strings, or Generators.
+    fn emit_for_of_statement_es5_array_indexing(&mut self, for_in_of: &ForInOfData) {
         // Simple array indexing pattern (default, no --downlevelIteration):
         // for (var _i = 0, arr_1 = arr; _i < arr_1.length; _i++) {
         //     var v = arr_1[_i];
@@ -812,7 +971,15 @@ impl<'a> Printer<'a> {
         self.write_line();
 
         // Emit the loop body
-        if let Some(stmt_node) = self.arena.get(for_in_of.statement) {
+        self.emit_for_of_body(for_in_of.statement);
+
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    /// Emit the for-of loop body (common logic for both array and iterator modes)
+    fn emit_for_of_body(&mut self, statement: NodeIndex) {
+        if let Some(stmt_node) = self.arena.get(statement) {
             if stmt_node.kind == crate::parser::syntax_kind_ext::BLOCK {
                 // If body is a block, emit its statements directly (unwrap the block)
                 if let Some(block) = self.arena.get_block(stmt_node) {
@@ -822,13 +989,62 @@ impl<'a> Printer<'a> {
                     }
                 }
             } else {
-                self.emit(for_in_of.statement);
+                self.emit(statement);
                 self.write_line();
             }
         }
+    }
 
-        self.decrease_indent();
-        self.write("}");
+    /// Emit value binding for iterator protocol: `var item = _a.value;`
+    fn emit_for_of_value_binding_iterator_es5(
+        &mut self,
+        initializer: NodeIndex,
+        result_name: &str,
+    ) {
+        if initializer.is_none() {
+            return;
+        }
+
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            self.write("var ");
+            if let Some(decl_list) = self.arena.get_variable(init_node) {
+                let mut first = true;
+                for &decl_idx in &decl_list.declarations.nodes {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                    {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        self.emit(decl.name);
+                        self.write(" = ");
+                        self.write(result_name);
+                        self.write(".value");
+                    }
+                }
+            }
+            self.write_semicolon();
+        } else if self.is_binding_pattern(initializer) {
+            self.write("var ");
+            let mut first = true;
+            self.emit_es5_destructuring_from_value(
+                initializer,
+                &format!("{}.value", result_name),
+                &mut first,
+            );
+            self.write_semicolon();
+        } else {
+            self.emit_expression(initializer);
+            self.write(" = ");
+            self.write(result_name);
+            self.write(".value");
+            self.write_semicolon();
+        }
     }
 
     #[allow(dead_code)]

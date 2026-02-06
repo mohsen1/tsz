@@ -77,9 +77,6 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Generate lib-assets
-        run: node scripts/generate-lib-assets.mjs
-
       - name: Build release
         run: cargo build --release
 
@@ -166,9 +163,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-wasm-
             ${{ runner.os }}-cargo-
-
-      - name: Generate lib-assets
-        run: node scripts/generate-lib-assets.mjs
 
       - name: Build WASM (nodejs target for conformance)
         run: wasm-pack build --target nodejs --out-dir pkg

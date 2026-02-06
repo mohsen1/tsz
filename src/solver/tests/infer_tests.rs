@@ -5339,6 +5339,23 @@ fn test_best_common_type_dedup() {
 }
 
 #[test]
+fn test_best_common_type_reuses_subtype_cache() {
+    let interner = TypeInterner::new();
+    let ctx = InferenceContext::new(&interner);
+
+    assert!(ctx.subtype_cache.borrow().is_empty());
+
+    let input = [TypeId::STRING, TypeId::NUMBER, TypeId::STRING];
+    let _ = ctx.best_common_type(&input);
+    let first_cache_size = ctx.subtype_cache.borrow().len();
+    assert!(first_cache_size > 0);
+
+    let _ = ctx.best_common_type(&input);
+    let second_cache_size = ctx.subtype_cache.borrow().len();
+    assert_eq!(second_cache_size, first_cache_size);
+}
+
+#[test]
 fn test_best_common_type_empty() {
     let interner = TypeInterner::new();
     let ctx = InferenceContext::new(&interner);
