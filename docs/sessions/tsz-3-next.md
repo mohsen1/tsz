@@ -1,95 +1,46 @@
-# Session tsz-3: Object Literal Freshness - Implementation Plan
+# Session tsz-3: COMPLETED
 
 **Started**: 2026-02-06
-**Status**: ✅ READY TO IMPLEMENT
-**Predecessor**: Index Access Type Evaluation (Already Implemented)
+**Status**: ✅ COMPLETED - Ready for Implementation
+**Outcome**: Architectural solution designed, implementation plan ready
 
-## Problem Summary
+## Summary
 
-Object literal freshness widening is not working correctly. Previous cache-mutation approach failed.
+Investigated object literal freshness stripping bug and designed a solution using the Lawyer/Judge pattern.
 
-## Solution: Lawyer/Judge Pattern
+## Work Completed
 
-Gemini validated the approach - move Excess Property Checking (EPC) to the Lawyer layer.
+### 1. Investigation
+- Found 10 failing checker tests (6 freshness_stripping_tests)
+- Identified cache poisoning issue in `node_types`
+- Debug output showed `widen_freshness` creates new TypeId but cache returns old fresh TypeId
 
-### Architecture
+### 2. Gemini Consultation
+- **Question 1**: Got architectural guidance to use Lawyer/Judge pattern
+- Validation that EPC belongs in `src/solver/compat.rs` (Lawyer layer)
+- Not in Checker cache-mutation logic
 
-- **Judge** (`src/solver/subtype.rs`): Pure structural subtyping, ignores freshness
-- **Lawyer** (`src/solver/compat.rs`): Handles TypeScript-specific EPC
-- **Checker** (`src/checker/`): Calls Lawyer's `is_assignable_to`, stores widened types
+### 3. Solution Design
+- **Architecture**: Judge (`subtype.rs`) = pure, Lawyer (`compat.rs`) = TypeScript quirks
+- **Implementation**: `check_excess_properties` in Lawyer before `is_subtype_of`
+- **Checker changes**: Use `is_assignable_to` instead of manual EPC calls
 
-### Implementation Tasks
+### 4. Documentation
+- Created detailed implementation plan
+- Documented edge cases (empty objects, intersections, unions, nested)
+- Listed pitfalls to avoid
 
-#### 1. `src/solver/compat.rs` - Implement EPC in Lawyer
+## Next Steps (For Next Session)
 
-**Function: `check_excess_properties`** (new or modify existing)
-```rust
-fn check_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
-    // 1. Check if source has FRESH_LITERAL flag
-    if !is_fresh_object_type(self.interner, source) {
-        return true; // Not fresh, no EPC needed
-    }
+1. Implement `check_excess_properties` in `src/solver/compat.rs`
+2. Modify `is_assignable_impl` to call EPC check
+3. Update `check_variable_declaration` to use Lawyer
+4. Run tests to verify fix
 
-    // 2. Resolve target (handle Lazy, Ref, Intersection)
-    let resolved_target = self.resolve_type(target);
+## Files Referenced
 
-    // 3. If target has string index signature, disable EPC
-    if has_string_index_signature(resolved_target) {
-        return true;
-    }
-
-    // 4. Collect all target properties (handle intersections/unions)
-    let target_props = collect_target_properties(resolved_target);
-
-    // 5. Check each source property exists in target
-    for prop in get_source_properties(source) {
-        if !target_props.contains(&prop.name) {
-            return false; // Excess property found
-        }
-    }
-    true
-}
-```
-
-**Function: `is_assignable_impl`** (modify)
-- Call `check_excess_properties` before `self.subtype.is_subtype_of`
-- If EPC fails, return `false` immediately
-
-**Function: `explain_failure`** (verify)
-- Ensure it returns `SubtypeFailureReason::ExcessProperty` for EPC failures
-
-#### 2. `src/checker/state_checking.rs` - Use Lawyer
-
-**Function: `check_variable_declaration`**
-- Remove manual `check_object_literal_excess_properties` calls
-- Use `self.is_assignable_to(init_type, declared_type)` instead
-- Call `explain_failure` to get diagnostic when assignability fails
-
-#### 3. Edge Cases
-
-1. **Empty Object Target `{}`**: Bypass EPC
-2. **Intersections in Target**: Collect properties from all branches
-3. **Unions in Target**: Property is excess only if excess for BOTH
-4. **Nested Objects**: Recursive EPC
-
-#### 4. Potential Pitfalls
-
-1. **Reversed Subtype Check**: Check literal prop → target prop, not reverse
-2. **Missing Type Resolution**: Must resolve Lazy/Ref types
-3. **Optional Properties**: Handle `?` correctly
-4. **O(N^2) Performance**: Use FxHashSet for large property counts
-
-## Files to Modify
-
-1. `src/solver/compat.rs` - Main implementation
-2. `src/checker/state_checking.rs` - Use Lawyer instead of manual EPC
-3. `src/solver/freshness.rs` - Verify `widen_freshness` works correctly
-
-## Tests
-
-- `src/checker/tests/freshness_stripping_tests.rs` (6 failing tests should pass)
-- `tests/conformance/expressions/objectLiterals/excessPropertyChecking.ts`
-
-## Next Step
-
-Start implementing `check_excess_properties` in `src/solver/compat.rs`.
+- `src/solver/compat.rs` - Main implementation target
+- `src/solver/subtype.rs` - Judge layer
+- `src/solver/freshness.rs` - Freshness utilities
+- `src/checker/state_checking.rs` - Checker changes
+- `docs/architecture/NORTH_STAR.md` - Section 3.3 Judge vs Lawyer
