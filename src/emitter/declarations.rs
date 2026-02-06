@@ -394,7 +394,7 @@ impl<'a> Printer<'a> {
                 es5_emitter.set_source_text(text);
             }
             let output = es5_emitter.emit_namespace(idx);
-            self.write(&output);
+            self.write(output.trim_end_matches('\n'));
             return;
         }
 

@@ -590,14 +590,14 @@ impl<'a> Printer<'a> {
                 }
                 ns_emitter.set_should_declare_var(should_declare_var);
                 let output = ns_emitter.emit_namespace(namespace_node);
-                self.write(&output);
+                self.write(output.trim_end_matches('\n'));
             }
 
             EmitDirective::ES5Enum { enum_node } => {
                 let mut enum_emitter = EnumES5Emitter::new(self.arena);
                 enum_emitter.set_indent_level(self.writer.indent_level());
                 let output = enum_emitter.emit_enum(enum_node);
-                self.write(&output);
+                self.write(output.trim_end_matches('\n'));
             }
 
             EmitDirective::CommonJSExport {
@@ -791,13 +791,13 @@ impl<'a> Printer<'a> {
                 }
                 ns_emitter.set_should_declare_var(*should_declare_var);
                 let output = ns_emitter.emit_namespace(*namespace_node);
-                self.write(&output);
+                self.write(output.trim_end_matches('\n'));
             }
             EmitDirective::ES5Enum { enum_node } => {
                 let mut enum_emitter = EnumES5Emitter::new(self.arena);
                 enum_emitter.set_indent_level(self.writer.indent_level());
                 let output = enum_emitter.emit_enum(*enum_node);
-                self.write(&output);
+                self.write(output.trim_end_matches('\n'));
             }
             EmitDirective::ES5AsyncFunction { function_node } => {
                 if let Some(func_node) = self.arena.get(*function_node)
@@ -917,13 +917,13 @@ impl<'a> Printer<'a> {
                 }
                 ns_emitter.set_should_declare_var(*should_declare_var);
                 let output = ns_emitter.emit_namespace(*namespace_node);
-                self.write(&output);
+                self.write(output.trim_end_matches('\n'));
             }
             EmitDirective::ES5Enum { enum_node } => {
                 let mut enum_emitter = EnumES5Emitter::new(self.arena);
                 enum_emitter.set_indent_level(self.writer.indent_level());
                 let output = enum_emitter.emit_enum(*enum_node);
-                self.write(&output);
+                self.write(output.trim_end_matches('\n'));
             }
             EmitDirective::CommonJSExport {
                 names,
