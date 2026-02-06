@@ -521,18 +521,24 @@ let x: T1 = "name";  // tsz errors, tsc accepts
 **Current Behavior**: Literal types widened to primitives in conditionals
 **Expected Behavior**: Literal types should be preserved
 
-**Investigation Started**:
-- Confirmed bug: tsz returns `string`, tsc returns `"name"`
-- Need to trace through `evaluate_conditional` in `src/solver/evaluate_rules/conditional.rs`
-- Suspect literal widening occurs during branch evaluation or union normalization
+**Investigation Update**:
+- Simple conditional (`Test<"name">`) **WORKS** in tsz! Issue is more specific.
+- Real bug: **Key remapping in mapped types** fails
+- Test: `type Filtered = { [K in keyof User as K extends "age" ? never : K]: User[K] };`
+- tsz rejects both valid and invalid assignments
+- tsc correctly accepts valid case and rejects invalid case
 
-**Next Steps**:
-1. Add tracing to `evaluate_conditional` to identify widening point
-2. Check if `true_type`/`false_type` evaluation preserves literals
-3. Fix evaluation to maintain literal types
-4. Verify fix unblocks Key Remapping
+**Root Cause Hypothesis**:
+The issue is NOT generic conditional evaluation, but specifically:
+1. How the `as` clause conditional is evaluated during mapped type key iteration
+2. The conditional is evaluated with `K` as a type parameter, not the concrete literal key
+3. When `K extends "age"` is checked with `K` being a type parameter, it may not resolve correctly
 
-**Status**: Investigation started - need to identify root cause
+**Location to investigate**:
+- `src/solver/evaluate_rules/mapped.rs` - key remapping logic
+- How the conditional type is instantiated for each key during iteration
+
+**Status**: Identified specific issue - key remapping conditional evaluation
 
 ## Dependencies
 
