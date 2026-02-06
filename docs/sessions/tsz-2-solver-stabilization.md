@@ -148,19 +148,75 @@ This ensures that objects with completely disjoint properties are not considered
 
 ---
 
-### Priority 5: Weak Types & Others (5 tests) - REMAINING ⚪
-**Tests**:
-- `test_constraint_satisfaction_multiple_candidates`
-- `test_resolve_multiple_lower_bounds_union`
+## Redefined Priorities (2026-02-05 by Gemini)
 
-**Context**: Most complex, tackle after property access is stabilized
+### Priority 1: Object Index Signatures (2 tests) - 🔴 NEXT
+**Tests**:
+- `test_object_with_index_satisfies_named_property_string_index`
+- `test_object_with_index_satisfies_numeric_property_number_index`
+
+**Goal**: Ensure plain objects are assignable to types with compatible index signatures.
+
+**Why First**: Structural typing is the core of TypeScript. If a plain object `{ a: string }` cannot be assigned to a type with an index signature `{ [k: string]: string }`, the compiler is fundamentally broken for common patterns.
+
+**Approach**:
+- Modify `src/solver/subtype.rs`
+- Focus on object-to-indexed type checking
+- Ensure that every property in source object is assignable to target's index signature value type
+
+**Files**: `src/solver/subtype.rs`
 
 ---
 
-### Priority 5: Weak Types & Others (9 tests) ⚪
-**Tests**: Pre-existing weak type failures, conditional types, keyof, narrowing, etc.
+### Priority 2: Narrowing `any` (1 test)
+**Tests**:
+- `test_narrow_by_typeof_any`
 
-**Strategy**: Leave for last unless blocking other progress
+**Goal**: Ensure `typeof any === "typename"` narrows to that type.
+
+**Why Second**: Control flow analysis is high-value. `any` behavior in narrowing is specific and counter-intuitive.
+
+**Approach**:
+- Modify `src/solver/narrowing.rs`
+- Review `narrow_by_typeof` implementation
+- Ensure `any` narrows to the specific type matching `tsc` behavior
+
+**Files**: `src/solver/narrowing.rs`
+
+---
+
+### Priority 3: Generic Fallback (1 test)
+**Tests**:
+- `test_generic_parameter_without_constraint_fallback_to_unknown`
+
+**Goal**: Ensure unconstrained generics default to `unknown` when inference fails.
+
+**Why Third**: Correct inference is crucial but this is a specific edge case.
+
+**Approach**:
+- Likely involves `src/solver/infer.rs`
+- Ensure type parameters with no inference candidates fall back to `unknown`
+
+**Files**: `src/solver/infer.rs`
+
+---
+
+### Priority 4: Keyof Union (1 test)
+**Tests**:
+- `test_keyof_union_string_index_and_literal_narrows`
+
+**Goal**: Fix `keyof` distribution over unions with index signatures.
+
+**Why Last**: Involves complex type algebra (`keyof (A | B)`) but less fundamental than basic structural assignment.
+
+**Approach**:
+- Likely involves `src/solver/operations.rs`
+- Ensure `keyof` distributes: `keyof (A | B) = (keyof A) & (keyof B)`
+- Handle interaction between index signatures and string literals
+
+**Files**: `src/solver/operations.rs`
+
+---
 
 ## Current Status (5 Failing Tests Remaining)
 
