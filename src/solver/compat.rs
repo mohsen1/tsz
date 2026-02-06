@@ -1386,6 +1386,25 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                         // E.A -> E.B should fail even if they have the same value
                         Some(false)
                     }
+                    (Some(sp), None) => {
+                        // Source is a member, target doesn't have a parent (target is not a member)
+                        // Check if target is the parent enum type
+                        // First, check if target itself is the enum type by DefId
+                        if let Some((t_def, _)) = target_enum {
+                            if t_def == sp {
+                                // Target is the parent enum of source member
+                                // Allow member to parent enum assignment (E.A -> E)
+                                return Some(true);
+                            }
+                        }
+                        // Also check using is_enum_type (handles union representations)
+                        if self.subtype.resolver.is_enum_type(target, self.interner) {
+                            // Target is an enum type, but we need to verify it's the PARENT enum
+                            // For now, allow structural check which will verify compatibility
+                            return None;
+                        }
+                        Some(false)
+                    }
                     _ => {
                         // Different parents (or one/both are types, not members)
                         // Nominal mismatch: EnumA.X is not assignable to EnumB

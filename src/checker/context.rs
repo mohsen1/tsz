@@ -2176,6 +2176,25 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
         self.definition_store.get_kind(def_id)
     }
 
+    /// Get the DefId for a SymbolRef (Phase 4.2: Ref -> Lazy migration).
+    ///
+    /// This enables converting SymbolRef to DefId by looking up the symbol_to_def mapping.
+    /// This is the reverse of def_to_symbol_id.
+    ///
+    /// Returns None if the SymbolRef doesn't have a corresponding DefId.
+    fn symbol_to_def_id(
+        &self,
+        symbol: crate::solver::types::SymbolRef,
+    ) -> Option<crate::solver::DefId> {
+        use crate::binder::SymbolId;
+
+        // Convert SymbolRef to SymbolId
+        let sym_id = SymbolId(symbol.0);
+
+        // Look up in the symbol_to_def mapping (populated by get_or_create_def_id)
+        self.symbol_to_def.borrow().get(&sym_id).copied()
+    }
+
     /// Check if a TypeId represents a full Enum type (not a specific member).
     ///
     /// Used to distinguish between:
@@ -2295,9 +2314,8 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
 
         // Convert parent SymbolId back to DefId
         // The parent should have a DefId from when it was bound
-        if let Some(parent_def_id) =
-            self.symbol_to_def_id(crate::solver::SymbolRef(parent_sym_id.0))
-        {
+        let parent_ref = crate::solver::SymbolRef(parent_sym_id.0);
+        if let Some(parent_def_id) = self.symbol_to_def_id(parent_ref) {
             return Some(parent_def_id);
         }
 

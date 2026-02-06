@@ -521,6 +521,7 @@ impl BinderState {
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
                         sym.value_declaration = member_idx;
                         sym.declarations.push(member_idx);
+                        sym.parent = enum_sym_id; // Set parent to the enum symbol
                     }
                     self.current_scope.set(member_name.to_string(), sym_id);
                     self.node_symbols.insert(member_idx.0, sym_id);
