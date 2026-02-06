@@ -624,6 +624,8 @@ pub const MAX_IN_PROGRESS_PAIRS: usize = limits::MAX_IN_PROGRESS_PAIRS as usize;
 ///
 /// - **Binary Relation**: Subtyping is binary (A <: B), but visitor is unary (visits A).
 ///   The target type B is stored as a field.
+/// - **Double Dispatch**: Many visitor methods must inspect both source and target kinds
+///   to determine which checker method to call (e.g., tuple-to-tuple vs tuple-to-array).
 /// - **Coinduction**: All recursive checks MUST go through `self.checker.check_subtype()`
 ///   to ensure cycle detection works correctly.
 /// - **Pre-checks**: Special cases (apparent shapes, target-is-union) remain in
@@ -631,6 +633,9 @@ pub const MAX_IN_PROGRESS_PAIRS: usize = limits::MAX_IN_PROGRESS_PAIRS as usize;
 pub struct SubtypeVisitor<'a, 'b, R: TypeResolver> {
     /// Reference to the parent checker (for recursive checks and state).
     pub checker: &'a mut SubtypeChecker<'b, R>,
+    /// The source type being visited (the "A" in "A <: B").
+    /// Stored because some delegation methods need the full TypeId, not just unpacked data.
+    pub source: TypeId,
     /// The target type we're checking against (the "B" in "A <: B").
     pub target: TypeId,
 }
@@ -677,9 +682,23 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         }
     }
 
-    fn visit_tuple(&mut self, _list_id: u32) -> Self::Output {
-        // TODO: Implement tuple subtype checking in Task #48.2
-        SubtypeResult::False
+    fn visit_tuple(&mut self, list_id: u32) -> Self::Output {
+        // Double dispatch: check target type to determine which helper to call
+        // Tuple <: Tuple, Tuple <: Array, Array <: Tuple
+        let s_tuple_id = TupleListId(list_id);
+
+        if let Some(t_list) = tuple_list_id(self.checker.interner, self.target) {
+            // Tuple <: Tuple
+            let s_elems = self.checker.interner.tuple_list(s_tuple_id);
+            let t_elems = self.checker.interner.tuple_list(t_list);
+            self.checker.check_tuple_subtype(&s_elems, &t_elems)
+        } else if let Some(t_elem) = array_element_type(self.checker.interner, self.target) {
+            // Tuple <: Array
+            self.checker
+                .check_tuple_to_array_subtype(s_tuple_id, t_elem)
+        } else {
+            SubtypeResult::False
+        }
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
@@ -701,6 +720,51 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 return SubtypeResult::True;
             }
         }
+
+        // Special case: If target is an object type, check if MERGED properties satisfy it
+        // This handles cases like: { a: string } & { b: number } <: { a: string; b: number }
+        if object_shape_id(self.checker.interner, self.target).is_some()
+            || object_with_index_shape_id(self.checker.interner, self.target).is_some()
+        {
+            use crate::solver::objects::{PropertyCollectionResult, collect_properties};
+
+            match collect_properties(self.source, self.checker.interner, self.checker.resolver) {
+                PropertyCollectionResult::Any => {
+                    // any & T = any, so check if any is subtype of target
+                    return self.checker.check_subtype(TypeId::ANY, self.target);
+                }
+                PropertyCollectionResult::NonObject => {
+                    // No object properties to check
+                }
+                PropertyCollectionResult::Properties {
+                    properties,
+                    string_index,
+                    number_index,
+                } => {
+                    if !properties.is_empty() || string_index.is_some() || number_index.is_some() {
+                        let merged_type = if string_index.is_some() || number_index.is_some() {
+                            self.checker.interner.object_with_index(ObjectShape {
+                                flags: ObjectFlags::empty(),
+                                properties,
+                                string_index,
+                                number_index,
+                                symbol: None,
+                            })
+                        } else {
+                            self.checker.interner.object(properties)
+                        };
+                        if self
+                            .checker
+                            .check_subtype(merged_type, self.target)
+                            .is_true()
+                        {
+                            return SubtypeResult::True;
+                        }
+                    }
+                }
+            }
+        }
+
         SubtypeResult::False
     }
 
@@ -714,15 +778,56 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         SubtypeResult::True
     }
 
-    fn visit_lazy(&mut self, _def_id: u32) -> Self::Output {
-        // Lazy types are handled as pre-checks in check_subtype_inner
-        // For now, fall through to default (False)
-        SubtypeResult::False
+    fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+        // Resolve the Lazy(DefId) type using the resolver
+        let resolved = self
+            .checker
+            .resolver
+            .resolve_lazy(DefId(def_id), self.checker.interner)
+            .unwrap_or(self.source);
+
+        // If resolution succeeded and changed the type, restart the check
+        // This is critical for coinductive cycle detection to work correctly
+        if resolved != self.source {
+            self.checker.check_subtype(resolved, self.target)
+        } else {
+            // Resolution failed or returned the same type - fall through
+            SubtypeResult::False
+        }
+    }
+
+    fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
+        // Resolve the legacy Ref(SymbolRef) type using the resolver
+        let resolved = self
+            .checker
+            .resolver
+            .resolve_ref(SymbolRef(symbol_ref), self.checker.interner)
+            .unwrap_or(self.source);
+
+        // If resolution succeeded and changed the type, restart the check
+        // This is critical for coinductive cycle detection to work correctly
+        if resolved != self.source {
+            self.checker.check_subtype(resolved, self.target)
+        } else {
+            // Resolution failed or returned the same type - fall through
+            SubtypeResult::False
+        }
     }
 
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
-        // Readonly T <: T and T <: Readonly T
-        self.checker.check_subtype(inner_type, self.target)
+        // Readonly types have specific subtyping rules:
+        // - Readonly<T> <: Readonly<U> if T <: U
+        // - Readonly<T> is NOT assignable to mutable T (safety)
+        // - T <: Readonly<T> is allowed (can add readonly)
+
+        // If target is also Readonly, we can peel both and check inner types
+        if let Some(t_inner) = readonly_inner_type(self.checker.interner, self.target) {
+            return self.checker.check_subtype(inner_type, t_inner);
+        }
+
+        // If target is NOT Readonly (mutable), Readonly source cannot be assigned
+        // UNLESS target is any/unknown (handled by fast paths in check_subtype_inner)
+        SubtypeResult::False
     }
 
     fn visit_string_intrinsic(
@@ -734,36 +839,140 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         SubtypeResult::False
     }
 
-    fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> Self::Output {
-        // Enums are handled as pre-checks in check_subtype_inner
+    fn visit_enum(&mut self, def_id: u32, member_type: TypeId) -> Self::Output {
+        // Enums are nominal types - nominal identity matters for enum-to-enum
+        if let Some((t_def, _t_members)) = enum_components(self.checker.interner, self.target) {
+            // Enum to Enum: Nominal check - DefIds must match
+            return if DefId(def_id) == t_def {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        // Enum to non-Enum: Structural check on member type
+        // e.g., Enum(1, 2, 3) <: number
         self.checker.check_subtype(member_type, self.target)
     }
 
-    // Stub implementations for remaining variants
-    // These will be filled in as we refactor the check_subtype_inner logic
-    fn visit_object(&mut self, _shape_id: u32) -> Self::Output {
-        SubtypeResult::False
+    // Double dispatch implementations for structural types
+    // These check the target type to determine which helper method to call
+
+    fn visit_object(&mut self, shape_id: u32) -> Self::Output {
+        // Double dispatch: check target type to determine which helper to call
+        let s_shape = self.checker.interner.object_shape(ObjectShapeId(shape_id));
+
+        if let Some(t_shape_id) = object_shape_id(self.checker.interner, self.target) {
+            // Object <: Object
+            let t_shape = self.checker.interner.object_shape(t_shape_id);
+            self.checker
+                .check_object_subtype(&s_shape, Some(ObjectShapeId(shape_id)), &t_shape)
+        } else if let Some(t_shape_id) =
+            object_with_index_shape_id(self.checker.interner, self.target)
+        {
+            // Object <: ObjectWithIndex
+            let t_shape = self.checker.interner.object_shape(t_shape_id);
+            self.checker.check_object_to_indexed(
+                &s_shape.properties,
+                Some(ObjectShapeId(shape_id)),
+                &t_shape,
+            )
+        } else {
+            SubtypeResult::False
+        }
     }
-    fn visit_object_with_index(&mut self, _shape_id: u32) -> Self::Output {
-        SubtypeResult::False
+
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        // Double dispatch: check target type to determine which helper to call
+        let s_shape = self.checker.interner.object_shape(ObjectShapeId(shape_id));
+
+        if let Some(t_shape_id) = object_with_index_shape_id(self.checker.interner, self.target) {
+            // ObjectWithIndex <: ObjectWithIndex
+            let t_shape = self.checker.interner.object_shape(t_shape_id);
+            self.checker.check_object_with_index_subtype(
+                &s_shape,
+                Some(ObjectShapeId(shape_id)),
+                &t_shape,
+            )
+        } else if let Some(t_shape_id) = object_shape_id(self.checker.interner, self.target) {
+            // ObjectWithIndex <: Object
+            let t_shape = self.checker.interner.object_shape(t_shape_id);
+            self.checker.check_object_with_index_to_object(
+                &s_shape,
+                ObjectShapeId(shape_id),
+                &t_shape.properties,
+            )
+        } else {
+            SubtypeResult::False
+        }
     }
-    fn visit_function(&mut self, _shape_id: u32) -> Self::Output {
-        SubtypeResult::False
+    fn visit_function(&mut self, shape_id: u32) -> Self::Output {
+        // Double dispatch: check target type to determine which helper to call
+        if let Some(t_fn_id) = function_shape_id(self.checker.interner, self.target) {
+            // Function <: Function
+            let s_fn = self
+                .checker
+                .interner
+                .function_shape(FunctionShapeId(shape_id));
+            let t_fn = self.checker.interner.function_shape(t_fn_id);
+            self.checker.check_function_subtype(&s_fn, &t_fn)
+        } else if let Some(t_callable_id) = callable_shape_id(self.checker.interner, self.target) {
+            // Function <: Callable
+            self.checker
+                .check_function_to_callable_subtype(FunctionShapeId(shape_id), t_callable_id)
+        } else {
+            SubtypeResult::False
+        }
     }
-    fn visit_callable(&mut self, _shape_id: u32) -> Self::Output {
-        SubtypeResult::False
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        // Double dispatch: check target type to determine which helper to call
+        if let Some(t_callable_id) = callable_shape_id(self.checker.interner, self.target) {
+            // Callable <: Callable
+            let s_callable = self
+                .checker
+                .interner
+                .callable_shape(CallableShapeId(shape_id));
+            let t_callable = self.checker.interner.callable_shape(t_callable_id);
+            self.checker
+                .check_callable_subtype(&s_callable, &t_callable)
+        } else if let Some(t_fn_id) = function_shape_id(self.checker.interner, self.target) {
+            // Callable <: Function
+            self.checker
+                .check_callable_to_function_subtype(CallableShapeId(shape_id), t_fn_id)
+        } else {
+            SubtypeResult::False
+        }
     }
     fn visit_bound_parameter(&mut self, _de_bruijn_index: u32) -> Self::Output {
         SubtypeResult::False
     }
-    fn visit_application(&mut self, _app_id: u32) -> Self::Output {
-        SubtypeResult::False
+    fn visit_application(&mut self, app_id: u32) -> Self::Output {
+        // Application types require the original source TypeId for proper expansion
+        self.checker.check_application_expansion_target(
+            self.source,
+            self.target,
+            TypeApplicationId(app_id),
+        )
     }
-    fn visit_conditional(&mut self, _cond_id: u32) -> Self::Output {
-        SubtypeResult::False
+    fn visit_conditional(&mut self, cond_id: u32) -> Self::Output {
+        // Conditional types require special handling
+        self.checker.conditional_branches_subtype(
+            self.checker
+                .interner
+                .conditional_type(ConditionalTypeId(cond_id))
+                .as_ref(),
+            self.target,
+        )
     }
-    fn visit_mapped(&mut self, _mapped_id: u32) -> Self::Output {
-        SubtypeResult::False
+
+    fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
+        // Mapped types require the original source TypeId for proper expansion
+        self.checker.check_mapped_expansion_target(
+            self.source,
+            self.target,
+            MappedTypeId(mapped_id),
+        )
     }
     fn visit_index_access(&mut self, _object_type: TypeId, _key_type: TypeId) -> Self::Output {
         SubtypeResult::False
