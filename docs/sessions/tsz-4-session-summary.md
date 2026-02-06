@@ -38,20 +38,31 @@ Session tsz-3 achieved **SOLVER COMPLETE** - 3544/3544 solver tests pass (100% p
 - ✅ flow_narrowing_applies_across_property_to_element_access
 - ✅ flow_narrowing_applies_across_element_to_property_access
 
-## Remaining Tasks
+## Next Priority (per Gemini)
 
-### Task #17: Fix enum type resolution and arithmetic
-**6 failing tests** related to enum handling.
+### Task #18: Fix index access type resolution 🔥 (NEXT)
+**6 failing tests:**
+- indexed_access_class_property_type
+- indexed_access_resolves_class_property_type
+- checker_lowers_element_access_string_index_signature
+- checker_lowers_element_access_number_index_signature
 
-### Task #18: Fix index access type resolution
-**6 failing tests** related to index signature resolution.
+**Gemini's Guidance:**
+- Logical continuity from Task #16 (flow narrowing)
+- Check if Checker is manually resolving properties instead of using `solver.evaluate_index_access()`
+- Focus: `src/checker/expr.rs` and `src/solver/evaluate.rs`
+- Remember: Checker is thin wrapper, Solver does type resolution
+
+### Task #17: Fix enum type resolution (SECONDARY)
+**6 failing tests** related to enum handling - likely quick wins from a single fix.
 
 ## Next Steps
 
-1. **Task #17**: Investigate enum type resolution failures
-2. **Task #18**: Fix index access type resolution
+1. **Task #18**: Audit check_element_access_expression for thin wrapper compliance
+2. Use Two-Question Rule: Ask Gemini for approach validation before implementing
+3. **Task #17**: Fix enum binary expression handling
 
 ## Success Criteria
 
 - All 33 remaining failing tests categorized and fixed
-- Flow narrowing works for all expression types
+- Checker properly delegates type resolution to Solver
