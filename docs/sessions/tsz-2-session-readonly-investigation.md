@@ -91,3 +91,76 @@ config.name = "error";    // Should emit TS2540 but doesn't
 - `check_readonly_assignment` in `state_checking.rs` - TS2540 checking
 - `property_is_readonly` in `operations_property.rs` - Readonly property lookup
 - `object_property_is_readonly` in `operations_property.rs` - Object shape readonly check
+
+---
+
+## Deep Investigation (2026-02-06 Continued)
+
+### Issue: Type Precedence - Object Literal Override Interface
+
+After extensive debugging with Gemini's guidance, identified the core issue:
+
+**Debug Output:**
+```
+declared_type=TypeId(494) (Some(Lazy(DefId(7)))), flow_type=TypeId(571) (Some(Object(ObjectShapeId(63))))
+```
+
+- `declared_type`: `Lazy(DefId(7))` - the interface `Config` with readonly properties
+- `flow_type`: `Object(ObjectShapeId(63))` - the object literal type WITHOUT readonly properties
+- The type being used for readonly checking: `Object(ObjectShapeId(64))` - ANOTHER object type
+- Property on shape 64: `readonly=false` (should be `true`)
+
+**Root Cause:**
+In `get_type_of_identifier` (type_computation_complex.rs), the fix only preserves:
+- `ReadonlyType` wrapper (for `readonly number[]` style)
+- `ObjectWithIndex` when `flow_type == ANY`
+
+For interface readonly properties:
+- The declared type is `Lazy(DefId)` - the interface
+- The flow type is `Object` - the object literal
+- The fix doesn't handle `Lazy` types, so `flow_type` is used
+- Result: readonly flags from interface are lost
+
+### Attempted Fixes:
+
+1. **Add TypeInterner override for `is_property_readonly`**
+   - Created override in `TypeInterner` impl to use `evaluate_type_with_options`
+   - This didn't help because the type is already resolved to `Object` before reaching `is_property_readonly`
+
+2. **Preserve `Lazy` types in type resolution**
+   - Tried to preserve `declared_type` when it's `Lazy`
+   - Result: Infinite recursion (Lazy → resolve → Lazy → resolve → ...)
+   - Reason: The `Lazy` type can't be resolved at that point in type checking
+
+3. **Resolve `Lazy` first, then check if interface**
+   - Tried calling `evaluate_type_with_options` on `Lazy` before checking
+   - Result: Returns same unresolved `Lazy` type
+   - Reason: Interface definition not available yet during type checking
+
+### Gemini's Analysis (Pro Model):
+
+**Key Insight:** This is a **fundamental architecture issue** that must be fixed.
+
+**The Real Problem:**
+- When `const x: MyInterface = { ... }` is declared:
+  - TypeScript: The type of `x` for subsequent usage IS `MyInterface`
+  - TSZ: The `flow_type` (Object Literal) overrides `declared_type` (Interface)
+
+**Required Fix:**
+1. **Fix type precedence in `src/checker/declarations.rs`**: Symbols MUST retain their declared interface type, not the initializer type
+2. **Fix recursion in `src/solver/subtype.rs`**: Add proper cycle detection for `Lazy` types
+3. **Object Literal is only for assignment check**: The literal type should be used for the initial assignability check, not for the symbol's type
+
+**Next Steps:**
+- Investigate `src/checker/declarations.rs` - ensure `register_symbol_type` uses the declared type
+- Add cycle detection in `src/solver/subtype.rs` for `Lazy` types before expanding
+- Use tracing to debug the recursion: `TSZ_LOG="wasm::solver::subtype=trace"`
+
+### Test Status:
+- ✅ test_readonly_array_element_assignment_2540 - PASS
+- ✅ test_readonly_property_assignment_2540 - PASS
+- ❌ test_readonly_element_access_assignment_2540 - FAIL (interface readonly property)
+- ❌ test_readonly_index_signature_element_access_assignment_2540 - FAIL (interface readonly index signature)
+- ❌ test_readonly_method_signature_assignment_2540 - FAIL (interface readonly method)
+
+Overall: 8273 tests passing, 39 failing, 158 ignored
