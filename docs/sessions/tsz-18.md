@@ -317,7 +317,26 @@ TypeKey::Lazy(def_id) => {
 
 **Committed**: `79892fdd6`
 
-**Status**: ✅ ARCHITECTURAL PROGRESS - Need deeper investigation of assignability checking
+**Status**: ✅ ARCHITECTURAL PROGRESS - Need deeper investigation of evaluation pipeline
+
+### 2026-02-06: Multiple Attempts at Indexed Access Fix
+
+**Attempt 1**: Added `visit_lazy` handler - resolved class but didn't perform index lookup
+**Attempt 2**: Fixed `visit_lazy` to use `evaluate_index_access` directly - still failing
+**Attempt 3**: Fixed `evaluate_type_with_options` to use `type_env` resolver - still failing
+
+**Test Still Failing**:
+- `type FooType = C["foo"]; let x: FooType = 3;`
+- Error: "Type 'number' is not assignable to type 'FooType'"
+
+**Issue**: The IndexAccess type is not being fully evaluated to a concrete type (number).
+- `evaluate_type` IS being called (per Gemini analysis)
+- But evaluation is not simplifying the IndexAccess type
+- May need to investigate `evaluate_type` dispatch logic in `src/solver/evaluate.rs`
+
+**Committed**: `958d20950`
+
+**Recommendation**: Consider switching to different failing tests that might be easier wins, or investigate SubtypeChecker's handling of unevaluated types.
 
 ## Next Steps (Revised Strategy)
 
