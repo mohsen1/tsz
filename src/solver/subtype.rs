@@ -1956,19 +1956,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_type_parameter_subtype(&s_info, target);
         }
 
-        if let Some(t_info) = type_param_info(self.interner, target) {
-            if let Some(constraint) = t_info.constraint {
-                // Special case: if source is EXACTLY the constraint, it's NOT assignable to T
-                // This prevents `constraint <: T` from being True (T is a type parameter)
-                // But structural subtypes of the constraint should still be assignable
-                if source == constraint {
-                    return SubtypeResult::False;
-                }
-                return self.check_subtype(source, constraint);
-            }
-            // Unconstrained type parameter acts like `unknown` (top type)
-            // Everything is assignable to an unconstrained type parameter
-            return SubtypeResult::True;
+        if let Some(_t_info) = type_param_info(self.interner, target) {
+            // A concrete type is never a subtype of an opaque type parameter.
+            // The type parameter T could be instantiated as any type satisfying its constraint,
+            // so we cannot guarantee that source <: T unless source is never/any (handled above).
+            //
+            // This is the correct TypeScript behavior:
+            // - "hello" is NOT assignable to T extends string (T could be "world")
+            // - { value: number } is NOT assignable to unconstrained T (T defaults to unknown)
+            //
+            // Note: When the type parameter is the SOURCE (e.g., T <: string), we check
+            // against its constraint. But as TARGET, we return False.
+            return SubtypeResult::False;
         }
 
         if let Some(s_kind) = intrinsic_kind(self.interner, source) {
