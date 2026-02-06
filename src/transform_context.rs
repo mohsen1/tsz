@@ -211,6 +211,31 @@ pub enum TransformDirective {
         template_node: NodeIndex,
     },
 
+    /// Substitute this with _this (lexical capture for arrow functions)
+    ///
+    /// When an arrow function captures `this`, all `this` references inside it
+    /// should be substituted with `_this` (the capture variable).
+    ///
+    /// ```typescript
+    /// class Foo {
+    ///   method() {
+    ///     // this -> _this
+    ///     () => this.x
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Becomes:
+    ///
+    /// ```javascript
+    /// var _this = this;
+    /// function () {
+    ///   // All this references become _this
+    ///   (function (_this) { return _this.x; })
+    /// }
+    /// ```
+    SubstituteThis,
+
     /// Module Wrapper: Wrap entire file for AMD/System/UMD
     ModuleWrapper {
         /// Module format (AMD, System, UMD)
