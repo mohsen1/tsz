@@ -3979,7 +3979,6 @@ fn test_abstract_class_in_local_scope_2511() {
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_static_member_suggestion_2662() {
     // Error 2662: Cannot find name 'foo'. Did you mean the static member 'C.foo'?
     use crate::parser::ParserState;
