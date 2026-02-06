@@ -16,7 +16,7 @@ use crate::solver::AssignabilityChecker;
 use crate::solver::TypeDatabase;
 use crate::solver::db::QueryDatabase;
 use crate::solver::def::DefId;
-use crate::solver::diagnostics::SubtypeFailureReason;
+use crate::solver::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
 use crate::solver::types::*;
 use crate::solver::utils;
 use crate::solver::visitor::{
@@ -1184,6 +1184,10 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// evaluated multiple times across different subtype checks.
     /// Key is (TypeId, no_unchecked_indexed_access) since that flag affects evaluation.
     pub(crate) eval_cache: FxHashMap<(TypeId, bool), TypeId>,
+    /// Optional tracer for collecting subtype failure diagnostics.
+    /// When `Some`, enables detailed failure reason collection for error messages.
+    /// When `None`, disables tracing for maximum performance (default).
+    pub tracer: Option<&'a mut dyn DynSubtypeTracer>,
 }
 
 /// Maximum total subtype checks allowed per SubtypeChecker instance.
@@ -1218,6 +1222,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             eval_cache: FxHashMap::default(),
+            tracer: None,
         }
     }
 }
@@ -1249,6 +1254,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             eval_cache: FxHashMap::default(),
+            tracer: None,
         }
     }
 
@@ -1270,6 +1276,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Configure how `any` is treated during subtype checks.
     pub fn with_any_propagation_mode(mut self, mode: AnyPropagationMode) -> Self {
         self.any_propagation = mode;
+        self
+    }
+
+    /// Set the tracer for collecting subtype failure diagnostics.
+    /// When set, enables detailed failure reason collection for error messages.
+    pub fn with_tracer(mut self, tracer: &'a mut dyn DynSubtypeTracer) -> Self {
+        self.tracer = Some(tracer);
         self
     }
 

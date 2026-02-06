@@ -79,6 +79,30 @@ pub trait SubtypeTracer {
     fn on_mismatch(&mut self, reason: impl FnOnce() -> SubtypeFailureReason) -> bool;
 }
 
+/// Object-safe version of SubtypeTracer for dynamic dispatch.
+///
+/// This trait is dyn-compatible and can be used as `&mut dyn DynSubtypeTracer`.
+/// It has a simpler signature that takes the reason directly rather than a closure.
+pub trait DynSubtypeTracer {
+    /// Called when a subtype mismatch is detected.
+    ///
+    /// Unlike `SubtypeTracer::on_mismatch`, this takes the reason directly
+    /// rather than a closure. This makes it object-safe (dyn-compatible).
+    ///
+    /// # Returns
+    ///
+    /// - `true` if checking should continue (for collecting more nested failures)
+    /// - `false` if checking should stop immediately (fast path)
+    fn on_mismatch_dyn(&mut self, reason: SubtypeFailureReason) -> bool;
+}
+
+/// Blanket implementation for all SubtypeTracer types.
+impl<T: SubtypeTracer> DynSubtypeTracer for T {
+    fn on_mismatch_dyn(&mut self, reason: SubtypeFailureReason) -> bool {
+        self.on_mismatch(|| reason)
+    }
+}
+
 /// Fast tracer that returns immediately on mismatch (zero-cost abstraction).
 ///
 /// This tracer is used for fast subtype checks where we only care about the
