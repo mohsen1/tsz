@@ -12,8 +12,9 @@ engine on top to match TypeScript behavior while preserving correctness where po
 > This project is not ready for general use yet.
 
 <!-- TS_VERSION_START -->
-
 Currently targeting `TypeScript`@`6.0.0-dev.20260116`
+<!-- TS_VERSION_END -->
+
 ### Type Checker
 
 To ensure tsz is a drop-in replacement for `tsc`, we run the official TypeScript conformance
@@ -21,7 +22,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [█████████░░░░░░░░░░░] 41.5% (5251/12661 tests)
+Progress: [██████████░░░░░░░░░░] 47.6% (6030/12661 tests)
 ```
 <!-- CONFORMANCE_END -->
 
