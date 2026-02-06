@@ -1665,15 +1665,15 @@ impl Server {
                     let kind = item
                         .map(|i| Self::completion_kind_to_str(i.kind))
                         .unwrap_or("property");
-                    let display_parts = if let Some(i) = item {
-                        if let Some(ref detail) = i.detail {
-                            serde_json::json!([{"text": detail, "kind": "text"}])
-                        } else {
-                            serde_json::json!([{"text": &name, "kind": "text"}])
-                        }
-                    } else {
-                        serde_json::json!([{"text": &name, "kind": "text"}])
-                    };
+                    let kind_modifiers =
+                        item.and_then(|i| i.kind_modifiers.as_deref()).unwrap_or("");
+                    let display_parts = Self::build_completion_display_parts(
+                        item,
+                        &name,
+                        &arena,
+                        &binder,
+                        &source_text,
+                    );
                     let documentation = item
                         .and_then(|i| i.documentation.as_ref())
                         .map(|doc| serde_json::json!([{"text": doc, "kind": "text"}]))
@@ -1681,7 +1681,7 @@ impl Server {
                     serde_json::json!({
                         "name": name,
                         "kind": kind,
-                        "kindModifiers": "",
+                        "kindModifiers": kind_modifiers,
                         "displayParts": display_parts,
                         "documentation": documentation,
                         "tags": [],
@@ -1693,6 +1693,332 @@ impl Server {
             Some(serde_json::json!(details))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    /// Build rich displayParts for a completion entry, matching TypeScript's format.
+    /// Generates structured parts like: class ClassName, var name: Type, function name(...), etc.
+    fn build_completion_display_parts(
+        item: Option<&wasm::lsp::completions::CompletionItem>,
+        name: &str,
+        arena: &wasm::parser::node::NodeArena,
+        binder: &wasm::binder::BinderState,
+        source_text: &str,
+    ) -> serde_json::Value {
+        use wasm::lsp::completions::CompletionItemKind;
+
+        let Some(item) = item else {
+            return serde_json::json!([{"text": name, "kind": "text"}]);
+        };
+
+        let mut parts: Vec<serde_json::Value> = Vec::new();
+
+        match item.kind {
+            CompletionItemKind::Class => {
+                parts.push(serde_json::json!({"text": "class", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "className"}));
+            }
+            CompletionItemKind::Interface => {
+                parts.push(serde_json::json!({"text": "interface", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "interfaceName"}));
+            }
+            CompletionItemKind::Enum => {
+                parts.push(serde_json::json!({"text": "enum", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "enumName"}));
+            }
+            CompletionItemKind::Module => {
+                parts.push(serde_json::json!({"text": "namespace", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "moduleName"}));
+            }
+            CompletionItemKind::TypeAlias => {
+                parts.push(serde_json::json!({"text": "type", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "aliasName"}));
+            }
+            CompletionItemKind::TypeParameter => {
+                parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": "type parameter", "kind": "text"}));
+                parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "typeParameterName"}));
+            }
+            CompletionItemKind::Function => {
+                parts.push(serde_json::json!({"text": "function", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "functionName"}));
+                Self::append_function_signature_from_source(
+                    &mut parts,
+                    name,
+                    binder,
+                    arena,
+                    source_text,
+                );
+            }
+            CompletionItemKind::Method => {
+                parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": "method", "kind": "text"}));
+                parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "methodName"}));
+            }
+            CompletionItemKind::Property => {
+                parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": "property", "kind": "text"}));
+                parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "propertyName"}));
+                Self::append_type_annotation_from_source(
+                    &mut parts,
+                    name,
+                    binder,
+                    arena,
+                    source_text,
+                );
+            }
+            CompletionItemKind::Variable | CompletionItemKind::Parameter => {
+                if item.kind == CompletionItemKind::Parameter {
+                    parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                    parts.push(serde_json::json!({"text": "parameter", "kind": "text"}));
+                    parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": name, "kind": "parameterName"}));
+                } else {
+                    let keyword =
+                        Self::get_var_keyword_from_source(name, binder, arena, source_text)
+                            .unwrap_or_else(|| {
+                                if let Some(ref detail) = item.detail {
+                                    match detail.as_str() {
+                                        "var" => "var",
+                                        _ => "let",
+                                    }
+                                } else {
+                                    "var"
+                                }
+                            });
+                    parts.push(serde_json::json!({"text": keyword, "kind": "keyword"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": name, "kind": "localName"}));
+                }
+                Self::append_type_annotation_from_source(
+                    &mut parts,
+                    name,
+                    binder,
+                    arena,
+                    source_text,
+                );
+            }
+            CompletionItemKind::Keyword => {
+                parts.push(serde_json::json!({"text": name, "kind": "keyword"}));
+            }
+            CompletionItemKind::Constructor => {
+                parts.push(serde_json::json!({"text": "constructor", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "className"}));
+            }
+        }
+
+        serde_json::json!(parts)
+    }
+
+    /// Determine var/let/const from the declaration source text.
+    fn get_var_keyword_from_source(
+        name: &str,
+        binder: &wasm::binder::BinderState,
+        arena: &wasm::parser::node::NodeArena,
+        source_text: &str,
+    ) -> Option<&'static str> {
+        use wasm::parser::syntax_kind_ext;
+
+        let symbol_id = binder.file_locals.get(name)?;
+        let sym = binder.symbols.get(symbol_id)?;
+        let decl = if !sym.value_declaration.is_none() {
+            sym.value_declaration
+        } else {
+            *sym.declarations.first()?
+        };
+        let node = arena.get(decl)?;
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        // Walk up to VariableStatement to find the keyword
+        let ext = arena.get_extended(decl)?;
+        let parent = ext.parent;
+        let parent_node = arena.get(parent)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return None;
+        }
+        let gp_ext = arena.get_extended(parent)?;
+        let gp = gp_ext.parent;
+        let gp_node = arena.get(gp)?;
+        if gp_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return None;
+        }
+        // Read the first keyword from the statement text
+        let start = gp_node.pos as usize;
+        let end = gp_node.end.min(source_text.len() as u32) as usize;
+        if start >= end {
+            return None;
+        }
+        let stmt_text = source_text[start..end].trim_start();
+        if stmt_text.starts_with("const ") || stmt_text.starts_with("const\t") {
+            Some("const")
+        } else if stmt_text.starts_with("let ") || stmt_text.starts_with("let\t") {
+            Some("let")
+        } else if stmt_text.starts_with("var ") || stmt_text.starts_with("var\t") {
+            Some("var")
+        } else {
+            None
+        }
+    }
+
+    /// Extract function signature from source text and append as displayParts.
+    fn append_function_signature_from_source(
+        parts: &mut Vec<serde_json::Value>,
+        name: &str,
+        binder: &wasm::binder::BinderState,
+        arena: &wasm::parser::node::NodeArena,
+        source_text: &str,
+    ) {
+        let decl_text = binder.file_locals.get(name).and_then(|sid| {
+            let sym = binder.symbols.get(sid)?;
+            let decl = if !sym.value_declaration.is_none() {
+                sym.value_declaration
+            } else {
+                *sym.declarations.first()?
+            };
+            let node = arena.get(decl)?;
+            let start = node.pos as usize;
+            let end = node.end.min(source_text.len() as u32) as usize;
+            if start < end {
+                Some(&source_text[start..end])
+            } else {
+                None
+            }
+        });
+
+        if let Some(text) = decl_text {
+            if let Some(open) = text.find('(') {
+                let mut depth = 0;
+                let mut close = None;
+                for (i, ch) in text[open..].char_indices() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close = Some(open + i);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(close_pos) = close {
+                    let params_text = &text[open + 1..close_pos];
+                    parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                    let params: Vec<&str> = if params_text.trim().is_empty() {
+                        vec![]
+                    } else {
+                        params_text.split(',').collect()
+                    };
+                    for (i, param) in params.iter().enumerate() {
+                        if i > 0 {
+                            parts.push(serde_json::json!({"text": ",", "kind": "punctuation"}));
+                            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                        }
+                        let param = param.trim();
+                        if let Some(colon_pos) = param.find(':') {
+                            let pname = param[..colon_pos].trim();
+                            let ptype = param[colon_pos + 1..].trim();
+                            parts.push(serde_json::json!({"text": pname, "kind": "parameterName"}));
+                            parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                            parts.push(serde_json::json!({"text": ptype, "kind": "keyword"}));
+                        } else {
+                            parts.push(serde_json::json!({"text": param, "kind": "parameterName"}));
+                        }
+                    }
+                    parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+
+                    let after_close = text[close_pos + 1..].trim_start();
+                    if let Some(rest) = after_close.strip_prefix(':') {
+                        let ret_type = rest.trim_start();
+                        let ret_type = ret_type
+                            .split(|c: char| c == '{' || c == '\n')
+                            .next()
+                            .unwrap_or("")
+                            .trim();
+                        if !ret_type.is_empty() {
+                            parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                            parts.push(serde_json::json!({"text": ret_type, "kind": "keyword"}));
+                        }
+                    } else {
+                        parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                        parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                        parts.push(serde_json::json!({"text": "void", "kind": "keyword"}));
+                    }
+                    return;
+                }
+            }
+        }
+
+        // Fallback: empty parens
+        parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+        parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+        parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+        parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+        parts.push(serde_json::json!({"text": "void", "kind": "keyword"}));
+    }
+
+    /// Extract type annotation from source text and append as displayParts.
+    fn append_type_annotation_from_source(
+        parts: &mut Vec<serde_json::Value>,
+        name: &str,
+        binder: &wasm::binder::BinderState,
+        arena: &wasm::parser::node::NodeArena,
+        source_text: &str,
+    ) {
+        let decl_text = binder.file_locals.get(name).and_then(|sid| {
+            let sym = binder.symbols.get(sid)?;
+            let decl = if !sym.value_declaration.is_none() {
+                sym.value_declaration
+            } else {
+                *sym.declarations.first()?
+            };
+            let node = arena.get(decl)?;
+            let start = node.pos as usize;
+            let end = node.end.min(source_text.len() as u32) as usize;
+            if start < end {
+                Some(&source_text[start..end])
+            } else {
+                None
+            }
+        });
+
+        if let Some(text) = decl_text {
+            // Find the name, then look for : after it
+            if let Some(name_pos) = text.find(name) {
+                let after_name = &text[name_pos + name.len()..];
+                let after_name = after_name.trim_start();
+                if let Some(rest) = after_name.strip_prefix(':') {
+                    let type_text = rest.trim_start();
+                    let type_text = type_text
+                        .split(|c: char| c == '=' || c == ';' || c == '\n')
+                        .next()
+                        .unwrap_or("")
+                        .trim();
+                    if !type_text.is_empty() {
+                        parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                        parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                        parts.push(serde_json::json!({"text": type_text, "kind": "keyword"}));
+                    }
+                }
+            }
+        }
     }
 
     fn handle_signature_help(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
