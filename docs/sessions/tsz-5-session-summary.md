@@ -123,7 +123,93 @@ Per Gemini's recommendation, this session focuses on:
 
 **Commit:** a399321d7 "feat(tszz-11): fix enum member-to-parent assignability"
 
+## Progress (2026-02-06 - Session Continuation)
+
+**Major Achievements:**
+- Fixed enum type detection by implementing `is_user_enum_def` method
+- Changed CompatChecker to use CheckerContext instead of TypeEnvironment
+- Added `register_resolved_type` call for enum type definitions
+- Reduced enum test failures from 10 to 3
+- Overall: 178 → 185 passing enum tests
+
+**New Implementation:**
+1. **TypeResolver trait extension** (`src/solver/subtype.rs`):
+   - Added `is_user_enum_def(def_id)` method to distinguish user enums from intrinsics
+   - Implemented in CheckerContext using symbol flags
+   - Implemented in TypeEnvironment (returns false as default)
+
+2. **Enum type registration** (`src/checker/state_type_analysis.rs`):
+   - Added `register_resolved_type` call after enum type creation
+   - This populates DefId <-> SymbolId mapping for type resolution
+
+3. **Assignability checker fix** (`src/checker/assignability_checker.rs`):
+   - Changed from `&*env` (TypeEnvironment) to `&self.ctx` (CheckerContext)
+   - Enables access to symbol information for enum type detection
+
+4. **Symbol flag checking** (`src/checker/context.rs`):
+   - `is_user_enum_def` checks `symbol.flags & ENUM` but not `ENUM_MEMBER`
+   - Also handles enum members by checking parent symbol flags
+
+**Fixed Tests:**
+- ✅ test_number_to_numeric_enum_type
+- ✅ test_number_literal_to_numeric_enum_type
+- ✅ test_numeric_enum_number_bidirectional
+- ✅ test_numeric_enum_open_and_nominal_assignability
+- ✅ test_cross_enum_nominal_incompatibility
+- ✅ test_string_enum_cross_incompatibility
+- ✅ test_enum_member_to_whole_enum
+- ✅ test_string_enum_not_to_string
+
+**Still Failing (3 tests):**
+- ❌ test_string_enum_not_assignable_to_string (TypeId caching issue)
+- ❌ test_number_to_numeric_enum_member (False negative - expected 1 error, got 0)
+- ❌ solver::enum_nominality::test_enum_nominal_typing_same_enum (Solver test)
+
+**Current Status:**
+- Checker: 185 passed, **3 failed**, 2 ignored (enum tests)
+- Overall significant progress on Task #17
+
+**Commit:** a31a97495 "feat(tszz-11): improve enum type detection with symbol flag checking"
+
+## Investigation: TypeId Collision Bug (test_string_enum_not_assignable_to_string)
+
+**Issue:**
+- TypeId(102) is being detected as enum S (DefId 1) when it should be string type
+- TypeId::STRING = TypeId(10) is correctly detected as intrinsic
+- The first assignability check uses TypeId(102) as target (fails)
+- The second check uses TypeId(10) as target (correct but too late)
+
+**Test code:**
+```typescript
+enum S { A = "a", B = "b" }
+let s: S = S.A;
+let str: string = s;  // Expected: NO error (string enum assignable to string)
+```
+
+**Error:**
+- "Type 'A' is not assignable to type 'S'" at start 63
+- This suggests the type of variable `str` is incorrectly set to enum S instead of string
+
+**Debug Output:**
+```
+DEBUG enum_assignability: source=TypeId(688), target=TypeId(102), source_def=Some(DefId(2)), target_def=Some(DefId(1))
+```
+- source = TypeId(688) with DefId(2) = enum member S.A
+- target = TypeId(102) with DefId(1) = enum S (WRONG - should be TypeId(10) = string)
+
+**Root Cause Hypothesis:**
+1. The type annotation `string` is being incorrectly resolved to enum S type
+2. OR the type of `str` variable is being incorrectly cached before assignment
+3. TypeId(102) might be created in `state_type_analysis.rs` when resolving the enum
+
+**Next Investigation Steps:**
+1. Trace where TypeId(102) is created (add logging to type interner)
+2. Check if `get_or_infer_type_of_node` returns wrong type for `str` variable declaration
+3. Verify that type annotation resolution returns TypeId::STRING (10) not TypeId(102)
+
 ## Next Steps
 
-1. **Task #17**: Investigate remaining 5 enum test failures (numeric enum bidirectional, string enum opacity)
-2. **Task #18**: Deep dive into index signature lowering with tracing
+**Recommended Approach:**
+1. Investigate TypeId collision first (highest priority - could cause non-deterministic bugs)
+2. Fix test_number_to_numeric_enum_member (likely small logic gap in enum member vs whole enum)
+3. Move to Task #18 (Index Signatures) after Task #17 is complete
