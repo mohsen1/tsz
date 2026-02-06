@@ -82,7 +82,8 @@ return result_type;
 
 **Start**: 8247 passing, 53 failing
 **End**: 8249 passing, 51 failing
-**Result**: +2 tests fixed
+**Result**: +2 tests fixed (index signature tests now passing)
+**Committed**: `b88bfeef4`
 
 ## Changes Made
 
