@@ -12,13 +12,13 @@
 //! - any in function signatures
 //! - any with strict mode pragmas
 
-use tsz_binder::BinderState;
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use crate::checker::context::CheckerOptions;
+use crate::checker::state::CheckerState;
 use crate::test_fixtures::TestContext;
 use std::sync::Arc;
+use tsz_binder::BinderState;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
 
 /// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
 const GLOBAL_TYPE_MOCKS: &str = r#"
@@ -55,10 +55,10 @@ fn test_no_errors(source: &str) {
 
     // Set lib contexts for global symbol resolution
     if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::context::LibContext> = ctx
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
             .lib_files
             .iter()
-            .map(|lib| crate::context::LibContext {
+            .map(|lib| crate::checker::context::LibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })
@@ -104,10 +104,10 @@ fn test_expect_error(source: &str, expected_error_substring: &str) {
 
     // Set lib contexts for global symbol resolution
     if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::context::LibContext> = ctx
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
             .lib_files
             .iter()
-            .map(|lib| crate::context::LibContext {
+            .map(|lib| crate::checker::context::LibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })

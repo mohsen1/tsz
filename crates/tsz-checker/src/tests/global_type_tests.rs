@@ -8,16 +8,16 @@
 
 #![allow(clippy::print_stderr)]
 
+use crate::checker::context::CheckerOptions;
+use crate::checker::state::CheckerState;
+use crate::test_fixtures::TestContext;
 use tsz_binder::BinderState;
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
-use crate::test_fixtures::TestContext;
 
 /// Helper function to create a checker without lib.d.ts and check source code.
 /// This creates the checker with the parser's arena directly to ensure proper node resolution.
-fn check_without_lib(source: &str) -> Vec<crate::types::Diagnostic> {
+fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     check_without_lib_with_options(source, CheckerOptions::default())
 }
 
@@ -25,7 +25,7 @@ fn check_without_lib(source: &str) -> Vec<crate::types::Diagnostic> {
 fn check_without_lib_with_options(
     source: &str,
     options: CheckerOptions,
-) -> Vec<crate::types::Diagnostic> {
+) -> Vec<crate::checker::types::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -223,7 +223,7 @@ const r = new Promise<number>((resolve) => resolve(1));
 
 /// Helper function to create a checker WITH lib.d.ts and check source code.
 /// This creates the checker with the parser's arena directly and loads lib files.
-fn check_with_lib(source: &str) -> Vec<crate::types::Diagnostic> {
+fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     use std::sync::Arc;
 
     let ctx = TestContext::new(); // This loads lib files
@@ -254,10 +254,10 @@ fn check_with_lib(source: &str) -> Vec<crate::types::Diagnostic> {
 
     // Set lib contexts for global symbol resolution
     if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::context::LibContext> = ctx
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
             .lib_files
             .iter()
-            .map(|lib| crate::context::LibContext {
+            .map(|lib| crate::checker::context::LibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })
@@ -385,7 +385,7 @@ class C {
 fn test_decorator_ts2318_with_lib_contexts() {
     // Simulate the multi-file test: a.ts has core interfaces, b.ts has decorated class
     // This tests that lib_contexts don't wrongly suppress the TS2318 error
-    use crate::context::LibContext;
+    use crate::checker::context::LibContext;
     use std::sync::Arc;
 
     let options = CheckerOptions {
