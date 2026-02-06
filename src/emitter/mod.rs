@@ -178,6 +178,7 @@ enum EmitDirective {
     ES5TemplateLiteral,
     SubstituteThis,
     SubstituteArguments,
+    ES5SuperCall,
     ModuleWrapper {
         format: crate::transform_context::ModuleFormat,
         dependencies: Arc<[String]>,
@@ -499,6 +500,7 @@ impl<'a> Printer<'a> {
             TransformDirective::ES5TemplateLiteral { .. } => EmitDirective::ES5TemplateLiteral,
             TransformDirective::SubstituteThis => EmitDirective::SubstituteThis,
             TransformDirective::SubstituteArguments => EmitDirective::SubstituteArguments,
+            TransformDirective::ES5SuperCall => EmitDirective::ES5SuperCall,
             TransformDirective::ModuleWrapper {
                 format,
                 dependencies,
@@ -748,6 +750,11 @@ impl<'a> Printer<'a> {
             EmitDirective::SubstituteArguments => {
                 // Substitute 'arguments' with '_arguments' for lexical capture
                 self.write("_arguments");
+            }
+
+            EmitDirective::ES5SuperCall => {
+                // Transform super(...) to _super.call(this, ...)
+                self.emit_super_call_es5(node);
             }
 
             EmitDirective::ModuleWrapper {
@@ -1086,6 +1093,10 @@ impl<'a> Printer<'a> {
                 // Substitute 'arguments' with '_arguments' for lexical capture
                 self.write("_arguments");
             }
+            EmitDirective::ES5SuperCall => {
+                // Transform super(...) to _super.call(this, ...)
+                self.emit_super_call_es5(node);
+            }
             EmitDirective::ModuleWrapper {
                 format,
                 dependencies,
@@ -1115,6 +1126,33 @@ impl<'a> Printer<'a> {
         } else {
             self.emit_chained_directive(node, idx, directives, index - 1);
         }
+    }
+
+    /// Emit ES5 super call: transform super(...) to _super.call(this, ...)
+    fn emit_super_call_es5(&mut self, node: &Node) {
+        let Some(call) = self.arena.get_call_expr(node) else {
+            return;
+        };
+
+        // Emit _super.call(this
+        self.write("_super.call(this");
+
+        // Emit arguments if any
+        if let Some(ref args) = call.arguments {
+            if !args.nodes.is_empty() {
+                self.write(", ");
+                // Emit arguments separated by commas
+                for (i, &arg_idx) in args.nodes.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.emit(arg_idx);
+                }
+            }
+        }
+
+        // Close the call
+        self.write(")");
     }
 
     /// Emit a node using default logic (no transforms).

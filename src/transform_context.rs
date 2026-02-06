@@ -258,6 +258,29 @@ pub enum TransformDirective {
     /// ```
     SubstituteArguments,
 
+    /// ES5 Super Call: Transform super(...args) to _super.call(this, ...args)
+    ///
+    /// ```typescript
+    /// class Foo extends Bar {
+    ///   constructor(x) {
+    ///     super(x);
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Becomes:
+    ///
+    /// ```javascript
+    /// var Foo = /** @class */ (function (_super) {
+    ///   __extends(Foo, _super);
+    ///   function Foo(x) {
+    ///     _super.call(this, x);
+    ///   }
+    ///   return Foo;
+    /// }(Bar));
+    /// ```
+    ES5SuperCall,
+
     /// Module Wrapper: Wrap entire file for AMD/System/UMD
     ModuleWrapper {
         /// Module format (AMD, System, UMD)
