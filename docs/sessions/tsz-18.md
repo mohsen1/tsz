@@ -1,10 +1,10 @@
 # Session TSZ-18: Conformance Testing & Bug Fixing
 
 **Started**: 2026-02-05
-**Status**: ✅ COMPLETED (Bug #1 Fixed)
+**Status**: ✅ COMPLETED (Bugs #1-3 Fixed, #4 Investigated)
 **Focus**: Find and fix actual bugs in implemented features through focused testing
 
-**Last Updated**: 2026-02-06 - **FIXED Bug #1: Key Remapping with conditionals**
+**Last Updated**: 2026-02-06 - **Bug #4 investigated (complex, deferred to future session)**
 
 ## Problem Statement
 
@@ -693,6 +693,54 @@ let w: WithoutAge = { name: "Alice" }; // ✅ Now works! (was error before)
 **Committed**: `261a03c43`
 
 **Status**: ✅ **Bug #1 FIXED!** Key remapping with conditionals now works correctly.
+
+### 2026-02-06: Bug #4 Investigation (Recursive Mapped Types) - Deferred
+
+**Bug**: Recursive mapped types with arrays don't work correctly in tsz.
+
+**Test Case**:
+```typescript
+type DeepPartial<T> = {
+    [P in keyof T]?: DeepPartial<T[P]>;
+};
+
+interface Data {
+    items: { name: string }[];
+}
+
+let test: DeepPartial<Data> = {
+    items: [{ name: "Alice" }]
+};
+```
+
+**Behavior**:
+- **tsc**: Accepts (correct)
+- **tsz**: Error - "not assignable to DeepPartial<Data>"
+
+**Even simpler case fails**:
+```typescript
+type MyPartial<T> = {
+    [P in keyof T]?: T[P];
+};
+
+let x: MyPartial<number[]> = [1, 2, 3];
+```
+
+**Investigation Findings**:
+1. The issue is in `evaluate_mapped_array` (src/solver/evaluate_rules/mapped.rs:639)
+2. The `element_type` parameter is marked as `_element_type` (ignored)
+3. The function substitutes `P -> number` but doesn't properly handle the indexed access `T[P]`
+4. The function returns `TypeId::Array(...)` but the element mapping may not be applying recursively
+
+**Why This Is Complex**:
+- `DeepPartial<Array<T>>` needs to map to `Array<DeepPartial<T>>`
+- The template `DeepPartial<T[P]>` contains an indexed access that needs special handling
+- When `P = number` (for array mapping), `T[P]` should resolve to the array element type
+- Then `DeepPartial<element_type>` needs to be evaluated recursively
+
+**Status**: Deferred to future session - requires deep investigation of indexed access resolution in mapped type templates.
+
+**Recommendation**: This bug blocks a fundamental TypeScript utility type. It should be prioritized in the next session focused on mapped types.
 
 ## Dependencies
 
