@@ -2775,6 +2775,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.downlevel_iteration {
         options.printer.downlevel_iteration = true;
     }
+    if args.no_emit_helpers {
+        options.printer.no_emit_helpers = true;
+    }
     if args.target.is_some() && options.lib_is_default && !options.checker.no_lib {
         options.lib_files = resolve_default_lib_files(options.printer.target)?;
     }

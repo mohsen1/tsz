@@ -1894,11 +1894,13 @@ impl<'a> Printer<'a> {
 
         let has_es5_transforms = self.has_es5_transforms();
 
-        // Emit all needed helpers
-        let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
-        if !helpers_code.is_empty() {
-            self.write(&helpers_code);
-            // emit_helpers() already adds newlines, no need to add more
+        // Emit all needed helpers (unless no_emit_helpers is set)
+        if !self.ctx.options.no_emit_helpers {
+            let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
+            if !helpers_code.is_empty() {
+                self.write(&helpers_code);
+                // emit_helpers() already adds newlines, no need to add more
+            }
         }
 
         if has_es5_transforms && helpers.make_template_object {
