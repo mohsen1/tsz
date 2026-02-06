@@ -1769,60 +1769,18 @@ impl<'a> Printer<'a> {
 
         // Emit runtime helpers (must come BEFORE __esModule marker)
         // Order: "use strict" → helpers → __esModule → exports init
-        let mut helpers = crate::transforms::helpers::HelpersNeeded::default();
 
-        // Detect CommonJS import/export helpers
-        if self.ctx.is_commonjs() {
-            self.detect_commonjs_helpers(&source.statements, &mut helpers);
-        }
+        // Use helpers from TransformContext (populated during lowering pass)
+        // This eliminates O(N) arena scans - all helpers are detected in Phase 1
+        let helpers = if self.transforms.helpers_populated() {
+            self.transforms.helpers().clone()
+        } else {
+            // Fallback for non-transforming emits (should be rare)
+            // In normal operation, LoweringPass always marks helpers_populated = true
+            crate::transforms::helpers::HelpersNeeded::default()
+        };
 
         let has_es5_transforms = self.has_es5_transforms();
-        if has_es5_transforms {
-            if self.transforms.helpers_populated() {
-                let es5_helpers = self.transforms.helpers();
-                helpers.extends |= es5_helpers.extends;
-                helpers.values |= es5_helpers.values;
-                helpers.rest |= es5_helpers.rest;
-                helpers.awaiter |= es5_helpers.awaiter;
-                helpers.generator |= es5_helpers.generator;
-                helpers.make_template_object |= es5_helpers.make_template_object;
-                helpers.class_private_field_get |= es5_helpers.class_private_field_get;
-                helpers.class_private_field_set |= es5_helpers.class_private_field_set;
-                helpers.decorate |= es5_helpers.decorate;
-            } else {
-                if self.needs_extends_helper(&source.statements) {
-                    helpers.extends = true;
-                }
-
-                if self.needs_values_helper() {
-                    helpers.values = true;
-                }
-                if self.needs_rest_helper() {
-                    helpers.rest = true;
-                }
-                if self.needs_async_helpers() {
-                    helpers.awaiter = true;
-                    helpers.generator = true;
-                }
-                if self.needs_class_private_field_helpers() {
-                    helpers.class_private_field_get = true;
-                    helpers.class_private_field_set = true;
-                }
-            }
-        } else if self.ctx.target_es5 {
-            // Even without other ES5 transforms, check if lowering pass marked async helpers
-            if self.transforms.helpers_populated() {
-                let es5_helpers = self.transforms.helpers();
-                helpers.awaiter |= es5_helpers.awaiter;
-                helpers.generator |= es5_helpers.generator;
-            } else {
-                // Fallback: scan for async functions (expensive O(N) operation)
-                if self.needs_async_helpers() {
-                    helpers.awaiter = true;
-                    helpers.generator = true;
-                }
-            }
-        }
 
         // Emit all needed helpers
         let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
