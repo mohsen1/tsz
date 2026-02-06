@@ -212,8 +212,8 @@ pub mod declaration_emitter;
 // JavaScript transforms (Phase 6.5+)
 pub mod transforms;
 
-// Query-based Structural Solver (Phase 7.5)
-pub mod solver;
+// Query-based Structural Solver (Phase 7.5) - re-exported from tsz-solver workspace crate
+pub use tsz_solver as solver;
 
 // LSP (Language Server Protocol) support
 pub mod lsp;

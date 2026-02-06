@@ -23,5 +23,11 @@ fixedbitset = { workspace = true }
 dashmap = { workspace = true }
 serde = { workspace = true }
 
+[dev-dependencies]
+rayon = { workspace = true }
+
+[features]
+experimental_salsa = []
+
 [lints]
 workspace = true
