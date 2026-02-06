@@ -1181,6 +1181,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self
     }
 
+    /// Apply compiler flags from a packed u16 bitmask.
+    ///
+    /// This unpacks the flags used by `RelationCacheKey` and applies them to the checker.
+    /// The bit layout matches the cache key definition in types.rs:
+    /// - bit 0: strict_null_checks
+    /// - bit 1: strict_function_types
+    /// - bit 2: exact_optional_property_types
+    /// - bit 3: no_unchecked_indexed_access
+    /// - bit 4: disable_method_bivariance
+    /// - bit 5: allow_void_return
+    /// - bit 6: allow_bivariant_rest
+    /// - bit 7: allow_bivariant_param_count
+    pub(crate) fn apply_flags(mut self, flags: u16) -> Self {
+        self.strict_null_checks = (flags & (1 << 0)) != 0;
+        self.strict_function_types = (flags & (1 << 1)) != 0;
+        self.exact_optional_property_types = (flags & (1 << 2)) != 0;
+        self.no_unchecked_indexed_access = (flags & (1 << 3)) != 0;
+        self.disable_method_bivariance = (flags & (1 << 4)) != 0;
+        self.allow_void_return = (flags & (1 << 5)) != 0;
+        self.allow_bivariant_rest = (flags & (1 << 6)) != 0;
+        self.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
+        self
+    }
+
     pub(crate) fn resolve_ref_type(&self, type_id: TypeId) -> TypeId {
         // Handle DefId-based Lazy types (new API)
         if let Some(def_id) = lazy_def_id(self.interner, type_id) {
@@ -3851,6 +3875,18 @@ pub fn are_types_structurally_identical<R: TypeResolver>(
 /// The QueryDatabase enables Salsa memoization when available.
 pub fn is_subtype_of_with_db(db: &dyn QueryDatabase, source: TypeId, target: TypeId) -> bool {
     let mut checker = SubtypeChecker::new(db.as_type_database()).with_query_db(db);
+    checker.is_subtype_of(source, target)
+}
+
+/// Convenience function for one-off subtype checks with compiler flags.
+/// The flags are a packed u16 bitmask matching RelationCacheKey.flags.
+pub fn is_subtype_of_with_flags(
+    interner: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+    flags: u16,
+) -> bool {
+    let mut checker = SubtypeChecker::new(interner).apply_flags(flags);
     checker.is_subtype_of(source, target)
 }
 
