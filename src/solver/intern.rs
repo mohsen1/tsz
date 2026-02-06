@@ -2619,6 +2619,19 @@ impl TypeInterner {
                 }
                 Some(count)
             }
+            // Task #47: Handle nested template literals
+            Some(TypeKey::TemplateLiteral(list_id)) => {
+                let spans = self.template_list(list_id);
+                let mut total = 1usize;
+                for span in spans.iter() {
+                    let span_count = match span {
+                        TemplateSpan::Text(_) => 1,
+                        TemplateSpan::Type(t) => self.template_span_cardinality(*t)?,
+                    };
+                    total = total.saturating_mul(span_count);
+                }
+                Some(total)
+            }
             _ => None,
         }
     }
@@ -2710,6 +2723,24 @@ impl TypeInterner {
                 }
                 Some(values)
             }
+            // Task #47: Handle nested template literals by expanding them recursively
+            Some(TypeKey::TemplateLiteral(list_id)) => {
+                let spans = self.template_list(list_id);
+                // Check if all spans are text-only (can return a single string)
+                if spans.iter().all(|s| matches!(s, TemplateSpan::Text(_))) {
+                    let mut combined = String::new();
+                    for span in spans.iter() {
+                        if let TemplateSpan::Text(atom) = span {
+                            combined.push_str(&self.resolve_atom_ref(*atom));
+                        }
+                    }
+                    return Some(vec![combined]);
+                }
+                // Otherwise, try to expand via Cartesian product (recursively call expand_template_literal_to_union)
+                // But we need to be careful not to cause infinite recursion
+                // For now, return None to indicate this template cannot be expanded as simple string literals
+                None
+            }
             _ => None,
         }
     }
@@ -2796,6 +2827,39 @@ impl TypeInterner {
                     }
                 }
                 TemplateSpan::Type(type_id) => {
+                    // Task #47: Flatten nested template literals
+                    // If a Type(type_id) refers to another TemplateLiteral, splice its spans into the parent
+                    if let Some(TypeKey::TemplateLiteral(nested_list_id)) = self.lookup(*type_id) {
+                        let nested_spans = self.template_list(nested_list_id);
+                        // Process each nested span as if it were part of the parent template
+                        for nested_span in nested_spans.iter() {
+                            match nested_span {
+                                TemplateSpan::Text(atom) => {
+                                    let text = self.resolve_atom_ref(*atom).to_string();
+                                    if let Some(ref mut pt) = pending_text {
+                                        pt.push_str(&text);
+                                        has_consecutive_texts = true;
+                                    } else {
+                                        pending_text = Some(text);
+                                    }
+                                }
+                                TemplateSpan::Type(nested_type_id) => {
+                                    // Flush pending text before adding the nested type
+                                    if let Some(text) = pending_text.take() {
+                                        if !text.is_empty() {
+                                            normalized.push(TemplateSpan::Text(
+                                                self.intern_string(&text),
+                                            ));
+                                        }
+                                    }
+                                    normalized.push(TemplateSpan::Type(*nested_type_id));
+                                }
+                            }
+                        }
+                        // Continue to the next span in the parent template
+                        continue;
+                    }
+
                     // Task #47: Intrinsic stringification/expansion rules
                     match *type_id {
                         TypeId::NULL => {
