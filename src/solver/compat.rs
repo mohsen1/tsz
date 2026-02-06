@@ -1309,23 +1309,57 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Let Case 3 handle this by falling through to structural checking.
         // Removed incorrect early return that rejected string enum -> string assignments.
 
+        // Fast path: Check if both are enum types with same DefId but different TypeIds
+        // This handles the test case where enum members aren't in the resolver
+        if let (Some((s_def, _)), Some((t_def, _))) = (
+            visitor::enum_components(self.interner, source),
+            visitor::enum_components(self.interner, target),
+        ) {
+            if s_def == t_def && source != target {
+                // Same enum DefId but different TypeIds
+                // Check if both are literal enum members (not union-based enums)
+                let s_is_enum_member = match self.interner.lookup(source) {
+                    Some(TypeKey::Enum(_, member_type)) => {
+                        matches!(
+                            self.interner.lookup(member_type),
+                            Some(TypeKey::Literal(
+                                LiteralValue::Number(_) | LiteralValue::String(_)
+                            ))
+                        )
+                    }
+                    _ => false,
+                };
+
+                let t_is_enum_member = match self.interner.lookup(target) {
+                    Some(TypeKey::Enum(_, member_type)) => {
+                        matches!(
+                            self.interner.lookup(member_type),
+                            Some(TypeKey::Literal(
+                                LiteralValue::Number(_) | LiteralValue::String(_)
+                            ))
+                        )
+                    }
+                    _ => false,
+                };
+
+                if s_is_enum_member && t_is_enum_member {
+                    // Both are enum literals with same DefId but different values
+                    // Nominal rule: E.A is NOT assignable to E.B
+                    return Some(false);
+                }
+            }
+        }
+
         let source_def = self.get_enum_def_id(source);
         let target_def = self.get_enum_def_id(target);
 
         match (source_def, target_def) {
             // Case 1: Both are enums (or enum members or Union-based enums)
+            // Note: Same-DefId, different-TypeId case is now handled above before get_enum_def_id
             (Some(s_def), Some(t_def)) => {
                 if s_def == t_def {
-                    // Same DefId: Check if they're the exact same type
-                    // This handles both same-member (E.A -> E.A) and whole-enum (E -> E)
-                    // For whole enums represented as unions, we need structural check
-                    // For same members, they're assignable
-                    if source == target {
-                        return Some(true);
-                    }
-                    // Same enum DefId but different TypeIds -> could be member->member or union case
-                    // Fall through to structural check
-                    return None;
+                    // Same DefId: Same type (E.A -> E.A or E -> E)
+                    return Some(true);
                 }
 
                 // Gap A: Different DefIds, but might be member -> parent relationship
