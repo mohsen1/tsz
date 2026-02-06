@@ -417,13 +417,16 @@ impl<'a> CheckerState<'a> {
             && !contains_infer_types(self.ctx.types, target);
 
         if is_cacheable {
-            // Pack boolean flags into a u8 bitmask for the cache key:
+            // Pack boolean flags into a u16 bitmask for the cache key:
             // bit 0: strict_null_checks
             // bit 1: strict_function_types
             // bit 2: exact_optional_property_types
             // bit 3: no_unchecked_indexed_access
             // bit 4: disable_method_bivariance
-            let mut flags: u8 = 0;
+            // bit 5: allow_void_return
+            // bit 6: allow_bivariant_rest
+            // bit 7: allow_bivariant_param_count
+            let mut flags: u16 = 0;
             if self.ctx.strict_null_checks() {
                 flags |= 1 << 0;
             }
@@ -432,6 +435,9 @@ impl<'a> CheckerState<'a> {
             }
             if self.ctx.exact_optional_property_types() {
                 flags |= 1 << 2;
+            }
+            if self.ctx.no_unchecked_indexed_access() {
+                flags |= 1 << 3;
             }
             // Note: For subtype checks in the checker, we use AnyPropagationMode::All (0)
             // since the checker doesn't track depth like SubtypeChecker does
@@ -484,7 +490,7 @@ impl<'a> CheckerState<'a> {
         // Cache the result for non-inference types
         if is_cacheable {
             // Reconstruct the cache key with the same flags as the lookup
-            let mut flags: u8 = 0;
+            let mut flags: u16 = 0;
             if self.ctx.strict_null_checks() {
                 flags |= 1 << 0;
             }
@@ -493,6 +499,9 @@ impl<'a> CheckerState<'a> {
             }
             if self.ctx.exact_optional_property_types() {
                 flags |= 1 << 2;
+            }
+            if self.ctx.no_unchecked_indexed_access() {
+                flags |= 1 << 3;
             }
             let cache_key = RelationCacheKey::subtype(source, target, flags, 0);
 

@@ -1663,13 +1663,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// This packs the Lawyer-layer flags into a compact cache key to ensure that
     /// results computed under different rules (strict vs non-strict) don't contaminate each other.
     fn make_cache_key(&self, source: TypeId, target: TypeId) -> RelationCacheKey {
-        // Pack boolean flags into a u8 bitmask:
+        // Pack boolean flags into a u16 bitmask:
         // bit 0: strict_null_checks
         // bit 1: strict_function_types
         // bit 2: exact_optional_property_types
         // bit 3: no_unchecked_indexed_access
         // bit 4: disable_method_bivariance
-        let mut flags: u8 = 0;
+        // bit 5: allow_void_return
+        // bit 6: allow_bivariant_rest
+        // bit 7: allow_bivariant_param_count
+        let mut flags: u16 = 0;
         if self.strict_null_checks {
             flags |= 1 << 0;
         }
@@ -1684,6 +1687,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         if self.disable_method_bivariance {
             flags |= 1 << 4;
+        }
+        if self.allow_void_return {
+            flags |= 1 << 5;
+        }
+        if self.allow_bivariant_rest {
+            flags |= 1 << 6;
+        }
+        if self.allow_bivariant_param_count {
+            flags |= 1 << 7;
         }
 
         // CRITICAL: Calculate effective `any_mode` based on depth.
