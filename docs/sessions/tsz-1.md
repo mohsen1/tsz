@@ -26,15 +26,22 @@
 **Problem**: `SubtypeChecker` is a "God Object" (~1000 lines) with massive match blocks. North Star Rule 2 mandates Visitor Pattern for all type operations.
 **Action**:
 1. ✅ Create `SubtypeVisitor` implementing `TypeVisitor` (commit: a318e7642)
-2. ⏳ Move logic from `check_subtype_inner` into the visitor
-3. ⏳ Enforce handling all 24+ `TypeKey` variants, preventing "missing variant" bugs
+2. ✅ Implement stub methods with double dispatch (commit: d82e30d82)
+3. ⏳ Move remaining logic from `check_subtype_inner` into the visitor
+4. ⏳ Refactor `check_subtype_inner` to use visitor
 
-**Progress** (Task #48.1 Complete):
-- Created `SubtypeVisitor<'a, 'b, R>` struct with `checker` and `target` fields
-- Implemented `TypeVisitor` trait with all required methods
-- Core intrinsics (intrinsic, literal) fully implemented
-- Union/Intersection handling implemented
-- Stub implementations for complex types (object, function, callable)
+**Progress** (Task #48.2 Complete):
+- Added `source: TypeId` field to `SubtypeVisitor` struct
+- Implemented `visit_lazy`: resolves Lazy(DefId) and recurses via check_subtype
+- Implemented `visit_ref`: resolves legacy Ref(SymbolRef) and recurses
+- Implemented `visit_tuple`: double dispatch for tuple-to-tuple and tuple-to-array
+- Implemented `visit_object`/`visit_object_with_index`: double dispatch for objects
+- Implemented `visit_function`/`visit_callable`: double dispatch for callables
+- Implemented `visit_application`/`visit_conditional`/`visit_mapped`: delegation methods
+- Critical fixes per Gemini Pro review:
+  - Fixed `visit_intersection`: added property merging for object targets
+  - Fixed `visit_readonly_type`: Readonly<T> is NOT assignable to mutable T
+  - Fixed `visit_enum`: added nominal identity check for enum-to-enum
 
 #### Priority 3: Task #49 - Global Canonical Mapping (The O(1) Goal)
 **Status**: ⏳ PENDING

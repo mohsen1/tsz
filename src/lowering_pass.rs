@@ -77,6 +77,10 @@ pub struct LoweringPass<'a> {
     /// Depth of arrow functions that capture 'arguments'
     /// When > 0, 'arguments' references should be substituted with '_arguments'
     arguments_capture_level: u32,
+    /// Tracks if the current class declaration has an 'extends' clause
+    current_class_is_derived: bool,
+    /// Tracks if we are currently inside a constructor body
+    in_constructor: bool,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -92,6 +96,8 @@ impl<'a> LoweringPass<'a> {
             declared_names: rustc_hash::FxHashSet::default(),
             this_capture_level: 0,
             arguments_capture_level: 0,
+            current_class_is_derived: false,
+            in_constructor: false,
         }
     }
 
@@ -126,6 +132,8 @@ impl<'a> LoweringPass<'a> {
                 self.visit_function_expression(node, idx)
             }
             k if k == syntax_kind_ext::ARROW_FUNCTION => self.visit_arrow_function(node, idx),
+            k if k == syntax_kind_ext::CONSTRUCTOR => self.visit_constructor(node, idx),
+            k if k == syntax_kind_ext::CALL_EXPRESSION => self.visit_call_expression(node, idx),
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 self.visit_variable_statement(node, idx)
             }
@@ -931,10 +939,17 @@ impl<'a> LoweringPass<'a> {
             self.transforms.insert(idx, final_directive);
         }
 
+        // Save and set current_class_is_derived state for super detection
+        let prev_is_derived = self.current_class_is_derived;
+        self.current_class_is_derived = heritage.is_some();
+
         // Visit children (members)
         for &member_idx in &class.members.nodes {
             self.visit(member_idx);
         }
+
+        // Restore previous state
+        self.current_class_is_derived = prev_is_derived;
     }
 
     fn lower_function_declaration(
@@ -947,6 +962,11 @@ impl<'a> LoweringPass<'a> {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };
+
+        // Save and reset in_constructor state for nested function scope
+        // Regular functions create a new scope, so in_constructor should be false inside them
+        let prev_in_constructor = self.in_constructor;
+        self.in_constructor = false;
 
         if let Some(mods) = &func.modifiers {
             for &mod_idx in &mods.nodes {
@@ -1039,6 +1059,9 @@ impl<'a> LoweringPass<'a> {
         if !func.body.is_none() {
             self.visit(func.body);
         }
+
+        // Restore in_constructor state
+        self.in_constructor = prev_in_constructor;
     }
 
     fn lower_enum_declaration(&mut self, node: &Node, idx: NodeIndex, force_export: bool) {
@@ -1247,6 +1270,70 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
+    /// Visit a constructor declaration
+    fn visit_constructor(&mut self, node: &Node, idx: NodeIndex) {
+        let Some(ctor) = self.arena.get_constructor(node) else {
+            return;
+        };
+
+        // Save previous state
+        let prev_in_constructor = self.in_constructor;
+        // Set new state - we're now inside a constructor
+        self.in_constructor = true;
+
+        // Visit children (modifiers, parameters, body)
+        if let Some(mods) = &ctor.modifiers {
+            for &mod_idx in &mods.nodes {
+                self.visit(mod_idx);
+            }
+        }
+        for &param_idx in &ctor.parameters.nodes {
+            self.visit(param_idx);
+        }
+        if !ctor.body.is_none() {
+            self.visit(ctor.body);
+        }
+
+        // Restore state
+        self.in_constructor = prev_in_constructor;
+    }
+
+    /// Visit a call expression and detect super() calls
+    fn visit_call_expression(&mut self, node: &Node, idx: NodeIndex) {
+        let Some(call) = self.arena.get_call_expr(node) else {
+            return;
+        };
+
+        // Check if this is a super() call
+        let is_super_call = if let Some(expr_node) = self.arena.get(call.expression) {
+            expr_node.kind == SyntaxKind::SuperKeyword as u16
+        } else {
+            false
+        };
+
+        // Emit directive if conditions met:
+        // 1. This is a super(...) call
+        // 2. Target is ES5
+        // 3. We're inside a constructor
+        // 4. The current class has a base class (is_derived)
+        if is_super_call
+            && self.ctx.target_es5
+            && self.in_constructor
+            && self.current_class_is_derived
+        {
+            self.transforms
+                .insert(idx, TransformDirective::ES5SuperCall);
+        }
+
+        // Continue traversal
+        self.visit(call.expression);
+        if let Some(ref args) = call.arguments {
+            for &arg_idx in &args.nodes {
+                self.visit(arg_idx);
+            }
+        }
+    }
+
     /// Visit a variable statement
     fn visit_variable_statement(&mut self, node: &Node, idx: NodeIndex) {
         self.lower_variable_statement(node, idx, false);
@@ -1286,6 +1373,10 @@ impl<'a> LoweringPass<'a> {
             return;
         };
 
+        // Save and reset in_constructor state for nested function scope
+        let prev_in_constructor = self.in_constructor;
+        self.in_constructor = false;
+
         if self.ctx.target_es5 {
             if func.is_async {
                 self.mark_async_helpers();
@@ -1312,6 +1403,9 @@ impl<'a> LoweringPass<'a> {
         if !func.body.is_none() {
             self.visit(func.body);
         }
+
+        // Restore in_constructor state
+        self.in_constructor = prev_in_constructor;
     }
 
     // =========================================================================
