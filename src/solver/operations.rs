@@ -38,6 +38,7 @@ use crate::solver::visitor::TypeVisitor;
 use crate::solver::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
+use tracing::debug;
 
 /// Maximum recursion depth for type constraint collection to prevent infinite loops.
 pub const MAX_CONSTRAINT_RECURSION_DEPTH: usize = 100;
@@ -655,21 +656,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .iter()
             .map(|p| {
                 let instantiated = instantiate_type(self.interner, p.type_id, &substitution);
-                eprintln!(
-                    "Instantiated param {:?}: original={:?} (key: {:?}) -> instantiated={:?} (key: {:?})",
-                    p.name,
-                    p.type_id,
-                    self.interner.lookup(p.type_id),
-                    instantiated,
-                    self.interner.lookup(instantiated),
-                );
+                if let Some(name_atom) = p.name {
+                    debug!(
+                        param_name = %self.interner.resolve_atom(name_atom).as_str(),
+                        original_type_id = p.type_id.0,
+                        original_type_key = ?self.interner.lookup(p.type_id),
+                        instantiated_type_id = instantiated.0,
+                        instantiated_type_key = ?self.interner.lookup(instantiated),
+                        "Instantiated param"
+                    );
+                }
                 // If this is a function type, also log its return type
                 if let Some(TypeKey::Function(shape_id)) = self.interner.lookup(instantiated) {
                     let shape = self.interner.function_shape(shape_id);
-                    eprintln!(
-                        "  -> instantiated function return_type={:?} (key: {:?})",
-                        shape.return_type,
-                        self.interner.lookup(shape.return_type),
+                    debug!(
+                        return_type_id = shape.return_type.0,
+                        return_type_key = ?self.interner.lookup(shape.return_type),
+                        "Instantiated function return type"
                     );
                 }
                 ParamInfo {
@@ -2057,14 +2060,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         self.constrain_types(ctx, var_map, t_this, s_this, priority);
                     }
                     // Covariant return: source_return <: target_return
-                    eprintln!(
-                        "Constraining return types: source_return={:?} (key: {:?}), target_return={:?} (key: {:?}), var_map keys: {:?}, priority={:?}",
-                        s_fn.return_type,
-                        self.interner.lookup(s_fn.return_type),
-                        t_fn.return_type,
-                        self.interner.lookup(t_fn.return_type),
-                        var_map.keys().collect::<Vec<_>>(),
-                        priority,
+                    debug!(
+                        source_return_id = s_fn.return_type.0,
+                        source_return_key = ?self.interner.lookup(s_fn.return_type),
+                        target_return_id = t_fn.return_type.0,
+                        target_return_key = ?self.interner.lookup(t_fn.return_type),
+                        var_map_keys = ?var_map.keys().collect::<Vec<_>>(),
+                        priority = ?priority,
+                        "Constraining return types"
                     );
                     self.constrain_types(
                         ctx,
