@@ -1059,7 +1059,9 @@ impl<'a> FlowAnalyzer<'a> {
             // CRITICAL FIX: Only apply discriminant narrowing if we are narrowing the BASE object.
             // If target is the property access itself (e.g. switch(obj.kind)),
             // we should use literal comparison, not discriminant narrowing.
-            if self.is_matching_reference(base, target) {
+            if self.is_matching_reference(base, target)
+                || self.is_target_access_of_base(base, target)
+            {
                 return Some((path, literal, is_optional, base));
             }
         }
@@ -1068,12 +1070,39 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some(literal) = self.literal_type_from_node(left)
         {
             // CRITICAL FIX: Only apply discriminant narrowing if we are narrowing the BASE object.
-            if self.is_matching_reference(base, target) {
+            if self.is_matching_reference(base, target)
+                || self.is_target_access_of_base(base, target)
+            {
                 return Some((path, literal, is_optional, base));
             }
         }
 
         None
+    }
+
+    /// Check if `target` is a property/element access of `base`.
+    ///
+    /// For example, if `base` is `obj` and `target` is `obj[key]`, this returns true.
+    /// This is used for discriminant narrowing where we have `obj[key] === literal`.
+    fn is_target_access_of_base(&self, base: NodeIndex, target: NodeIndex) -> bool {
+        let target = self.skip_parenthesized(target);
+        let Some(target_node) = self.arena.get(target) else {
+            return false;
+        };
+
+        if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let Some(access) = self.arena.get_access_expr(target_node) else {
+                return false;
+            };
+            self.is_matching_reference(base, access.expression)
+        } else if target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let Some(access) = self.arena.get_access_expr(target_node) else {
+                return false;
+            };
+            self.is_matching_reference(base, access.expression)
+        } else {
+            false
+        }
     }
 
     pub(crate) fn narrow_by_discriminant_for_type(

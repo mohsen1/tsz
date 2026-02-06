@@ -1518,10 +1518,21 @@ impl<'a> CheckerState<'a> {
             // to preserve literal type widening. Flow analysis may narrow back to literal types
             // from the initializer, but we need to keep the widened type (string, number, etc.)
             // const variables preserve their literal types through flow analysis.
+            //
+            // CRITICAL EXCEPTION: If flow_type is different from declared_type and not ERROR,
+            // we should use flow_type. This allows discriminant narrowing to work for mutable
+            // variables while preserving literal type widening in most cases.
             let is_const = self.is_const_variable_declaration(value_decl);
             let result_type = if !is_const {
-                // Mutable variable (let/var) - use widened declared type
-                declared_type
+                // Mutable variable (let/var)
+                // Use flow_type if it's different (narrowed) and not an error
+                if flow_type != declared_type && flow_type != TypeId::ERROR {
+                    // Flow narrowed the type (e.g., discriminant narrowing) - use narrowed type
+                    flow_type
+                } else {
+                    // No narrowing or error - use declared type to preserve widening
+                    declared_type
+                }
             } else {
                 // Const variable - use flow type (preserves literal type)
                 result_type

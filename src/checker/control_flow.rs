@@ -2212,6 +2212,30 @@ impl<'a> FlowAnalyzer<'a> {
                     {
                         // Check if the guard applies to our target reference
                         if self.is_matching_reference(guard_target, target) {
+                            // CRITICAL FIX: Don't apply discriminant guards to property/element access results
+                            // Discriminant guards (like `obj.kind === "a"`) should only narrow the base object (`obj`),
+                            // not property access results (like `obj.value`).
+                            //
+                            // Example:
+                            //   type U = { kind: "a"; value: string } | { kind: "b"; value: number };
+                            //   let obj: U = { kind: "a", value: "ok" };
+                            //   if (obj.kind === "a") {
+                            //     obj.value.toUpperCase(); // obj.value should be narrowed to string via obj
+                            //   }
+                            //
+                            // The discriminant guard narrows `obj` to { kind: "a"; value: string }, and then
+                            // accessing `obj.value` gives us `string`. We should NOT try to narrow `obj.value`
+                            // directly by the discriminant (which would fail since `string | number` has no `kind` property).
+                            let is_discriminant_guard =
+                                matches!(guard, TypeGuard::Discriminant { .. });
+                            let is_property_access = self.is_property_or_element_access(target);
+
+                            if is_discriminant_guard && is_property_access {
+                                // Skip narrowing - the discriminant guard applies to the base, not the property
+                                // The property type will be computed from the already-narrowed base object
+                                return type_id;
+                            }
+
                             // CRITICAL: Invert sense for inequality operators (!== and !=)
                             // This applies to ALL guards, not just typeof
                             // For `x !== "string"` or `x.kind !== "circle"`, the true branch should EXCLUDE
@@ -2364,6 +2388,39 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         type_id
+    }
+
+    /// Check if a node is a property access or element access expression.
+    ///
+    /// This is used to prevent discriminant guards from being applied to property
+    /// access results. Discriminant guards (like `obj.kind === "a"`) should only
+    /// narrow the base object (`obj`), not property access results (like `obj.value`).
+    fn is_property_or_element_access(&self, node: NodeIndex) -> bool {
+        let node = self.skip_parenthesized_non_recursive(node);
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+        node_data.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node_data.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    }
+
+    /// Skip parentheses (non-recursive to avoid issues with circular references).
+    fn skip_parenthesized_non_recursive(&self, mut idx: NodeIndex) -> NodeIndex {
+        for _ in 0..100 {
+            // Limit iterations to prevent infinite loops
+            let Some(node) = self.arena.get(idx) else {
+                return idx;
+            };
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                let Some(paren) = self.arena.get_parenthesized(node) else {
+                    return idx;
+                };
+                idx = paren.expression;
+            } else {
+                return idx;
+            }
+        }
+        idx
     }
 
     pub(crate) fn const_condition_initializer(
@@ -2731,18 +2788,26 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some((property_path, literal_type, is_optional, _base)) =
                 self.discriminant_comparison(bin.left, bin.right, target)
             {
-                let mut base_type = type_id;
-                if is_optional && effective_truth {
-                    let narrowed = narrowing.narrow_excluding_type(base_type, TypeId::NULL);
-                    base_type = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+                // CRITICAL FIX: Don't apply discriminant guards to property/element access results
+                // Discriminant guards (like `obj.kind === "a"`) should only narrow the base object (`obj`),
+                // not property access results (like `obj.value`).
+                let is_property_access = self.is_property_or_element_access(target);
+                if !is_property_access {
+                    let mut base_type = type_id;
+                    if is_optional && effective_truth {
+                        let narrowed = narrowing.narrow_excluding_type(base_type, TypeId::NULL);
+                        base_type = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+                    }
+                    return self.narrow_by_discriminant_for_type(
+                        base_type,
+                        &property_path,
+                        literal_type,
+                        effective_truth,
+                        narrowing,
+                    );
                 }
-                return self.narrow_by_discriminant_for_type(
-                    base_type,
-                    &property_path,
-                    literal_type,
-                    effective_truth,
-                    narrowing,
-                );
+                // For property access targets, skip discriminant narrowing
+                // The property type will be computed from the already-narrowed base object
             }
 
             if let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target) {

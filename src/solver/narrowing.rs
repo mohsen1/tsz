@@ -491,6 +491,11 @@ impl<'a> NarrowingContext<'a> {
         // This ensures type aliases are resolved to their actual union types
         let resolved_type = self.resolve_type(union_type);
 
+        trace!(
+            "narrow_by_discriminant: union_type={}, resolved_type={}, property_path={:?}, literal_value={}",
+            union_type.0, resolved_type.0, property_path, literal_value.0
+        );
+
         // CRITICAL FIX: Use classify_for_union_members instead of union_list_id
         // This correctly handles intersections containing unions, nested unions, etc.
         let single_member_storage: Vec<TypeId>;
@@ -506,6 +511,8 @@ impl<'a> NarrowingContext<'a> {
                 &single_member_storage
             }
         };
+
+        trace!("narrow_by_discriminant: members={:?}", members);
 
         trace!(
             "Checking {} member(s) for discriminant match",
@@ -548,7 +555,10 @@ impl<'a> NarrowingContext<'a> {
                     Some(t) => t,
                     None => {
                         // Property doesn't exist on this member
-                        trace!("Member {} does not have property path", check_type_id.0);
+                        trace!(
+                            "Member {} does not have property path {:?}",
+                            check_type_id.0, property_path
+                        );
                         return false;
                     }
                 };
@@ -559,13 +569,13 @@ impl<'a> NarrowingContext<'a> {
 
                 if matches {
                     trace!(
-                        "Member {} has property path with type {}, literal {} matches",
-                        check_type_id.0, prop_type.0, literal_value.0
+                        "Member {} has property path {:?} with type {}, literal {} matches",
+                        check_type_id.0, property_path, prop_type.0, literal_value.0
                     );
                 } else {
                     trace!(
-                        "Member {} has property path with type {}, literal {} does not match",
-                        check_type_id.0, prop_type.0, literal_value.0
+                        "Member {} has property path {:?} with type {}, literal {} does not match",
+                        check_type_id.0, property_path, prop_type.0, literal_value.0
                     );
                 }
 
