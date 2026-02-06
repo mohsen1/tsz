@@ -1177,7 +1177,6 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
         // Task A: Use passed flags instead of hardcoded 0,0
-        // TODO: Configure CompatChecker with these flags
         let key = RelationCacheKey::assignability(source, target, flags, 0);
 
         if let Some(result) = self.check_cache(&self.assignability_cache, key) {
@@ -1187,9 +1186,11 @@ impl QueryDatabase for QueryCache<'_> {
         // Use CompatChecker with all compatibility rules
         use crate::solver::compat::CompatChecker;
         let mut checker = CompatChecker::new(self.as_type_database());
-        // TODO: Apply flags to CompatChecker (needs apply_flags method)
-        // For now, the cache key includes flags, but the checker uses defaults
-        // This is safe as long as callers use consistent flags
+
+        // FIX: Apply flags to ensure checker matches the cache key configuration
+        // This prevents cache poisoning where results from non-strict checks
+        // leak into strict checks (Gap C fix)
+        checker.apply_flags(flags);
 
         let result = checker.is_assignable(source, target);
 
