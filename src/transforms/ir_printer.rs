@@ -925,21 +925,71 @@ impl<'a> IRPrinter<'a> {
             }
             IRNode::ASTRef(idx) => {
                 // Check if this node has a transform directive that we should apply
-                if let (Some(arena), Some(transforms)) = (self.arena, self.transforms.as_ref())
-                    && let Some(node) = arena.get(*idx)
-                    && transforms.has_transform(*idx)
-                {
-                    // For now, handle arrow functions specifically
-                    // TODO: Generalize to handle all transform types
-                    use crate::parser::syntax_kind_ext;
-                    if node.kind == syntax_kind_ext::ARROW_FUNCTION {
-                        if let Some(func_data) = arena.get_function(node) {
-                            self.emit_arrow_function_es5(arena, node, func_data, *idx);
-                            return;
+                if let Some(arena) = self.arena {
+                    if let Some(node) = arena.get(*idx) {
+                        // Get the directive for this node (clone to avoid borrow issues)
+                        let directive = self.transforms.as_ref().and_then(|t| t.get(*idx).cloned());
+
+                        if let Some(directive) = directive {
+                            use crate::parser::syntax_kind_ext;
+
+                            // Handle ES5ArrowFunction directive
+                            if matches!(
+                                directive,
+                                crate::transform_context::TransformDirective::ES5ArrowFunction { .. }
+                            ) && node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            {
+                                if let Some(func_data) = arena.get_function(node) {
+                                    // Extract flags from directive before mutable borrow
+                                    let (captures_this, captures_arguments, class_alias) = match &directive {
+                                        crate::transform_context::TransformDirective::ES5ArrowFunction {
+                                            captures_this,
+                                            captures_arguments,
+                                            class_alias,
+                                            ..
+                                        } => (*captures_this, *captures_arguments, class_alias.as_deref().map(|s| s.to_string())),
+                                        _ => (false, false, None),
+                                    };
+
+                                    self.emit_arrow_function_es5_with_flags(
+                                        arena,
+                                        node,
+                                        func_data,
+                                        *idx,
+                                        captures_this,
+                                        captures_arguments,
+                                        class_alias,
+                                    );
+                                    return;
+                                }
+                            }
+
+                            // Handle SubstituteThis directive
+                            if matches!(
+                                directive,
+                                crate::transform_context::TransformDirective::SubstituteThis
+                            ) {
+                                if let Some(_ident) = arena.get_identifier(node) {
+                                    self.write("_this");
+                                    return;
+                                }
+                            }
+
+                            // Handle SubstituteArguments directive
+                            if matches!(
+                                directive,
+                                crate::transform_context::TransformDirective::SubstituteArguments
+                            ) {
+                                if let Some(_ident) = arena.get_identifier(node) {
+                                    self.write("_arguments");
+                                    return;
+                                }
+                            }
+
+                            // Note: For other directive types, fall through to source text copy
+                            // This is intentional - we only handle directives that are ready
                         }
                     }
-                    // For other node types with transforms, fall through to source text copy
-                    // This is a temporary limitation - in the future, all transforms should be handled
                 }
 
                 // Emit AST node by using its source text.
@@ -1458,6 +1508,10 @@ impl Default for IRPrinter<'_> {
 impl<'a> IRPrinter<'a> {
     /// Emit an arrow function as ES5 function expression
     /// Transforms: () => expr  →  function () { return expr; }
+    ///
+    /// This is the OLD implementation that re-calculates captures using transform_utils.
+    /// Kept for compatibility but should not be used - use emit_arrow_function_es5_with_flags instead.
+    #[allow(dead_code)]
     fn emit_arrow_function_es5(
         &mut self,
         arena: &NodeArena,
@@ -1465,19 +1519,50 @@ impl<'a> IRPrinter<'a> {
         func: &crate::parser::node::FunctionData,
         node_idx: NodeIndex,
     ) {
-        use crate::parser::syntax_kind_ext;
         use crate::syntax::transform_utils;
 
         // Check if this captures 'this' or 'arguments'
         let captures_this = transform_utils::contains_this_reference(arena, node_idx);
         let captures_arguments = transform_utils::contains_arguments_reference(arena, node_idx);
 
-        // Determine capture wrapper
+        self.emit_arrow_function_es5_with_flags(
+            arena,
+            _node,
+            func,
+            node_idx,
+            captures_this,
+            captures_arguments,
+            None,
+        );
+    }
+
+    /// Emit an arrow function as ES5 function expression using directive flags
+    /// Transforms: () => expr  →  function () { return expr; }
+    ///
+    /// This is the NEW implementation that:
+    /// 1. Uses flags from TransformDirective (doesn't re-calculate)
+    /// 2. Uses recursive emit_node calls for the body (handles nested directives)
+    /// 3. Supports class_alias for static class members
+    fn emit_arrow_function_es5_with_flags(
+        &mut self,
+        arena: &NodeArena,
+        _node: &Node,
+        func: &crate::parser::node::FunctionData,
+        _node_idx: NodeIndex,
+        captures_this: bool,
+        captures_arguments: bool,
+        class_alias: Option<String>,
+    ) {
+        use crate::parser::syntax_kind_ext;
+
+        // Determine capture wrapper and the capture variable name
         let captures_any = captures_this || captures_arguments;
+        let capture_var = class_alias.as_deref().unwrap_or("_this");
+
         if captures_any {
             self.write("(function (");
             if captures_this {
-                self.write("_this");
+                self.write(capture_var);
             }
             if captures_this && captures_arguments {
                 self.write(", ");
@@ -1507,36 +1592,19 @@ impl<'a> IRPrinter<'a> {
         }
         self.write(") ");
 
-        // Body
+        // Body - use recursive emit_node to handle nested directives
         let body_node = arena.get(func.body);
         let is_block = body_node
             .map(|n| n.kind == syntax_kind_ext::BLOCK)
             .unwrap_or(false);
 
         if is_block {
-            // Block body - emit directly
-            if let Some(body_text) = self.source_text {
-                if let Some(body) = arena.get(func.body) {
-                    let start = body.pos as usize;
-                    let end = std::cmp::min(body.end as usize, body_text.len());
-                    if start < end {
-                        self.write(&body_text[start..end]);
-                    }
-                }
-            }
+            // Block body - emit recursively to handle nested transforms
+            self.emit_node(&IRNode::ASTRef(func.body));
         } else {
-            // Concise body - wrap with return
+            // Concise body - wrap with return and emit recursively
             self.write("{ return ");
-            if let Some(body_text) = self.source_text {
-                if let Some(body) = arena.get(func.body) {
-                    let start = body.pos as usize;
-                    let end = std::cmp::min(body.end as usize, body_text.len());
-                    if start < end {
-                        let raw = &body_text[start..end];
-                        self.write(raw.trim());
-                    }
-                }
-            }
+            self.emit_node(&IRNode::ASTRef(func.body));
             self.write("; }");
         }
 
@@ -1545,7 +1613,13 @@ impl<'a> IRPrinter<'a> {
             self.write("; })");
             self.write("(");
             if captures_this {
-                self.write("this");
+                if class_alias.is_some() {
+                    // For class aliases, emit the alias directly (e.g., _a)
+                    self.write(capture_var);
+                } else {
+                    // For regular this capture, emit 'this'
+                    self.write("this");
+                }
             }
             if captures_this && captures_arguments {
                 self.write(", ");
