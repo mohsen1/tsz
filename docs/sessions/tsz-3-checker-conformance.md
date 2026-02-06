@@ -1,8 +1,32 @@
 # Session tsz-3: Checker Conformance & Architecture Alignment
 
 **Started**: 2026-02-06
-**Status**: Active
+**Status**: Active - Focus: Rest Parameter & Variadic Tuple Subtyping
 **Predecessor**: tsz-2 (Solver Stabilization - COMPLETED)
+
+## Current Focus (2026-02-06)
+
+**Issue**: Function type with fixed parameters NOT assignable to function with rest parameter
+
+**Test**: `aliasOfGenericFunctionWithRestBehavedSameAsUnaliased.ts`
+
+**Problem**:
+```typescript
+type a3 = (name: string, mixed: any, args_0: any) => any
+type b3 = (name: string, mixed: any, ...args: any[]) => any
+type test3 = a3 extends b3 ? "y" : "n"  // tsc: "y", tsz: "n"
+```
+
+**Investigation Direction** (per Gemini guidance):
+- Focus on **Lawyer layer** (`src/solver/lawyer.rs`) - not Checker
+- Check **Variadic Tuple Subtyping** - rest params may be represented as tuples
+- Audit `any` propagation rules during function parameter comparison
+- Use tracing: `TSZ_LOG="wasm::solver::subtype=trace"`
+
+**Files**:
+- `src/solver/subtype.rs` - tuple assignability
+- `src/solver/lawyer.rs` - any propagation rules
+- `src/solver/subtype_rules/functions.rs` - function subtyping
 
 ## Context
 
@@ -64,3 +88,34 @@ The tsz-2 session successfully stabilized the Solver unit tests (3524 tests pass
 1. Run initial conformance baseline
 2. Pick a failing test and trace with TSZ_LOG=debug
 3. Use Two-Question Rule for any Checker changes
+
+## Detailed Investigation (2026-02-06)
+
+### Key Finding: Function Type Instantiation Preserves rest Flag
+
+In `src/solver/instantiate.rs` line 422, when instantiating function types:
+```rust
+rest: p.rest,  // Preserves rest flag from original parameter
+```
+
+### The Core Question
+
+When declaring `type F<T extends any[]> = (...args: T) => void`:
+
+**For `F<[any]>` (instantiation with tuple):**
+- Should the function have: `params: [{type: any, rest: false}]` (fixed param)
+- Or: `params: [{type: any, rest: true}]` (rest param)?
+
+**For `F<any[]>` (instantiation with array):**
+- Should have: `params: [{type: any[], rest: true}]`
+
+### Investigation Approach
+
+1. The instantiation preserves the `rest` flag from the generic definition
+2. Need to determine how `...args: T` is initially lowered when `T extends any[]`
+3. Key file: `src/checker/type_node.rs` - tuple type lowering (lines 393-403)
+
+### Next Step
+
+Add debug output to see actual FunctionShape.params structure for both instantiations.
+
