@@ -1425,3 +1425,62 @@ Continue improving emit test pass rate. The IR/Directive architectural mismatch 
 - `src/emitter/helpers.rs` - Implement HelperManager
 - `src/lowering_pass.rs` - Mark helpers when transformations are used
 
+---
+
+### 2025-02-06 Session 27: --noEmitHelpers CLI Option Fix - COMPLETED ✅
+
+**Issue:** The `--noEmitHelpers` option was defined in the CLI but never actually applied to the printer options, so helpers were always emitted regardless of the flag.
+
+**Investigation:**
+1. Found that `src/transforms/helpers.rs` already has a complete helper system:
+   - Helper code strings for all TypeScript helpers (`__extends`, `__assign`, `__awaiter`, `__generator`, etc.)
+   - `HelpersNeeded` struct to track which helpers are needed
+   - `emit_helpers()` function to generate the helper code
+2. `src/transform_context.rs` has `helpers: HelpersNeeded` field with `helpers()` and `helpers_mut()` methods
+3. `src/lowering_pass.rs` marks helpers as needed via `helpers_mut()` during AST analysis
+4. `src/emitter/mod.rs` already calls `emit_helpers(&helpers)` and writes output
+
+**Root Cause:** Two bugs found:
+1. The emitter never checked `ctx.options.no_emit_helpers` before emitting helpers
+2. The `apply_cli_overrides()` function in `src/cli/driver.rs` never passed `args.no_emit_helpers` to the printer options
+
+**Fix Applied (commit 92fb44986):**
+```rust
+// src/emitter/mod.rs - Added check before emitting helpers
+if !self.ctx.options.no_emit_helpers {
+    let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
+    if !helpers_code.is_empty() {
+        self.write(&helpers_code);
+    }
+}
+
+// src/cli/driver.rs - Added missing override
+if args.no_emit_helpers {
+    options.printer.no_emit_helpers = true;
+}
+```
+
+**Test Results:**
+```bash
+# Before fix - helpers always emitted:
+var __extends = ...;  // Always present
+var A = ...
+
+# After fix - helpers can be skipped:
+tsz --target ES5 file.ts              # Emits __extends
+tsz --target ES5 --noEmitHelpers file.ts  # No helper emitted
+```
+
+**Files Modified:**
+- `src/emitter/mod.rs` - Added `no_emit_helpers` check before helper emission
+- `src/cli/driver.rs` - Added missing override in `apply_cli_overrides()`
+
+**Key Discovery:** The Helper Manager infrastructure was already complete - I just found and fixed bugs preventing proper operation. The system correctly:
+1. Tracks which helpers are needed during LoweringPass
+2. Emits all needed helpers at the top of files
+3. Respects `--noEmitHelpers` when set (after fix)
+
+**Remaining Tasks:**
+- Verify all helpers are being tracked correctly in LoweringPass
+- Test various helper combinations (extends + awaiter + generator, etc.)
+
