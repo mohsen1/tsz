@@ -165,6 +165,9 @@ enum EmitDirective {
     ES5ObjectLiteral {
         object_literal: NodeIndex,
     },
+    ES5ArrayLiteral {
+        array_literal: NodeIndex,
+    },
     ES5VariableDeclarationList {
         decl_list: NodeIndex,
     },
@@ -473,6 +476,11 @@ impl<'a> Printer<'a> {
                     object_literal: *object_literal,
                 }
             }
+            TransformDirective::ES5ArrayLiteral { array_literal } => {
+                EmitDirective::ES5ArrayLiteral {
+                    array_literal: *array_literal,
+                }
+            }
             TransformDirective::ES5VariableDeclarationList { decl_list } => {
                 EmitDirective::ES5VariableDeclarationList {
                     decl_list: *decl_list,
@@ -669,6 +677,17 @@ impl<'a> Printer<'a> {
                     && let Some(literal) = self.arena.get_literal_expr(literal_node)
                 {
                     self.emit_object_literal_es5(&literal.elements.nodes);
+                    return;
+                }
+
+                self.emit_node_default(node, idx);
+            }
+
+            EmitDirective::ES5ArrayLiteral { array_literal } => {
+                if let Some(literal_node) = self.arena.get(array_literal)
+                    && let Some(literal) = self.arena.get_literal_expr(literal_node)
+                {
+                    self.emit_array_literal_es5(&literal.elements.nodes);
                     return;
                 }
 
@@ -982,6 +1001,16 @@ impl<'a> Printer<'a> {
 
                 self.emit_chained_previous(node, idx, directives, index);
             }
+            EmitDirective::ES5ArrayLiteral { array_literal } => {
+                if let Some(literal_node) = self.arena.get(*array_literal)
+                    && let Some(literal) = self.arena.get_literal_expr(literal_node)
+                {
+                    self.emit_array_literal_es5(&literal.elements.nodes);
+                    return;
+                }
+
+                self.emit_chained_previous(node, idx, directives, index);
+            }
             EmitDirective::ES5VariableDeclarationList { decl_list } => {
                 if let Some(list_node) = self.arena.get(*decl_list) {
                     self.emit_variable_declaration_list_es5(list_node);
@@ -1161,6 +1190,7 @@ impl<'a> Printer<'a> {
                 || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                 || k == syntax_kind_ext::FOR_OF_STATEMENT
                 || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
                 || k == syntax_kind_ext::TEMPLATE_EXPRESSION
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
