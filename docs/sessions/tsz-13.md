@@ -1,86 +1,101 @@
-# Session TSZ-13: Foundational Cleanup & Index Signatures
+# Session TSZ-13: Index Signature Implementation
 
 **Started**: 2026-02-06
-**Status**: 🔄 IN PROGRESS - Investigation Phase
+**Status**: 🔄 IN PROGRESS - Implementation Phase
 **Predecessor**: TSZ-12 (Cache Invalidation - Complete)
 
 ## Task
 
-Complete "almost done" features (Readonly infrastructure, Enum error counts) and implement Element Access Index Signatures for high impact.
+Implement Index Signature support for TypeScript subtyping and element access.
 
-## Investigation Findings
+## Problem Statement
 
-### Enum Error Duplication (~2 tests)
-
-**Tests affected**:
-- `test_cross_enum_nominal_incompatibility`
-- `test_string_enum_cross_incompatibility`
-
-**Issue**: Tests expect 1 TS2322 error but get 2
-- Code: `let e2: E2 = e1;` where e1 is type E1, e2 is declared as E2
-- tsc produces: 1 error (correct)
-- tsz produces: 2 errors (duplicate)
-
-**Investigation**:
-- Error is reported in `src/checker/state_checking.rs:445` in `check_variable_declaration`
-- Only one error reporting call found in the code path
-- Loop in `check_variable_statement` calls `check_variable_declaration` once per declaration
-- **Root cause**: Unknown - requires deeper debugging of duplicate diagnostic reporting
-
-**Status**: Minor diagnostic deduplication issue, not a type system bug. Enum nominal typing works correctly (fixed in tsz-9).
-
-### Readonly Infrastructure (~6 tests)
-
-**Tests affected**:
-- `test_readonly_array_element_assignment_2540`
-- `test_readonly_element_access_assignment_2540`
-- `test_readonly_index_signature_element_access_assignment_2540`
-- `test_readonly_method_signature_assignment_2540`
-- `test_readonly_index_signature_variable_access_assignment_2540`
-- (+1 more)
-
-**Issue**: Tests get error 2318 ("Cannot find global type") instead of 2540 ("Cannot assign to readonly")
-- Root cause: Tests manually create `CheckerState` without loading lib files
-- Readonly subtyping logic already fixed in tsz-11
-- **Fix needed**: Update test setup to use lib fixtures
-
-**Status**: Test infrastructure issue, straightforward to fix.
-
-## Remaining Work
-
-### Task 2: Element Access Index Signatures (~3 tests - High Impact)
-
-**Problem**: `obj[key]` lookup doesn't properly fall back to index signatures when no property matches.
+**Problem**: Element access and subtyping for objects with index signatures are failing.
 
 **TypeScript behavior**:
-1. First check for exact property match
-2. If no match, check string index signature (`[x: string]: T`)
-3. If no match, check number index signature (`[x: number]: T`)
-4. Handle generic type parameters as keys (`T[K]`)
+1. Element access priority: named property → numeric index → string index
+2. Numeric indexer must be subtype of string indexer
+3. Properties must satisfy index signature constraints
+4. Handle intersections, unions, lazy resolution
 
-**Tests affected**:
+**Tests affected** (~3 tests):
 - `test_checker_lowers_element_access_string_index_signature`
 - `test_checker_lowers_element_access_number_index_signature`
 - `test_checker_property_access_union_type`
+
+## Implementation Plan (Validated by Gemini)
+
+### Phase 1: Lowering (src/solver/lower.rs)
+**Functions to modify**:
+- `lower_type_literal`: Detect `IndexSignatureData`, use `interner.object_with_index`
+- `lower_interface_declarations`: Aggregate index signatures from merged interfaces
+- `index_signature_properties_compatible`: Check explicit properties satisfy index signature
+
+### Phase 2: Subtyping (src/solver/subtype.rs)
+**Functions to modify**:
+- `SubtypeVisitor::visit_object`: Call `check_object_to_indexed` for `ObjectWithIndex` targets
+- `SubtypeVisitor::visit_object_with_index`: Handle `Indexed <: Indexed` and `Indexed <: Object`
+- `check_object_to_indexed`: Verify properties are subtypes of index signature value type
+
+**Critical requirements**:
+- Resolve `Lazy(DefId)` types before comparing
+- Use `in_progress`/`seen_defs` sets to prevent infinite recursion
+- Preserve `symbol` field for nominal identity
+
+### Phase 3: Evaluation (src/solver/evaluate.rs)
+**New function**: `evaluate_index_access(interner, object_type, index_type)`
+
+**Logic**:
+1. Resolve `object_type` (handle Union, Intersection, Ref/Lazy)
+2. If key is string literal, look for named property first
+3. If no match and key is number/numeric literal, check numeric index signature
+4. If key is string/string literal, check string index signature
+5. For intersections, search all members using `collect_properties`
+
+**Edge cases**:
+- Numeric indexer must be subtype of string indexer
+- Property named `"123"` caught by numeric index signature
+- `any` index signature → any property access returns `any`
+- `readonly` index signatures prevent writes
+
+### Phase 4: Checker Integration
+**File**: `src/checker/state.rs` (not `expr.rs`)
+- Call `solver.evaluate_index_access` from element access checking
+- Delegate to Solver following North Star Rule 3
+
+## Expected Impact
+
+- **Direct**: Fix ~3 tests
+- **Indirect**: Halo effect on tests using index signatures
+- **Goal**: 8250+ passing, 50- failing
+
+## Files to Modify
+
+1. **src/solver/lower.rs** - Index signature detection
+2. **src/solver/subtype.rs** - Subtyping logic
+3. **src/solver/evaluate.rs** - Element access evaluation
+4. **src/solver/objects.rs** - Property collection for intersections
+5. **src/checker/state.rs** - Checker integration
 
 ## Test Status
 
 **Start**: 8247 passing, 53 failing
 **Current**: 8247 passing, 53 failing
-**Goal**: 8260+ passing, 45- failing
 
 ## Notes
 
-**Session Progress**:
-- Investigated enum error duplication (found diagnostic issue, not type system bug)
-- Identified readonly test infrastructure fix path
-- Ready to implement index signatures (high impact feature)
+**Gemini Question 1 (Approach Validation)**: Complete
+- Validated the overall approach
+- Corrected: use `evaluate.rs` not `expr.rs` for element access
+- Identified specific functions and edge cases
+- Emphasized: Resolver Lazy types, prevent infinite recursion, preserve nominal identity
 
-**Gemini's Recommendation**:
-- Index Signatures are foundational - required for `T[K]` expressions, Mapped Types, `keyof` operations
-- Has "halo effect" on many other tests that rely on indexer lookups
+**AGENTS.md Mandatory Workflow**:
+- Question 1 (Pre-implementation): ✅ Complete
+- Question 2 (Post-implementation): Pending (after implementing solver logic)
 
-**Next Steps**:
-1. Fix readonly infrastructure tests (quick wins)
-2. Implement index signatures (high impact)
-3. Address enum error duplication if time permits
+**Next Step**: Implement Phase 1 (Lowering) and Phase 2 (Subtyping) in Solver, then ask Gemini Question 2 for code review before Checker integration.
+
+**Deferred**:
+- Readonly infrastructure tests (~6) - test setup issue
+- Enum error duplication (~2) - diagnostic deduplication issue
