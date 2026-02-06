@@ -55,8 +55,9 @@ Fixed `NarrowingVisitor` to properly handle Lazy/Ref/Application resolution and 
 - ✅ `visit_keyof` (Commit `ed7e454e8`) - contravariant logic with TypeParameter handling
 - ✅ `visit_template_literal` (Commit `4c686ef37`) - template <: string and template <: template
 - ✅ `visit_type_query` (Commit `5b0cea7ca`) - typeof symbol resolution and recursion
+- ✅ `visit_index_access` (Commit `e532109ed`) - S[I] <: T[J] deferred index access
 
-**Status**: 4 of 7 stubs complete. Need to complete visit_index_access, visit_this_type, visit_infer.
+**Status**: 5 of 7 stubs complete. Need to complete visit_this_type, visit_infer.
 
 ## Next Steps
 
@@ -77,6 +78,7 @@ Fixed `NarrowingVisitor` to properly handle Lazy/Ref/Application resolution and 
 - `ed7e454e8`: feat(solver): fix visit_keyof to handle type parameters correctly
 - `4c686ef37`: feat(solver): implement visit_template_literal in SubtypeVisitor
 - `5b0cea7ca`: feat(solver): implement visit_type_query in SubtypeVisitor
+- `e532109ed`: feat(solver): implement visit_index_access in SubtypeVisitor
 
 ## Test Results
 
