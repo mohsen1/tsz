@@ -1153,6 +1153,91 @@ in static class members, which will improve ES5 class method emit accuracy.
 
 **Session Achievements:**
 - ✅ Enum ES5 downleveling (commit 591840d18)
-- ✅ CommonJS interop __importDefault (commit a760aa7ca)  
+- ✅ CommonJS interop __importDefault (commit a760aa7ca)
 - ✅ Verified 10+ ES5 features working
 - ✅ Clear architectural path forward from Gemini Pro
+
+### 2025-02-06 Session 22: Decorator Work Abandoned - Parser Limitation
+
+**Discovery:**
+Attempted to implement ES5 decorator emission infrastructure but discovered that
+the tsz parser does not parse decorators at all. The `@decorator` syntax is not
+recognized, making any emitter-side implementation impossible without parser changes.
+
+**Attempted Implementation:**
+- Added `collect_decorators()`, `collect_member_decorators()`, and related helpers
+- Added `emit_es5_decorators()` to emit `__decorate` helper calls
+- Modified `emit_decorator()` in special_expressions.rs to emit nothing in ES5
+
+**Blocker:**
+Decorators (`@decorator`) are not being parsed by the tsz parser. This is outside
+the scope of the emitter session (tsz-4), as it requires parser implementation.
+
+**Resolution:**
+Abandoned decorator work. Reset to origin/main to remove the unworkable commits.
+
+**Next:**
+Consulted Gemini for new achievable task that:
+1. Doesn't require parser changes
+2. Will improve emit test pass rate
+3. Is achievable with current architecture
+
+**Gemini Recommendation:**
+Implement `downlevelIteration` for `for-of` loops with full iterator protocol support.
+
+### 2025-02-06 Session 22: New Task - downlevelIteration for for-of Loops
+
+**Current State:**
+The emitter currently implements a "loose" optimization for `for-of` loops in ES5
+that only works for Arrays. This fails at runtime for Strings, Maps, Sets, and Generators.
+
+**Current Implementation (es5_bindings.rs):**
+```rust
+// Array-only optimization:
+for (var i = 0; i < arr.length; i++) {
+    var item = arr[i];
+    // body
+}
+```
+
+**Problem:**
+This pattern fails for any iterable that isn't array-indexable:
+- Strings: Should iterate over code points, not array indices
+- Sets/Maps: No array indexing, must use Symbol.iterator protocol
+- Generators: No length property, must call .next() until done
+
+**Required Implementation:**
+When `downlevelIteration` is enabled, emit full iterator protocol with `__values` helper:
+
+```javascript
+var e_1, _a, e_1_1;
+try {
+    for (e_1 = __values(iterable), _a = e_1.next(); !_a.done; _a = e_1.next()) {
+        var item = _a.value;
+        // body
+    }
+}
+catch (e_1_1) { e_1 = { error: e_1_1 }; }
+finally {
+    try {
+        if (_a && !_a.done && (_a = e_1["return"])) _a.call(e_1);
+    }
+    finally { if (e_1) throw e_1.error; }
+}
+```
+
+**Implementation Plan:**
+1. Add `downlevel_iteration: bool` flag to `PrinterOptions`
+2. Modify `emit_for_of_statement` in `src/emitter/statements.rs` to check flag
+3. When enabled, emit iterator protocol with try/catch/finally
+4. Fix `get_temp_var_name` collision bug (currently wraps % 26, needs `_a_1` pattern)
+
+**Files to Modify:**
+- `src/options.rs` - Add `downlevel_iteration` flag
+- `src/emitter/statements.rs` - Update for-of emission logic
+- `src/emitter/es5_bindings.rs` - Fix temp var collision bug
+
+**Expected Impact:**
+This will enable passing tests involving Set, Map, String iteration, and Generators.
+
+**Status:** Starting implementation now.
