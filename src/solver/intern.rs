@@ -2652,6 +2652,23 @@ impl TypeInterner {
                     }
                 }
                 TemplateSpan::Type(type_id) => {
+                    // Task #47: Remove empty string literals from interpolations
+                    // An empty string literal contributes nothing to the template
+                    if let Some(TypeKey::Literal(LiteralValue::String(s))) = self.lookup(*type_id) {
+                        let s = self.resolve_atom_ref(s);
+                        if s.is_empty() {
+                            // Skip this empty string literal
+                            // Flush pending text first
+                            if let Some(text) = pending_text.take() {
+                                if !text.is_empty() {
+                                    normalized.push(TemplateSpan::Text(self.intern_string(&text)));
+                                }
+                            }
+                            // Don't add the empty type span - continue to next span
+                            continue;
+                        }
+                    }
+
                     // Flush any pending text before adding a type span
                     if let Some(text) = pending_text.take() {
                         if !text.is_empty() {
@@ -2680,7 +2697,29 @@ impl TypeInterner {
 
     /// Intern a template literal type
     pub fn template_literal(&self, spans: Vec<TemplateSpan>) -> TypeId {
-        // Normalize spans by merging consecutive text spans
+        // Task #47: High-level absorption and widening (Pass 1)
+        // These checks must happen BEFORE structural normalization
+
+        // Never absorption: if any part is never, the whole type is never
+        for span in &spans {
+            if let TemplateSpan::Type(type_id) = span {
+                if *type_id == TypeId::NEVER {
+                    return TypeId::NEVER;
+                }
+            }
+        }
+
+        // Unknown and Any widening: if any part is unknown or any, the whole type is string
+        // Note: string intrinsic does NOT widen (it's used for pattern matching)
+        for span in &spans {
+            if let TemplateSpan::Type(type_id) = span {
+                if *type_id == TypeId::UNKNOWN || *type_id == TypeId::ANY {
+                    return TypeId::STRING;
+                }
+            }
+        }
+
+        // Normalize spans by merging consecutive text spans (Pass 2)
         let normalized = self.normalize_template_spans(spans);
 
         // Check if expansion would exceed the limit
