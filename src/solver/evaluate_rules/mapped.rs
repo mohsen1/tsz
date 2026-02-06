@@ -172,6 +172,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // If we expand this, T["pop"] becomes ERROR. We need to keep it deferred
         // and handle property access on the deferred mapped type specially.
         if self.is_mapped_type_over_type_parameter(mapped) {
+            tracing::trace!(
+                constraint = ?self.interner().lookup(constraint),
+                "evaluate_mapped: DEFERRED - mapped type over type parameter"
+            );
             return self.interner().mapped(mapped.clone());
         }
 
@@ -181,7 +185,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // If we can't determine concrete keys, keep it as a mapped type (deferred)
         let key_set = match self.extract_mapped_keys(keys) {
             Some(keys) => keys,
-            None => return self.interner().mapped(mapped.clone()),
+            None => {
+                tracing::trace!(
+                    keys_lookup = ?self.interner().lookup(keys),
+                    "evaluate_mapped: DEFERRED - could not extract concrete keys"
+                );
+                return self.interner().mapped(mapped.clone());
+            }
         };
 
         // Limit number of keys to prevent OOM with large mapped types.
