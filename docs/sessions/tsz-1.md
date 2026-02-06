@@ -767,39 +767,47 @@ Per Gemini's guidance, the following areas need verification for complete O(1) e
    - Example: `(A | B) & C` → `(A & C) | (B & C)`
    - Need to verify if interner performs this normalization
 
-### Task #51: Diagnostic Integration - BLOCKED
+### Task #51: Diagnostic Integration - IN PROGRESS ✅
 
-**Status**: ⚠️ BLOCKED - Requires extensive refactoring
+**Status**: ✅ INFRASTRUCTURE COMPLETE (commit: 5dc10641e)
 
-**Initial Approach**:
-Add `T: SubtypeTracer = FastTracer` generic parameter to `SubtypeChecker`.
+**Solution Implemented**:
+Used `Option<&'a mut dyn DynSubtypeTracer>` field instead of generic parameter.
 
-**Challenge Discovered**:
-The `SubtypeChecker` has methods defined across 7+ files in `src/solver/subtype_rules/`:
-- `intrinsics.rs`: `check_intrinsic_subtype`, `is_boxed_primitive_subtype`
-- `tuples.rs`: `check_tuple_subtype`, `check_tuple_to_array_subtype`
-- `unions.rs`: `check_type_parameter_subtype`
-- `functions.rs`, `objects.rs`, `literals.rs`, `generics.rs`, `conditionals.rs`
+**Changes Made**:
+1. Added `DynSubtypeTracer` trait to `diagnostics.rs` (dyn-compatible)
+2. Added blanket impl: `impl<T: SubtypeTracer> DynSubtypeTracer for T`
+3. Added `tracer: Option<&'a mut dyn DynSubtypeTracer>` field to `SubtypeChecker`
+4. Added `with_tracer()` method to `SubtypeChecker`
+5. Updated constructors to initialize `tracer: None`
 
-All these `impl` blocks would need to be updated with the `T` parameter, touching ~10,000+ lines of code.
+**Benefits**:
+- No changes needed to `subtype_rules/` files (7+ files untouched!)
+- Zero overhead when tracer is None (default)
+- Compatible with existing `DiagnosticTracer` via blanket impl
 
-**Alternative Approaches**:
-1. Use a trait object (`Box<dyn SubtypeTracer>`) - but this adds overhead
-2. Store tracer in a thread-local or global - breaks encapsulation
-3. Use composition instead of inheritance - major refactor
-4. Add the generic parameter but use macro to reduce boilerplate
+**Next Steps** (Incremental Implementation):
+1. Add trace calls in `check_subtype_inner` for high-level failures
+2. Add trace calls in `subtype_rules/intrinsics.rs` for intrinsic mismatches
+3. Add trace calls in `subtype_rules/objects.rs` for property mismatches
+4. Add trace calls in `subtype_rules/functions.rs` for parameter/return mismatches
 
-**Recommendation**: Ask Gemini for the simplest approach that doesn't require touching 10+ files.
+**Usage Pattern**:
+```rust
+if let Some(tracer) = &mut self.tracer {
+    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch { source, target }) {
+        return SubtypeResult::False;
+    }
+}
+```
 
 ---
 
-### Task #52: DNF Normalization - NEXT PRIORITY
+### Task #52: DNF Normalization
 
-**Status**: ⏳ READY TO START
+**Status**: ⏳ PENDING
 
 **Goal**: Implement `(A | B) & C` → `(A & C) | (B & C)` in `intern.rs`
-
-This is simpler than Task #51 and can be done independently.
 
 ---
 
