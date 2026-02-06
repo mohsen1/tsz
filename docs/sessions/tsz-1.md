@@ -4,11 +4,48 @@
 **Last Updated**: 2026-02-05
 **Focus**: Core Type Relations & Structural Soundness (The "Judge" Layer)
 
-## Session Redefined (2025-02-05)
+## Session Redefined (2025-02-05 - Redux)
 
-**Strategic Position**: Transitioning from **Performance Optimization** to **"Canonical Completeness"** milestone. The Judge now has robust canonicalization machinery (De Bruijn indices, partial intersection merging), but must ensure that EVERY path through the Solver produces canonical results and leverages O(1) equality.
+**Strategic Position**: Transitioning from **"Canonical Completeness"** to **"Total Canonicalization"** milestone. After discovering that Tasks #44 and #45 were already implemented, the focus shifts to ensuring that NO operation in `src/solver/` can produce non-canonical TypeIds.
 
-**Key Insight**: While TypeId equality is O(1) for identical types, we still perform full structural walks for non-identical types on every subtype check. Subtype memoization is the biggest remaining performance win.
+**Key Insight**: The "Mechanics of Evaluation" are complete (keyof, index_access, subtype caching all exist). The remaining work is ensuring that **every** type-producing operation uses canonical methods (`union()`, `intersection()`) instead of raw `intern()`.
+
+### Redefined Priorities: Total Canonicalization
+
+#### Priority 1: Task #46 - Instantiation Canonicalization ⏳ NEXT
+**Status**: ⏳ PENDING
+**File**: `src/solver/instantiate.rs`
+**Problem**: When `instantiate_type` performs substitution, it constructs new types. If it calls `interner.intern()` with raw `TypeKey`, it bypasses normalization.
+**Example**: `List<string | string>` must equal `List<string>`.
+**Action**: Audit `TypeInstantiator::instantiate_key` to use canonical methods.
+
+---
+
+#### Priority 2: Task #47 - Template Literal Canonicalization
+**Status**: ⏳ PENDING
+**Files**: `src/solver/intern.rs`, `src/solver/evaluate_rules/template_literal.rs`
+**Problem**: Template literals allow redundant structures.
+**Requirements**:
+1. Merge adjacent `TemplateSpan::Text` nodes
+2. Remove empty string literals from interpolations
+3. Never absorption: if any part is `never`, whole type is `never`
+4. Any widening: if any part is `any`, whole type is `string`
+
+---
+
+#### Priority 3: Task #48 - Primitive-Object Intersection Soundness
+**Status**: ⏳ PENDING
+**File**: `src/solver/intern.rs` (Function: `reduce_intersection_subtypes`)
+**Problem**: TypeScript has "boxing" rules. `string & { length: number }` is valid, but `number & { length: number }` is not.
+**Action**: Refine intersection reduction for primitive-object intersections.
+
+---
+
+#### Priority 4: Task #49 - Global Subtype Cache Persistence
+**Status**: ⏳ PENDING
+**Files**: `src/solver/db.rs`, `src/solver/subtype.rs`
+**Problem**: Ensure `QueryCache` acts as long-lived, thread-safe store.
+**Action**: Audit `RelationCacheKey` lifecycle for correct context capture.
 
 ### Coordination Map
 
@@ -173,23 +210,25 @@
 
 ---
 
-### Priority 2: Task #45 - Index Access & Keyof Simplification 🚧 NEXT
-**Status**: ⏳ PENDING
+### Priority 2: Task #45 - Index Access & Keyof Simplification ✅ ALREADY DONE
+**Status**: ✅ ALREADY IMPLEMENTED (370 + 825 lines)
 **Why**: `evaluate_index_access` and `evaluate_keyof` must return the most simplified canonical form.
 
-**Examples**:
-- `keyof {a: 1, b: 2}` should return the same TypeId as `"a" | "b"`
-- `T[K]` where `T = {a: string, b: number}` and `K = "a"` should simplify to `string`
+**Findings**: Comprehensive implementations already exist:
+- `src/solver/evaluate_rules/keyof.rs` (370 lines) - Full keyof operator with distributivity
+- `src/solver/evaluate_rules/index_access.rs` (825 lines) - Complete index access implementation
 
-**Files**: `src/solver/evaluate.rs`
+Both already use canonical `union()` and `intersection()` methods.
 
 ---
 
-### Priority 3: Task #46 - Instantiation Canonicalization
+### Priority 3: Task #46 - Instantiation Canonicalization 🚧 NEXT
 **Status**: ⏳ PENDING
 **Why**: When a generic is substituted, the resulting TypeKey must be passed through canonical normalization.
 
 **Example**: `List<string>` becoming `string | string` after substitution should collapse to `string`.
+
+**Action**: Audit `TypeInstantiator::instantiate_key` to use canonical methods.
 
 **Files**: `src/solver/instantiate.rs`
 
@@ -199,20 +238,46 @@
 **Status**: ⏳ PENDING
 **Why**: Template literals need normalization for adjacent string constants and `any`/`never` absorption.
 
+**Requirements**:
+1. Merge adjacent `TemplateSpan::Text` nodes
+2. Remove empty string literals from interpolations
+3. Never absorption: if any part is `never`, whole type is `never`
+4. Any widening: if any part is `any`, whole type is `string`
+
+**Files**: `src/solver/intern.rs`, `src/solver/evaluate_rules/template_literal.rs`
+
+---
+
+### Priority 5: Task #48 - Primitive-Object Intersection Soundness
+**Status**: ⏳ PENDING
+**Why**: TypeScript has "boxing" rules. `string & { length: number }` is valid, but `number & { length: number }` is not.
+
+**Action**: Refine `reduce_intersection_subtypes` for primitive-object intersections.
+
 **Files**: `src/solver/intern.rs`
 
 ---
 
-## Critical Gaps Identified
+### Priority 6: Task #49 - Global Subtype Cache Persistence
+**Status**: ⏳ PENDING
+**Why**: Ensure `QueryCache` acts as long-lived, thread-safe store with correct context capture.
 
-### Gap A: Double Interning
-Some evaluation functions call `interner.intern()` directly, potentially bypassing canonicalization. Need to audit all calls in `evaluate.rs` and `instantiate.rs`.
+**Action**: Audit `RelationCacheKey` lifecycle for compiler flag handling.
 
-### Gap B: Subtype Memoization vs. Coinduction
-No long-lived cache for successful subtype checks. Every check performs a full structural walk unless types are identical.
+**Files**: `src/solver/db.rs`, `src/solver/subtype.rs`
 
-### Gap C: Literal/Primitive Intersection Soundness
-Need to refine `reduce_intersection_subtypes` to handle primitive-object intersections based on TypeScript's "boxing" rules (e.g., `string & { length: number }` is valid, but `number & { length: number }` is not).
+---
+
+## Critical Gaps - Updated Status
+
+### Gap A: Double Interning ⏳ PENDING
+Some evaluation functions call `interner.intern()` directly, potentially bypassing canonicalization. This is what Task #46 addresses.
+
+### Gap B: Subtype Memoization vs. Coinduction ✅ RESOLVED
+Task #44 confirmed that comprehensive subtype caching is already implemented with correct handling of non-definitive results.
+
+### Gap C: Literal/Primitive Intersection Soundness ⏳ PENDING
+This is now Task #48. The `reduce_intersection_subtypes` function needs refinement for TypeScript's "boxing" rules.
 
 ---
 
