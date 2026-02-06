@@ -441,6 +441,18 @@ impl<'a> CheckerState<'a> {
                 // - get_type_of_symbol returns the actual cached concrete type
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                     let resolved = self.get_type_of_symbol(sym_id);
+                    // FIX: Detect identity loop by comparing DefId, not TypeId.
+                    // When get_type_of_symbol hits a circular reference, it returns a Lazy placeholder
+                    // for the same symbol. Even though the TypeId might be different (due to fresh interning),
+                    // the DefId should be the same. This detects the cycle and breaks infinite recursion.
+                    // This happens in cases like: class C { static { C.#x; } static #x = 123; }
+                    let resolved_def_id = self.ctx.types.lookup(resolved).and_then(|k| match k {
+                        TypeKey::Lazy(d) => Some(d),
+                        _ => None,
+                    });
+                    if resolved_def_id == Some(def_id) {
+                        return type_id;
+                    }
                     // Recursively resolve if still Lazy (handles Lazy chains)
                     if let Some(TypeKey::Lazy(_)) = self.ctx.types.lookup(resolved) {
                         self.evaluate_type_with_resolution(resolved)
