@@ -1732,9 +1732,8 @@ impl Server {
                             if let Some(ref doc) = p.documentation {
                                 param["documentation"] =
                                     serde_json::json!([{"text": doc, "kind": "text"}]);
-                            } else {
-                                param["documentation"] = serde_json::json!([]);
                             }
+                            // Omit "documentation" when empty (TypeScript omits it)
                             param
                         })
                         .collect();
@@ -1757,9 +1756,8 @@ impl Server {
                     });
                     if let Some(ref doc) = sig.documentation {
                         item["documentation"] = serde_json::json!([{"text": doc, "kind": "text"}]);
-                    } else {
-                        item["documentation"] = serde_json::json!([]);
                     }
+                    // Omit "documentation" when empty (TypeScript omits it)
                     // Build tags from parameter documentation
                     let tags: Vec<serde_json::Value> = sig
                         .parameters
