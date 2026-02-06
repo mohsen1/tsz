@@ -373,6 +373,10 @@ This is why key remapping fails! When the conditional `K extends "age" ? never :
 
 **Test Results**: 8272 passing, 40 failing (unchanged)
 
+**Session Status**: Made good progress on mapped type modifiers (+17 tests). Identified root cause of key remapping bug (conditional literal preservation), but fix is complex and requires deeper investigation of type parameter substitution and literal type widening in conditional evaluation.
+
+**Recommendation for next session**: Focus on fixing conditional type literal preservation as it's a high-impact bug that affects multiple features.
+
 ### 2026-02-06: Indexed Access Investigation (In Progress)
 
 **Pivoted from Template Literals** to Indexed Access based on Gemini recommendation:
