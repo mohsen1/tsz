@@ -510,7 +510,7 @@ impl<'a> CheckerState<'a> {
             String::from("<anonymous>")
         };
 
-        let mut derived_members = Vec::new();
+        let mut derived_members: Vec<(String, TypeId, NodeIndex, u16)> = Vec::new();
         for &member_idx in &iface_data.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -520,6 +520,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            let kind = member_node.kind;
             let Some(sig) = self.ctx.arena.get_signature(member_node) else {
                 continue;
             };
@@ -527,7 +528,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let type_id = self.get_type_of_interface_member(member_idx);
-            derived_members.push((name, type_id));
+            derived_members.push((name, type_id, member_idx, kind));
         }
 
         // Process each heritage clause (extends)
@@ -628,7 +629,8 @@ impl<'a> CheckerState<'a> {
                 let substitution =
                     TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
-                for (member_name, member_type) in &derived_members {
+                for (member_name, member_type, derived_member_idx, derived_kind) in &derived_members
+                {
                     let mut found = false;
 
                     for &base_iface_idx in &base_iface_indices {
@@ -671,7 +673,25 @@ impl<'a> CheckerState<'a> {
                             let base_type =
                                 instantiate_type(self.ctx.types, base_type, &substitution);
 
-                            if !self.is_assignable_to(*member_type, base_type) {
+                            // For method signatures, also check required parameter
+                            // count: derived methods must not require more parameters
+                            // than the base method provides. This catches the
+                            // "target signature provides too few arguments" case.
+                            let param_count_incompatible = if *derived_kind == METHOD_SIGNATURE
+                                && base_member_node.kind == METHOD_SIGNATURE
+                            {
+                                let derived_required = self
+                                    .count_required_params_from_signature_node(*derived_member_idx);
+                                let base_required =
+                                    self.count_required_params_from_signature_node(base_member_idx);
+                                derived_required > base_required
+                            } else {
+                                false
+                            };
+
+                            if param_count_incompatible
+                                || !self.is_assignable_to(*member_type, base_type)
+                            {
                                 let member_type_str = self.format_type(*member_type);
                                 let base_type_str = self.format_type(base_type);
 
@@ -1083,5 +1103,44 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Count required (non-optional, non-rest, no-initializer) parameters in a
+    /// method/function signature node, excluding `this` parameters.
+    fn count_required_params_from_signature_node(&self, node_idx: NodeIndex) -> usize {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return 0;
+        };
+        let Some(sig) = self.ctx.arena.get_signature(node) else {
+            return 0;
+        };
+        let Some(ref params) = sig.parameters else {
+            return 0;
+        };
+        let mut count = 0;
+        for &param_idx in &params.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            // Skip `this` pseudo-parameter
+            if let Some(name_node) = self.ctx.arena.get(param.name) {
+                if name_node.kind == SyntaxKind::ThisKeyword as u16 {
+                    continue;
+                }
+            }
+            // Rest parameters are not counted as required
+            if param.dot_dot_dot_token {
+                continue;
+            }
+            // Optional or has-default parameters are not required
+            if param.question_token || !param.initializer.is_none() {
+                continue;
+            }
+            count += 1;
+        }
+        count
     }
 }

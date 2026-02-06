@@ -185,6 +185,14 @@ impl<'a> CheckerState<'a> {
         self.has_modifier_kind(modifiers, SyntaxKind::StaticKeyword)
     }
 
+    /// Check if modifiers include the 'accessor' keyword (auto-accessor).
+    pub(crate) fn has_accessor_modifier(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> bool {
+        self.has_modifier_kind(modifiers, SyntaxKind::AccessorKeyword)
+    }
+
     /// Check if modifiers include the 'private' keyword.
     pub(crate) fn has_private_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
         self.has_modifier_kind(modifiers, SyntaxKind::PrivateKeyword)

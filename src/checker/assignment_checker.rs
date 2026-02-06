@@ -116,7 +116,20 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Set destructuring flag when LHS is an object/array pattern to suppress
+        // TS1117 (duplicate property) checks in destructuring targets.
+        let is_destructuring = if let Some(left_node) = self.ctx.arena.get(left_idx) {
+            left_node.kind == crate::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || left_node.kind == crate::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        } else {
+            false
+        };
+        let prev_destructuring = self.ctx.in_destructuring_target;
+        if is_destructuring {
+            self.ctx.in_destructuring_target = true;
+        }
         let left_target = self.get_type_of_assignment_target(left_idx);
+        self.ctx.in_destructuring_target = prev_destructuring;
         let left_type = self.resolve_type_query_type(left_target);
 
         let prev_context = self.ctx.contextual_type;

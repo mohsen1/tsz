@@ -775,6 +775,11 @@ impl BinderState {
                                             // For renamed imports (import { foo as bar }), track original name
                                             if let Some(prop_name) = prop_name {
                                                 sym.import_name = Some(prop_name.to_string());
+                                            } else {
+                                                // For non-renamed imports (import { foo }), still set
+                                                // import_name so the checker can distinguish named
+                                                // imports from namespace imports (import * as ns).
+                                                sym.import_name = Some(name.to_string());
                                             }
                                         }
                                     }
