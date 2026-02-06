@@ -20,7 +20,9 @@
 
 use std::fmt::Write;
 
-use crate::parser::node::NodeArena;
+use crate::parser::base::NodeIndex;
+use crate::parser::node::{Node, NodeArena};
+use crate::transform_context::TransformContext;
 use crate::transforms::ir::*;
 
 /// Find the end of a statement in source text by scanning for ';' at depth 0
@@ -133,6 +135,8 @@ pub struct IRPrinter<'a> {
     arena: Option<&'a NodeArena>,
     /// Source text for emitting ASTRef nodes
     source_text: Option<&'a str>,
+    /// Optional transform directives for ASTRef nodes
+    transforms: Option<TransformContext>,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -144,6 +148,7 @@ impl<'a> IRPrinter<'a> {
             indent_str: "    ",
             arena: None,
             source_text: None,
+            transforms: None,
         }
     }
 
@@ -155,6 +160,7 @@ impl<'a> IRPrinter<'a> {
             indent_str: "    ",
             arena: Some(arena),
             source_text: None,
+            transforms: None,
         }
     }
 
@@ -166,7 +172,13 @@ impl<'a> IRPrinter<'a> {
             indent_str: "    ",
             arena: Some(arena),
             source_text: Some(source_text),
+            transforms: None,
         }
+    }
+
+    /// Set transform directives for ASTRef emission
+    pub fn set_transforms(&mut self, transforms: TransformContext) {
+        self.transforms = Some(transforms);
     }
 
     /// Set the source text for ASTRef emission
@@ -912,6 +924,24 @@ impl<'a> IRPrinter<'a> {
                 }
             }
             IRNode::ASTRef(idx) => {
+                // Check if this node has a transform directive that we should apply
+                if let (Some(arena), Some(transforms)) = (self.arena, self.transforms.as_ref())
+                    && let Some(node) = arena.get(*idx)
+                    && transforms.has_transform(*idx)
+                {
+                    // For now, handle arrow functions specifically
+                    // TODO: Generalize to handle all transform types
+                    use crate::parser::syntax_kind_ext;
+                    if node.kind == syntax_kind_ext::ARROW_FUNCTION {
+                        if let Some(func_data) = arena.get_function(node) {
+                            self.emit_arrow_function_es5(arena, node, func_data, *idx);
+                            return;
+                        }
+                    }
+                    // For other node types with transforms, fall through to source text copy
+                    // This is a temporary limitation - in the future, all transforms should be handled
+                }
+
                 // Emit AST node by using its source text.
                 // For expressions, just emit the trimmed text directly.
                 // For statements, we need to find the statement end.
@@ -1422,6 +1452,109 @@ impl<'a> IRPrinter<'a> {
 impl Default for IRPrinter<'_> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<'a> IRPrinter<'a> {
+    /// Emit an arrow function as ES5 function expression
+    /// Transforms: () => expr  →  function () { return expr; }
+    fn emit_arrow_function_es5(
+        &mut self,
+        arena: &NodeArena,
+        node: &Node,
+        func: &crate::parser::node::FunctionData,
+        node_idx: NodeIndex,
+    ) {
+        use crate::parser::syntax_kind_ext;
+        use crate::syntax::transform_utils;
+
+        // Check if this captures 'this' or 'arguments'
+        let captures_this = transform_utils::contains_this_reference(arena, node_idx);
+        let captures_arguments = transform_utils::contains_arguments_reference(arena, node_idx);
+
+        // Determine capture wrapper
+        let captures_any = captures_this || captures_arguments;
+        if captures_any {
+            self.write("(function (");
+            if captures_this {
+                self.write("_this");
+            }
+            if captures_this && captures_arguments {
+                self.write(", ");
+            }
+            if captures_arguments {
+                self.write("_arguments");
+            }
+            self.write(") { return ");
+        } else {
+            self.write("function (");
+        }
+
+        // Parameters
+        self.write("(");
+        let params = &func.parameters.nodes;
+        for (i, &param_idx) in params.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            if let Some(param_node) = arena.get(param_idx) {
+                if let Some(param) = arena.get_parameter(param_node) {
+                    if let Some(ident) = arena.get_identifier(param_node) {
+                        self.write(&ident.escaped_text);
+                    }
+                }
+            }
+        }
+        self.write(") ");
+
+        // Body
+        let body_node = arena.get(func.body);
+        let is_block = body_node
+            .map(|n| n.kind == syntax_kind_ext::BLOCK)
+            .unwrap_or(false);
+
+        if is_block {
+            // Block body - emit directly
+            if let Some(body_text) = self.source_text {
+                if let Some(body) = arena.get(func.body) {
+                    let start = body.pos as usize;
+                    let end = std::cmp::min(body.end as usize, body_text.len());
+                    if start < end {
+                        self.write(&body_text[start..end]);
+                    }
+                }
+            }
+        } else {
+            // Concise body - wrap with return
+            self.write("{ return ");
+            if let Some(body_text) = self.source_text {
+                if let Some(body) = arena.get(func.body) {
+                    let start = body.pos as usize;
+                    let end = std::cmp::min(body.end as usize, body_text.len());
+                    if start < end {
+                        let raw = &body_text[start..end];
+                        self.write(raw.trim());
+                    }
+                }
+            }
+            self.write("; }");
+        }
+
+        // Close capture wrapper
+        if captures_any {
+            self.write("; })");
+            self.write("(");
+            if captures_this {
+                self.write("this");
+            }
+            if captures_this && captures_arguments {
+                self.write(", ");
+            }
+            if captures_arguments {
+                self.write("arguments");
+            }
+            self.write(")");
+        }
     }
 }
 
