@@ -837,31 +837,40 @@ Focus on high-impact, low-effort fixes first.
 
 ## Current Session Goal (2025-02-06)
 
-**Primary Goal: Fix Structural Gaps in ES5 Downleveling**
+**Primary Goal: Fix Arrow Function `this` Capture to Match tsc Pattern**
 
-**Finding via Triage (per Gemini):**
-Pass rate is 33.9% with **structural issues**, not just formatting. Arrow function tests show:
+**Structural Issue Identified (via Gemini consultation):**
 
-1. **Different `this` capture patterns:**
-   - Expected: `Vector.foo = function () { log(_a); };` (uses captured `_a`)
-   - Actual: `Vector.foo = (function (_this) { return function () { log(_this); }; })(this);`
-   - Both are semantically correct but patterns differ
+tsz uses **IIFE capture pattern** but tsc uses **Class Alias Capture** for static members:
 
-2. **Nested function formatting:** Multi-line vs single-line decisions
+**tsz (actual):**
+```javascript
+Vector.foo = (function (_this) { return function () { log(_this); }; })(this);
+```
 
-3. **Comment placement:** Comments in wrong locations (after code instead of before)
+**tsc (expected):**
+```javascript
+var _a;
+_a = Vector;
+Vector.foo = function () { log(_a); };
+```
 
-**Action Plan:**
-1. Identify which `this` capture pattern tsc uses for static methods
-2. Fix arrow function `this` capture to match exactly
-3. Fix comment preservation/emission order
+Both are semantically correct but patterns differ. To match tsc exactly, need to implement "Class Alias Capture."
 
-**Arrow Function Pass Rate:** 38.2% (47/123)
+**Implementation Plan (per Gemini):**
+1. **LoweringPass**: Detect when ArrowFunction is within a Static member
+2. **TransformDirective**: Pass capture target (class alias) information
+3. **emit_arrow_function_es5** (`src/emitter/es5_helpers.rs` lines 730-815):
+   - Accept optional `alias_override`
+   - Skip IIFE wrapper when alias provided
+   - Substitute `this` with alias string
 
-**Key Files:**
-- `src/emitter/functions.rs` - Arrow function emission
-- `src/emitter/es5_bindings.rs` - ES5 this capture
-- `src/emitter/mod.rs` - Comment handling
+**Edge Cases:**
+- Class expressions need temporary names
+- Nested arrows must share same alias
+- Multiple classes require nearest enclosing class alias
+
+**Current Pass Rate:** 33.9% (148/437)
 
 ---
 
