@@ -1674,11 +1674,25 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
     }
 
     fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
-        self.query_cache.evaluate_mapped(mapped)
+        // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution
+        // This fixes the NoopResolver issue that prevents type alias resolution in mapped types
+        let type_env = self.type_env.borrow();
+        let mut evaluator = crate::solver::evaluate::TypeEvaluator::with_resolver(
+            self.as_type_database(),
+            &*type_env,
+        );
+        evaluator.evaluate_mapped(mapped)
     }
 
     fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
-        self.query_cache.evaluate_keyof(operand)
+        // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution
+        // This fixes the NoopResolver issue that prevents type alias resolution in keyof
+        let type_env = self.type_env.borrow();
+        let mut evaluator = crate::solver::evaluate::TypeEvaluator::with_resolver(
+            self.as_type_database(),
+            &*type_env,
+        );
+        evaluator.evaluate_keyof(operand)
     }
 
     fn resolve_property_access(

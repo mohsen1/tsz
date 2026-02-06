@@ -226,6 +226,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // keyof (A & B) = keyof A | keyof B (covariance)
                     self.keyof_intersection(members, operand)
                 }
+                // CRITICAL: Handle Lazy (type aliases) by attempting resolution via resolver
+                TypeKey::Lazy(def_id) => {
+                    match self.resolver().resolve_lazy(def_id, self.interner()) {
+                        Some(resolved) => {
+                            // Recursively compute keyof of the resolved type
+                            self.recurse_keyof(resolved)
+                        }
+                        None => {
+                            // Keep as deferred KeyOf if resolution fails
+                            self.interner().intern(TypeKey::KeyOf(operand))
+                        }
+                    }
+                }
+                // CRITICAL: Handle Application (generic types) by evaluating them first
+                TypeKey::Application(_app_id) => {
+                    // Evaluate the application to get the instantiated type
+                    let evaluated = self.evaluate(evaluated_operand);
+                    // Then compute keyof of the evaluated result
+                    self.recurse_keyof(evaluated)
+                }
                 // For other types (type parameters, etc.), keep as KeyOf (deferred)
                 _ => self.interner().intern(TypeKey::KeyOf(operand)),
             }
