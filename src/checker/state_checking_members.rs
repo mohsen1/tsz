@@ -2413,7 +2413,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.check_parameter_initializers(&func.parameters.nodes);
 
             if !has_type_annotation {
+                // Suppress definite assignment errors during return type inference.
+                // The function body will be checked again below, and that's when
+                // we want to emit TS2454 errors to avoid duplicates.
+                let prev_suppress = self.ctx.suppress_definite_assignment_errors;
+                self.ctx.suppress_definite_assignment_errors = true;
                 return_type = self.infer_return_type_from_body(func.body, None);
+                self.ctx.suppress_definite_assignment_errors = prev_suppress;
             }
 
             // TS7010 (implicit any return) is emitted for functions without
