@@ -320,6 +320,47 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             self.cache.clear();
         }
     }
+
+    /// Apply compiler options from a bitmask flags value.
+    ///
+    /// The flags correspond to `RelationCacheKey` bits:
+    /// - bit 0: strict_null_checks
+    /// - bit 1: strict_function_types
+    /// - bit 2: exact_optional_property_types
+    /// - bit 3: no_unchecked_indexed_access
+    /// - bit 4: disable_method_bivariance (strict_subtype_checking)
+    /// - bit 5: allow_void_return
+    /// - bit 6: allow_bivariant_rest
+    /// - bit 7: allow_bivariant_param_count
+    ///
+    /// This is used by `QueryCache::is_assignable_to_with_flags` to ensure
+    /// cached results respect the compiler configuration.
+    pub fn apply_flags(&mut self, flags: u16) {
+        // Apply flags to CompatChecker's own fields
+        let strict_null_checks = (flags & (1 << 0)) != 0;
+        let strict_function_types = (flags & (1 << 1)) != 0;
+        let exact_optional_property_types = (flags & (1 << 2)) != 0;
+        let no_unchecked_indexed_access = (flags & (1 << 3)) != 0;
+        let disable_method_bivariance = (flags & (1 << 4)) != 0;
+
+        self.set_strict_null_checks(strict_null_checks);
+        self.set_strict_function_types(strict_function_types);
+        self.set_exact_optional_property_types(exact_optional_property_types);
+        self.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        self.set_strict_subtype_checking(disable_method_bivariance);
+
+        // Also apply flags to the internal SubtypeChecker
+        // We do this directly since apply_flags() uses a builder pattern
+        self.subtype.strict_null_checks = strict_null_checks;
+        self.subtype.strict_function_types = strict_function_types;
+        self.subtype.exact_optional_property_types = exact_optional_property_types;
+        self.subtype.no_unchecked_indexed_access = no_unchecked_indexed_access;
+        self.subtype.disable_method_bivariance = disable_method_bivariance;
+        self.subtype.allow_void_return = (flags & (1 << 5)) != 0;
+        self.subtype.allow_bivariant_rest = (flags & (1 << 6)) != 0;
+        self.subtype.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
+    }
+
     ///
     /// When strict mode is enabled, `any` does NOT silence structural mismatches.
     /// This means the type checker will still report errors even when `any` is involved,
