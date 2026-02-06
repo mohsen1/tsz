@@ -210,22 +210,21 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
 
     fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
         // CRITICAL: Classes and interfaces are represented as Lazy types.
-        // We must resolve them and recurse to find properties.
+        // We must resolve them and then perform the index access lookup.
         let def_id = crate::solver::def::DefId(def_id);
-        let resolved = self
+        if let Some(resolved) = self
             .evaluator
             .resolver()
-            .resolve_lazy(def_id, self.evaluator.interner())?;
-
-        // If it resolved to the same type (cycle/unresolvable), defer evaluation
-        if resolved == self.object_type {
-            return None;
+            .resolve_lazy(def_id, self.evaluator.interner())
+        {
+            // CRITICAL: Use evaluate_index_access directly (not recurse) to perform property lookup
+            // This resolves the class C and then finds the "foo" property within it
+            return Some(
+                self.evaluator
+                    .evaluate_index_access(resolved, self.index_type),
+            );
         }
-
-        Some(
-            self.evaluator
-                .recurse_index_access(resolved, self.index_type),
-        )
+        None
     }
 
     fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
