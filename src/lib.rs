@@ -129,8 +129,8 @@ pub use tsz_binder::module_resolution_debug;
 // Lib Loader - re-exported from tsz-binder
 pub use tsz_binder::lib_loader;
 
-// Checker types and implementation (Phase 5)
-pub mod checker;
+// Checker types and implementation (Phase 5) - re-exported from tsz-checker workspace crate
+pub use tsz_checker as checker;
 
 #[cfg(test)]
 #[path = "tests/checker_state_tests.rs"]
@@ -2664,37 +2664,20 @@ mod debug_asi;
 #[path = "tests/p1_error_recovery_tests.rs"]
 mod p1_error_recovery_tests;
 
-// Strict null checks manual tests for TS18050/TS2531/2532 error codes
-#[cfg(test)]
-#[path = "checker/tests/strict_null_manual.rs"]
-mod strict_null_manual;
-
-// Generic type inference manual tests
-#[cfg(test)]
-#[path = "checker/tests/generic_inference_manual.rs"]
-mod generic_inference_manual;
-
-// Enum nominality tests
-#[cfg(test)]
-#[path = "checker/tests/enum_nominality_tests.rs"]
-mod enum_nominality_tests;
-
-// Private brand nominality tests
-#[cfg(test)]
-#[path = "checker/tests/private_brands.rs"]
-mod private_brands;
+// Tests moved to checker crate: strict_null_manual, generic_inference_manual,
+// enum_nominality_tests, private_brands
 
 // Constructor accessibility tests
 #[cfg(test)]
-#[path = "checker/tests/constructor_accessibility.rs"]
+#[path = "../crates/tsz-checker/src/tests/constructor_accessibility.rs"]
 mod constructor_accessibility;
 
 // Void return exception tests
 #[cfg(test)]
-#[path = "checker/tests/void_return_exception.rs"]
+#[path = "../crates/tsz-checker/src/tests/void_return_exception.rs"]
 mod void_return_exception;
 
 // Any-propagation tests
 #[cfg(test)]
-#[path = "checker/tests/any_propagation.rs"]
+#[path = "../crates/tsz-checker/src/tests/any_propagation.rs"]
 mod any_propagation;
