@@ -993,7 +993,26 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     fn visit_infer(&mut self, _param_info: &TypeParamInfo) -> Self::Output {
         SubtypeResult::False
     }
-    fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> Self::Output {
+    fn visit_unique_symbol(&mut self, symbol_ref: u32) -> Self::Output {
+        use crate::solver::types::SymbolRef;
+        use crate::solver::visitor::unique_symbol_ref;
+
+        // unique symbol has nominal identity - same symbol ref is subtype
+        if let Some(t_symbol_ref) = unique_symbol_ref(self.checker.interner, self.target) {
+            return if symbol_ref == t_symbol_ref.0 {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        // unique symbol is always a subtype of symbol
+        if let Some(TypeKey::Intrinsic(IntrinsicKind::Symbol)) =
+            self.checker.interner.lookup(self.target)
+        {
+            return SubtypeResult::True;
+        }
+
         SubtypeResult::False
     }
     fn visit_module_namespace(&mut self, _symbol_ref: u32) -> Self::Output {
