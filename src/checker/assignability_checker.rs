@@ -165,7 +165,6 @@ impl<'a> CheckerState<'a> {
         if source == target {
             return true;
         }
-
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.
@@ -197,6 +196,18 @@ impl<'a> CheckerState<'a> {
             && let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key)
         {
             return cached;
+        }
+
+        // Fast path: if source is exactly a member of the target union, assignability is true.
+        // This avoids constructing CompatChecker for large return unions with many exact members.
+        if let Some(crate::solver::TypeKey::Union(list_id)) = self.ctx.types.lookup(target) {
+            let members = self.ctx.types.type_list(list_id);
+            if members.iter().any(|&member| member == source) {
+                if let Some(cache_key) = cache_key {
+                    self.ctx.relation_cache.borrow_mut().insert(cache_key, true);
+                }
+                return true;
+            }
         }
 
         let env = self.ctx.type_env.borrow();
@@ -252,7 +263,6 @@ impl<'a> CheckerState<'a> {
         if source == target {
             return true;
         }
-
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.
@@ -284,6 +294,18 @@ impl<'a> CheckerState<'a> {
             && let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key)
         {
             return cached;
+        }
+
+        // Fast path: if source is exactly a member of the target union, assignability is true.
+        // Reused for bivariant mode to skip expensive checker setup in callback-heavy paths.
+        if let Some(crate::solver::TypeKey::Union(list_id)) = self.ctx.types.lookup(target) {
+            let members = self.ctx.types.type_list(list_id);
+            if members.iter().any(|&member| member == source) {
+                if let Some(cache_key) = cache_key {
+                    self.ctx.relation_cache.borrow_mut().insert(cache_key, true);
+                }
+                return true;
+            }
         }
 
         let env = self.ctx.type_env.borrow();
