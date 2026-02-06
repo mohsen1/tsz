@@ -791,12 +791,44 @@ impl<'a> CheckerState<'a> {
         self.ctx.symbol_resolution_stack.push(sym_id);
         self.ctx.symbol_resolution_set.insert(sym_id);
 
-        // CRITICAL: Pre-cache a placeholder (ERROR) to break deep recursion chains
+        // CRITICAL: Pre-cache a placeholder to break deep recursion chains
         // This prevents stack overflow in circular class inheritance by ensuring
         // that when we try to resolve this symbol again mid-resolution, we get
-        // the cached ERROR immediately instead of recursing deeper.
-        // We'll overwrite this with the real result later (line 3098).
-        self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+        // the cached value immediately instead of recursing deeper.
+        // We'll overwrite this with the real result later (line 815).
+        //
+        // For named entities (Interface, Class, TypeAlias, Enum), use a Lazy type
+        // as the placeholder instead of ERROR. This allows circular dependencies
+        // like `interface User { filtered: Filtered } type Filtered = { [K in keyof User]: ... }`
+        // to work correctly, since keyof Lazy(User) can defer evaluation instead of failing.
+        let symbol = self.ctx.binder.get_symbol(sym_id);
+        let placeholder = if let Some(symbol) = symbol {
+            let flags = symbol.flags;
+            if flags
+                & (symbol_flags::INTERFACE
+                    | symbol_flags::CLASS
+                    | symbol_flags::TYPE_ALIAS
+                    | symbol_flags::ENUM)
+                != 0
+            {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id))
+            } else {
+                TypeId::ERROR
+            }
+        } else {
+            TypeId::ERROR
+        };
+        trace!(
+            sym_id = sym_id.0,
+            placeholder = placeholder.0,
+            is_lazy = matches!(
+                self.ctx.types.lookup(placeholder),
+                Some(crate::solver::TypeKey::Lazy(_))
+            ),
+            "get_type_of_symbol: inserted placeholder"
+        );
+        self.ctx.symbol_types.insert(sym_id, placeholder);
 
         self.push_symbol_dependency(sym_id, true);
         let (result, type_params) = self.compute_type_of_symbol(sym_id);
