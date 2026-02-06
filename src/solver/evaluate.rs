@@ -422,7 +422,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Extract type parameter infos from a type by scanning for TypeParameter types.
     fn extract_type_params_from_type(&self, type_id: TypeId) -> Vec<TypeParamInfo> {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = FxHashSet::default();
         let mut params = Vec::new();
         self.collect_type_params(type_id, &mut seen, &mut params);
         params
@@ -432,7 +432,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn collect_type_params(
         &self,
         type_id: TypeId,
-        seen: &mut std::collections::HashSet<crate::interner::Atom>,
+        seen: &mut FxHashSet<crate::interner::Atom>,
         params: &mut Vec<TypeParamInfo>,
     ) {
         if type_id.is_intrinsic() {

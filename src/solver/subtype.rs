@@ -367,12 +367,12 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 #[derive(Clone, Debug, Default)]
 pub struct TypeEnvironment {
     /// Maps symbol references to their resolved structural types.
-    types: std::collections::HashMap<u32, TypeId>,
+    types: FxHashMap<u32, TypeId>,
     /// Maps symbol references to their type parameters (for generic types).
-    type_params: std::collections::HashMap<u32, Vec<TypeParamInfo>>,
+    type_params: FxHashMap<u32, Vec<TypeParamInfo>>,
     /// Maps primitive intrinsic kinds to their boxed interface types (Rule #33).
     /// e.g., IntrinsicKind::Number -> TypeId of the Number interface
-    boxed_types: std::collections::HashMap<IntrinsicKind, TypeId>,
+    boxed_types: FxHashMap<IntrinsicKind, TypeId>,
     /// The Array<T> interface type from lib.d.ts.
     /// Used to resolve array methods via the official interface.
     array_base_type: Option<TypeId>,
@@ -380,44 +380,44 @@ pub struct TypeEnvironment {
     array_base_type_params: Vec<TypeParamInfo>,
     /// Maps DefIds to their resolved structural types (Phase 4.3 migration).
     /// This enables `TypeKey::Lazy(DefId)` resolution.
-    def_types: std::collections::HashMap<u32, TypeId>,
+    def_types: FxHashMap<u32, TypeId>,
     /// Maps DefIds to their type parameters (for generic types with Lazy refs).
-    def_type_params: std::collections::HashMap<u32, Vec<TypeParamInfo>>,
+    def_type_params: FxHashMap<u32, Vec<TypeParamInfo>>,
     /// Maps DefIds back to SymbolIds for InheritanceGraph lookups (Phase 3.2).
     /// This bridge enables Lazy(DefId) types to use the O(1) InheritanceGraph
     /// by mapping DefIds back to their corresponding SymbolIds.
-    def_to_symbol: std::collections::HashMap<u32, SymbolId>,
+    def_to_symbol: FxHashMap<u32, SymbolId>,
     /// Maps SymbolIds to DefIds for Ref -> Lazy migration (Phase 3.4).
     /// This reverse mapping enables migrating Ref(SymbolRef) types to use
     /// DefId-based resolution via resolve_lazy instead of resolve_ref.
-    symbol_to_def: std::collections::HashMap<u32, DefId>,
+    symbol_to_def: FxHashMap<u32, DefId>,
     /// Set of DefIds that correspond to numeric enums.
     /// Used for Rule #7 (Open Numeric Enums) where number types are assignable to/from numeric enums.
-    numeric_enums: std::collections::HashSet<u32>,
+    numeric_enums: FxHashSet<u32>,
     /// Maps DefIds to their DefKind (Task #32: Graph Isomorphism).
     /// Used by the Canonicalizer to distinguish structural types (TypeAlias)
     /// from nominal types (Interface/Class/Enum).
-    def_kinds: std::collections::HashMap<u32, crate::solver::def::DefKind>,
+    def_kinds: FxHashMap<u32, crate::solver::def::DefKind>,
     /// Maps enum member DefIds to their parent enum DefId.
     /// Used for member-to-parent assignability (e.g., E.A -> E).
-    enum_parents: std::collections::HashMap<u32, DefId>,
+    enum_parents: FxHashMap<u32, DefId>,
 }
 
 impl TypeEnvironment {
     pub fn new() -> Self {
         TypeEnvironment {
-            types: std::collections::HashMap::new(),
-            type_params: std::collections::HashMap::new(),
-            boxed_types: std::collections::HashMap::new(),
+            types: FxHashMap::default(),
+            type_params: FxHashMap::default(),
+            boxed_types: FxHashMap::default(),
             array_base_type: None,
             array_base_type_params: Vec::new(),
-            def_types: std::collections::HashMap::new(),
-            def_type_params: std::collections::HashMap::new(),
-            def_to_symbol: std::collections::HashMap::new(),
-            symbol_to_def: std::collections::HashMap::new(),
-            numeric_enums: std::collections::HashSet::new(),
-            def_kinds: std::collections::HashMap::new(),
-            enum_parents: std::collections::HashMap::new(),
+            def_types: FxHashMap::default(),
+            def_type_params: FxHashMap::default(),
+            def_to_symbol: FxHashMap::default(),
+            symbol_to_def: FxHashMap::default(),
+            numeric_enums: FxHashSet::default(),
+            def_kinds: FxHashMap::default(),
+            enum_parents: FxHashMap::default(),
         }
     }
 

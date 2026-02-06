@@ -1628,7 +1628,7 @@ impl<'a> CheckerState<'a> {
     /// The getter return type must be assignable to the setter parameter type.
     pub(crate) fn check_accessor_type_compatibility(&mut self, members: &[NodeIndex]) {
         use crate::checker::types::diagnostics::diagnostic_codes;
-        use std::collections::HashMap;
+        use rustc_hash::FxHashMap;
 
         // Collect getter return types and setter parameter types
         struct AccessorTypeInfo {
@@ -1636,7 +1636,7 @@ impl<'a> CheckerState<'a> {
             setter: Option<(NodeIndex, TypeId, bool, bool)>, // (accessor_idx, param_type, is_abstract, is_declared)
         }
 
-        let mut accessors: HashMap<String, AccessorTypeInfo> = HashMap::new();
+        let mut accessors: FxHashMap<String, AccessorTypeInfo> = FxHashMap::default();
 
         for &member_idx in members {
             let Some(node) = self.ctx.arena.get(member_idx) else {
