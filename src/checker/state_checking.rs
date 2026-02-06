@@ -1086,15 +1086,17 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         prop_name: &str,
     ) -> crate::solver::operations_property::PropertyAccessResult {
-        use crate::solver::operations_property::PropertyAccessEvaluator;
-
         // Ensure symbols are resolved in the environment
         self.ensure_application_symbols_resolved(object_type);
 
-        // Create evaluator with QueryDatabase (which includes TypeResolver)
-        let evaluator = PropertyAccessEvaluator::new(self.ctx.types);
-
-        evaluator.resolve_property_access(object_type, prop_name)
+        // Route through QueryDatabase so repeated property lookups hit QueryCache.
+        // This is especially important for hot paths like repeated `string[].push`
+        // checks in class-heavy files.
+        self.ctx.types.resolve_property_access_with_options(
+            object_type,
+            prop_name,
+            self.ctx.compiler_options.no_unchecked_indexed_access,
+        )
     }
 
     /// Check if an assignment target is a readonly property.
