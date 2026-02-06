@@ -215,6 +215,26 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Memoized wrapper around `contains_infer_types` for assignability hot paths.
+    pub(crate) fn contains_infer_types_cached(&mut self, type_id: TypeId) -> bool {
+        use crate::solver::visitor::contains_infer_types;
+
+        if self.ctx.contains_infer_types_true.contains(&type_id) {
+            return true;
+        }
+        if self.ctx.contains_infer_types_false.contains(&type_id) {
+            return false;
+        }
+
+        let has_infer = contains_infer_types(self.ctx.types, type_id);
+        if has_infer {
+            self.ctx.contains_infer_types_true.insert(type_id);
+        } else {
+            self.ctx.contains_infer_types_false.insert(type_id);
+        }
+        has_infer
+    }
+
     // =========================================================================
     // Main Assignability Check
     // =========================================================================
@@ -226,7 +246,6 @@ impl<'a> CheckerState<'a> {
     /// Assignability is more permissive than subtyping.
     pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::solver::CompatChecker;
-        use crate::solver::visitor::contains_infer_types;
 
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
@@ -247,8 +266,8 @@ impl<'a> CheckerState<'a> {
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
         // Note: Use ORIGINAL types for cache key, not evaluated types
-        let is_cacheable = !contains_infer_types(self.ctx.types, source)
-            && !contains_infer_types(self.ctx.types, target);
+        let is_cacheable =
+            !self.contains_infer_types_cached(source) && !self.contains_infer_types_cached(target);
 
         if is_cacheable {
             // Pack boolean flags into a u16 bitmask for the cache key
@@ -344,7 +363,6 @@ impl<'a> CheckerState<'a> {
     /// which disables strict_function_types for the check.
     pub fn is_assignable_to_bivariant(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::solver::CompatChecker;
-        use crate::solver::visitor::contains_infer_types;
 
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
@@ -365,8 +383,8 @@ impl<'a> CheckerState<'a> {
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
         // Note: Use ORIGINAL types for cache key, not evaluated types
-        let is_cacheable = !contains_infer_types(self.ctx.types, source)
-            && !contains_infer_types(self.ctx.types, target);
+        let is_cacheable =
+            !self.contains_infer_types_cached(source) && !self.contains_infer_types_cached(target);
 
         // Pack boolean flags into a u16 bitmask for the cache key
         // Note: For bivariant checks, we do NOT set strict_function_types flag
@@ -630,7 +648,6 @@ impl<'a> CheckerState<'a> {
         use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::solver::SubtypeChecker;
-        use crate::solver::visitor::contains_infer_types;
 
         // Fast path: identity check
         if source == target {
@@ -639,8 +656,8 @@ impl<'a> CheckerState<'a> {
 
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
-        let is_cacheable = !contains_infer_types(self.ctx.types, source)
-            && !contains_infer_types(self.ctx.types, target);
+        let is_cacheable =
+            !self.contains_infer_types_cached(source) && !self.contains_infer_types_cached(target);
 
         if is_cacheable {
             // Pack boolean flags into a u16 bitmask for the cache key:

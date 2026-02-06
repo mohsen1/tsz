@@ -2440,14 +2440,16 @@ fn indexed_object_property_is_readonly(
         return prop.readonly;
     }
 
-    // Check index signatures for numeric properties
-    if is_numeric_index_name(prop_name) {
-        if shape.string_index.as_ref().is_some_and(|idx| idx.readonly) {
-            return true;
-        }
-        if shape.number_index.as_ref().is_some_and(|idx| idx.readonly) {
-            return true;
-        }
+    // Check string index signature for ALL property names
+    if shape.string_index.as_ref().is_some_and(|idx| idx.readonly) {
+        return true;
+    }
+
+    // Check numeric index signature for numeric properties
+    if is_numeric_index_name(prop_name)
+        && shape.number_index.as_ref().is_some_and(|idx| idx.readonly)
+    {
+        return true;
     }
 
     false

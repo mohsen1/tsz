@@ -1143,6 +1143,9 @@ impl<'a> CheckerState<'a> {
                 // Only emit TS2348 for types that have construct signatures but zero call signatures
                 if self.is_constructor_type(callee_type) {
                     self.error_class_constructor_without_new_at(callee_type, call.expression);
+                } else if self.is_get_accessor_call(call.expression) {
+                    // TS6234: Calling a get accessor as a function
+                    self.error_get_accessor_not_callable_at(call.expression);
                 } else {
                     // For other non-callable types, emit the generic not-callable error
                     self.error_not_callable_at(callee_type, call.expression);
@@ -1286,6 +1289,20 @@ impl<'a> CheckerState<'a> {
             // First try the main binder (fast path for local symbols).
             let local_symbol = self.ctx.binder.get_symbol(sym_id);
             let flags = local_symbol.map(|s| s.flags).unwrap_or(0);
+
+            // TS2662: Bare identifier resolving to a static class member.
+            // Static members must be accessed via `ClassName.member`, not as
+            // bare identifiers.  The binder puts them in the class scope so
+            // they resolve, but the checker must reject unqualified access.
+            if (flags & crate::binder::symbol_flags::STATIC) != 0 {
+                if let Some(ref class_info) = self.ctx.enclosing_class.clone() {
+                    if self.is_static_member(&class_info.member_nodes, name) {
+                        self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
+                        return TypeId::ERROR;
+                    }
+                }
+            }
+
             let has_type = (flags & crate::binder::symbol_flags::TYPE) != 0;
             let has_value = (flags & crate::binder::symbol_flags::VALUE) != 0;
             let is_type_alias = (flags & crate::binder::symbol_flags::TYPE_ALIAS) != 0;
@@ -1499,13 +1516,11 @@ impl<'a> CheckerState<'a> {
                 && declared_type != TypeId::ANY
                 && declared_type != TypeId::ERROR
             {
-                // Check if declared_type has ReadonlyType modifier - if so, preserve it
+                // Check if declared_type has ReadonlyType modifier or ObjectWithIndex - if so, preserve it
                 match self.ctx.types.lookup(declared_type) {
                     Some(crate::solver::TypeKey::ReadonlyType(_)) => declared_type,
-                    Some(crate::solver::TypeKey::ObjectWithIndex(_))
-                        if flow_type == TypeId::ANY =>
-                    {
-                        // Original fix: Only preserve ObjectWithIndex when flow_type is ANY
+                    Some(crate::solver::TypeKey::ObjectWithIndex(_)) => {
+                        // Always preserve ObjectWithIndex types through flow analysis
                         declared_type
                     }
                     _ => flow_type,
@@ -1525,10 +1540,26 @@ impl<'a> CheckerState<'a> {
             let is_const = self.is_const_variable_declaration(value_decl);
             let result_type = if !is_const {
                 // Mutable variable (let/var)
-                // Use flow_type if it's different (narrowed) and not an error
-                if flow_type != declared_type && flow_type != TypeId::ERROR {
-                    // Flow narrowed the type (e.g., discriminant narrowing) - use narrowed type
-                    flow_type
+                // If declared type is ObjectWithIndex, always preserve it
+                if matches!(
+                    self.ctx.types.lookup(declared_type),
+                    Some(crate::solver::TypeKey::ObjectWithIndex(_))
+                ) {
+                    declared_type
+                } else if flow_type != declared_type && flow_type != TypeId::ERROR {
+                    // Flow narrowed the type - but check if this is just the initializer
+                    // literal being returned. For mutable variables without annotations,
+                    // the declared type is already widened (e.g., STRING for "hi"),
+                    // so if the flow type widens to the declared type, use declared_type.
+                    let widened_flow =
+                        crate::solver::widening::widen_type(self.ctx.types, flow_type);
+                    if widened_flow == declared_type {
+                        // Flow type is just the initializer literal - use widened declared type
+                        declared_type
+                    } else {
+                        // Genuine narrowing (e.g., discriminant narrowing) - use narrowed type
+                        flow_type
+                    }
                 } else {
                     // No narrowing or error - use declared type to preserve widening
                     declared_type

@@ -3291,14 +3291,9 @@ impl ParserState {
         // Skip 'get' or 'set'
         self.next_token();
 
-        // If there's a line break after get/set, it's treated as a property name
-        // (shorthand property in class), not as an accessor keyword.
-        // This matches TypeScript's ASI behavior.
-        if self.scanner.has_preceding_line_break() {
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
-            return false;
-        }
+        // Note: line breaks after get/set do NOT prevent accessor parsing.
+        // The ECMAScript grammar has no [no LineTerminator here] restriction
+        // for get/set in class method definitions.
 
         // Check the token AFTER 'get' or 'set' to determine what we have:
         // - `:`, `=`, `;`, `}`, `?` → property named 'get'/'set' (e.g., `get: number`)

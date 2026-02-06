@@ -258,6 +258,9 @@ impl<'a> CheckerState<'a> {
 
         // Check the function body (for type errors within the body)
         if !body.is_none() {
+            // Track that we're inside a nested function for abstract property access checks.
+            // This must happen before infer_return_type_from_body which evaluates body expressions.
+            self.ctx.function_depth += 1;
             self.cache_parameter_types(&parameters.nodes, Some(&param_types));
 
             // Assign contextual types to destructuring parameters (binding patterns)
@@ -529,12 +532,11 @@ impl<'a> CheckerState<'a> {
                 }
                 self.ctx.iteration_depth = 0;
                 self.ctx.switch_depth = 0;
-                self.ctx.function_depth += 1;
+                // Note: function_depth was already incremented at body entry
                 self.check_statement(body);
                 // Restore control flow context
                 self.ctx.iteration_depth = saved_cf_context.0;
                 self.ctx.switch_depth = saved_cf_context.1;
-                self.ctx.function_depth -= 1;
                 self.ctx.label_stack.truncate(saved_cf_context.2);
                 self.ctx.had_outer_loop = saved_cf_context.3;
             }
@@ -548,6 +550,9 @@ impl<'a> CheckerState<'a> {
             if is_async_for_context {
                 self.ctx.exit_async_context();
             }
+
+            // Restore function_depth (incremented at body entry)
+            self.ctx.function_depth -= 1;
         }
 
         // Create function type using TypeInterner
@@ -731,6 +736,7 @@ impl<'a> CheckerState<'a> {
             if self.is_this_expression(access.expression)
                 && let Some(ref class_info) = self.ctx.enclosing_class.clone()
                 && class_info.in_constructor
+                && self.ctx.function_depth == 0  // Skip inside nested functions/arrow functions
                 && self.is_abstract_member(&class_info.member_nodes, property_name)
             {
                 self.error_abstract_property_in_constructor(

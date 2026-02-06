@@ -46,7 +46,7 @@ use crate::solver::types::{
     TypeApplicationId, TypeListId, TypeParamInfo,
 };
 use crate::solver::{LiteralValue, SymbolRef, TypeDatabase, TypeId, TypeKey};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 // =============================================================================
 // Type Visitor Trait
@@ -1645,6 +1645,7 @@ where
     let mut checker = ContainsTypeChecker {
         types,
         predicate,
+        memo: FxHashMap::default(),
         visiting: FxHashSet::default(),
         max_depth: 20,
         current_depth: 0,
@@ -1658,6 +1659,7 @@ where
 {
     types: &'a dyn TypeDatabase,
     predicate: F,
+    memo: FxHashMap<TypeId, bool>,
     visiting: FxHashSet<TypeId>,
     max_depth: usize,
     current_depth: usize,
@@ -1668,28 +1670,34 @@ where
     F: Fn(&TypeKey) -> bool,
 {
     fn check(&mut self, type_id: TypeId) -> bool {
+        if let Some(&cached) = self.memo.get(&type_id) {
+            return cached;
+        }
         if self.current_depth >= self.max_depth {
             return false;
         }
-        if self.visiting.contains(&type_id) {
+        if !self.visiting.insert(type_id) {
             return false;
         }
 
         let Some(key) = self.types.lookup(type_id) else {
+            self.visiting.remove(&type_id);
             return false;
         };
 
         if (self.predicate)(&key) {
+            self.visiting.remove(&type_id);
+            self.memo.insert(type_id, true);
             return true;
         }
 
-        self.visiting.insert(type_id);
         self.current_depth += 1;
 
         let result = self.check_key(&key);
 
         self.current_depth -= 1;
         self.visiting.remove(&type_id);
+        self.memo.insert(type_id, result);
 
         result
     }
