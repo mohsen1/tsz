@@ -216,7 +216,9 @@ impl<'a> FlowAnalyzer<'a> {
                 .map(|(_, _, base)| self.is_matching_reference(base, reference))
                 .unwrap_or(false);
 
-        self.switch_reference_cache.borrow_mut().insert(key, affects);
+        self.switch_reference_cache
+            .borrow_mut()
+            .insert(key, affects);
         affects
     }
 
