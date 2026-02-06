@@ -2567,18 +2567,54 @@ impl TypeInterner {
     /// Get the string literal values from a type (single literal or union of literals).
     /// Returns None if the type is not a string literal or union of string literals.
     fn get_string_literal_values(&self, type_id: TypeId) -> Option<Vec<String>> {
-        match self.lookup(type_id) {
-            Some(TypeKey::Literal(LiteralValue::String(atom))) => {
-                Some(vec![self.resolve_atom_ref(atom).to_string()])
+        // Helper to convert a single type to a string value if possible
+        let to_string_val = |id: TypeId| -> Option<String> {
+            // Handle intrinsics that stringify to text
+            if id == TypeId::NULL {
+                return Some("null".to_string());
             }
+            if id == TypeId::UNDEFINED || id == TypeId::VOID {
+                return Some("undefined".to_string());
+            }
+            if id == TypeId::BOOLEAN_TRUE {
+                return Some("true".to_string());
+            }
+            if id == TypeId::BOOLEAN_FALSE {
+                return Some("false".to_string());
+            }
+
+            // Handle literal types
+            match self.lookup(id) {
+                Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+                    Some(self.resolve_atom_ref(atom).to_string())
+                }
+                Some(TypeKey::Literal(LiteralValue::Boolean(b))) => Some(b.to_string()),
+                Some(TypeKey::Literal(LiteralValue::Number(n))) => {
+                    // TypeScript stringifies numbers in templates (e.g., 1 -> "1", 1.5 -> "1.5")
+                    Some(format!("{}", n.0))
+                }
+                Some(TypeKey::Literal(LiteralValue::BigInt(atom))) => {
+                    // BigInts in templates are stringified (e.g., 100n -> "100")
+                    Some(self.resolve_atom_ref(atom).to_string())
+                }
+                _ => None,
+            }
+        };
+
+        // Handle the top-level type (either a single value or a union)
+        if let Some(val) = to_string_val(type_id) {
+            return Some(vec![val]);
+        }
+
+        match self.lookup(type_id) {
             Some(TypeKey::Union(list_id)) => {
                 let members = self.type_list(list_id);
                 let mut values = Vec::with_capacity(members.len());
                 for member in members.iter() {
-                    if let Some(TypeKey::Literal(LiteralValue::String(atom))) = self.lookup(*member)
-                    {
-                        values.push(self.resolve_atom_ref(atom).to_string());
+                    if let Some(val) = to_string_val(*member) {
+                        values.push(val);
                     } else {
+                        // If any member cannot be stringified, the whole union cannot be expanded
                         return None;
                     }
                 }
