@@ -1284,6 +1284,19 @@ impl<'a> CheckerState<'a> {
                     self.collect_infer_type_parameters_inner(member.type_node, params);
                 }
             }
+            // Type Parameters: check constraint and default for nested infer
+            k if k == syntax_kind_ext::TYPE_PARAMETER => {
+                if let Some(type_param) = self.ctx.arena.get_type_parameter(node) {
+                    // Check constraint: <T extends infer U>
+                    if type_param.constraint != NodeIndex::NONE {
+                        self.collect_infer_type_parameters_inner(type_param.constraint, params);
+                    }
+                    // Check default: <T = infer U>
+                    if type_param.default != NodeIndex::NONE {
+                        self.collect_infer_type_parameters_inner(type_param.default, params);
+                    }
+                }
+            }
             _ => {
                 // Parameters: check the type annotation (handled via node.kind directly)
                 if let Some(param) = self.ctx.arena.get_parameter(node) {
