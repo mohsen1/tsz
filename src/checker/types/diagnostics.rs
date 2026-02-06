@@ -259,6 +259,7 @@ pub mod diagnostic_messages {
     pub const MODULE_HAS_NO_DEFAULT_EXPORT: &str = "Module '{0}' has no default export.";
     pub const CANNOT_FIND_MODULE: &str =
         "Cannot find module '{0}' or its corresponding type declarations.";
+    pub const CANNOT_FIND_MODULE_DID_YOU_MEAN: &str = "Cannot find module '{0}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?";
     pub const INVALID_MODULE_NAME_IN_AUGMENTATION: &str =
         "Invalid module name in augmentation, module '{0}' cannot be found.";
 
@@ -583,6 +584,7 @@ pub mod diagnostic_codes {
     pub const CANNOT_FIND_MODULE_2307: u32 = 2307; // Classic: Cannot find module 'x'.
     pub const MODULE_NOT_FOUND: u32 = 2307;
     pub const CANNOT_FIND_MODULE: u32 = 2307; // Cannot find module '{0}' or its corresponding type declarations.
+    pub const CANNOT_FIND_MODULE_DID_YOU_MEAN: u32 = 2792; // Cannot find module '{0}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?
     pub const INVALID_MODULE_NAME_IN_AUGMENTATION: u32 = 2664; // Invalid module name in augmentation, module '{0}' cannot be found.
     pub const EXPORT_ASSIGNMENT_WITH_OTHER_EXPORTS: u32 = 2309; // An export assignment cannot be used in a module with other exported elements.
     pub const HAS_NO_DEFAULT_EXPORT: u32 = 2613;
