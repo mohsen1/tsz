@@ -1525,10 +1525,19 @@ impl<'a> CheckerState<'a> {
                     if let Some(module_specifier) =
                         self.get_require_module_specifier(import.module_specifier)
                     {
-                        // Try to resolve the module from module_exports
-                        if let Some(exports_table) =
-                            self.ctx.binder.module_exports.get(&module_specifier)
-                        {
+                        // Try to resolve the module from ambient module_exports first
+                        let exports_table = self
+                            .ctx
+                            .binder
+                            .module_exports
+                            .get(&module_specifier)
+                            .cloned()
+                            .or_else(|| {
+                                // Fallback: cross-file resolution for real multi-file projects
+                                self.resolve_cross_file_namespace_exports(&module_specifier)
+                            });
+
+                        if let Some(exports_table) = exports_table {
                             // Create an object type with all the module's exports
                             use crate::solver::PropertyInfo;
                             let mut props: Vec<PropertyInfo> = Vec::new();

@@ -779,10 +779,26 @@ impl<'a> CheckerState<'a> {
         }
         visited_modules.insert(key);
 
-        // First, check if it's a direct export from this module
+        // First, check if it's a direct export from this module (ambient modules)
         if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
             if let Some(sym_id) = module_exports.get(member_name) {
                 return self.resolve_alias_symbol(sym_id, visited_aliases);
+            }
+        }
+
+        // Cross-file resolution: resolve the module to a target file and look up exports
+        if let Some(target_file_idx) = self.ctx.resolve_import_target(module_specifier) {
+            if let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) {
+                // Check target file's module_exports
+                if let Some((_, exports_table)) = target_binder.module_exports.iter().next() {
+                    if let Some(sym_id) = exports_table.get(member_name) {
+                        return Some(sym_id);
+                    }
+                }
+                // Fall back to target file's file_locals (for exported top-level declarations)
+                if let Some(sym_id) = target_binder.file_locals.get(member_name) {
+                    return Some(sym_id);
+                }
             }
         }
 
@@ -1286,6 +1302,12 @@ impl<'a> CheckerState<'a> {
                                         .shorthand_ambient_modules
                                         .contains(module_name)
                                     && !self.ctx.binder.declared_modules.contains(module_name)
+                                    && !self
+                                        .ctx
+                                        .resolved_modules
+                                        .as_ref()
+                                        .is_some_and(|r| r.contains(module_name))
+                                    && self.ctx.resolve_import_target(module_name).is_none()
                                 {
                                     return true;
                                 }
