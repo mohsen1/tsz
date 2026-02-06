@@ -1029,61 +1029,82 @@ impl<'a> CheckerState<'a> {
             ContextualTypeContext::with_expected(self.ctx.types, callee_type_for_resolution);
         let check_excess_properties = overload_signatures.is_none();
 
-        // Two-pass argument collection for generic calls without explicit type arguments
-        let arg_types = if is_generic_call && let Some(shape) = callee_shape {
-            // Pre-compute which arguments are contextually sensitive to avoid borrowing self in closures
-            let sensitive_args: Vec<bool> = args
-                .iter()
-                .map(|&arg| is_contextually_sensitive(self, arg))
-                .collect();
+        // Two-pass argument collection for generic calls is only needed when at least one
+        // argument is contextually sensitive (e.g. lambdas/object literals needing contextual type).
+        let arg_types = if is_generic_call {
+            if let Some(shape) = callee_shape {
+                // Pre-compute which arguments are contextually sensitive to avoid borrowing self in closures.
+                let sensitive_args: Vec<bool> = args
+                    .iter()
+                    .map(|&arg| is_contextually_sensitive(self, arg))
+                    .collect();
+                let needs_two_pass = sensitive_args.iter().copied().any(std::convert::identity);
 
-            // === Round 1: Collect non-contextual argument types ===
-            // This allows type parameters to be inferred from concrete arguments
-            let round1_arg_types = self.collect_call_argument_types_with_context(
-                args,
-                |i, arg_count| {
-                    // Skip contextually sensitive arguments in Round 1
-                    if sensitive_args[i] {
-                        None
-                    } else {
-                        ctx_helper.get_parameter_type_for_call(i, arg_count)
-                    }
-                },
-                check_excess_properties,
-            );
+                if needs_two_pass {
+                    // === Round 1: Collect non-contextual argument types ===
+                    // This allows type parameters to be inferred from concrete arguments.
+                    let round1_arg_types = self.collect_call_argument_types_with_context(
+                        args,
+                        |i, arg_count| {
+                            // Skip contextually sensitive arguments in Round 1.
+                            if sensitive_args[i] {
+                                None
+                            } else {
+                                ctx_helper.get_parameter_type_for_call(i, arg_count)
+                            }
+                        },
+                        check_excess_properties,
+                    );
 
-            // === Perform Round 1 Inference ===
-            // Use the Solver to infer type parameters from non-contextual arguments only
-            let substitution = {
-                let env = self.ctx.type_env.borrow();
-                let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-                self.ctx.configure_compat_checker(&mut checker);
-                let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
+                    // === Perform Round 1 Inference ===
+                    // Use the solver to infer type parameters from non-contextual arguments only.
+                    let substitution = {
+                        let env = self.ctx.type_env.borrow();
+                        let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+                        self.ctx.configure_compat_checker(&mut checker);
+                        let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
 
-                // Set contextual type for downward inference (e.g., `let x: string = id(...)`)
-                if let Some(ctx_type) = self.ctx.contextual_type {
-                    evaluator.set_contextual_type(Some(ctx_type));
+                        // Set contextual type for downward inference (e.g., `let x: string = id(...)`).
+                        if let Some(ctx_type) = self.ctx.contextual_type {
+                            evaluator.set_contextual_type(Some(ctx_type));
+                        }
+
+                        // Run Round 1 inference and get substitution with fixed type variables.
+                        evaluator.compute_contextual_types(&shape, &round1_arg_types)
+                    };
+
+                    // === Round 2: Collect ALL argument types with contextual typing ===
+                    // Now that type parameters are partially inferred, lambdas get proper contextual types.
+                    self.collect_call_argument_types_with_context(
+                        args,
+                        |i, arg_count| {
+                            let param_type =
+                                ctx_helper.get_parameter_type_for_call(i, arg_count)?;
+                            // Instantiate parameter type with Round 1 substitution.
+                            // This gives lambdas their contextual types (e.g., `(x: number) => U`).
+                            Some(instantiate_type(self.ctx.types, param_type, &substitution))
+                        },
+                        check_excess_properties,
+                    )
+                } else {
+                    // No context-sensitive arguments: skip Round 1/2 and use single-pass collection.
+                    self.collect_call_argument_types_with_context(
+                        args,
+                        |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
+                        check_excess_properties,
+                    )
                 }
-
-                // Run Round 1 inference and get substitution with fixed type variables
-                evaluator.compute_contextual_types(&shape, &round1_arg_types)
-            };
-
-            // === Round 2: Collect ALL argument types with contextual typing ===
-            // Now that type parameters are partially inferred, lambdas get proper contextual types
-            self.collect_call_argument_types_with_context(
-                args,
-                |i, arg_count| {
-                    let param_type = ctx_helper.get_parameter_type_for_call(i, arg_count)?;
-                    // Instantiate parameter type with Round 1 substitution
-                    // This gives lambdas their contextual types (e.g., `(x: number) => U`)
-                    Some(instantiate_type(self.ctx.types, param_type, &substitution))
-                },
-                check_excess_properties,
-            )
+            } else {
+                // Shouldn't happen for generic call detection, but keep single-pass fallback.
+                self.collect_call_argument_types_with_context(
+                    args,
+                    |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
+                    check_excess_properties,
+                )
+            }
         } else {
             // === Single-pass: Standard argument collection ===
-            // Non-generic calls or calls with explicit type arguments use the standard flow
+            // Non-generic calls or calls with explicit type arguments use the standard flow.
             self.collect_call_argument_types_with_context(
                 args,
                 |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),

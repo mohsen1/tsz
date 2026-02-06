@@ -4,6 +4,65 @@
 
 Resumed optimization work and landed one additional focused fix with isolated benchmark evidence.
 
+## Follow-up Session (Under-2x Benchmarks)
+
+Worked the remaining under-2x group with targeted profiling and checker/driver optimizations.
+
+### Changes Landed
+
+Files:
+- `src/cli/driver.rs`
+- `src/checker/context.rs`
+- `src/checker/state_type_analysis.rs`
+- `src/checker/type_computation_complex.rs`
+- `src/checker/type_checking_queries.rs`
+- `src/bin/tsz_server/main.rs`
+
+Key mechanics:
+- Reduced cross-file checker setup overhead:
+  - `CheckerContext` now stores large cross-file structures as `Arc<...>`:
+    - `all_arenas`
+    - `all_binders`
+    - `resolved_module_paths`
+    - `resolved_module_errors`
+    - `is_external_module_by_file`
+  - avoids cloning large vectors/maps once per checked file.
+- Replaced heavyweight `all_binders` prebuild with a minimal cross-file lookup binder:
+  - keeps only file-local symbol table + that file’s export table for import/export lookup.
+  - avoids cloning full symbol arenas/module maps per file for `CheckerContext::all_binders`.
+- Generic call argument collection now avoids unnecessary two-pass inference:
+  - in `type_computation_complex`, two-pass generic argument collection runs only when at least one argument is contextually sensitive.
+  - non-context-sensitive generic calls now use single-pass argument collection.
+- Wired existing class-member `this` cache:
+  - `class_member_this_type` now reads/writes `EnclosingClassInfo.cached_instance_this_type`.
+  - avoids repeated recomputation of class instance `this` type within a class body.
+
+### Validation
+
+Build/tests:
+- `cargo fmt`
+- `cargo check -q`
+- Targeted tests passed:
+  - `cargo test -q test_map_multi_pass_inference`
+  - `cargo test -q test_identity_function_inference`
+  - `cargo test -q test_downward_inference`
+  - `cargo test -q test_new_expression_infers_class_instance_type`
+  - `cargo test -q test_new_expression_infers_base_class_properties`
+  - `cargo test -q test_new_expression_infers_generic_class_type_params`
+  - `cargo test -q test_ts2564_generic_property_uninitialized`
+
+Benchmarks (latest stable spot-checks on this machine):
+- `hyperfine --warmup 5 --runs 12` utility-types:
+  - `utility-types/index.ts`: `tsz 181.5ms` vs `tsgo 216.2ms` (`tsz 1.19x`)
+- `hyperfine --warmup 5 --runs 12` constraint conflicts:
+  - `Constraint conflicts N=200`: `tsz 205.0ms` vs `tsgo 237.9ms` (`tsz 1.16x`)
+- `hyperfine --warmup 2 --runs 10` resolving class base type:
+  - `resolvingClassDeclarationWhenInBaseTypeResolution.ts`: `tsz 156.2ms` vs `tsgo 227.5ms` (`tsz 1.46x`)
+
+Status:
+- These changes reduced avoidable checker setup/inference overhead and improved stability of the hot paths.
+- The key laggards remain under 2x on this machine and now appear increasingly dominated by fixed startup/lib costs rather than a single large checker hotspot.
+
 ## Proven Change
 
 Added memoization for `ensure_application_symbols_resolved` traversal so repeated assignability checks avoid re-walking the same type graphs.

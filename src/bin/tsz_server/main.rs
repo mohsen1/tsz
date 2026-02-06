@@ -3927,8 +3927,8 @@ impl Server {
         binder.bind_source_file(&arena, root);
         let binder = Arc::new(binder);
 
-        let all_arenas: Vec<Arc<NodeArena>> = vec![arena.clone()];
-        let all_binders: Vec<Arc<BinderState>> = vec![binder.clone()];
+        let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(vec![arena.clone()]);
+        let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new(vec![binder.clone()]);
         let user_file_contexts: Vec<LibContext> = vec![LibContext {
             arena: arena.clone(),
             binder: binder.clone(),
@@ -3939,6 +3939,7 @@ impl Server {
 
         let file_names = vec![file_path.to_string()];
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+        let resolved_module_paths = Arc::new(resolved_module_paths);
 
         let query_cache = wasm::solver::QueryCache::new(&type_interner);
 
@@ -4154,11 +4155,11 @@ impl Server {
             // multi-file tests that reference symbols from other files.
             // Single-file conformance mode doesn't have full module resolution context.
 
-            checker.ctx.set_all_arenas((*all_arenas).clone());
-            checker.ctx.set_all_binders((*all_binders).clone());
+            checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+            checker.ctx.set_all_binders(Arc::clone(&all_binders));
             checker
                 .ctx
-                .set_resolved_module_paths((*resolved_module_paths_arc).clone());
+                .set_resolved_module_paths(Arc::clone(&resolved_module_paths_arc));
             checker
                 .ctx
                 .set_resolved_modules((*resolved_modules_arc).clone());
