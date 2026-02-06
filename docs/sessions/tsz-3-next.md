@@ -1,54 +1,61 @@
-# Session tsz-3: COMPLETED
+# Session tsz-3: Index Access Type Evaluation (`T[K]`)
 
 **Started**: 2026-02-06
-**Status**: ✅ COMPLETE
-**Final Conformance**: 68/100 tests passing
+**Status**: Active - Planning Phase
+**Predecessor**: tsz-3-complete (In operator, TS2339, infer keywords, Anti-Pattern 8.1)
 
-## Completed Tasks
+## Task Definition
 
-### 1. In Operator Narrowing
-**Problem**: `in` operator was not filtering `NEVER` type from unions.
-**Solution**: Enhanced `get_inferred_type_of_property` to exclude `NEVER` types from unions.
-**File**: `src/solver/narrowing.rs`
+**Implement Index Access Type Evaluation** to enable resolving types like `User["id"]` to their actual property types.
 
-### 2. TS2339 String Literal Property Access
-**Problem**: Property access on primitive types (number, string, boolean) failed with TS2339.
-**Solution**: Implemented visitor pattern to traverse primitive types and check for symbol existence.
-**File**: `src/solver/narrowing.rs`
+This is a fundamental building block for advanced type logic. Without it, Mapped Types (like `Partial<T>`) and complex generic lookups cannot be resolved.
 
-### 3. Conditional Type Inference with `infer` Keywords
-**Problem**: `infer R` in conditional types caused "Cannot find name 'R'" errors.
-**Solution**: Fixed `collect_infer_type_parameters_inner` to recursively check for `InferType` nodes in nested type structures.
-**File**: `src/checker/type_checking_queries.rs`
+## Problem Statement
 
-### 4. Anti-Pattern 8.1 Refactoring
-**Problem**: Checker was directly matching on `TypeKey`, creating tight coupling.
-**Solution**: Replaced direct `TypeKey` matching with `classify_for_traversal` classification approach.
-**Files**: `src/checker/assignability_checker.rs`, `src/solver/type_queries.rs`
+Currently, `tsz` can represent Index Access Types in the `TypeKey` enum but does not evaluate them. When encountering `User["id"]`, it should resolve to the actual type of the `id` property.
 
-## Verified Already Implemented
+### Requirements
+1. **Simple property lookups** on object types
+2. **Index signature lookups** (`{ [key: string]: T }`)
+3. **Union Distribution**: `T[K1 | K2]` → `T[K1] | T[K2]`
+4. **Object Distribution**: `(T1 | T2)[K]` → `T1[K] | T2[K]`
+5. **Deferred evaluation** for generic types
 
-The following features were investigated and found to be correctly implemented:
+## Failing Test Case
 
-1. **Void Return Exception** - Functions returning `T` assignable to functions returning `void`
-2. **String Intrinsic Types** - `Uppercase<T>`, `Lowercase<T>`, `Capitalize<T>`, `Uncapitalize<T>`
-3. **Keyof Distribution** - `keyof (A | B)` correctly distributes to `(keyof A) & (keyof B)`
-4. **Method Parameter Bivariance** - Method parameters are bivariant as TypeScript specifies
-5. **Excess Property Checking** - Infrastructure exists with `FRESH_LITERAL` flag
+```typescript
+interface User {
+    id: number;
+    name: string;
+    age?: number;
+}
 
-## Impact
+type T1 = User["id"];          // Expected: number
+type T2 = User["id" | "name"]; // Expected: number | string
+type T3 = User["age"];         // Expected: number | undefined
 
-- **Solver Tests**: 3524/3524 passing (100%)
-- **Conformance**: 68/100 passing
-- **Architecture**: Significant progress toward North Star goals with elimination of TypeKey matching in Checker
+interface Dictionary {
+    [key: string]: boolean;
+}
+type T4 = Dictionary["anyKey"]; // Expected: boolean
+```
 
-## Commits
+## Files to Modify
 
-All work has been committed and pushed to `origin/main`.
+Per Gemini's recommendation:
+1. **`src/solver/evaluate.rs`** - Primary file for `evaluate_index_access` logic
+2. **`src/solver/mod.rs`** - Ensure routing to `evaluate_index_access`
+3. **`src/solver/visitor.rs`** - Verify traversal of `IndexAccess` variants
 
-## Next Steps for Future Sessions
+## Implementation Approach
 
-Per Gemini recommendation, potential high-ROI tasks:
-1. Run full conformance suite to identify specific failing tests
-2. Investigate control flow analysis bugs (equality narrowing, chained else-if)
-3. Implement additional Lawyer layer overrides if needed
+**Per MANDATORY Gemini Workflow, must ask Question 1 first:**
+
+1. **Distribution First**: Handle unions in both `index_type` and `object_type`
+2. **Property Lookup**: Check object properties, then index signatures
+3. **Intrinsic Handling**: Handle primitives (`string["length"]` → `number`)
+4. **Deferred Evaluation**: Return `IndexAccess` as-is for unresolved type parameters
+
+## Next Step
+
+Ask Gemini Question 1 (Approach Validation) before implementing.
