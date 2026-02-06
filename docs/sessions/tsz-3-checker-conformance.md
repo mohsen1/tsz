@@ -32,7 +32,13 @@ The tsz-2 session successfully stabilized the Solver unit tests (3524 tests pass
 
 ## Progress
 
-*Session started - no progress yet*
+### Conformance Baseline (2026-02-06)
+
+**100 tests**: 69/100 passed (69%)
+- Top errors: TS2322 (6 extra), TS2349 (3 extra), TS2307 (3 extra), TS2792 (2 missing)
+- Time: 1.4s
+
+**10 tests**: 10/10 passed (100%)
 
 ## Next Steps
 
