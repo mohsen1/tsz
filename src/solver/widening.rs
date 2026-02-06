@@ -29,7 +29,7 @@ use crate::solver::types::{LiteralValue, TypeId, TypeKey};
 /// let widened = widen_type(db, string_literal_type);
 /// assert_eq!(widened, TypeId::STRING);
 /// ```
-pub fn widen_type(db: &impl crate::solver::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn widen_type(db: &dyn crate::solver::TypeDatabase, type_id: TypeId) -> TypeId {
     match db.lookup(type_id) {
         // String/Number/Boolean/BigInt literals widen to their primitives
         Some(TypeKey::Literal(ref value)) => match value {
@@ -142,7 +142,7 @@ mod tests {
         let string_lit = interner.intern(TypeKey::Literal(LiteralValue::String(
             interner.intern_string("hello"),
         )));
-        let widened = widen_type(&interner, string_lit);
+        let widened = widen_type(&interner as &dyn crate::solver::TypeDatabase, string_lit);
         assert_eq!(widened, TypeId::STRING);
     }
 
@@ -151,7 +151,7 @@ mod tests {
         let interner = TypeInterner::new();
         let number_lit =
             interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(42.0))));
-        let widened = widen_type(&interner, number_lit);
+        let widened = widen_type(&interner as &dyn crate::solver::TypeDatabase, number_lit);
         assert_eq!(widened, TypeId::NUMBER);
     }
 
@@ -159,7 +159,7 @@ mod tests {
     fn test_widen_boolean_literal() {
         let interner = TypeInterner::new();
         let bool_lit = interner.intern(TypeKey::Literal(LiteralValue::Boolean(true)));
-        let widened = widen_type(&interner, bool_lit);
+        let widened = widen_type(&interner as &dyn crate::solver::TypeDatabase, bool_lit);
         assert_eq!(widened, TypeId::BOOLEAN);
     }
 
@@ -170,7 +170,7 @@ mod tests {
         let lit2 = interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(2.0))));
         let union = interner.union(vec![lit1, lit2]);
 
-        let widened = widen_type(&interner, union);
+        let widened = widen_type(&interner as &dyn crate::solver::TypeDatabase, union);
         // After widening, we get number | number which dedups to number
         assert_eq!(widened, TypeId::NUMBER);
     }

@@ -1587,7 +1587,16 @@ impl<'a> CheckerState<'a> {
                     }
                     // Fall back to inferring from initializer
                     if !var_decl.initializer.is_none() {
-                        return (self.get_type_of_node(var_decl.initializer), Vec::new());
+                        let inferred_type = self.get_type_of_node(var_decl.initializer);
+                        // FIX: Widen literal types for non-const variables (let/var)
+                        // TypeScript widens "hello" -> string, 42 -> number for mutable variables
+                        // but preserves literal types for const variables
+                        if !self.is_const_variable_declaration(value_decl) {
+                            let widened_type =
+                                crate::solver::widening::widen_type(self.ctx.types, inferred_type);
+                            return (widened_type, Vec::new());
+                        }
+                        return (inferred_type, Vec::new());
                     }
                 }
                 // Check if this is a function parameter

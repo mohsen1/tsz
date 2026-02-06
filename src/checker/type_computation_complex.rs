@@ -1514,6 +1514,19 @@ impl<'a> CheckerState<'a> {
                 flow_type
             };
 
+            // FIX: For mutable variables (let/var), always use declared_type instead of flow_type
+            // to preserve literal type widening. Flow analysis may narrow back to literal types
+            // from the initializer, but we need to keep the widened type (string, number, etc.)
+            // const variables preserve their literal types through flow analysis.
+            let is_const = self.is_const_variable_declaration(value_decl);
+            let result_type = if !is_const {
+                // Mutable variable (let/var) - use widened declared type
+                declared_type
+            } else {
+                // Const variable - use flow type (preserves literal type)
+                result_type
+            };
+
             // FIX: Flow analysis may return the original fresh type from the initializer expression.
             // For variable references, we must respect the widening that was applied during variable
             // declaration. If the symbol was widened (non-fresh), the flow result should also be widened.
