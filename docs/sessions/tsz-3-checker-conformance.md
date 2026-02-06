@@ -43,17 +43,21 @@ The tsz-2 session successfully stabilized the Solver unit tests (3524 tests pass
 **Test**: `abstractClassUnionInstantiation.ts`
 **Issue**: `new cls3()` where `cls3: typeof ConcreteA | typeof ConcreteB` incorrectly reports TS2351
 
-**Partial Fix Implemented** (Commit f32c9cc85):
-- Modified `get_type_of_new_expression` to collect callable types from union members
-- Added `MultipleSignatures` variant to `CallSignaturesKind` enum
-- Updated `classify_for_call_signatures` to handle union of callables
+**Investigation Progress**:
+- Gemini identified root cause: `check_symbol_constructability` returns TypeQuery instead of converting to Callable
+- Attempted fix: Use `construct_to_call_callable` on cached symbol type (Commit 7afc37a31)
+- Status: Still not working - `construct_to_call_callable` returns None for the cached type
 
-**Status**: Fix compiles but doesn't solve the issue yet. The union of constructors is still being reported as not constructable.
+**Current Understanding**:
+- `typeof Class` resolves to a TypeQuery
+- Need to resolve TypeQuery to actual Callable before conversion
+- Complexity: Type resolution requires `&mut self` but we're in `&self` context
+- May need different approach or architectural change
 
 **Requires Further Investigation**:
-- How is `typeof Class` represented in the type system?
-- Why doesn't the union of callable types get recognized as constructible?
-- Need to add debug tracing to understand the actual type flow
+- How does TypeQuery resolution work in the checker?
+- What is the actual cached type for a class symbol?
+- Should we use tracing to see the type flow?
 
 ## Next Steps
 
