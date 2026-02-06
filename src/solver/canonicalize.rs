@@ -37,7 +37,9 @@ use crate::solver::TypeDatabase;
 use crate::solver::def::DefId;
 use crate::solver::def::DefKind;
 use crate::solver::subtype::TypeResolver;
-use crate::solver::types::{IndexSignature, ObjectShapeId, TupleElement, TypeId, TypeKey};
+use crate::solver::types::{
+    IndexSignature, ObjectShapeId, TemplateSpan, TupleElement, TypeId, TypeKey,
+};
 use rustc_hash::FxHashMap;
 
 /// Canonicalizer for structural type identity.
@@ -314,6 +316,30 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             TypeKey::Object(shape_id) => self.canonicalize_object(shape_id, false),
 
             TypeKey::ObjectWithIndex(shape_id) => self.canonicalize_object(shape_id, true),
+
+            // Task #47: Template Literal canonicalization for alpha-equivalence
+            // Uppercase<T> and Uppercase<U> should be identical when T and U are identical
+            TypeKey::TemplateLiteral(id) => {
+                let spans = self.interner.template_list(id);
+                let c_spans: Vec<TemplateSpan> = spans
+                    .iter()
+                    .map(|span| match span {
+                        TemplateSpan::Text(atom) => TemplateSpan::Text(*atom),
+                        TemplateSpan::Type(t) => TemplateSpan::Type(self.canonicalize(*t)),
+                    })
+                    .collect();
+                self.interner.template_literal(c_spans)
+            }
+
+            // Task #47: String Intrinsic canonicalization for alpha-equivalence
+            // Uppercase<T>, Lowercase<T>, etc. should canonicalize nested type parameters
+            TypeKey::StringIntrinsic { kind, type_arg } => {
+                let c_arg = self.canonicalize(type_arg);
+                self.interner.intern(TypeKey::StringIntrinsic {
+                    kind,
+                    type_arg: c_arg,
+                })
+            }
 
             // Other types: preserve as-is (will be handled as needed)
             _ => type_id,
