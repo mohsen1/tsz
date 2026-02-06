@@ -2019,6 +2019,11 @@ impl<'a> Printer<'a> {
                 self.comment_emit_idx += 1;
             }
         }
+
+        // Ensure output ends with a newline (matching tsc behavior)
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
     }
 }
 
