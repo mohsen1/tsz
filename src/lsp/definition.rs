@@ -782,6 +782,12 @@ impl<'a> GoToDefinition<'a> {
                 if let Some(ext) = self.arena.get_extended(decl_idx) {
                     let parent_idx = ext.parent;
                     if !parent_idx.is_none() {
+                        // Check if parent is a CatchClause - no contextSpan for catch vars
+                        if let Some(parent_node) = self.arena.get(parent_idx) {
+                            if parent_node.kind == syntax_kind_ext::CATCH_CLAUSE {
+                                return (decl_node.pos, decl_node.end);
+                            }
+                        }
                         if let Some(parent_ext) = self.arena.get_extended(parent_idx) {
                             let grandparent_idx = parent_ext.parent;
                             if !grandparent_idx.is_none() {
@@ -1138,9 +1144,15 @@ impl<'a> GoToDefinition<'a> {
                 if let Some(parent_node) = self.arena.get(parent) {
                     match parent_node.kind {
                         syntax_kind_ext::SOURCE_FILE => return true,
-                        // VariableDeclarationList and VariableStatement are transparent
+                        // Transparent containers - keep walking up
                         syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                        | syntax_kind_ext::VARIABLE_STATEMENT => {
+                        | syntax_kind_ext::VARIABLE_STATEMENT
+                        | syntax_kind_ext::CLASS_DECLARATION
+                        | syntax_kind_ext::CLASS_EXPRESSION
+                        | syntax_kind_ext::INTERFACE_DECLARATION
+                        | syntax_kind_ext::ENUM_DECLARATION
+                        | syntax_kind_ext::MODULE_DECLARATION
+                        | syntax_kind_ext::MODULE_BLOCK => {
                             current = parent;
                             continue;
                         }

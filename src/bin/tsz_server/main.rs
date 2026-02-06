@@ -2797,11 +2797,6 @@ impl Server {
             };
 
             // Build references array with byte-offset textSpans
-            // Compute cursor offset for isDefinition check
-            let cursor_offset = line_map
-                .position_to_offset(position, &source_text)
-                .unwrap_or(0);
-
             let references: Vec<serde_json::Value> = ref_infos
                 .iter()
                 .map(|ref_info| {
@@ -2812,10 +2807,7 @@ impl Server {
                     let start_off = start.unwrap_or(0);
                     let end_off = end.unwrap_or(0);
 
-                    // isDefinition is only true when the cursor is AT this definition site
-                    let is_definition = ref_info.is_definition
-                        && cursor_offset >= start_off
-                        && cursor_offset <= end_off;
+                    let is_definition = ref_info.is_definition;
 
                     let mut ref_json = serde_json::json!({
                         "fileName": ref_info.location.file_path,
