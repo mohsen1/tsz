@@ -837,19 +837,25 @@ Focus on high-impact, low-effort fixes first.
 
 ## Current Session Goal (2025-02-06)
 
-**Primary Goal: Implement ES5 Template Literal Downleveling**
+**Primary Goal: Implement Async/Await Downleveling to ES5**
 
 **Rationale (per Gemini consultation):**
-- Template literals (backticks) are core ES6 feature used extensively in tests
-- Currently likely emits raw backticks even when targeting ES5
-- Matching tsc requires transforming `` `a${b}c` `` → `"a" + b + "c"` or `"a".concat(b, "c")`
-- High-impact feature that will flip many tests
+- Last "Big Three" functional gap in ES5 downleveling (after spread and for-of)
+- Appears in hundreds of conformance tests
+- Forces completion of HelperManager (__awaiter, __generator)
+- Structural transformation that "unlocks" entire test categories
+- Like namespace/class merging, this will give significant pass rate boost
 
 **Implementation Plan:**
-1. Update `EmitDirective::ES5TemplateLiteral` in LoweringPass and Printer
-2. Implement transform in `src/emitter/es5_helpers.rs` or dedicated template file
-3. Handle simple case: `` `prefix${expr}suffix` `` → `"prefix" + expr + "suffix"`
-4. Handle complex case with multiple expressions
+1. **Helper Infrastructure**: Add `EmitHelperKind::Awaiter` and `EmitHelperKind::Generator`
+2. **Transformer**: Transform async to state machine using `__generator` helper
+3. **LoweringPass**: Detect async functions and set `ES5AsyncFunction` directive
+4. **State Machine**: Handle `await expr` → state machine yields
+
+**Key Files:**
+- `src/transforms/async_es5.rs` - Transformation logic
+- `src/emitter/helpers.rs` - Helper injection
+- `src/lowering_pass.rs` - Directive triggering
 
 **Current Pass Rate: 33.9%** (148/437)
 
