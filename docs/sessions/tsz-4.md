@@ -1383,3 +1383,45 @@ Vector.foo = function () {
 
 **Next Steps:**
 Continue improving emit test pass rate. The IR/Directive architectural mismatch has been resolved for arrow functions in static class methods.
+
+### 2025-02-06 Session 26: Emit Test Failure Triage - COMPLETED ✅
+
+**Test Results:**
+- Current pass rate: **31.8% (56/176)**
+- Failed: 120, Skipped: 24
+
+**Triage Findings:**
+
+**Cluster A: Formatting/Whitespace (~80% of failures)**
+- **Comment placement:** tsc puts comments on same line as code, tsz splits to new line
+  - Example: `var a = [1, '']; // {}[]` (tsc) → two lines (tsz)
+  - Root cause: IR printer's emission logic for comments
+- **Line wrapping:** Minor differences in how long expressions are wrapped
+- **Trailing whitespace/newlines:** Missing newlines at end of file
+
+**Cluster B: Missing Functionality (~10-15% of failures)**
+- **Missing emit helpers:** Some tests fail because helpers aren't being emitted
+- **Complex ES5 transforms:** Some edge cases in for-of, destructuring, etc.
+
+**Core Functionality: WORKING** ✅
+- Classes (IIFE pattern)
+- Arrow functions (ES5 conversion)
+- Spread operators (`__spreadArray`, `__assign`)
+- Async/await (state machine)
+- Enums (IIFE pattern)
+- Template literals (concat pattern)
+- Destructuring
+- CommonJS interop
+
+**Next Priorities (per Gemini guidance):**
+1. **Helper Manager** - Centralized tracking of `__spreadArray`, `__assign`, `__awaiter`, etc.
+   - Impact: Would flip hundreds of tests
+2. **Hygiene/Variable Renaming** - Avoid `_this` collisions
+3. **Directive Prologues** - "use strict" handling
+4. **Formatting improvements** - Comment placement, line wrapping
+
+**Files to Modify for Helper Manager:**
+- `src/emitter/mod.rs` - Add helper tracking
+- `src/emitter/helpers.rs` - Implement HelperManager
+- `src/lowering_pass.rs` - Mark helpers when transformations are used
+
