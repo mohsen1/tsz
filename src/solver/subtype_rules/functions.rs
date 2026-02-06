@@ -10,6 +10,7 @@
 //! - Type predicate compatibility
 //! - `this` parameter handling
 
+use crate::solver::instantiate::TypeSubstitution;
 use crate::solver::types::*;
 use crate::solver::visitor::contains_this_type;
 
@@ -207,6 +208,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - Parameter compatibility (contravariant or bivariant for methods)
     /// - Rest parameter handling
     /// - Optional parameter compatibility
+    ///
+    /// Generic instantiation: When the target is generic but the source is not,
+    /// we instantiate the target's type parameters to `any` before checking compatibility.
+    /// This allows non-generic implementations to be compatible with generic overloads.
     pub(crate) fn check_function_subtype(
         &mut self,
         source: &FunctionShape,
@@ -217,15 +222,54 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
+        // Handle generic target vs non-generic source
+        // When checking if a non-generic implementation is compatible with a generic overload,
+        // we need to instantiate the target's type parameters to `any` (or their constraints).
+        // This implements universal quantification: the implementation must work for ALL possible T.
+        let (target_return, target_this, target_params) =
+            if !target.type_params.is_empty() && source.type_params.is_empty() {
+                // Create a substitution mapping each type parameter to ANY
+                let mut substitution = TypeSubstitution::new();
+                for param in &target.type_params {
+                    substitution.insert(param.name, TypeId::ANY);
+                }
+
+                // Instantiate target's return type, this_type, and parameters
+                use crate::solver::instantiate::instantiate_type;
+                let instantiated_return =
+                    instantiate_type(self.interner, target.return_type, &substitution);
+                let instantiated_this = match target.this_type {
+                    Some(this_id) => Some(instantiate_type(self.interner, this_id, &substitution)),
+                    None => None,
+                };
+
+                // Instantiate parameters
+                let instantiated_params: Vec<_> = target
+                    .params
+                    .iter()
+                    .map(|p| ParamInfo {
+                        name: p.name,
+                        type_id: instantiate_type(self.interner, p.type_id, &substitution),
+                        optional: p.optional,
+                        rest: p.rest,
+                    })
+                    .collect();
+
+                (instantiated_return, instantiated_this, instantiated_params)
+            } else {
+                // Use the original target types
+                (target.return_type, target.this_type, target.params.to_vec())
+            };
+
         // Return type is covariant
         if !self
-            .check_return_compat(source.return_type, target.return_type)
+            .check_return_compat(source.return_type, target_return)
             .is_true()
         {
             return SubtypeResult::False;
         }
 
-        if !self.are_this_parameters_compatible(source.this_type, target.this_type) {
+        if !self.are_this_parameters_compatible(source.this_type, target_this) {
             return SubtypeResult::False;
         }
 
@@ -238,11 +282,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let is_method = source.is_method || target.is_method;
 
         // Check rest parameter handling
-        let target_has_rest = target.params.last().is_some_and(|p| p.rest);
+        let target_has_rest = target_params.last().is_some_and(|p| p.rest);
         let source_has_rest = source.params.last().is_some_and(|p| p.rest);
         let rest_elem_type = if target_has_rest {
-            target
-                .params
+            target_params
                 .last()
                 .map(|param| self.get_array_element_type(param.type_id))
         } else {
@@ -252,7 +295,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
 
         let source_required = self.required_param_count(&source.params);
-        let target_required = self.required_param_count(&target.params);
+        let target_required = self.required_param_count(&target_params);
         let extra_required_ok = target_has_rest
             && source_required > target_required
             && self.extra_required_accepts_undefined(
@@ -281,9 +324,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let param_check_result = (|| -> SubtypeResult {
             // Count non-rest parameters
             let target_fixed_count = if target_has_rest {
-                target.params.len().saturating_sub(1)
+                target_params.len().saturating_sub(1)
             } else {
-                target.params.len()
+                target_params.len()
             };
             let source_fixed_count = if source_has_rest {
                 source.params.len().saturating_sub(1)
@@ -295,7 +338,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
             for i in 0..fixed_compare_count {
                 let s_param = &source.params[i];
-                let t_param = &target.params[i];
+                let t_param = &target_params[i];
 
                 // Check optional compatibility
                 if s_param.optional && !t_param.optional {
@@ -370,7 +413,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
                 if !rest_is_top {
                     for i in source_fixed_count..target_fixed_count {
-                        let t_param = &target.params[i];
+                        let t_param = &target_params[i];
                         if !self.are_parameters_compatible_impl(
                             rest_elem_type,
                             t_param.type_id,
