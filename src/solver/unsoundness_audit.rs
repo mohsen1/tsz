@@ -21,7 +21,7 @@
 //! println!("Rule #7: {:?}", status);
 //! ```
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::fmt;
 
 /// Implementation status of a single catalog rule
@@ -122,13 +122,13 @@ pub struct RuleImplementation {
 /// Audit report for the TypeScript unsoundness catalog
 #[derive(Debug, Clone)]
 pub struct UnsoundnessAudit {
-    rules: HashMap<u8, RuleImplementation>,
+    rules: FxHashMap<u8, RuleImplementation>,
 }
 
 impl UnsoundnessAudit {
     /// Create a new audit with the current implementation status
     pub fn new() -> Self {
-        let mut rules = HashMap::new();
+        let mut rules = FxHashMap::default();
 
         // =========================================================================
         // PHASE 1: Hello World Barrier (Bootstrapping)

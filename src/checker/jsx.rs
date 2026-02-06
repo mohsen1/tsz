@@ -395,7 +395,7 @@ impl<'a> JsxChecker<'a> {
             return;
         };
 
-        let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut seen_keys: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
 
         for &attr_idx in &attrs.properties.nodes {
             let Some(attr_node) = self.arena.get(attr_idx) else {

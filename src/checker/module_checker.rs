@@ -12,7 +12,7 @@
 use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
 use crate::solver::types::Visibility;
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 // =============================================================================
 // Module and Import Checking Methods
@@ -208,7 +208,7 @@ impl<'a> CheckerState<'a> {
         {
             // Check for circular re-export chains
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
-                let mut visited = HashSet::new();
+                let mut visited = FxHashSet::default();
                 for source_module in source_modules {
                     self.check_reexport_chain_for_cycles(source_module, &mut visited);
                 }
@@ -223,7 +223,7 @@ impl<'a> CheckerState<'a> {
         if self.ctx.binder.module_exports.contains_key(module_name) {
             // Check for circular re-export chains
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
-                let mut visited = HashSet::new();
+                let mut visited = FxHashSet::default();
                 for source_module in source_modules {
                     self.check_reexport_chain_for_cycles(source_module, &mut visited);
                 }

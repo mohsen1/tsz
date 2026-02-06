@@ -75,6 +75,7 @@ use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::syntax::transform_utils::contains_this_reference;
 use crate::syntax::transform_utils::is_private_identifier;
+use crate::transform_context::TransformContext;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir::*;
 use crate::transforms::private_fields_es5::{
@@ -90,6 +91,8 @@ pub struct ES5ClassTransformer<'a> {
     has_extends: bool,
     private_fields: Vec<PrivateFieldInfo>,
     private_accessors: Vec<PrivateAccessorInfo>,
+    /// Transform directives from LoweringPass
+    transforms: Option<TransformContext>,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
@@ -100,22 +103,45 @@ impl<'a> ES5ClassTransformer<'a> {
             has_extends: false,
             private_fields: Vec::new(),
             private_accessors: Vec::new(),
+            transforms: None,
         }
+    }
+
+    /// Set transform directives from LoweringPass
+    pub fn set_transforms(&mut self, transforms: TransformContext) {
+        self.transforms = Some(transforms);
     }
 
     /// Convert an AST statement to IR (avoids ASTRef when possible)
     fn convert_statement(&self, idx: NodeIndex) -> IRNode {
-        AstToIr::new(self.arena).convert_statement(idx)
+        let mut converter = AstToIr::new(self.arena);
+        if let Some(ref transforms) = self.transforms {
+            converter = converter.with_transforms(transforms.clone());
+        }
+        converter.convert_statement(idx)
     }
 
     /// Convert an AST expression to IR (avoids ASTRef when possible)
     fn convert_expression(&self, idx: NodeIndex) -> IRNode {
-        AstToIr::new(self.arena).convert_expression(idx)
+        let mut converter = AstToIr::new(self.arena);
+        if let Some(ref transforms) = self.transforms {
+            converter = converter.with_transforms(transforms.clone());
+        }
+        converter.convert_expression(idx)
     }
 
     /// Convert a block body to IR statements
     fn convert_block_body(&self, block_idx: NodeIndex) -> Vec<IRNode> {
-        if let Some(block_node) = self.arena.get(block_idx)
+        self.convert_block_body_with_alias(block_idx, None)
+    }
+
+    /// Convert a block body to IR statements, optionally prepending a class alias declaration
+    fn convert_block_body_with_alias(
+        &self,
+        block_idx: NodeIndex,
+        class_alias: Option<String>,
+    ) -> Vec<IRNode> {
+        let mut stmts = if let Some(block_node) = self.arena.get(block_idx)
             && let Some(block) = self.arena.get_block(block_node)
         {
             block
@@ -126,7 +152,20 @@ impl<'a> ES5ClassTransformer<'a> {
                 .collect()
         } else {
             vec![]
+        };
+
+        // If we have a class_alias, prepend the alias declaration: `var <alias> = this;`
+        if let Some(alias) = class_alias {
+            stmts.insert(
+                0,
+                IRNode::VarDecl {
+                    name: alias.clone(),
+                    initializer: Some(Box::new(IRNode::This { captured: false })),
+                },
+            );
         }
+
+        stmts
     }
 
     /// Transform a class declaration to IR
@@ -794,6 +833,113 @@ impl<'a> ES5ClassTransformer<'a> {
         None
     }
 
+    /// Check if a static method body contains arrow functions with class_alias,
+    /// and return the alias if found
+    fn get_class_alias_for_static_method(&self, body_idx: NodeIndex) -> Option<String> {
+        if let Some(ref transforms) = self.transforms {
+            // Get all arrow function nodes in the method body
+            let arrow_indices = self.collect_arrow_functions_in_block(body_idx);
+            // Check if any arrow function has a class_alias directive
+            for &arrow_idx in &arrow_indices {
+                if let Some(dir) = transforms.get(arrow_idx) {
+                    if let crate::transform_context::TransformDirective::ES5ArrowFunction {
+                        class_alias,
+                        ..
+                    } = dir
+                    {
+                        if let Some(alias) = class_alias {
+                            return Some(alias.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Collect all arrow function node indices in a block
+    fn collect_arrow_functions_in_block(&self, block_idx: NodeIndex) -> Vec<NodeIndex> {
+        let mut arrows = Vec::new();
+        if let Some(block_node) = self.arena.get(block_idx)
+            && let Some(block) = self.arena.get_block(block_node)
+        {
+            for &stmt_idx in &block.statements.nodes {
+                self.collect_arrow_functions_in_node(stmt_idx, &mut arrows);
+            }
+        }
+        arrows
+    }
+
+    /// Recursively collect arrow function indices starting from a node
+    fn collect_arrow_functions_in_node(&self, idx: NodeIndex, arrows: &mut Vec<NodeIndex>) {
+        use crate::parser::syntax_kind_ext;
+
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+
+        // Check if this node itself is an arrow function
+        if node.kind == syntax_kind_ext::ARROW_FUNCTION {
+            arrows.push(idx);
+        }
+
+        // Recursively check children based on node type
+        // For blocks, check each statement
+        if let Some(block) = self.arena.get_block(node) {
+            for &stmt_idx in &block.statements.nodes {
+                self.collect_arrow_functions_in_node(stmt_idx, arrows);
+            }
+        }
+        // For expressions with sub-expressions, check those
+        else if let Some(func) = self.arena.get_function(node) {
+            // Check parameters
+            for &param_idx in &func.parameters.nodes {
+                self.collect_arrow_functions_in_node(param_idx, arrows);
+            }
+            // Check body
+            if !func.body.is_none() {
+                self.collect_arrow_functions_in_node(func.body, arrows);
+            }
+        }
+        // For variable declarations, check initializer
+        else if let Some(var_decl) = self.arena.get_variable_declaration(node) {
+            if !var_decl.initializer.is_none() {
+                self.collect_arrow_functions_in_node(var_decl.initializer, arrows);
+            }
+        }
+        // For variable statements, check declarations
+        else if let Some(var_stmt) = self.arena.get_variable(node) {
+            for &decl_idx in &var_stmt.declarations.nodes {
+                self.collect_arrow_functions_in_node(decl_idx, arrows);
+            }
+        }
+        // For return statements, check expression
+        else if let Some(ret_stmt) = self.arena.get_return_statement(node) {
+            if !ret_stmt.expression.is_none() {
+                self.collect_arrow_functions_in_node(ret_stmt.expression, arrows);
+            }
+        }
+        // For expression statements, check expression
+        else if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
+            self.collect_arrow_functions_in_node(expr_stmt.expression, arrows);
+        }
+        // For call expressions, check callee and arguments
+        else if let Some(call) = self.arena.get_call_expr(node) {
+            self.collect_arrow_functions_in_node(call.expression, arrows);
+            if let Some(ref args) = call.arguments {
+                for &arg_idx in &args.nodes {
+                    self.collect_arrow_functions_in_node(arg_idx, arrows);
+                }
+            }
+        }
+        // For binary expressions, check left and right
+        else if let Some(binary) = self.arena.get_binary_expr(node) {
+            self.collect_arrow_functions_in_node(binary.left, arrows);
+            self.collect_arrow_functions_in_node(binary.right, arrows);
+        }
+        // Note: This is a simplified traversal - may miss some edge cases
+    }
+
     /// Emit prototype methods as IR
     fn emit_methods_ir(&self, body: &mut Vec<IRNode>, class_idx: NodeIndex) {
         let Some(class_node) = self.arena.get(class_idx) else {
@@ -1019,7 +1165,9 @@ impl<'a> ES5ClassTransformer<'a> {
                         generator_body: Box::new(generator_body),
                     }]
                 } else {
-                    self.convert_block_body(method_data.body)
+                    // Check if this static method has arrow functions with class_alias
+                    let class_alias = self.get_class_alias_for_static_method(method_data.body);
+                    self.convert_block_body_with_alias(method_data.body, class_alias)
                 };
 
                 // ClassName.methodName = function () { body };
@@ -1307,6 +1455,10 @@ pub struct AstToIr<'a> {
     arena: &'a NodeArena,
     /// Track if we're inside an arrow function that captures `this`
     this_captured: Cell<bool>,
+    /// Transform directives from LoweringPass
+    transforms: Option<TransformContext>,
+    /// Current class alias to use for `this` substitution in static methods
+    current_class_alias: Cell<Option<String>>,
 }
 
 impl<'a> AstToIr<'a> {
@@ -1314,7 +1466,21 @@ impl<'a> AstToIr<'a> {
         Self {
             arena,
             this_captured: Cell::new(false),
+            transforms: None,
+            current_class_alias: Cell::new(None),
         }
+    }
+
+    /// Set transform directives from LoweringPass
+    pub fn with_transforms(mut self, transforms: TransformContext) -> Self {
+        self.transforms = Some(transforms);
+        self
+    }
+
+    /// Set the current class alias for `this` substitution
+    pub fn with_class_alias(self, alias: Option<String>) -> Self {
+        self.current_class_alias.set(alias);
+        self
     }
 
     /// Convert a statement to IR
@@ -1364,9 +1530,17 @@ impl<'a> AstToIr<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => IRNode::BooleanLiteral(false),
             k if k == SyntaxKind::NullKeyword as u16 => IRNode::NullLiteral,
             k if k == SyntaxKind::UndefinedKeyword as u16 => IRNode::Undefined,
-            k if k == SyntaxKind::ThisKeyword as u16 => IRNode::This {
-                captured: self.this_captured.get(),
-            },
+            k if k == SyntaxKind::ThisKeyword as u16 => {
+                // If we have a class_alias set (static method context), use it instead of `this`
+                if let Some(alias) = self.current_class_alias.take() {
+                    self.current_class_alias.set(Some(alias.clone()));
+                    IRNode::Identifier(alias)
+                } else {
+                    IRNode::This {
+                        captured: self.this_captured.get(),
+                    }
+                }
+            }
             k if k == SyntaxKind::SuperKeyword as u16 => IRNode::Super,
             k if k == syntax_kind_ext::CALL_EXPRESSION => self.convert_call_expression(idx),
             k if k == syntax_kind_ext::NEW_EXPRESSION => self.convert_new_expression(idx),
@@ -1463,12 +1637,32 @@ impl<'a> AstToIr<'a> {
         let node = self.arena.get(idx).unwrap();
         // VariableStatement uses VariableData which has declarations directly
         if let Some(var_data) = self.arena.get_variable(node) {
-            let decls: Vec<IRNode> = var_data
-                .declarations
-                .nodes
+            // Collect all declaration indices, handling the case where
+            // VariableData.declarations may contain VARIABLE_DECLARATION_LIST nodes
+            let mut decl_indices = Vec::new();
+            for &decl_idx in &var_data.declarations.nodes {
+                if let Some(decl_node) = self.arena.get(decl_idx) {
+                    use crate::parser::syntax_kind_ext;
+                    // Check if this is a VARIABLE_DECLARATION_LIST (intermediate node)
+                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                        // Get the VariableData for this list and collect its declarations
+                        if let Some(list_var_data) = self.arena.get_variable(decl_node) {
+                            for &actual_decl_idx in &list_var_data.declarations.nodes {
+                                decl_indices.push(actual_decl_idx);
+                            }
+                        }
+                    } else {
+                        // Direct VARIABLE_DECLARATION node
+                        decl_indices.push(decl_idx);
+                    }
+                }
+            }
+
+            let decls: Vec<IRNode> = decl_indices
                 .iter()
                 .filter_map(|&d| self.convert_variable_declaration(d))
                 .collect();
+
             if decls.is_empty() {
                 // If all declarations were filtered out (e.g., due to parsing issues),
                 // fallback to source text
@@ -2101,16 +2295,36 @@ impl<'a> AstToIr<'a> {
 
     fn convert_arrow_function(&self, idx: NodeIndex) -> IRNode {
         let node = self.arena.get(idx).unwrap();
+
         // ArrowFunction uses FunctionData (has equals_greater_than_token set)
         if let Some(arrow) = self.arena.get_function(node) {
-            // Check if this arrow function captures `this`
-            let captures_this = contains_this_reference(self.arena, idx);
+            // First check if there's a directive from LoweringPass
+            let (captures_this, class_alias) = if let Some(ref transforms) = self.transforms {
+                if let Some(crate::transform_context::TransformDirective::ES5ArrowFunction {
+                    captures_this,
+                    class_alias,
+                    ..
+                }) = transforms.get(idx)
+                {
+                    (*captures_this, class_alias.as_ref().map(|s| s.to_string()))
+                } else {
+                    // No directive, fall back to local analysis
+                    (contains_this_reference(self.arena, idx), None)
+                }
+            } else {
+                // No transforms available, fall back to local analysis
+                (contains_this_reference(self.arena, idx), None)
+            };
 
             // Save previous state and set captured flag if needed
             let prev_captured = self.this_captured.get();
+            let prev_alias = self.current_class_alias.take();
+
             if captures_this {
                 self.this_captured.set(true);
             }
+            // Set the class_alias so `this` references in the body get converted
+            self.current_class_alias.set(class_alias.clone());
 
             let params = self.convert_parameters(&arrow.parameters);
             let (body, is_expression_body) = if let Some(body_node) = self.arena.get(arrow.body) {
@@ -2133,6 +2347,7 @@ impl<'a> AstToIr<'a> {
 
             // Restore previous state
             self.this_captured.set(prev_captured);
+            self.current_class_alias.set(prev_alias);
 
             // Arrow functions become regular functions in ES5
             let func_expr = IRNode::FunctionExpr {
@@ -2143,9 +2358,10 @@ impl<'a> AstToIr<'a> {
                 body_source_range: None,
             };
 
-            // If this arrow captures `this`, wrap in IIFE:
-            // (function (_this) { return <func>; })(this)
-            if captures_this {
+            // Handle this capture:
+            // - If class_alias is Some (static method), no IIFE wrapper needed - the alias is provided by outer scope
+            // - If captures_this but no class_alias (regular method), wrap in IIFE
+            if captures_this && class_alias.is_none() {
                 IRNode::CallExpr {
                     callee: Box::new(IRNode::FunctionExpr {
                         name: None,
@@ -2163,6 +2379,7 @@ impl<'a> AstToIr<'a> {
                     }],
                 }
             } else {
+                // Either doesn't capture this, or has class_alias (static method)
                 func_expr
             }
         } else {
