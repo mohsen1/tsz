@@ -934,6 +934,12 @@ impl<'a> FindReferences<'a> {
             return symbol_id;
         }
 
+        // Fallback: if the cursor is on a keyword (not an identifier), walk up to
+        // the parent declaration node and look it up in node_symbols.
+        if let Some(sym) = self.try_keyword_declaration_fallback(node_idx) {
+            return Some(sym);
+        }
+
         let tag_idx = self.tagged_template_tag(node_idx)?;
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         if let Some(scope_cache) = scope_cache {
@@ -941,6 +947,60 @@ impl<'a> FindReferences<'a> {
         } else {
             walker.resolve_node(root, tag_idx)
         }
+    }
+
+    /// When the cursor is on a keyword (class, function, declare, etc.) that's part
+    /// of a declaration, resolve to the declaration's symbol.
+    fn try_keyword_declaration_fallback(&self, node_idx: NodeIndex) -> Option<SymbolId> {
+        use crate::parser::syntax_kind_ext;
+        use crate::scanner::SyntaxKind;
+
+        let node = self.arena.get(node_idx)?;
+        let kind = node.kind;
+
+        // Only apply to keyword nodes (not identifiers)
+        if kind == SyntaxKind::Identifier as u16 || kind == SyntaxKind::PrivateIdentifier as u16 {
+            return None;
+        }
+
+        // Walk up to parent nodes looking for a declaration
+        let mut current = node_idx;
+        for _ in 0..5 {
+            let ext = self.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+
+            // Check if this parent node has a symbol in node_symbols
+            if let Some(&sym_id) = self.binder.node_symbols.get(&current.0) {
+                return Some(sym_id);
+            }
+
+            // Also check for specific declaration node kinds
+            let parent = self.arena.get(current)?;
+            match parent.kind {
+                syntax_kind_ext::VARIABLE_STATEMENT
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::INTERFACE_DECLARATION
+                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION
+                | syntax_kind_ext::MODULE_DECLARATION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::METHOD_SIGNATURE
+                | syntax_kind_ext::PROPERTY_DECLARATION
+                | syntax_kind_ext::PROPERTY_SIGNATURE => {
+                    // Check node_symbols for this declaration
+                    if let Some(&sym_id) = self.binder.node_symbols.get(&current.0) {
+                        return Some(sym_id);
+                    }
+                    break; // Don't walk further up
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     fn tagged_template_tag(&self, node_idx: NodeIndex) -> Option<NodeIndex> {

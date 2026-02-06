@@ -2885,8 +2885,24 @@ impl Server {
             parts.push(serde_json::json!({ "text": kind, "kind": "keyword" }));
             parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
         }
-        parts.push(serde_json::json!({ "text": name, "kind": "localName" }));
+        let name_kind = Self::symbol_kind_to_display_part_kind(kind);
+        parts.push(serde_json::json!({ "text": name, "kind": name_kind }));
         parts
+    }
+
+    fn symbol_kind_to_display_part_kind(kind: &str) -> &'static str {
+        match kind {
+            "class" => "className",
+            "function" => "functionName",
+            "interface" => "interfaceName",
+            "enum" => "enumName",
+            "enum member" => "enumMemberName",
+            "module" | "namespace" => "moduleName",
+            "type" => "aliasName",
+            "method" => "methodName",
+            "property" => "propertyName",
+            _ => "localName",
+        }
     }
 
     fn handle_navto(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
