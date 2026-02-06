@@ -17,9 +17,11 @@ enum ArraySegment<'a> {
 
 impl<'a> Printer<'a> {
     /// Emit an array literal with ES5 spread transformation.
-    /// Pattern: [1, ...a, 2] -> [1].concat(a, [2])
-    /// Pattern: [...a, 1] -> a.concat([1])
-    /// Pattern: [1, ...a] -> [1].concat(a)
+    /// Uses TypeScript's __spreadArray helper for exact tsc matching.
+    /// Pattern: [...a] -> __spreadArray([], a, true)
+    /// Pattern: [...a, 1] -> __spreadArray(a, [1], false)
+    /// Pattern: [1, ...a] -> __spreadArray([1], a, false)
+    /// Pattern: [1, ...a, 2] -> __spreadArray([1], a, false).concat([2])
     pub(super) fn emit_array_literal_es5(&mut self, elements: &[NodeIndex]) {
         if elements.is_empty() {
             self.write("[]");
@@ -47,7 +49,7 @@ impl<'a> Printer<'a> {
             segments.push(ArraySegment::Elements(&elements[current_start..]));
         }
 
-        // Emit the concat chain
+        // Emit using __spreadArray for exact tsc matching
         match segments.as_slice() {
             [] => {
                 // Should not happen due to empty check above
@@ -59,30 +61,70 @@ impl<'a> Printer<'a> {
                 self.emit_comma_separated(elems);
                 self.write("]");
             }
+            [ArraySegment::Spread(spread_idx)] => {
+                // Only a spread element: [...a] -> __spreadArray([], a, true)
+                self.write("__spreadArray([], ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(", true)");
+            }
             [
                 ArraySegment::Spread(spread_idx),
                 ArraySegment::Elements(elems),
             ] => {
-                // Spread first, then elements: [...a, 1, 2] -> a.concat([1, 2])
+                // Spread first, then elements: [...a, 1, 2] -> __spreadArray(a, [1, 2], false)
+                self.write("__spreadArray(");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
                     self.emit_spread_expression(spread_node);
                 }
-                self.write(".concat(");
+                self.write(", ");
                 self.write("[");
                 self.emit_comma_separated(elems);
                 self.write("]");
-                self.write(")");
+                self.write(", false)");
             }
-            [ArraySegment::Spread(spread_idx)] => {
-                // Only a spread element: [...a] -> a.slice() for shallow copy
-                // Note: TypeScript uses __spreadArray([], a, true) but .slice() is simpler ES5
+            [
+                ArraySegment::Elements(elems),
+                ArraySegment::Spread(spread_idx),
+            ] => {
+                // Elements first, then spread: [1, 2, ...a] -> __spreadArray([1, 2], a, false)
+                self.write("__spreadArray(");
+                self.write("[");
+                self.emit_comma_separated(elems);
+                self.write("]");
+                self.write(", ");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
                     self.emit_spread_expression(spread_node);
                 }
-                self.write(".slice()");
+                self.write(", false)");
+            }
+            [
+                ArraySegment::Elements(prefix_elems),
+                ArraySegment::Spread(spread_idx),
+                ArraySegment::Elements(suffix_elems),
+            ] => {
+                // Elements, spread, elements: [1, ...a, 2] -> __spreadArray([1], a, false).concat([2])
+                self.write("__spreadArray(");
+                self.write("[");
+                self.emit_comma_separated(prefix_elems);
+                self.write("]");
+                self.write(", ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(", false)");
+                // Append suffix with concat
+                if !suffix_elems.is_empty() {
+                    self.write(".concat(");
+                    self.write("[");
+                    self.emit_comma_separated(suffix_elems);
+                    self.write("]");
+                    self.write(")");
+                }
             }
             [first, rest @ ..] => {
-                // Elements first, then rest (spreads or elements)
+                // Fallback for more complex patterns: use concat chain
                 self.emit_array_segment(first);
                 for segment in rest {
                     self.write(".concat(");
