@@ -126,6 +126,9 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 self.visit_export_declaration(node, idx)
             }
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => {
+                self.visit_import_declaration(node, idx)
+            }
             k if k == syntax_kind_ext::FOR_IN_STATEMENT => self.visit_for_in_statement(node),
             k if k == syntax_kind_ext::FOR_OF_STATEMENT => self.visit_for_of_statement(node, idx),
             _ => self.visit_children(idx),
@@ -464,6 +467,15 @@ impl<'a> LoweringPass<'a> {
                                 object_literal: idx,
                             },
                         );
+                        // Mark __assign helper if object spread is detected
+                        if lit
+                            .elements
+                            .nodes
+                            .iter()
+                            .any(|&idx| self.is_spread_element(idx))
+                        {
+                            self.transforms.helpers_mut().assign = true;
+                        }
                     }
 
                     for &elem in &lit.elements.nodes {
@@ -579,8 +591,10 @@ impl<'a> LoweringPass<'a> {
         if self.ctx.target_es5 && !for_in_of.await_modifier {
             self.transforms
                 .insert(idx, TransformDirective::ES5ForOf { for_of_node: idx });
-            // Note: simple array-indexing pattern doesn't need __values helper
-            // __values is only needed with --downlevelIteration
+            // Mark __values helper for proper iteration support
+            // Current implementation uses simple array indexing, but tsc emits
+            // __values for non-array iterables with --downlevelIteration
+            self.transforms.helpers_mut().values = true;
         }
 
         self.visit(for_in_of.initializer);
@@ -601,10 +615,59 @@ impl<'a> LoweringPass<'a> {
         self.lower_module_declaration(node, idx, false);
     }
 
+    fn visit_import_declaration(&mut self, node: &Node, _idx: NodeIndex) {
+        let Some(import_decl) = self.arena.get_import_decl(node) else {
+            return;
+        };
+
+        // Detect CommonJS helpers: import * as ns from "mod"
+        if self.is_commonjs()
+            && let Some(clause_node) = self.arena.get(import_decl.import_clause)
+            && let Some(clause) = self.arena.get_import_clause(clause_node)
+            && !clause.is_type_only
+            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+        {
+            // NAMESPACE_IMPORT = 275
+            if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                let helpers = self.transforms.helpers_mut();
+                helpers.import_star = true;
+                helpers.create_binding = true; // __importStar depends on __createBinding
+            } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+                && !named_imports.name.is_none()
+                && named_imports.elements.nodes.is_empty()
+            {
+                // "default" import with empty named imports (also needs importStar)
+                let helpers = self.transforms.helpers_mut();
+                helpers.import_star = true;
+                helpers.create_binding = true;
+            }
+        }
+
+        // Continue traversal
+        if !import_decl.import_clause.is_none() {
+            self.visit(import_decl.import_clause);
+        }
+    }
+
     fn visit_export_declaration(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(export_decl) = self.arena.get_export_decl(node) else {
             return;
         };
+
+        // Skip type-only exports
+        if export_decl.is_type_only {
+            return;
+        }
+
+        // Detect CommonJS helpers: export * from "mod"
+        if self.is_commonjs()
+            && !export_decl.module_specifier.is_none()
+            && export_decl.export_clause.is_none()
+        {
+            let helpers = self.transforms.helpers_mut();
+            helpers.export_star = true;
+            helpers.create_binding = true; // __exportStar depends on __createBinding
+        }
 
         if export_decl.export_clause.is_none() {
             return;
@@ -731,6 +794,10 @@ impl<'a> LoweringPass<'a> {
                 self.mark_async_helpers();
                 directives.push(TransformDirective::ES5AsyncFunction { function_node });
             } else if self.function_parameters_need_es5_transform(&func.parameters) {
+                // Mark rest helper if parameters have rest
+                if self.function_parameters_need_rest_helper(&func.parameters) {
+                    self.transforms.helpers_mut().rest = true;
+                }
                 directives.push(TransformDirective::ES5FunctionParameters { function_node });
             }
         }
@@ -890,6 +957,10 @@ impl<'a> LoweringPass<'a> {
         } else if self.ctx.target_es5
             && self.function_parameters_need_es5_transform(&func.parameters)
         {
+            // Mark rest helper if parameters have rest
+            if self.function_parameters_need_rest_helper(&func.parameters) {
+                self.transforms.helpers_mut().rest = true;
+            }
             TransformDirective::ES5FunctionParameters { function_node: idx }
         } else {
             TransformDirective::Identity
@@ -1168,6 +1239,10 @@ impl<'a> LoweringPass<'a> {
                     TransformDirective::ES5AsyncFunction { function_node: idx },
                 );
             } else if self.function_parameters_need_es5_transform(&func.parameters) {
+                // Mark rest helper if parameters have rest
+                if self.function_parameters_need_rest_helper(&func.parameters) {
+                    self.transforms.helpers_mut().rest = true;
+                }
                 self.transforms.insert(
                     idx,
                     TransformDirective::ES5FunctionParameters { function_node: idx },
@@ -1399,6 +1474,55 @@ impl<'a> LoweringPass<'a> {
             param.dot_dot_dot_token
                 || !param.initializer.is_none()
                 || self.is_binding_pattern_idx(param.name)
+        })
+    }
+
+    /// Check if function parameters have rest that needs __rest helper
+    fn function_parameters_need_rest_helper(&self, params: &NodeList) -> bool {
+        params.nodes.iter().any(|&param_idx| {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                return false;
+            };
+
+            // Rest parameters in function declarations need __rest helper
+            if param.dot_dot_dot_token {
+                return true;
+            }
+
+            // Check if binding patterns contain rest
+            if self.is_binding_pattern_idx(param.name) {
+                self.binding_pattern_has_rest(param.name)
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Check if a binding pattern has a rest element
+    fn binding_pattern_has_rest(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+            && node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return false;
+        };
+
+        let Some(pattern) = self.arena.get_binding_pattern(node) else {
+            return false;
+        };
+
+        pattern.elements.nodes.iter().any(|&elem_idx| {
+            self.arena
+                .get(elem_idx)
+                .and_then(|elem_node| self.arena.get_binding_element(elem_node))
+                .map(|elem| elem.dot_dot_dot_token)
+                .unwrap_or(false)
         })
     }
 
