@@ -619,6 +619,13 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
 
     fn visit_function(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.function_shape(FunctionShapeId(shape_id));
+
+        // Check if this function signature accepts the given arg_count
+        // For arity-based overload filtering in unions of function types
+        if !self.signature_accepts_arg_count(&shape.params, self.arg_count) {
+            return None;
+        }
+
         self.extract_from_params(&shape.params)
     }
 
