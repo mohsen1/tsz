@@ -26,6 +26,18 @@ Per Gemini Pro recommendation: "Since you know where the code lives for Mapped T
 
 ## Focus Areas
 
+### Area 0: Evaluation Pipeline (CRITICAL - Unblocks Mapped Types)
+**Location**: `src/solver/evaluate.rs`, `src/solver/db.rs`
+
+**Problem**: `QueryCache` uses `NoopResolver` for type evaluation, preventing Lazy type (type alias) resolution. This blocks bugs #1-4.
+
+**Solution**: Implement "Proxy Resolver" pattern (~30 min):
+- Create `DatabaseResolver<'a>` struct that wraps `&'a dyn TypeDatabase`
+- Update `BinderTypeDatabase` to pass proper resolver to `TypeEvaluator`
+- High impact: Fixes 4 mapped type bug categories with one change
+
+**Status**: Ready to implement - Gemini has validated approach
+
 ### Area 1: Indexed Access Types (tsz-15)
 **Location**: `src/solver/evaluate_rules/keyof.rs`, `src/solver/evaluate_rules/index_access.rs`
 
