@@ -3,6 +3,7 @@
 //! Measures the performance impact of CFA on type checking operations.
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use std::time::Duration;
 use wasm::binder::BinderState;
 use wasm::checker::CheckerOptions;
 use wasm::checker::state::CheckerState;
@@ -177,6 +178,10 @@ function complex(input: string | number | null, flag: boolean) {
     return result;
 }
 "#;
+
+/// Real-world stress file from TypeScript's compiler test suite.
+const LARGE_CONTROL_FLOW_GRAPH_CODE: &str =
+    include_str!("../TypeScript/tests/cases/compiler/largeControlFlowGraph.ts");
 
 /// Benchmark parsing and binding (includes flow graph construction).
 fn bench_parse_and_bind(c: &mut Criterion) {
@@ -355,11 +360,85 @@ fn bench_scaling(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark the real largeControlFlowGraph.ts test file.
+///
+/// This file is intentionally 10k+ flow steps deep and is the main outlier in
+/// tsz-vs-tsgo comparisons. Keep sample size small so it remains usable during
+/// optimization work.
+fn bench_large_control_flow_graph(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cfa_large_control_flow_graph");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_secs(1));
+    group.measurement_time(Duration::from_secs(20));
+
+    group.bench_function("parse_bind", |b| {
+        b.iter(|| {
+            let mut parser = ParserState::new(
+                "largeControlFlowGraph.ts".to_string(),
+                LARGE_CONTROL_FLOW_GRAPH_CODE.to_string(),
+            );
+            let root = parser.parse_source_file();
+            let mut binder = BinderState::new();
+            binder.bind_source_file(parser.get_arena(), root);
+            black_box(root)
+        })
+    });
+
+    // Parse and bind once, then benchmark checker cost in isolation.
+    let mut parser = ParserState::new(
+        "largeControlFlowGraph.ts".to_string(),
+        LARGE_CONTROL_FLOW_GRAPH_CODE.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    group.bench_function("check_only", |b| {
+        b.iter(|| {
+            let types = TypeInterner::new();
+            let mut checker = CheckerState::new(
+                parser.get_arena(),
+                &binder,
+                &types,
+                "largeControlFlowGraph.ts".to_string(),
+                CheckerOptions::default(),
+            );
+            checker.check_source_file(root);
+            black_box(checker.ctx.diagnostics.len())
+        })
+    });
+
+    group.bench_function("full_pipeline", |b| {
+        b.iter(|| {
+            let mut parser = ParserState::new(
+                "largeControlFlowGraph.ts".to_string(),
+                LARGE_CONTROL_FLOW_GRAPH_CODE.to_string(),
+            );
+            let root = parser.parse_source_file();
+            let mut binder = BinderState::new();
+            binder.bind_source_file(parser.get_arena(), root);
+            let types = TypeInterner::new();
+            let mut checker = CheckerState::new(
+                parser.get_arena(),
+                &binder,
+                &types,
+                "largeControlFlowGraph.ts".to_string(),
+                CheckerOptions::default(),
+            );
+            checker.check_source_file(root);
+            black_box(checker.ctx.diagnostics.len())
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     cfa_benches,
     bench_parse_and_bind,
     bench_type_check,
     bench_flow_analysis,
-    bench_scaling
+    bench_scaling,
+    bench_large_control_flow_graph
 );
 criterion_main!(cfa_benches);
