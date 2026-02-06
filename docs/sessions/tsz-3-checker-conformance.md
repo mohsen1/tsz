@@ -230,3 +230,33 @@ Fixing this would unlock dozens of conformance tests related to:
 - Tail<T>, variadic tuple types
 - Higher-order function patterns
 
+
+## 2026-02-06 Key Finding: Rest Flag Comes From AST Syntax
+
+**Critical Discovery**: The `rest: true` flag comes from the AST syntax `...`, not from the type parameter constraint!
+
+From src/parser/state_statements.rs lines 1359-1367:
+```rust
+let is_rest_param = if let Some(node) = self.arena.get(param) {
+    if let Some(param_data) = self.arena.get_parameter(node) {
+        param_data.dot_dot_dot_token  // <-- AST has ...
+    } else {
+        false
+    }
+};
+```
+
+**This Means**:
+- `type F<T extends any[]> = (...args: T) => void` has `rest: true` because of the `...` syntax
+- When instantiating `F<[any]>`, we substitute `T` with `[any]` but the `rest` flag is preserved
+- The function shape already has `rest: true` before instantiation
+
+**Conclusion**: The lowering is likely correct! The problem must be elsewhere.
+
+### Revised Hypothesis
+
+Maybe the issue is NOT about rest flags at all. Let me check:
+1. Are the function types actually being created correctly?
+2. Is there an issue with how `[any]` (tuple) vs `any[]` (array) are compared?
+3. Could the issue be in tuple subtyping rather than function subtyping?
+
