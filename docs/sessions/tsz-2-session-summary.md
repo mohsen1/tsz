@@ -54,8 +54,9 @@ Fixed `NarrowingVisitor` to properly handle Lazy/Ref/Application resolution and 
 - ✅ `visit_unique_symbol` (Commit `24ac2eae3`) - nominal identity checking
 - ✅ `visit_keyof` (Commit `ed7e454e8`) - contravariant logic with TypeParameter handling
 - ✅ `visit_template_literal` (Commit `4c686ef37`) - template <: string and template <: template
+- ✅ `visit_type_query` (Commit `5b0cea7ca`) - typeof symbol resolution and recursion
 
-**Status**: 3 of 7 stubs complete. Need to complete visit_index_access, visit_type_query, visit_this_type, visit_infer.
+**Status**: 4 of 7 stubs complete. Need to complete visit_index_access, visit_this_type, visit_infer.
 
 ## Next Steps
 
@@ -75,6 +76,7 @@ Fixed `NarrowingVisitor` to properly handle Lazy/Ref/Application resolution and 
 - `24ac2eae3`: feat(solver): implement visit_unique_symbol in SubtypeVisitor
 - `ed7e454e8`: feat(solver): fix visit_keyof to handle type parameters correctly
 - `4c686ef37`: feat(solver): implement visit_template_literal in SubtypeVisitor
+- `5b0cea7ca`: feat(solver): implement visit_type_query in SubtypeVisitor
 
 ## Test Results
 
