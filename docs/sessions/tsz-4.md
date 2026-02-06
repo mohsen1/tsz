@@ -837,27 +837,37 @@ Focus on high-impact, low-effort fixes first.
 
 ## Current Session Goal (2025-02-06)
 
-**Primary Goal: Implement Async/Await Downleveling to ES5**
+**Discovery: Async/Await Downleveling Already Implemented** ✅
 
-**Rationale (per Gemini consultation):**
-- Last "Big Three" functional gap in ES5 downleveling (after spread and for-of)
-- Appears in hundreds of conformance tests
-- Forces completion of HelperManager (__awaiter, __generator)
-- Structural transformation that "unlocks" entire test categories
-- Like namespace/class merging, this will give significant pass rate boost
+Found that `src/transforms/async_es5.rs` and `async_es5_ir.rs` already implement:
+- Async functions → `__awaiter(this, void 0, void 0, function () { ... })`
+- State machine with `__generator` for `await` expressions
+- Proper switch/case label jumping for control flow
 
-**Implementation Plan:**
-1. **Helper Infrastructure**: Add `EmitHelperKind::Awaiter` and `EmitHelperKind::Generator`
-2. **Transformer**: Transform async to state machine using `__generator` helper
-3. **LoweringPass**: Detect async functions and set `ES5AsyncFunction` directive
-4. **State Machine**: Handle `await expr` → state machine yields
+**Test confirms it works:**
+```javascript
+async function foo() { await bar(); return 1; }
+// Becomes:
+return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_a) {
+        switch (_a.label) {
+            case 0: return [4 /*yield*/, bar()];
+            case 1: _a.sent(); return [2 /*return*/, 1];
+        }
+    });
+});
+```
 
-**Key Files:**
-- `src/transforms/async_es5.rs` - Transformation logic
-- `src/emitter/helpers.rs` - Helper injection
-- `src/lowering_pass.rs` - Directive triggering
+**All Major ES5 Downleveling Features Complete:**
+- ✅ __spreadArray (array spread)
+- ✅ __assign (object spread)
+- ✅ for-of downleveling
+- ✅ Template literals
+- ✅ Async/await downleveling
 
 **Current Pass Rate: 33.9%** (148/437)
+
+**Status:** Need to analyze remaining 66% failures to find next improvement opportunities.
 
 ---
 
