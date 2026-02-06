@@ -1146,6 +1146,8 @@ name = "tsz-binder"
 version = "0.1.0"
 dependencies = [
  "rustc-hash 2.1.1",
+ "serde",
+ "serde_json",
  "tracing",
  "tsz-common",
  "tsz-parser",

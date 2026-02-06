@@ -3,16 +3,17 @@
 //! This file contains the second half of the `impl BinderState` block,
 //! split from `state.rs` for maintainability.
 
-use crate::binder::{
+use crate::lib_loader;
+use crate::{
     ContainerKind, FlowNodeId, Symbol, SymbolArena, SymbolId, SymbolTable, flow_flags, symbol_flags,
 };
-use crate::lib_loader;
-use crate::parser::node::{Node, NodeArena};
-use crate::parser::node_flags;
-use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
-use crate::scanner::SyntaxKind;
 use std::sync::Arc;
 use tracing::{debug, warn};
+use tsz_parser::parser::node::{Node, NodeArena};
+use tsz_parser::parser::node_flags;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::{NodeIndex, NodeList};
+use tsz_scanner::SyntaxKind;
 
 use super::state::{BinderState, ResolutionStats, ValidationError};
 
@@ -431,10 +432,7 @@ impl BinderState {
                     self.module_augmentations
                         .entry(module_spec.clone())
                         .or_default()
-                        .push(crate::binder::state::ModuleAugmentation::new(
-                            name.to_string(),
-                            idx,
-                        ));
+                        .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
                 }
             }
 
@@ -469,10 +467,7 @@ impl BinderState {
                     self.module_augmentations
                         .entry(module_spec.clone())
                         .or_default()
-                        .push(crate::binder::state::ModuleAugmentation::new(
-                            name.to_string(),
-                            idx,
-                        ));
+                        .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
                 }
             }
 
@@ -595,7 +590,7 @@ impl BinderState {
     pub(crate) fn clause_allows_fallthrough(
         &self,
         arena: &NodeArena,
-        clause: &crate::parser::node::CaseClauseData,
+        clause: &tsz_parser::parser::node::CaseClauseData,
     ) -> bool {
         let Some(&last_stmt_idx) = clause.statements.nodes.last() else {
             return true;
@@ -2224,7 +2219,7 @@ impl BinderState {
         }
 
         for i in 0..self.symbols.len() {
-            let sym_id = crate::binder::SymbolId(i as u32);
+            let sym_id = crate::SymbolId(i as u32);
             if let Some(sym) = self.symbols.get(sym_id)
                 && sym.declarations.is_empty()
             {
@@ -2236,7 +2231,7 @@ impl BinderState {
         }
 
         for i in 0..self.symbols.len() {
-            let sym_id = crate::binder::SymbolId(i as u32);
+            let sym_id = crate::SymbolId(i as u32);
             if let Some(sym) = self.symbols.get(sym_id)
                 && !sym.value_declaration.is_none()
             {

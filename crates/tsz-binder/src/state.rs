@@ -7,20 +7,21 @@
 
 #![allow(clippy::print_stderr)]
 
-use crate::binder::{
+use crate::lib_loader;
+use crate::module_resolution_debug::ModuleResolutionDebugger;
+use crate::{
     ContainerKind, FlowNodeArena, FlowNodeId, Scope, ScopeContext, ScopeId, SymbolArena, SymbolId,
     SymbolTable, flow_flags, symbol_flags,
 };
-use crate::common::ScriptTarget;
-use crate::lib_loader;
-use crate::module_resolution_debug::ModuleResolutionDebugger;
-use crate::parser::node::{Node, NodeArena};
-use crate::parser::node_flags;
-use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
-use crate::scanner::SyntaxKind;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tracing::{Level, debug, span};
+use tsz_common::common::ScriptTarget;
+use tsz_parser::parser::node::{Node, NodeArena};
+use tsz_parser::parser::node_flags;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::{NodeIndex, NodeList};
+use tsz_scanner::SyntaxKind;
 
 const MAX_SCOPE_WALK_ITERATIONS: usize = 10_000;
 
@@ -125,7 +126,7 @@ pub struct BinderState {
     /// Ambient module declarations by specifier (e.g. "pkg", "./types")
     pub declared_modules: FxHashSet<String>,
     /// Whether the current source file is an external module (has top-level import/export).
-    pub(crate) is_external_module: bool,
+    pub is_external_module: bool,
     /// Flow nodes for control flow analysis
     pub flow_nodes: FlowNodeArena,
     /// Current flow node
@@ -150,7 +151,7 @@ pub struct BinderState {
     /// Flow node after each top-level statement (for incremental binding).
     pub(crate) top_level_flow: FxHashMap<u32, FlowNodeId>,
     /// Map case/default clause nodes to their containing switch statement.
-    pub(crate) switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
+    pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     /// Hoisted var declarations
     pub(crate) hoisted_vars: Vec<(String, NodeIndex)>,
     /// Hoisted function declarations
@@ -162,7 +163,7 @@ pub struct BinderState {
     /// Map from AST node (that creates a scope) to its ScopeId
     pub node_scope_ids: FxHashMap<u32, ScopeId>,
     /// Current active ScopeId during binding
-    pub(crate) current_scope_id: ScopeId,
+    pub current_scope_id: ScopeId,
 
     // ===== Module Resolution Debugging =====
     /// Debugger for tracking symbol table operations and scope lookups
@@ -511,7 +512,7 @@ impl BinderState {
         node_symbols: FxHashMap<u32, SymbolId>,
         scopes: Vec<Scope>,
         node_scope_ids: FxHashMap<u32, ScopeId>,
-        global_augmentations: FxHashMap<String, Vec<crate::parser::NodeIndex>>,
+        global_augmentations: FxHashMap<String, Vec<tsz_parser::NodeIndex>>,
         module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
         module_exports: FxHashMap<String, SymbolTable>,
         reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
@@ -1004,7 +1005,6 @@ impl BinderState {
 
     /// Public method for testing import resolution with reexports.
     /// This allows tests to verify that wildcard and named re-exports are properly resolved.
-    #[cfg(test)]
     pub fn resolve_import_if_needed_public(
         &self,
         module_specifier: &str,
@@ -1026,11 +1026,7 @@ impl BinderState {
 
     /// Find the enclosing scope for a given node by walking up the AST.
     /// Returns the ScopeId of the nearest scope-creating ancestor node.
-    pub(crate) fn find_enclosing_scope(
-        &self,
-        arena: &NodeArena,
-        node_idx: NodeIndex,
-    ) -> Option<ScopeId> {
+    pub fn find_enclosing_scope(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<ScopeId> {
         let mut current = node_idx;
 
         // Walk up the AST using parent pointers to find the nearest scope
@@ -1411,8 +1407,7 @@ impl BinderState {
         self.lib_symbols_merged = true;
     }
 
-    #[cfg(test)]
-    pub(crate) fn resolved_identifier_cache_len(&self) -> usize {
+    pub fn resolved_identifier_cache_len(&self) -> usize {
         self.resolved_identifier_cache.read().unwrap().len()
     }
 
@@ -1561,7 +1556,7 @@ impl BinderState {
     /// * `arena` - The NodeArena containing the AST
     /// * `file_name` - The name of the file being bound (used as the key in module_exports)
     fn populate_module_exports_from_file_symbols(&mut self, _arena: &NodeArena, file_name: &str) {
-        use crate::binder::symbol_flags;
+        use crate::symbol_flags;
 
         // Collect all exports from all module-level symbols in this file
         let mut file_exports = SymbolTable::new();
@@ -1975,7 +1970,7 @@ impl BinderState {
             } else {
                 // Handle single statement (not wrapped in a block)
                 // e.g., `if (x) var y = 1;` or `while (x) var i = 0;`
-                let mut stmts = crate::parser::NodeList::new();
+                let mut stmts = tsz_parser::NodeList::new();
                 stmts.nodes.push(idx);
                 self.collect_hoisted_declarations(arena, &stmts);
             }
@@ -3137,7 +3132,7 @@ impl BinderState {
         arena: &NodeArena,
         modifiers: &Option<NodeList>,
     ) -> bool {
-        use crate::scanner::SyntaxKind;
+        use tsz_scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
@@ -3157,7 +3152,7 @@ impl BinderState {
         arena: &NodeArena,
         modifiers: &Option<NodeList>,
     ) -> bool {
-        use crate::scanner::SyntaxKind;
+        use tsz_scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
@@ -3177,7 +3172,7 @@ impl BinderState {
         arena: &NodeArena,
         modifiers: &Option<NodeList>,
     ) -> bool {
-        use crate::scanner::SyntaxKind;
+        use tsz_scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
@@ -3197,7 +3192,7 @@ impl BinderState {
         arena: &NodeArena,
         modifiers: &Option<NodeList>,
     ) -> bool {
-        use crate::scanner::SyntaxKind;
+        use tsz_scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
@@ -3217,7 +3212,7 @@ impl BinderState {
         arena: &NodeArena,
         modifiers: &Option<NodeList>,
     ) -> bool {
-        use crate::scanner::SyntaxKind;
+        use tsz_scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
