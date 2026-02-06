@@ -438,14 +438,39 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if !imports.name.is_none() && imports.elements.nodes.is_empty() {
+        // Filter out type-only import specifiers
+        let value_imports: Vec<_> = imports
+            .elements
+            .nodes
+            .iter()
+            .filter(|&spec_idx| {
+                if let Some(spec_node) = self.arena.get(*spec_idx) {
+                    if let Some(spec) = self.arena.get_specifier(spec_node) {
+                        !spec.is_type_only
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        // If all imports are type-only, don't emit the named bindings at all
+        if value_imports.is_empty() {
+            return;
+        }
+
+        if !imports.name.is_none() && value_imports.is_empty() {
             self.write("* as ");
             self.emit(imports.name);
             return;
         }
 
         self.write("{ ");
-        self.emit_comma_separated(&imports.elements.nodes);
+        // Convert Vec<&NodeIndex> to Vec<NodeIndex> for emit_comma_separated
+        let value_refs: Vec<NodeIndex> = value_imports.iter().map(|&&idx| idx).collect();
+        self.emit_comma_separated(&value_refs);
         self.write(" }");
     }
 
@@ -1006,10 +1031,16 @@ impl<'a> Printer<'a> {
     pub(super) fn collect_value_specifiers(&self, elements: &NodeList) -> Vec<NodeIndex> {
         let mut specs = Vec::new();
         for &spec_idx in &elements.nodes {
+            // Check explicit "import type" syntax (parser-set flag)
             if let Some(spec_node) = self.arena.get(spec_idx)
                 && let Some(spec) = self.arena.get_specifier(spec_node)
                 && spec.is_type_only
             {
+                continue;
+            }
+            // Check implicit type-only imports (type checker side-table)
+            // This handles cases like `import { Interface }` where Interface refers to an interface
+            if self.ctx.options.type_only_nodes.contains(&spec_idx) {
                 continue;
             }
             specs.push(spec_idx);
