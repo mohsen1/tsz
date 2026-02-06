@@ -156,6 +156,7 @@ enum EmitDirective {
         arrow_node: NodeIndex,
         captures_this: bool,
         captures_arguments: bool,
+        class_alias: Option<Arc<str>>,
     },
     ES5AsyncFunction {
         function_node: NodeIndex,
@@ -464,10 +465,12 @@ impl<'a> Printer<'a> {
                 arrow_node,
                 captures_this,
                 captures_arguments,
+                class_alias,
             } => EmitDirective::ES5ArrowFunction {
                 arrow_node: *arrow_node,
                 captures_this: *captures_this,
                 captures_arguments: *captures_arguments,
+                class_alias: class_alias.clone(),
             },
             TransformDirective::ES5AsyncFunction { function_node } => {
                 EmitDirective::ES5AsyncFunction {
@@ -642,6 +645,7 @@ impl<'a> Printer<'a> {
                 arrow_node,
                 captures_this,
                 captures_arguments,
+                class_alias,
             } => {
                 if let Some(arrow_node) = self.arena.get(arrow_node)
                     && let Some(func) = self.arena.get_function(arrow_node)
@@ -651,6 +655,7 @@ impl<'a> Printer<'a> {
                         func,
                         captures_this,
                         captures_arguments,
+                        &class_alias,
                     );
                     return;
                 }
@@ -851,6 +856,7 @@ impl<'a> Printer<'a> {
                 arrow_node,
                 captures_this,
                 captures_arguments,
+                class_alias,
             } => {
                 if let Some(arrow_node) = self.arena.get(*arrow_node)
                     && let Some(func) = self.arena.get_function(arrow_node)
@@ -860,6 +866,7 @@ impl<'a> Printer<'a> {
                         func,
                         *captures_this,
                         *captures_arguments,
+                        class_alias,
                     );
                 }
             }
@@ -991,6 +998,7 @@ impl<'a> Printer<'a> {
                 arrow_node,
                 captures_this,
                 captures_arguments,
+                class_alias,
             } => {
                 if let Some(arrow_node) = self.arena.get(*arrow_node)
                     && let Some(func) = self.arena.get_function(arrow_node)
@@ -1000,6 +1008,7 @@ impl<'a> Printer<'a> {
                         func,
                         *captures_this,
                         *captures_arguments,
+                        class_alias,
                     );
                     return;
                 }

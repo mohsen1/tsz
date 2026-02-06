@@ -6,6 +6,7 @@ use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transform_context::TransformDirective;
 use crate::transforms::ClassES5Emitter;
+use std::sync::Arc;
 
 /// Segment of an array literal for ES5 spread transformation
 enum ArraySegment<'a> {
@@ -729,16 +730,29 @@ impl<'a> Printer<'a> {
 
     /// Emit ES5-compatible function expression for arrow function
     /// Arrow: (x) => x + 1  →  function (x) { return x + 1; }
+    ///
+    /// When `class_alias` is Some (arrow in static member), use class alias capture:
+    /// var _a = Vector; _a.foo = () => _a;
+    ///
+    /// Otherwise use IIFE capture:
+    /// (function (_this) { return _this.x; })(this)
     pub(super) fn emit_arrow_function_es5(
         &mut self,
         _node: &Node,
         func: &crate::parser::node::FunctionData,
         captures_this: bool,
         captures_arguments: bool,
+        class_alias: &Option<Arc<str>>,
     ) {
+        // When class_alias is Some (arrow in static member), use class alias capture pattern:
+        // - Don't use IIFE wrapper
+        // - this references are substituted with the class alias via SubstituteThis directive
+        // Example: var _a = Vector; _a.foo = () => _a;
+        let use_class_alias_capture = class_alias.is_some() && captures_this;
+
         // Determine capture wrapper: (function (_this, _arguments) { ... })
         let captures_any = captures_this || captures_arguments;
-        if captures_any {
+        if captures_any && !use_class_alias_capture {
             self.write("(function (");
             if captures_this {
                 self.write("_this");
@@ -823,7 +837,7 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if captures_any {
+        if captures_any && !use_class_alias_capture {
             // Close the (function (_this, _arguments) { ... }) wrapper
             self.write("; })");
             self.write("(");
