@@ -1,27 +1,27 @@
 # Session TSZ-13: Index Signature Implementation
 
 **Started**: 2026-02-06
-**Status**: 🔄 IN PROGRESS - Implementation Phase
+**Status**: 🔄 IN PROGRESS - Ready for Implementation
 **Predecessor**: TSZ-12 (Cache Invalidation - Complete)
 
 ## Task
 
 Implement Index Signature support for TypeScript subtyping and element access.
 
-## Problem Statement
+## Project Status (Gemini Assessment)
 
-**Problem**: Element access and subtyping for objects with index signatures are failing.
+**Current State**: High-momentum stabilization phase
+- **8247 passing, 53 failing** (started at 8232, 68 failing)
+- **+15 tests fixed** in tsz-12
+- Architectural integrity: Strong adherence to North Star
+- Solver robustness: Becoming "single source of truth"
+- Workflow compliance: Two-Question Rule preventing bugs
 
-**TypeScript behavior**:
-1. Element access priority: named property → numeric index → string index
-2. Numeric indexer must be subtype of string indexer
-3. Properties must satisfy index signature constraints
-4. Handle intersections, unions, lazy resolution
-
-**Tests affected** (~3 tests):
-- `test_checker_lowers_element_access_string_index_signature`
-- `test_checker_lowers_element_access_number_index_signature`
-- `test_checker_property_access_union_type`
+**Priority Ranking** (per Gemini):
+1. **Index Signatures** (this session) - Highest priority, fundamental to TypeScript object model
+2. **Flow Narrowing** (~5 tests) - Highest complexity, architecturally sensitive
+3. **Readonly Infrastructure** (~6 tests) - High priority, test setup issues
+4. **Diagnostic Deduplication** (~2 tests) - Medium priority, polish task
 
 ## Implementation Plan (Validated by Gemini)
 
@@ -41,6 +41,7 @@ Implement Index Signature support for TypeScript subtyping and element access.
 - Resolve `Lazy(DefId)` types before comparing
 - Use `in_progress`/`seen_defs` sets to prevent infinite recursion
 - Preserve `symbol` field for nominal identity
+- Follow Visitor Pattern (North Star Rule 2)
 
 ### Phase 3: Evaluation (src/solver/evaluate.rs)
 **New function**: `evaluate_index_access(interner, object_type, index_type)`
@@ -63,9 +64,22 @@ Implement Index Signature support for TypeScript subtyping and element access.
 - Call `solver.evaluate_index_access` from element access checking
 - Delegate to Solver following North Star Rule 3
 
+**Important**: Keep logic separated between Judge (structural) and Lawyer (TS-specific compatibility) per NORTH_STAR.md Section 3.3.
+
+## AGENTS.md Workflow
+
+**Question 1 (Approach Validation)**: ✅ Complete
+- Validated implementation plan
+- Corrected: use `evaluate.rs` not `expr.rs`
+- Identified specific functions and edge cases
+
+**Question 2 (Code Review)**: ⏳ Pending
+- After implementing solver logic
+- Ask Gemini Pro to review: `./scripts/ask-gemini.mjs --pro --include=src/solver`
+
 ## Expected Impact
 
-- **Direct**: Fix ~3 tests
+- **Direct**: Fix ~3 index signature tests
 - **Indirect**: Halo effect on tests using index signatures
 - **Goal**: 8250+ passing, 50- failing
 
@@ -77,6 +91,15 @@ Implement Index Signature support for TypeScript subtyping and element access.
 4. **src/solver/objects.rs** - Property collection for intersections
 5. **src/checker/state.rs** - Checker integration
 
+## Roadmap (Gemini Recommendation)
+
+| Phase | Session | Focus |
+|-------|---------|-------|
+| **Immediate** | **TSZ-13** | Index Signatures (this session) |
+| **Short-term** | **TSZ-14** | Readonly Infrastructure (~6 tests) |
+| **Mid-term** | **TSZ-15** | Flow Narrowing (~5 tests) - Use `--pro` |
+| **Long-term** | **TSZ-16** | Module/Overload Resolution (~7 tests) |
+
 ## Test Status
 
 **Start**: 8247 passing, 53 failing
@@ -84,18 +107,6 @@ Implement Index Signature support for TypeScript subtyping and element access.
 
 ## Notes
 
-**Gemini Question 1 (Approach Validation)**: Complete
-- Validated the overall approach
-- Corrected: use `evaluate.rs` not `expr.rs` for element access
-- Identified specific functions and edge cases
-- Emphasized: Resolver Lazy types, prevent infinite recursion, preserve nominal identity
+**Gemini Recommendation**: Do not pivot. The plan is validated and ready-to-implement. Pivoting now would abandon guaranteed-correct implementation.
 
-**AGENTS.md Mandatory Workflow**:
-- Question 1 (Pre-implementation): ✅ Complete
-- Question 2 (Post-implementation): Pending (after implementing solver logic)
-
-**Next Step**: Implement Phase 1 (Lowering) and Phase 2 (Subtyping) in Solver, then ask Gemini Question 2 for code review before Checker integration.
-
-**Deferred**:
-- Readonly infrastructure tests (~6) - test setup issue
-- Enum error duplication (~2) - diagnostic deduplication issue
+**Next Step**: Begin Phase 1 (Lowering) implementation in `src/solver/lower.rs`.
