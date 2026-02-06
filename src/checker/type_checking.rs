@@ -2626,6 +2626,15 @@ impl<'a> CheckerState<'a> {
         // are already on the Callable itself
         let array_instance_type = array_type;
 
+        // PropertyAccessEvaluator runs through multiple database backends
+        // (query cache, interner, binder-backed resolver). Register Array<T>
+        // through the query database so all backends see the same base type.
+        if let Some(ty) = array_instance_type {
+            self.ctx
+                .types
+                .register_array_base_type(ty, array_type_params.clone());
+        }
+
         // 2. Populate the environment
         // We use try_borrow_mut to be safe, though at this stage it should be free
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
