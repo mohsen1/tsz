@@ -201,6 +201,75 @@ function patchSessionClient(SessionClient) {
         return result;
     };
 
+    // Override getDefinitionAtPosition to pass through metadata fields from
+    // the server response (kind, name, containerName, contextSpan, etc.)
+    // The base SessionClient hardcodes these as empty strings.
+    const _origGetDefinitionAtPosition = proto.getDefinitionAtPosition;
+    proto.getDefinitionAtPosition = function(fileName, position) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        const request = this.processRequest("definition", args);
+        const response = this.processResponse(request);
+        if (!response.body) return [];
+        return response.body.map(entry => {
+            const result = {
+                kind: entry.kind || "",
+                name: entry.name || "",
+                containerName: entry.containerName || "",
+                fileName: entry.file,
+                textSpan: this.decodeSpan(entry),
+            };
+            if (entry.isLocal !== undefined) result.isLocal = entry.isLocal;
+            if (entry.isAmbient !== undefined) result.isAmbient = entry.isAmbient;
+            if (entry.unverified !== undefined) result.unverified = entry.unverified;
+            if (entry.failedAliasResolution !== undefined) result.failedAliasResolution = entry.failedAliasResolution;
+            if (entry.contextStart) {
+                result.contextSpan = this.decodeSpan(
+                    { start: entry.contextStart, end: entry.contextEnd },
+                    fileName
+                );
+            }
+            return result;
+        });
+    };
+
+    // Override getDefinitionAndBoundSpan to pass through metadata fields
+    const _origGetDefinitionAndBoundSpan = proto.getDefinitionAndBoundSpan;
+    proto.getDefinitionAndBoundSpan = function(fileName, position) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        const request = this.processRequest("definitionAndBoundSpan", args);
+        const response = this.processResponse(request);
+        const body = response.body;
+        if (!body) return undefined;
+        const definitions = (body.definitions || []).map(entry => {
+            const result = {
+                kind: entry.kind || "",
+                name: entry.name || "",
+                containerName: entry.containerName || "",
+                fileName: entry.file,
+                textSpan: this.decodeSpan(entry),
+            };
+            if (entry.isLocal !== undefined) result.isLocal = entry.isLocal;
+            if (entry.isAmbient !== undefined) result.isAmbient = entry.isAmbient;
+            if (entry.unverified !== undefined) result.unverified = entry.unverified;
+            if (entry.failedAliasResolution !== undefined) result.failedAliasResolution = entry.failedAliasResolution;
+            if (entry.contextStart) {
+                result.contextSpan = this.decodeSpan(
+                    { start: entry.contextStart, end: entry.contextEnd },
+                    fileName
+                );
+            }
+            return result;
+        });
+        // Return undefined when no definitions found (matches TypeScript behavior)
+        if (definitions.length === 0) return undefined;
+        return {
+            definitions,
+            textSpan: this.decodeSpan(body.textSpan, request.arguments.file),
+        };
+    };
+
     proto.isValidBraceCompletionAtPosition = function(fileName, position, openingBrace) {
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = {

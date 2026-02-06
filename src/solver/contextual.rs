@@ -394,6 +394,30 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         None
     }
 
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        self.visit_object(shape_id)
+    }
+
+    fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+        let resolved = crate::solver::evaluate::evaluate_type(self.db, TypeId(def_id));
+        if resolved != TypeId(def_id) {
+            self.visit_type(self.db, resolved)
+        } else {
+            None
+        }
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        for &member in members.iter() {
+            let mut extractor = PropertyExtractor::new(self.db, self.name.clone());
+            if let Some(ty) = extractor.extract(member) {
+                return Some(ty);
+            }
+        }
+        None
+    }
+
     fn default_output() -> Self::Output {
         None
     }

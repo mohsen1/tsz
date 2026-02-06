@@ -138,11 +138,21 @@ impl<'a> CheckerState<'a> {
 
                         // Not an array literal - treat as variadic (element type applies to all remaining params)
                         // But first, emit TS2556 error: spread must be tuple or rest parameter
+                        // Only emit when the target function does NOT have a rest parameter.
+                        // We detect rest parameters by checking if the expected type at the current
+                        // effective_index is an array type (rest params are typed as arrays).
                         if get_array_element_type(self.ctx.types, spread_type).is_some() {
-                            // This is a spread of a non-tuple array type
-                            // TypeScript emits TS2556: "A spread argument must either have a tuple type or be passed to a rest parameter."
-                            // We'll emit the error here on the spread expression
-                            self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                            let current_expected =
+                                expected_for_index(effective_index, expanded_count);
+                            let target_has_rest = current_expected.is_some_and(|t| {
+                                get_array_element_type(self.ctx.types, t).is_some()
+                                    || get_tuple_elements(self.ctx.types, t).is_some()
+                            });
+                            if !target_has_rest {
+                                // This is a spread of a non-tuple array type
+                                // TypeScript emits TS2556: "A spread argument must either have a tuple type or be passed to a rest parameter."
+                                self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                            }
                             // Continue processing - push the element type for assignability checking
                             if let Some(elem_type) =
                                 get_array_element_type(self.ctx.types, spread_type)

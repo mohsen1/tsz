@@ -1260,6 +1260,62 @@ impl<'a> FlowAnalyzer<'a> {
         type_id // Non-literal types are preserved
     }
 
+    /// Check if an assignment node is a mutable variable declaration (let/var) without a type annotation.
+    /// Used to determine when literal types should be widened to their base types.
+    fn is_mutable_var_decl_without_annotation(&self, node: NodeIndex) -> bool {
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+
+        // Handle VARIABLE_DECLARATION directly
+        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let Some(decl) = self.arena.get_variable_declaration(node_data) else {
+                return false;
+            };
+            // If there's a type annotation, don't widen - the user specified the type
+            if !decl.type_annotation.is_none() {
+                return false;
+            }
+            // Check if the parent declaration list is let/var (not const)
+            if let Some(ext) = self.arena.get_extended(node) {
+                if !ext.parent.is_none() {
+                    if let Some(parent_node) = self.arena.get(ext.parent) {
+                        let flags = parent_node.flags as u32;
+                        return (flags & node_flags::CONST) == 0;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // Handle VARIABLE_DECLARATION_LIST or VARIABLE_STATEMENT: check flags on the list
+        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            || node_data.kind == syntax_kind_ext::VARIABLE_STATEMENT
+        {
+            let flags = node_data.flags as u32;
+            if (flags & node_flags::CONST) != 0 {
+                return false;
+            }
+            // Check individual declarations for type annotations
+            if let Some(list) = self.arena.get_variable(node_data) {
+                for &decl_idx in &list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                        if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
+                            if decl.type_annotation.is_none() {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     /// Check if an assignment node represents a destructuring assignment.
     /// Destructuring assignments widen literals to primitives, unlike direct assignments.
     fn is_destructuring_assignment(&self, node: NodeIndex) -> bool {
@@ -1430,6 +1486,12 @@ impl<'a> FlowAnalyzer<'a> {
                 // Example: [x] = [1] widens to number, ({ x } = { x: 1 }) widens to number
                 // Also handles default values: [x = 2] = [] widens to number
                 if widen_literals_for_destructuring {
+                    return Some(self.widen_to_primitive(literal_type));
+                }
+                // For mutable variable declarations (let/var) without type annotations,
+                // widen literal types to their base types to match TypeScript behavior.
+                // Example: let x = "hi" -> string (not "hi"), let x = 42 -> number (not 42)
+                if self.is_mutable_var_decl_without_annotation(assignment_node) {
                     return Some(self.widen_to_primitive(literal_type));
                 }
                 return Some(literal_type);

@@ -69,9 +69,19 @@ pub fn compile_test(
 
     // Create tsconfig.json with test options
     let tsconfig_path = dir_path.join("tsconfig.json");
+    let allow_js = options
+        .get("allowJs")
+        .or_else(|| options.get("allowjs"))
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let include = if allow_js {
+        serde_json::json!(["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"])
+    } else {
+        serde_json::json!(["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"])
+    };
     let tsconfig_content = serde_json::json!({
         "compilerOptions": convert_options_to_tsconfig(options),
-        "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
+        "include": include,
         "exclude": ["node_modules"]
     });
 

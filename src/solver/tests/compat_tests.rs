@@ -5743,6 +5743,41 @@ fn test_best_common_type_with_literal_widening() {
 // =============================================================================
 
 #[test]
+fn test_private_brand_lazy_self_resolution_does_not_recurse() {
+    struct SelfReferentialLazyResolver {
+        def_id: DefId,
+        lazy_type: TypeId,
+    }
+
+    impl TypeResolver for SelfReferentialLazyResolver {
+        #[allow(deprecated)]
+        fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            None
+        }
+
+        fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            if def_id == self.def_id {
+                Some(self.lazy_type)
+            } else {
+                None
+            }
+        }
+    }
+
+    let interner = TypeInterner::new();
+    let def_id = DefId(42);
+    let lazy_type = interner.intern(TypeKey::Lazy(def_id));
+    let resolver = SelfReferentialLazyResolver { def_id, lazy_type };
+    let checker = CompatChecker::with_resolver(&interner, &resolver);
+
+    // A self-referential lazy resolution should short-circuit instead of recurring forever.
+    assert_eq!(
+        checker.private_brand_assignability_override(lazy_type, lazy_type),
+        None
+    );
+}
+
+#[test]
 fn test_private_brand_same_brand_assignable() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);

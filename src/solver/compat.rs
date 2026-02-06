@@ -1138,6 +1138,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     ) -> Option<bool> {
         use crate::solver::types::Visibility;
 
+        // Fast path: identical types don't need nominal brand override logic.
+        // Let the regular assignability path decide.
+        if source == target {
+            return None;
+        }
+
         // 1. Handle Target Union (OR logic)
         // S -> (A | B) : Valid if S -> A OR S -> B
         if let Some(TypeKey::Union(members)) = self.interner.lookup(target) {
@@ -1192,12 +1198,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // 5. Handle Lazy types (recursive resolution)
         if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(source) {
             if let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner) {
+                // Guard against non-progressing lazy resolution (e.g. DefId -> same Lazy type),
+                // which would otherwise recurse forever.
+                if resolved == source {
+                    return None;
+                }
                 return self.private_brand_assignability_override(resolved, target);
             }
         }
 
         if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(target) {
             if let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner) {
+                // Same non-progress guard for target-side lazy resolution.
+                if resolved == target {
+                    return None;
+                }
                 return self.private_brand_assignability_override(source, resolved);
             }
         }

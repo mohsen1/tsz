@@ -264,15 +264,14 @@ pub fn load_lib_files_for_test() -> Vec<Arc<crate::lib_loader::LibFile>> {
 /// Internal function to load lib files from known paths.
 /// Checks multiple locations where TypeScript libs might be installed.
 fn load_lib_files_from_paths() -> Vec<Arc<crate::lib_loader::LibFile>> {
-    // Try multiple paths where TypeScript libs might be located
+    // Use CARGO_MANIFEST_DIR for absolute paths so tests work with nextest
+    // (which runs each test in a separate process with a different working directory)
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_paths = [
-        // Local conformance test scripts
-        std::path::PathBuf::from("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        // Local emit test scripts
-        std::path::PathBuf::from("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        // Repository root (if cloned)
-        std::path::PathBuf::from("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        std::path::PathBuf::from("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
     ];
 
     for lib_path in &lib_paths {

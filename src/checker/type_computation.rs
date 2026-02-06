@@ -1390,6 +1390,10 @@ impl<'a> CheckerState<'a> {
         let mut getter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
         let mut setter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
 
+        // Skip duplicate property checks for destructuring assignment targets.
+        // `({ x, y: y1, "y": y1 } = obj)` is valid - same property extracted twice.
+        let skip_duplicate_check = self.ctx.in_destructuring_target;
+
         // Check for ThisType<T> marker in contextual type (Vue 2 / Options API pattern)
         // We need to extract this BEFORE the for loop so it's available for the pop at the end
         let marker_this_type: Option<TypeId> = if let Some(ctx_type) = self.ctx.contextual_type {
@@ -1456,8 +1460,8 @@ impl<'a> CheckerState<'a> {
 
                     let name_atom = self.ctx.types.intern_string(&name);
 
-                    // Check for duplicate property
-                    if properties.contains_key(&name_atom) {
+                    // Check for duplicate property (skip in destructuring targets)
+                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
                         let message = format_message(
                             diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
                             &[&name],
@@ -1537,8 +1541,8 @@ impl<'a> CheckerState<'a> {
 
                     let name_atom = self.ctx.types.intern_string(&name);
 
-                    // Check for duplicate property
-                    if properties.contains_key(&name_atom) {
+                    // Check for duplicate property (skip in destructuring targets)
+                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
                         let message = format_message(
                             diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
                             &[&name],
@@ -1582,8 +1586,8 @@ impl<'a> CheckerState<'a> {
 
                     let name_atom = self.ctx.types.intern_string(&name);
 
-                    // Check for duplicate property
-                    if properties.contains_key(&name_atom) {
+                    // Check for duplicate property (skip in destructuring targets)
+                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
                         let message = format_message(
                             diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
                             &[&name],
@@ -1673,7 +1677,10 @@ impl<'a> CheckerState<'a> {
                     } else {
                         getter_names.contains(&name_atom) && !setter_names.contains(&name_atom)
                     };
-                    if properties.contains_key(&name_atom) && !is_complementary_pair {
+                    if !skip_duplicate_check
+                        && properties.contains_key(&name_atom)
+                        && !is_complementary_pair
+                    {
                         let message = format_message(
                             diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
                             &[&name],

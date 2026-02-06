@@ -95,6 +95,8 @@ impl<'a> CheckerState<'a> {
             // `type_env` is rebuilt per file, so drop per-file symbol-resolution memoization.
             self.ctx.application_symbols_resolved.clear();
             self.ctx.application_symbols_resolution_set.clear();
+            self.ctx.contains_infer_types_true.clear();
+            self.ctx.contains_infer_types_false.clear();
 
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution

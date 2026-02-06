@@ -1555,6 +1555,13 @@ impl<'a> CheckerState<'a> {
         declared_type: TypeId,
         sym_id: SymbolId,
     ) -> TypeId {
+        // Flow narrowing is only meaningful for variable-like bindings.
+        // Class/function/namespace symbols have stable declared types and
+        // do not participate in definite-assignment analysis.
+        if !self.symbol_participates_in_flow_analysis(sym_id) {
+            return declared_type;
+        }
+
         // Check definite assignment for block-scoped variables without initializers
         if self.should_check_definite_assignment(sym_id, idx)
             && !self.skip_definite_assignment_for_type(declared_type)
@@ -1568,6 +1575,16 @@ impl<'a> CheckerState<'a> {
 
         // Apply type narrowing based on control flow
         self.apply_flow_narrowing(idx, declared_type)
+    }
+
+    fn symbol_participates_in_flow_analysis(&self, sym_id: SymbolId) -> bool {
+        use crate::binder::symbol_flags;
+
+        self.ctx
+            .binder
+            .get_symbol(sym_id)
+            .map(|symbol| (symbol.flags & symbol_flags::VARIABLE) != 0)
+            .unwrap_or(false)
     }
 
     /// Emit TS2454 error for variable used before definite assignment.
