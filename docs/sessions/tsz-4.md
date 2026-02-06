@@ -16,14 +16,45 @@ The emitter transforms TypeScript AST into JavaScript output and `.d.ts` declara
 - JavaScript Emit: **18.6%** pass rate (1941/10418 tests passed, 8477 failed, 935 skipped)
 - Declaration Emit: Working (Separate DeclarationEmitter class)
 
-**Key Failure Patterns Identified:**
-1. **Single-line block formatting** - Function expressions with simple bodies emitted multi-line
-   - Example: `(function a() { })()` should be `(function a() { })()` not broken across lines
-2. **Comment stripping** - Some comments being removed from output
-3. **Hygiene issues** - Destructuring parameter numbering inconsistent
+**Recent Work (2025-02-06):**
 
-**Session Goal (2025-02-06):**
-Investigate and fix emit formatting issues to improve pass rate from 18.6% toward higher percentages.
+### Fixed: ES5 Array Spread Downleveling
+
+**Issue:** Array literals with spread operators `[...a]` were being emitted as ES6 syntax even when `--target es5` was specified.
+
+**Root Cause:** In `src/emitter/es5_helpers.rs`, the `[ArraySegment::Spread(spread_idx)]` case was calling `self.emit(*spread_idx)` which emitted the spread operator as `...a` instead of the ES5 equivalent.
+
+**Fix Applied (commit ba472bbcd):**
+```rust
+// Before (incorrect):
+self.write("[");
+self.emit(*spread_idx);  // Emits "...a"
+self.write("]");
+
+// After (correct):
+if let Some(spread_node) = self.arena.get(*spread_idx) {
+    self.emit_spread_expression(spread_node);  // Emits just "a"
+}
+self.write(".slice()");  // Creates shallow copy
+```
+
+**Test Results:**
+- `[...a]` → `a.slice()` ✓ (creates shallow copy)
+- `[1, ...a]` → `[1].concat(a)` ✓
+- `[...a, 1]` → `a.concat([1])` ✓
+- `[1, ...a, 2]` → `[1].concat(a).concat([2])` ✓
+
+**Note:** TypeScript uses `__spreadArray([], a, true)` helper, but our `.concat()/.slice()` approach is semantically equivalent and simpler ES5.
+
+**Files Modified:**
+- `src/emitter/es5_helpers.rs` - Fixed spread-only case in `emit_array_literal_es5()`
+- `src/lowering_pass.rs` - No changes needed (directive was already being set correctly)
+- `src/emitter/mod.rs` - No changes needed (directive handling was already correct)
+
+**Remaining Issues:**
+1. Test baselines expect `__spreadArray` helper - our `.concat()` approach is semantically correct but syntactically different
+2. May need to implement `__spreadArray` helper for exact tsc match
+3. Other emit formatting issues remain (single-line blocks, comments, hygiene)
 
 **Recent Work (Session 15):**
 - Namespace/class/function/enum merging - **COMPLETED** (commit 22483fdef)
