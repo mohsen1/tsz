@@ -447,24 +447,15 @@ impl<'a> Printer<'a> {
         func: &crate::parser::node::FunctionData,
         captures_this: bool,
     ) {
-        let needs_this_capture = captures_this;
-        let parent_this_expr = if self.ctx.arrow_state.this_capture_depth > 0 {
-            "_this"
-        } else {
-            "this"
-        };
-
-        if needs_this_capture {
+        if captures_this {
+            // Wrap in (function (_this) { ... }) to capture this
+            // The LoweringPass now marks individual 'this' references with SubstituteThis directive,
+            // so we don't need to track this_capture_depth during emission
             self.write("(function (_this) { return ");
-            self.ctx.arrow_state.this_capture_depth += 1;
         }
 
         if func.is_async {
-            let this_expr = if needs_this_capture {
-                "_this"
-            } else {
-                parent_this_expr
-            };
+            let this_expr = if captures_this { "_this" } else { "this" };
             self.emit_async_function_es5(func, "", this_expr);
         } else {
             self.write("function (");
@@ -521,11 +512,19 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if needs_this_capture {
-            self.ctx.arrow_state.this_capture_depth -= 1;
-            self.write("; })(");
-            self.write(parent_this_expr);
-            self.write("))");
+        if captures_this {
+            // Close the (function (_this) { ... }) wrapper
+            // Note: We no longer decrement this_capture_depth since directives handle substitution
+            self.write("; })");
+            self.write("(");
+            // For nested arrow functions, the parent 'this' has already been captured
+            // by the wrapping, so we pass the outer 'this' expression
+            if self.ctx.arrow_state.this_capture_depth > 0 {
+                self.write("_this");
+            } else {
+                self.write("this");
+            }
+            self.write(")");
         }
     }
 
