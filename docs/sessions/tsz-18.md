@@ -538,17 +538,35 @@ The issue is NOT generic conditional evaluation, but specifically:
 - `src/solver/evaluate_rules/mapped.rs` - key remapping logic
 - How the conditional type is instantiated for each key during iteration
 
-**Status**: Added detailed tracing to `remap_key_type_for_mapped` for debugging (committed: 3f7cb08a3)
+**Status**: Investigation complete - identified architectural timing issue (committed: 2db11e7c6)
 
-**Next Investigation Phase**:
-- Phase 1: Verify Substitution Integrity - Check if `K` is being replaced with literal keys
-- Phase 2: Fix Conditional Literal Preservation if needed
-- Phase 3: Verify `never` filtering works correctly
+**Root Cause Discovered**:
+The mapped type `Filtered` evaluation returns DEFERRED because:
+1. `extract_mapped_keys` receives `KeyOf(User)`
+2. When it tries to extract keys, it calls `collect_properties(User)`
+3. User interface (TypeId 1) is in **Error state** - not fully resolved yet
+4. `collect_properties` correctly returns `NonObject` for Error types
+5. This prevents key extraction, blocking the entire mapped type evaluation
 
-**Tools Ready**:
-- Detailed tracing added to `remap_key_type_for_mapped`
-- Can see: param_name, key_type, substitution result, evaluation result
-- Next: Run test with tracing to see actual values
+**Trace Evidence**:
+```
+extract_mapped_keys: handling KeyOf type, operand_lookup=Some(Error)
+extract_mapped_keys: KeyOf operand is not an object
+evaluate_mapped: DEFERRED - could not extract concrete keys
+```
+
+**Architectural Issue**:
+This is the same timing problem found earlier with Indexed Access on Classes:
+- Mapped type evaluation happens BEFORE interface is fully populated in type_env
+- The type evaluator can't resolve Lazy (interface) types because they're not ready yet
+- This is a fundamental ordering issue in the type checking pipeline
+
+**Fix Implemented**:
+Added `TypeKey::KeyOf` handler to `extract_mapped_keys` that uses `collect_properties`.
+However, this doesn't solve the underlying timing issue - the interface is still in Error state.
+
+**Session Status**: This is a deeper architectural issue requiring rework of type evaluation ordering.
+The mapped type needs to be evaluated AFTER the source interface is fully resolved.
 
 ## Dependencies
 
