@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Deserializer};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -85,7 +87,7 @@ pub struct CompilerOptions {
     #[serde(default)]
     pub base_url: Option<String>,
     #[serde(default)]
-    pub paths: Option<HashMap<String, Vec<String>>>,
+    pub paths: Option<FxHashMap<String, Vec<String>>>,
     #[serde(default)]
     pub root_dir: Option<String>,
     #[serde(default)]
@@ -448,11 +450,11 @@ pub fn parse_tsconfig(source: &str) -> Result<TsConfig> {
 }
 
 pub fn load_tsconfig(path: &Path) -> Result<TsConfig> {
-    let mut visited = HashSet::new();
+    let mut visited = FxHashSet::default();
     load_tsconfig_inner(path, &mut visited)
 }
 
-fn load_tsconfig_inner(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<TsConfig> {
+fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<TsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
         bail!("tsconfig extends cycle detected at {}", canonical.display());
@@ -612,7 +614,7 @@ fn parse_jsx_emit(value: &str) -> Result<JsxEmit> {
     Ok(jsx)
 }
 
-fn build_path_mappings(paths: &HashMap<String, Vec<String>>) -> Vec<PathMapping> {
+fn build_path_mappings(paths: &FxHashMap<String, Vec<String>>) -> Vec<PathMapping> {
     let mut mappings = Vec::new();
     for (pattern, targets) in paths {
         if targets.is_empty() {
@@ -680,7 +682,7 @@ pub(crate) fn resolve_lib_files_with_options(
         .iter()
         .map(|value| normalize_lib_name(value))
         .collect();
-    let mut visited = HashSet::new();
+    let mut visited = FxHashSet::default();
 
     while let Some(lib_name) = pending.pop_front() {
         if lib_name.is_empty() || !visited.insert(lib_name.clone()) {
@@ -891,8 +893,8 @@ fn lib_dir_from_root(root: &Path) -> Option<PathBuf> {
     None
 }
 
-fn build_lib_map(lib_dir: &Path) -> Result<HashMap<String, PathBuf>> {
-    let mut map = HashMap::new();
+fn build_lib_map(lib_dir: &Path) -> Result<FxHashMap<String, PathBuf>> {
+    let mut map = FxHashMap::default();
     for entry in std::fs::read_dir(lib_dir)
         .with_context(|| format!("failed to read lib directory {}", lib_dir.display()))?
     {

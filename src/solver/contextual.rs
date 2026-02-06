@@ -1423,6 +1423,9 @@ pub fn apply_contextual_type(
         }
     }
 
+    // PERF: Reuse a single SubtypeChecker across all subtype checks in this function
+    let mut checker = crate::solver::subtype::SubtypeChecker::new(interner);
+
     // Check if contextual type is a union
     if let Some(TypeKey::Union(members)) = interner.lookup(ctx_type) {
         let members = interner.type_list(members);
@@ -1434,31 +1437,28 @@ pub fn apply_contextual_type(
         }
         // If expr_type is assignable to any union member, use expr_type
         for &member in members.iter() {
-            if is_subtype_of(interner, expr_type, member) {
+            checker.reset();
+            if checker.is_subtype_of(expr_type, member) {
                 return expr_type;
             }
         }
     }
 
     // If expr_type is assignable to contextual type, use expr_type (it's more specific)
-    if is_subtype_of(interner, expr_type, ctx_type) {
+    checker.reset();
+    if checker.is_subtype_of(expr_type, ctx_type) {
         return expr_type;
     }
 
     // If contextual type is assignable to expr_type, use contextual type (it's more specific)
-    if is_subtype_of(interner, ctx_type, expr_type) {
+    checker.reset();
+    if checker.is_subtype_of(ctx_type, expr_type) {
         return ctx_type;
     }
 
     // Default: prefer the expression type (don't widen to contextual type)
     // This prevents incorrectly widening concrete types to generic type parameters
     expr_type
-}
-
-/// Check if a type is a subtype of another type.
-fn is_subtype_of(interner: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
-    use crate::solver::subtype::is_subtype_of;
-    is_subtype_of(interner, source, target)
 }
 
 /// Context for yield expression contextual typing in generators.

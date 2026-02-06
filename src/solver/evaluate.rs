@@ -159,6 +159,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.no_unchecked_indexed_access = enabled;
     }
 
+    /// Reset per-evaluation state so this evaluator can be reused.
+    ///
+    /// Clears the cache, cycle detection sets, and counters while preserving
+    /// configuration and borrowed references. Uses `.clear()` to reuse memory.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.cache.clear();
+        self.visiting.clear();
+        self.visiting_defs.clear();
+        self.depth = 0;
+        self.total_evaluations = 0;
+        self.depth_exceeded = false;
+    }
+
     // =========================================================================
     // Accessor methods for evaluate_rules modules
     // =========================================================================

@@ -1490,6 +1490,11 @@ impl BinderState {
                 self.bind_node(arena, stmt_idx);
                 self.top_level_flow.insert(stmt_idx.0, self.current_flow);
             }
+
+            // Populate module_exports for cross-file import resolution
+            // This enables type-only import elision and proper import validation
+            let file_name = sf.file_name.clone();
+            self.populate_module_exports_from_file_symbols(arena, &file_name);
         }
 
         self.sync_current_scope_to_persistent();
@@ -1535,6 +1540,47 @@ impl BinderState {
                     self.file_locals.set(name.clone(), *sym_id);
                 }
             }
+        }
+    }
+
+    /// Populate module_exports from file-level module symbols.
+    ///
+    /// This enables cross-file import resolution and type-only import elision.
+    /// After binding a source file, we collect all module-level exports and
+    /// add them to the module_exports table keyed by the file name.
+    ///
+    /// # Arguments
+    /// * `arena` - The NodeArena containing the AST
+    /// * `file_name` - The name of the file being bound (used as the key in module_exports)
+    fn populate_module_exports_from_file_symbols(&mut self, _arena: &NodeArena, file_name: &str) {
+        use crate::binder::symbol_flags;
+
+        // Collect all exports from all module-level symbols in this file
+        let mut file_exports = SymbolTable::new();
+
+        // Iterate through file_locals to find modules and their exports
+        for (_name, &sym_id) in self.file_locals.iter() {
+            if let Some(symbol) = self.symbols.get(sym_id) {
+                // Check if this is a module/namespace symbol
+                if (symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
+                    != 0
+                {
+                    // If the module has an exports table, merge it into file_exports
+                    if let Some(module_exports) = symbol.exports.as_ref() {
+                        for (export_name, &export_sym_id) in module_exports.iter() {
+                            if !file_exports.has(export_name) {
+                                file_exports.set(export_name.clone(), export_sym_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add to module_exports if we found any exports
+        if !file_exports.is_empty() {
+            self.module_exports
+                .insert(file_name.to_string(), file_exports);
         }
     }
 

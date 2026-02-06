@@ -2529,7 +2529,8 @@ impl<'a> TypeLowering<'a> {
             // Phase 4.2: Must resolve to DefId - no fallback to SymbolRef
             // The def_id_resolver closure must be provided and must return valid DefIds
             if let Some(def_id) = self.resolve_def_id(node_idx) {
-                return self.interner.intern(TypeKey::Lazy(def_id));
+                let lazy_type = self.interner.intern(TypeKey::Lazy(def_id));
+                return lazy_type;
             }
             // If def_id resolution failed, this is an error - don't create bogus Lazy types
 

@@ -138,7 +138,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // Fall back to TypeLowering for type nodes not handled above
             // (conditional types, mapped types, indexed access types, etc.)
             _ => {
+                use crate::binder::symbol_flags;
                 use crate::solver::TypeLowering;
+                use crate::solver::types::is_compiler_managed_type;
 
                 let type_param_bindings: Vec<(crate::interner::Atom, TypeId)> = self
                     .ctx
@@ -147,12 +149,101 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .map(|(name, &type_id)| (self.ctx.types.intern_string(name), type_id))
                     .collect();
 
-                let type_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
-                let value_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
-                let mut lowering = TypeLowering::with_resolvers(
+                // Create proper type/value resolvers that look up symbols in the binder
+                // This is needed for mapped types, conditional types, and other complex types
+                let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
+                    let node = self.ctx.arena.get(node_idx)?;
+                    let ident = self.ctx.arena.get_identifier(node)?;
+                    let name = ident.escaped_text.as_str();
+
+                    // Skip built-in types that have special handling in TypeLowering
+                    if is_compiler_managed_type(name) {
+                        return None;
+                    }
+
+                    // Look up the symbol in file_locals
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                        if (symbol.flags
+                            & (symbol_flags::TYPE
+                                | symbol_flags::REGULAR_ENUM
+                                | symbol_flags::CONST_ENUM))
+                            != 0
+                        {
+                            return Some(sym_id.0);
+                        }
+                    }
+
+                    // Also check lib_contexts if available
+                    for lib_ctx in &self.ctx.lib_contexts {
+                        if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                            let symbol = lib_ctx.binder.get_symbol(sym_id)?;
+                            if (symbol.flags
+                                & (symbol_flags::TYPE
+                                    | symbol_flags::REGULAR_ENUM
+                                    | symbol_flags::CONST_ENUM))
+                                != 0
+                            {
+                                return Some(sym_id.0);
+                            }
+                        }
+                    }
+
+                    None
+                };
+
+                let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
+                    let node = self.ctx.arena.get(node_idx)?;
+                    let ident = self.ctx.arena.get_identifier(node)?;
+                    let name = ident.escaped_text.as_str();
+
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            if (symbol.flags
+                                & (symbol_flags::VALUE
+                                    | symbol_flags::ALIAS
+                                    | symbol_flags::REGULAR_ENUM
+                                    | symbol_flags::CONST_ENUM))
+                                != 0
+                            {
+                                return Some(sym_id.0);
+                            }
+                        }
+                    }
+
+                    for lib_ctx in &self.ctx.lib_contexts {
+                        if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                            if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
+                                if (symbol.flags
+                                    & (symbol_flags::VALUE
+                                        | symbol_flags::ALIAS
+                                        | symbol_flags::REGULAR_ENUM
+                                        | symbol_flags::CONST_ENUM))
+                                    != 0
+                                {
+                                    return Some(sym_id.0);
+                                }
+                            }
+                        }
+                    }
+
+                    None
+                };
+
+                // Create def_id_resolver to prefer Lazy(DefId) over Ref(SymbolRef)
+                let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::def::DefId> {
+                    let sym_id = type_resolver(node_idx)?;
+                    Some(
+                        self.ctx
+                            .get_or_create_def_id(crate::binder::SymbolId(sym_id)),
+                    )
+                };
+
+                let mut lowering = TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
                     &type_resolver,
+                    &def_id_resolver,
                     &value_resolver,
                 );
                 if !type_param_bindings.is_empty() {

@@ -14,7 +14,7 @@ use crate::lsp::utils::find_node_at_offset;
 use crate::parser::node::{NodeAccess, NodeArena};
 use crate::parser::{NodeIndex, modifier_flags, syntax_kind_ext};
 use crate::scanner::{self, SyntaxKind};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -108,14 +108,14 @@ impl RenameTextEdit {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct WorkspaceEdit {
     /// Map of file path -> list of edits.
-    pub changes: HashMap<String, Vec<TextEdit>>,
+    pub changes: FxHashMap<String, Vec<TextEdit>>,
 }
 
 impl WorkspaceEdit {
     /// Create a new workspace edit.
     pub fn new() -> Self {
         Self {
-            changes: HashMap::new(),
+            changes: FxHashMap::default(),
         }
     }
 
@@ -136,13 +136,13 @@ impl Default for WorkspaceEdit {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RenameWorkspaceEdit {
     /// Map of file path -> list of rich rename edits.
-    pub changes: HashMap<String, Vec<RenameTextEdit>>,
+    pub changes: FxHashMap<String, Vec<RenameTextEdit>>,
 }
 
 impl RenameWorkspaceEdit {
     pub fn new() -> Self {
         Self {
-            changes: HashMap::new(),
+            changes: FxHashMap::default(),
         }
     }
 

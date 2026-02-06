@@ -1834,9 +1834,9 @@ impl TypeInterner {
     ///
     /// Note: Literals of the same primitive type are NOT disjoint (e.g., "a" & "b" is valid).
     fn has_disjoint_primitives(&self, members: &[TypeId]) -> bool {
-        use std::collections::HashSet;
+        use rustc_hash::FxHashSet;
 
-        let mut primitive_kinds: HashSet<PrimitiveKind> = HashSet::new();
+        let mut primitive_kinds: FxHashSet<PrimitiveKind> = FxHashSet::default();
 
         for &member in members {
             let kind = self.get_primitive_kind(member);

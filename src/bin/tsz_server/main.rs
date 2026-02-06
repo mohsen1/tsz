@@ -37,7 +37,6 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read as IoRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -316,7 +315,7 @@ enum LegacyRequest {
     /// Type check files and return error codes
     Check {
         id: u64,
-        files: HashMap<String, String>,
+        files: FxHashMap<String, String>,
         #[serde(default)]
         options: CheckOptions,
     },
@@ -661,7 +660,7 @@ pub(crate) struct Server {
     /// Response sequence counter (for tsserver protocol)
     pub(crate) response_seq: u64,
     /// Open files (for tsserver protocol)
-    pub(crate) open_files: HashMap<String, String>,
+    pub(crate) open_files: FxHashMap<String, String>,
     /// Server mode
     pub(crate) _server_mode: ServerMode,
     /// Log configuration
@@ -715,7 +714,7 @@ impl Server {
             unified_lib_cache: None,
             checks_completed: 0,
             response_seq: 0,
-            open_files: HashMap::new(),
+            open_files: FxHashMap::default(),
             _server_mode: server_mode,
             _log_config: log_config,
         })
@@ -3145,7 +3144,7 @@ impl Server {
     fn handle_legacy_check(
         &mut self,
         id: u64,
-        files: HashMap<String, String>,
+        files: FxHashMap<String, String>,
         options: CheckOptions,
     ) -> LegacyResponse {
         let start = Instant::now();
@@ -3299,7 +3298,7 @@ impl Server {
 
     fn run_check(
         &mut self,
-        files: HashMap<String, String>,
+        files: FxHashMap<String, String>,
         options: CheckOptions,
     ) -> Result<Vec<i32>> {
         // Use unified lib loading for proper cross-lib symbol resolution.
@@ -4267,7 +4266,7 @@ mod tests {
             unified_lib_cache: None,
             checks_completed: 0,
             response_seq: 0,
-            open_files: HashMap::new(),
+            open_files: FxHashMap::default(),
             _server_mode: ServerMode::Semantic,
             _log_config: LogConfig {
                 level: LogLevel::Off,

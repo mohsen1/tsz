@@ -6,7 +6,7 @@
 //! - `incoming_calls`: finds all callers of a function
 //! - `outgoing_calls`: finds all callees within a function body
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::binder::BinderState;
 use crate::lsp::document_symbols::SymbolKind;
@@ -139,7 +139,7 @@ impl<'a> CallHierarchyProvider<'a> {
 
         // Scan all identifier nodes in the arena that match the target name
         // and appear inside a CallExpression, grouping by containing function.
-        let mut callers: HashMap<u32, Vec<Range>> = HashMap::new();
+        let mut callers: FxHashMap<u32, Vec<Range>> = FxHashMap::default();
 
         for (i, node) in self.arena.nodes.iter().enumerate() {
             if node.kind != SyntaxKind::Identifier as u16 {
@@ -230,7 +230,8 @@ impl<'a> CallHierarchyProvider<'a> {
 
         // Group calls by the resolved callee.
         // Key: NodeIndex of the callee's declaration, Value: list of call-site ranges.
-        let mut callees: HashMap<u32, (Option<CallHierarchyItem>, Vec<Range>)> = HashMap::new();
+        let mut callees: FxHashMap<u32, (Option<CallHierarchyItem>, Vec<Range>)> =
+            FxHashMap::default();
 
         for call_idx in call_nodes {
             let call_node = match self.arena.get(call_idx) {

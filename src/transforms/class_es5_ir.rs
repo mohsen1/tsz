@@ -81,8 +81,8 @@ use crate::transforms::ir::*;
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_private_accessors, collect_private_fields,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::Cell;
-use std::collections::HashMap;
 
 /// Context for ES5 class transformation
 pub struct ES5ClassTransformer<'a> {
@@ -953,8 +953,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let accessor_map = collect_accessor_pairs(self.arena, &class_data.members, false);
 
         // Track which accessor names we've emitted
-        let mut emitted_accessors: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut emitted_accessors: FxHashSet<String> = FxHashSet::default();
 
         // Second pass: emit methods and accessors in source order
         for &member_idx in &class_data.members.nodes {
@@ -1123,8 +1122,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let static_accessor_map = collect_accessor_pairs(self.arena, &class_data.members, true);
 
         // Track which static accessor names we've emitted
-        let mut emitted_static_accessors: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut emitted_static_accessors: FxHashSet<String> = FxHashSet::default();
 
         // Second pass: emit static members in source order
         for &member_idx in &class_data.members.nodes {
@@ -1385,8 +1383,9 @@ fn collect_accessor_pairs(
     arena: &NodeArena,
     members: &NodeList,
     collect_static: bool,
-) -> HashMap<String, (Option<NodeIndex>, Option<NodeIndex>)> {
-    let mut accessor_map: HashMap<String, (Option<NodeIndex>, Option<NodeIndex>)> = HashMap::new();
+) -> FxHashMap<String, (Option<NodeIndex>, Option<NodeIndex>)> {
+    let mut accessor_map: FxHashMap<String, (Option<NodeIndex>, Option<NodeIndex>)> =
+        FxHashMap::default();
 
     for &member_idx in &members.nodes {
         let Some(member_node) = arena.get(member_idx) else {
