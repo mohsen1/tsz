@@ -1367,6 +1367,23 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS6234: "This expression is not callable because it is a 'get' accessor.
+    /// Did you mean to access it without '()'?"
+    pub fn error_get_accessor_not_callable_at(&mut self, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.ctx.diagnostics.push(
+                crate::checker::types::diagnostics::Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    "This expression is not callable because it is a 'get' accessor. Did you mean to access it without '()'?".to_string(),
+                    diagnostic_codes::GET_ACCESSOR_NOT_CALLABLE,
+                ),
+            );
+        }
+    }
+
     /// Report TS2348: "Cannot invoke an expression whose type lacks a call signature"
     /// This is specifically for class constructors called without 'new'.
     pub fn error_class_constructor_without_new_at(&mut self, type_id: TypeId, idx: NodeIndex) {
