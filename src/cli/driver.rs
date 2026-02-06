@@ -1632,7 +1632,7 @@ fn read_source_files(
 /// duplicate symbol declarations.
 fn load_lib_files_for_contexts(
     lib_files: &[PathBuf],
-    target: crate::emitter::ScriptTarget,
+    _target: crate::emitter::ScriptTarget,
 ) -> Vec<LibContext> {
     use crate::binder::BinderState;
     use crate::parser::ParserState;
@@ -1666,20 +1666,6 @@ fn load_lib_files_for_contexts(
             Some((file_name, source_text))
         })
         .collect();
-
-    // If no disk lib files were found, fall back to embedded libs.
-    // This ensures global types (Array, String, etc.) are always available,
-    // even in test environments without TypeScript installed.
-    #[cfg(feature = "embedded_libs")]
-    let lib_contents = if lib_contents.is_empty() {
-        let embedded = crate::embedded_libs::get_default_libs_for_target(target);
-        embedded
-            .into_iter()
-            .map(|lib| (lib.file_name.to_string(), lib.content.to_string()))
-            .collect()
-    } else {
-        lib_contents
-    };
 
     // Parse and bind all libs in parallel
     let lib_contexts: Vec<LibContext> = lib_contents
