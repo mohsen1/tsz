@@ -554,3 +554,49 @@ This ensures O(1) equality for meta-types produced during instantiation. Without
 **Remaining Tasks for tsz-1:**
 - Task B: Audit `evaluate.rs` for canonicalization opportunities
 
+---
+
+## Session Update (2026-02-06 - Part 6)
+
+**Completed Work:**
+- ✅ Task #47 (Template Literal Canonicalization) - COMPLETE (commit: 779d36343)
+
+**Task #47: Template Literal Canonicalization (Interner-level Normalization)**
+Completed template literal canonicalization in `src/solver/intern.rs` for O(1) equality.
+
+**Changes Made:**
+
+1. **template_span_cardinality (line 2622-2634)**: Added TemplateLiteral case
+   - Recursively calculates cardinality by multiplying span counts
+   - Text spans contribute 1, Type spans recursively call template_span_cardinality
+   - Uses saturating_mul to prevent overflow
+
+2. **get_string_literal_values (line 2726-2742)**: Added TemplateLiteral case
+   - Returns single combined string if all spans are text-only
+   - Returns None for templates with type interpolations (can't expand as simple literals)
+
+3. **normalize_template_spans (line 2830-2860)**: Added nested template flattening
+   - Checks if Type(type_id) is a TemplateLiteral
+   - Splices nested spans into parent template
+   - Processes nested Text spans with pending_text merging
+   - Processes nested Type spans by adding them to normalized output
+
+**Test Results:**
+- 3526 solver tests passing (same count as before)
+- 1 pre-existing test failure (unrelated to this work)
+
+**Gemini Pro Review:**
+- ✅ Implementation is correct and safe
+- ✅ DAG structure prevents infinite recursion
+- ✅ Depth tracking not required
+- ✅ Bottom-up interning ensures nested templates are already normalized
+
+**What This Achieves:**
+- Nested template literals like `` `a${`b`}c` `` now flatten to `` `abc` ``
+- Template cardinality calculation handles recursive templates
+- Text-only nested templates return single combined string value
+
+**Next Steps:**
+- Address the 189 pre-existing test failures
+- Or continue with remaining canonicalization gaps
+
