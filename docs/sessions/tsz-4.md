@@ -830,3 +830,39 @@ Focus on high-impact, low-effort fixes first.
 - Build momentum with quick wins
 
 **Status:** Starting triage and looking for first fix opportunity.
+
+---
+
+## Current Session Goal (2025-02-06 - Gemini Consulted)
+
+**Primary Goal: Implement Helper Infrastructure & Exact Spread Matching**
+
+**Rationale (per Gemini consultation):**
+- The project must match `tsc` behavior exactly (per AGENTS.md)
+- Using `.concat()` instead of `__spreadArray` causes baseline test failures
+- Helper infrastructure is a blocker for all ES5 downleveling (for-of, async/await, decorators)
+- Implementing `__spreadArray` and `__assign` will likely flip hundreds of tests from Fail to Pass
+
+### Implementation Plan
+
+#### Phase A: Helper Tracking
+- **Files**: `src/transforms/helpers.rs`, `src/lowering_pass.rs`
+- Ensure `LoweringPass` flags helpers in `TransformContext`
+- Call `ctx.request_helper(EmitHelperKind::SpreadArray)` when ES5 spread is detected
+
+#### Phase B: Helper Injection
+- **File**: `src/emitter/mod.rs` in `emit_source_file`
+- Before emitting statements, check `self.transforms.helpers()`
+- Use `emit_helpers` function to inject helper definitions at top of output
+
+#### Phase C: Exact Spread Matching
+- **File**: `src/emitter/es5_helpers.rs`
+- Update `emit_array_literal_es5` to emit `__spreadArray` calls
+- Pattern: `[...a, 1]` → `__spreadArray(a, [1], false)`
+
+### Priority Order
+1. Helper Infrastructure (blocks all other ES5 downleveling)
+2. `__spreadArray` (fixes semantic vs exact gap)
+3. `__assign` (Object Spread) - many tests use `{...obj}`
+4. `for-of` Downleveling (biggest pass-rate jump)
+5. Hygiene/Rename (fixes `_this` vs `_this_1` collisions)
