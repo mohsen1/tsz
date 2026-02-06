@@ -1332,6 +1332,29 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS18045: accessor modifier only allowed when targeting ES2015+
+        // Ambient contexts (declare class) are exempt.
+        if self.has_accessor_modifier(&prop.modifiers) {
+            use crate::checker::context::ScriptTarget;
+            let is_es5_or_lower = matches!(
+                self.ctx.compiler_options.target,
+                ScriptTarget::ES3 | ScriptTarget::ES5
+            );
+            let in_ambient = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .map(|c| c.is_declared)
+                .unwrap_or(false);
+            if is_es5_or_lower && !in_ambient {
+                self.error_at_node(
+                    member_idx,
+                    "Properties with the 'accessor' modifier are only available when targeting ECMAScript 2015 and higher.",
+                    diagnostic_codes::ACCESSOR_MODIFIER_ONLY_ES2015_PLUS,
+                );
+            }
+        }
+
         // Error 1248: A class member cannot have the 'const' keyword
         if let Some(const_mod) = self.get_const_modifier(&prop.modifiers) {
             self.error_at_node(

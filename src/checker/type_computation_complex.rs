@@ -1289,6 +1289,20 @@ impl<'a> CheckerState<'a> {
             // First try the main binder (fast path for local symbols).
             let local_symbol = self.ctx.binder.get_symbol(sym_id);
             let flags = local_symbol.map(|s| s.flags).unwrap_or(0);
+
+            // TS2662: Bare identifier resolving to a static class member.
+            // Static members must be accessed via `ClassName.member`, not as
+            // bare identifiers.  The binder puts them in the class scope so
+            // they resolve, but the checker must reject unqualified access.
+            if (flags & crate::binder::symbol_flags::STATIC) != 0 {
+                if let Some(ref class_info) = self.ctx.enclosing_class.clone() {
+                    if self.is_static_member(&class_info.member_nodes, name) {
+                        self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
+                        return TypeId::ERROR;
+                    }
+                }
+            }
+
             let has_type = (flags & crate::binder::symbol_flags::TYPE) != 0;
             let has_value = (flags & crate::binder::symbol_flags::VALUE) != 0;
             let is_type_alias = (flags & crate::binder::symbol_flags::TYPE_ALIAS) != 0;
