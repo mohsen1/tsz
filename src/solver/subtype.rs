@@ -2678,7 +2678,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        SubtypeResult::False
+        // =======================================================================
+        // VISITOR PATTERN DISPATCH (Task #48.4)
+        // =======================================================================
+        // After all special-case checks above, dispatch to the visitor for
+        // general structural type checking. The visitor implements double-
+        // dispatch pattern to handle source type variants and their interaction
+        // with the target type.
+        // =======================================================================
+
+        // Extract the interner reference FIRST (Copy trait)
+        // This must happen before creating the visitor which mutably borrows self
+        let interner = self.interner;
+
+        // Create the visitor with a mutable reborrow of self
+        let mut visitor = SubtypeVisitor {
+            checker: self,
+            source,
+            target,
+        };
+
+        // Dispatch to the visitor using the extracted interner
+        visitor.visit_type(interner, source)
     }
 
     /// Check if a deferred keyof type is a subtype of string | number | symbol.
