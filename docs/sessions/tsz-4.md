@@ -945,7 +945,45 @@ Per the original plan and Gemini consultation, the next priorities are:
 
 ### Priority Order
 1. Helper Infrastructure (blocks all other ES5 downleveling)
-2. `__spreadArray` (fixes semantic vs exact gap)
-3. `__assign` (Object Spread) - many tests use `{...obj}`
+2. `__spreadArray` (fixes semantic vs exact gap) ✅
+3. `__assign` (Object Spread) - many tests use `{...obj}` ✅
 4. `for-of` Downleveling (biggest pass-rate jump)
 5. Hygiene/Rename (fixes `_this` vs `_this_1` collisions)
+
+### 2025-02-06 Session 17: Architectural Issue Discovery
+
+**Arrow Function `this` Capture - Blocked by Architecture**
+
+Discovered fundamental issue when implementing Class Alias Capture pattern:
+- ClassES5Emitter uses IR-based transformation
+- IRPrinter copies source text via ASTRef for unhandled constructs
+- Directive-based transforms are never applied to nested nodes in classes
+- This means arrow functions inside static class methods are copied as-is from source
+
+**Example:**
+Input: `class Vector { static foo() { const f = () => this; } }`
+Expected (tsc): `var f = function () { return _this; };`
+Actual (tsz): `const f = () => this;` (no transformation)
+
+**Root Cause:**
+Two parallel transformation systems that don't communicate:
+1. **Directive-based**: LoweringPass → TransformContext → Emitter
+2. **IR-based**: ClassES5Emitter → IRPrinter → JavaScript strings
+
+IRPrinter's ASTRef mechanism bypasses all directive transforms.
+
+**Status:** Infrastructure partially implemented but incomplete. Documented for future session.
+
+**Discovery: ES5 Downleveling Features Already Working**
+
+Verified that these features are fully implemented:
+- ✅ Template literals: ``Hello ${name}`` → "Hello, ".concat(name)
+- ✅ Array spread: `[...arr]` → __spreadArray([], arr, true)
+- ✅ Object spread: `{...obj}`` → __assign({}, obj)
+- ✅ let/const → var transformation
+- ✅ Classes (class → IIFE pattern)
+- ✅ Async/await → __awaiter/__generator state machine
+- ✅ Destructuring (complex pattern matching)
+
+**Next Steps:**
+Need to analyze remaining 66% of emit test failures to find high-impact improvements that avoid the IR-based/directive-based architectural mismatch.
