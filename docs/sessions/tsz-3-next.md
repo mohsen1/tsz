@@ -1,92 +1,57 @@
-# Session TSZ-3-Flow: In Operator Narrowing Bug Fix
+# Session TSZ-3: TS2339 String Literal Property Access Fix
 
 **Started**: 2026-02-06
-**Status**: ✅ COMPLETE
-**Focus**: Fix in operator narrowing for union types with optional properties
+**Status**: 🔄 IN PROGRESS (Investigation phase)
+**Focus**: Fix TS2339 false positives on string literal property access
 
 ## Problem Statement
 
-**Immediate Issue**: The test `test_in_operator_optional_property_keeps_false_branch_union` was failing because in operator narrowing for union types was incorrectly creating intersection types and including NEVER values in the result.
+**Issue**: String literals are being treated as having all properties (any-like behavior in property access), causing TS2339 false positives.
 
-## Root Cause Investigation
-
-### Initial Hypothesis (INCORRECT)
-The session initially thought this was a "flow node association issue" where else branch expressions were getting the wrong flow node.
-
-### Actual Root Cause (CORRECT)
-The issue was in `src/solver/narrowing.rs` in the `narrow_by_property_presence` function:
-
-1. **NEVER type pollution**: When narrowing a union type with `"prop" in x`, union members without the property became NEVER, but these NEVER types were INCLUDED in the resulting union, causing incorrect narrowing.
-
-2. **Unnecessary intersection**: For union narrowing, the code was creating intersections like `type & { prop: type }` instead of just filtering the union members.
-
-## Solution
-
-### Changes Made
-
-**File**: `src/solver/narrowing.rs` - `narrow_by_property_presence` function
-
-1. **Filter NEVER types before union creation**:
-   ```rust
-   let matching_non_never: Vec<TypeId> = matching
-       .into_iter()
-       .filter(|&t| t != TypeId::NEVER)
-       .collect();
-   ```
-
-2. **Keep union members as-is instead of intersecting**:
-   ```rust
-   if present {
-       if has_property {
-           // Property exists: Keep the member as-is
-           // CRITICAL: For union narrowing, we don't modify the member type
-           member  // Instead of: self.db.intersection2(member, filter_obj)
-       }
-   }
-   ```
-
-### Example Fix
+**Expected Behavior**:
 ```typescript
-let x: { a?: number } | { b: string };
-if ("a" in x) {
-  x; // Before: union of [NEVER, { a?: number } & { a: number }]  (WRONG)
-     // After:  { a?: number }                                   (CORRECT)
-} else {
-  x; // Before: union of [NEVER, { b: string }]                  (WRONG)
-     // After:  { a?: number } | { b: string }                   (CORRECT)
-}
+const str = "hello";
+str.unknownProperty; // Should emit TS2339: Property 'unknownProperty' does not exist on type '"hello"'
 ```
 
-## Success Criteria
+## Investigation Findings
 
-- [x] Identify root cause of flow node association issue
-- [x] Fix narrowing logic for union types with in operator
-- [x] `test_in_operator_optional_property_keeps_false_branch_union` passes
-- [x] All 10 in operator narrowing tests passing
-- [x] Gemini Pro review: **APPROVED**
-- [x] Commit and push fixes
+**Gemini Guidance Summary**:
 
-## Test Results
+The issue is that string literals should use the `String` interface type for property lookup, not return `ANY` for unknown properties.
 
-- All 10 in operator tests pass
-- All 82 control flow tests pass
-- No regressions introduced (8 pre-existing test failures remain)
+**Key Files**:
+1. `src/solver/operations.rs` - property lookup logic for primitives
+2. `src/checker/expr.rs` - TS2339 reporting
+3. `src/solver/lawyer.rs` or `src/solver/compat.rs` - possible lax rules for primitives
 
-## Files Modified
+**Root Cause Hypothesis**:
+Currently, when `get_property_of_type` encounters a string literal type, it may be:
+- Returning `TypeId::ANY` instead of looking up the `String` interface
+- Using a "lax" rule in lawyer/compat that allows all properties on primitives
 
-- `src/solver/narrowing.rs` - Fixed union narrowing in `narrow_by_property_presence`
-- `src/checker/tests/control_flow_tests.rs` - Removed `#[ignore]` from passing test
-- `src/binder/state.rs` - Added trace logging for if statement binding (useful for future debugging)
-- `src/binder/state_binding.rs` - Added trace logging for record_flow (useful for future debugging)
+**Correct Approach**:
+1. Identify the Base Type: When `get_property_of_type` encounters `TypeKey::Literal(LiteralValue::String(_))`, it should lookup the `String` symbol
+2. Lookup Global Interface: Resolve the `String` interface type and perform property lookup
+3. Handle Missing Properties: If property not found on `String` interface, return `None`/error to trigger TS2339
 
-## Key Learnings
+## Next Steps
 
-1. **Session diagnosis was wrong**: The initial hypothesis about "flow node association" was incorrect. The flow nodes were actually correct - the issue was in the narrowing logic itself.
+1. Use tracing to see the flow:
+   ```bash
+   TSZ_LOG="wasm::solver::operations=trace" cargo run -- test_string_literal_prop.ts
+   ```
 
-2. **Debug tracing is essential**: Adding eprintln! debugging helped quickly identify the actual bug (NEVER types being included in union).
+2. Check `src/solver/operations.rs` for `get_property_of_type` to see why it returns valid type for unknown properties
 
-3. **Gemini consultation is valuable**: Gemini Pro review confirmed the fix was correct and identified edge cases.
+3. Ensure `src/solver/lower.rs` correctly identifies `String` interface symbol during bootstrap
+
+## Estimated Impact
+
+- **Estimated**: ~50-100 false positives
+- **Complexity**: Medium (requires understanding global interface lookup)
+- **Estimated Time**: 2-4 hours
 
 ---
 
-*Session completed by tsz-3 on 2026-02-06*
+*Session updated by tsz-3 on 2026-02-06*
