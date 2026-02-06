@@ -891,8 +891,9 @@ impl<'a> SignatureHelpProvider<'a> {
             checker.format_type(shape.return_type)
         };
         let prefix = if is_constructor {
-            // Construct signatures use "new " prefix (matches interface `new(...)` syntax)
-            format!("new {}(", type_params_str)
+            // Constructor signatures use the class name as prefix, not "new"
+            // TypeScript shows: ClassName(params): ClassName
+            format!("{}{}(", callee_name, type_params_str)
         } else {
             format!("{}{}(", callee_name, type_params_str)
         };
