@@ -126,6 +126,12 @@ pub struct CompilerOptions {
     /// Enable experimental support for legacy experimental decorators
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub experimental_decorators: Option<bool>,
+    /// Allow JavaScript files to be a part of your program
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub allow_js: Option<bool>,
+    /// Enable error reporting in type-checked JavaScript files
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub check_js: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -163,6 +169,10 @@ pub struct ResolvedCompilerOptions {
     pub es_module_interop: bool,
     /// Allow 'import x from y' when a module doesn't have a default export
     pub allow_synthetic_default_imports: bool,
+    /// Allow JavaScript files to be part of the program
+    pub allow_js: bool,
+    /// Enable error reporting in type-checked JavaScript files
+    pub check_js: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -444,6 +454,14 @@ pub fn resolve_compiler_options(
         resolved.checker.experimental_decorators = experimental_decorators;
     }
 
+    if let Some(allow_js) = options.allow_js {
+        resolved.allow_js = allow_js;
+    }
+
+    if let Some(check_js) = options.check_js {
+        resolved.check_js = check_js;
+    }
+
     Ok(resolved)
 }
 
@@ -551,6 +569,8 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
         experimental_decorators: child
             .experimental_decorators
             .or(base.experimental_decorators),
+        allow_js: child.allow_js.or(base.allow_js),
+        check_js: child.check_js.or(base.check_js),
     }
 }
 

@@ -17,6 +17,7 @@ pub struct FileDiscoveryOptions {
     pub exclude: Option<Vec<String>>,
     pub out_dir: Option<PathBuf>,
     pub follow_links: bool,
+    pub allow_js: bool,
 }
 
 impl FileDiscoveryOptions {
@@ -39,6 +40,7 @@ impl FileDiscoveryOptions {
             exclude: config.exclude.clone(),
             out_dir: out_dir.map(Path::to_path_buf),
             follow_links: false,
+            allow_js: false,
         }
     }
 }
@@ -49,7 +51,7 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
     for file in &options.files {
         let path = resolve_file_path(&options.base_dir, file);
         ensure_file_exists(&path)?;
-        if is_ts_file(&path) {
+        if is_ts_file(&path) || (options.allow_js && is_js_file(&path)) {
             files.insert(path);
         }
     }
@@ -77,7 +79,7 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
             }
 
             let path = entry.path();
-            if !is_ts_file(path) {
+            if !(is_ts_file(path) || (options.allow_js && is_js_file(path))) {
                 continue;
             }
 
@@ -260,6 +262,13 @@ fn ensure_file_exists(path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub(crate) fn is_js_file(path: &Path) -> bool {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("js") | Some("jsx") | Some("mjs") | Some("cjs") => true,
+        _ => false,
+    }
 }
 
 pub(crate) fn is_ts_file(path: &Path) -> bool {

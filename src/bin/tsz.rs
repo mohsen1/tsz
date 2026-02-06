@@ -731,6 +731,7 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         exclude: config.as_ref().and_then(|c| c.exclude.clone()),
         out_dir: resolved.out_dir.clone(),
         follow_links: false,
+        allow_js: resolved.allow_js,
     };
 
     let files = discover_ts_files(&discovery)?;
