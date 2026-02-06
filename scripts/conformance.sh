@@ -142,16 +142,43 @@ generate_cache() {
         echo ""
     fi
 
-    echo -e "${GREEN}Generating TSC cache (using tsc directly)...${NC}"
-    echo "Test directory: $TEST_DIR"
-    echo "Workers: $WORKERS"
-    echo ""
+    # Use fast Node.js generator if TypeScript is available
+    local FAST_GEN="$REPO_ROOT/scripts/generate-tsc-cache-fast.mjs"
+    local TS_MODULE="$REPO_ROOT/scripts/emit/node_modules/typescript/lib/typescript.js"
+    
+    if [ -f "$FAST_GEN" ] && [ -f "$TS_MODULE" ]; then
+        # Cap workers at 8 for the fast generator to avoid OOM
+        # (each worker loads a full TypeScript instance ~300-500MB)
+        local FAST_WORKERS=$WORKERS
+        if [ "$FAST_WORKERS" -gt 8 ]; then
+            FAST_WORKERS=8
+        fi
+        echo -e "${GREEN}Generating TSC cache (fast mode - TypeScript API)...${NC}"
+        echo "Test directory: $TEST_DIR"
+        echo "Workers: $FAST_WORKERS"
+        echo ""
+        
+        cd "$REPO_ROOT"
+        node "$FAST_GEN" \
+            --test-dir "$TEST_DIR" \
+            --output "$CACHE_FILE" \
+            --workers "$FAST_WORKERS" \
+            --ts-path "$TS_MODULE"
+    else
+        echo -e "${GREEN}Generating TSC cache (using tsc directly)...${NC}"
+        echo "Test directory: $TEST_DIR"
+        echo "Workers: $WORKERS"
+        echo ""
+        echo -e "${YELLOW}Tip: Install TypeScript in scripts/emit for ~3x faster generation${NC}"
+        echo -e "${YELLOW}  cd scripts/emit && npm install${NC}"
+        echo ""
 
-    cd "$REPO_ROOT"
-    $CACHE_GEN_BIN \
-        --test-dir "$TEST_DIR" \
-        --output "$CACHE_FILE" \
-        --workers "$WORKERS"
+        cd "$REPO_ROOT"
+        $CACHE_GEN_BIN \
+            --test-dir "$TEST_DIR" \
+            --output "$CACHE_FILE" \
+            --workers "$WORKERS"
+    fi
 
     echo ""
     echo -e "${GREEN}Cache generated: $CACHE_FILE${NC}"
