@@ -150,24 +150,43 @@ This ensures that objects with completely disjoint properties are not considered
 
 ## Redefined Priorities (2026-02-05 by Gemini)
 
-### 🔴 Priority 1: Fix Inference Regression (4 tests) - NEW
-**Tests**:
+### ✅ Priority 1: Index Signature Inference - DELETED TESTS (Commit c1460e42c)
+
+**Investigation Result**: After consulting Gemini Pro and verifying with tsc, the 4 "failing" tests were actually testing **incorrect TypeScript behavior**.
+
+**Root Cause**: TypeScript does NOT infer type parameters from index signatures when the target property is **required**.
+
+**Evidence**:
+```typescript
+function foo<T>(bag: { a: T }): T { return bag.a; }
+const arg: { [k: string]: number } = {};
+const result = foo(arg);
+// tsc error: Property 'a' is missing in type '{ [k: string]: number; }'
+// but required in type '{ a: unknown; }'
+// Notice: T defaults to unknown, NOT number
+```
+
+**Solution**: Modified `constrain_index_signatures_to_properties` to only extract candidates from index signatures when the target property is **optional**.
+
+**Files Modified**:
+- `src/solver/operations.rs` - Added `if !prop.optional { continue; }` check
+- `src/solver/tests/operations_tests.rs` - Deleted 4 incorrect tests with explanatory comments
+
+**Deleted Tests**:
 - `test_infer_generic_missing_property_uses_index_signature`
 - `test_infer_generic_missing_numeric_property_uses_number_index_signature`
-- `test_infer_generic_property_from_number_index_signature_infinity`
 - `test_infer_generic_property_from_source_index_signature`
+- `test_infer_generic_property_from_number_index_signature_infinity`
 
-**Problem**: The fix for strict object subtyping (correctly) rejects assigning index signatures to required properties. However, the inference engine relied on this loose behavior to extract candidates.
-
-**Context**: TypeScript distinguishes between strictness (Checker/Judge) and discovery (Inference/Lawyer). The inference walker needs to be more permissive than the subtype check.
-
-**Approach**: Modify `infer_generic_function` (or its helper) to explicitly allow extracting candidates from index signatures even for required properties, decoupling inference from strict subtype validation.
-
-**Files**: `src/solver/infer.rs` or `src/solver/operations.rs`
+**Why This Is Correct**:
+- TypeScript's inference mirrors assignability rules
+- Required property `{ a: T }` is NOT satisfied by index signature `{ [k: string]: V }`
+- Therefore, no inference happens - T defaults to unknown
+- Optional property `{ a?: T }` WOULD be satisfied, and inference works
 
 ---
 
-### Priority 2: Object Index Signatures (Complete) - ✅
+### ✅ Priority 2: Object Index Signatures (Complete) - COMPLETED
 **Tests**:
 - ✅ `test_object_with_index_satisfies_named_property_string_index`
 - ✅ `test_object_with_index_satisfies_numeric_property_number_index`
@@ -206,7 +225,12 @@ This ensures that objects with completely disjoint properties are not considered
 
 ---
 
-## Current Status (8 Failing Tests Remaining)
+## Current Status (4 Failing Tests Remaining - 1 Solver, 3 Checker/Narrowing)
+
+**Solver Tests**: 1 remaining
+**Checker Tests**: 3 remaining (control flow / narrowing - pre-existing issues)
+
+The solver stabilization has significantly progressed. Remaining issues are primarily in the checker's control flow analysis, not the type solver itself.
 
 ### Fixed: Generic Inference with Callback Functions (commit 28888e435)
 
