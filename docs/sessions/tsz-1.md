@@ -1,14 +1,48 @@
 # TSZ-1 Session Log
 
 **Session ID**: tsz-1
-**Last Updated**: 2026-02-05
+**Last Updated**: 2026-02-06
 **Focus**: Core Type Relations & Structural Soundness (The "Judge" Layer)
 
-## Session Redefined (2025-02-05 - Redux)
+## Session Redefined (2026-02-06 - O(1) Equality Push)
 
-**Strategic Position**: Transitioning from **"Canonical Completeness"** to **"Total Canonicalization"** milestone. After discovering that Tasks #44 and #45 were already implemented, the focus shifts to ensuring that NO operation in `src/solver/` can produce non-canonical TypeIds.
+**Strategic Position**: Transitioning to **"Structural Interning"** - where TypeId itself represents the canonical form. The `Canonicalizer` exists but is currently "opt-in" in SubtypeChecker fast-path. To reach North Star O(1) equality, we must move from "Physical Interning" to "Structural Interning."
 
-**Key Insight**: The "Mechanics of Evaluation" are complete (keyof, index_access, subtype caching all exist). The remaining work is ensuring that **every** type-producing operation uses canonical methods (`union()`, `intersection()`) instead of raw `intern()`.
+**Key Insight**: Currently `are_types_structurally_identical()` creates a new `Canonicalizer` and re-traverses the graph on every call - O(N) instead of O(1). We need global canonical mapping + visitor pattern refactoring.
+
+### Redefined Priorities (per Gemini consultation)
+
+#### Priority 1: Task #47 - Template Literal & String Intrinsic Canonicalization ⏳ IMMEDIATE
+**Status**: ⏳ PENDING
+**File**: `src/solver/canonicalize.rs`
+**Problem**: `Uppercase<T>` and `Uppercase<U>` should be identical if `T` and `U` are identical. Template literals need alpha-equivalence.
+**Action**:
+1. Implement `TypeKey::TemplateLiteral(id)`: Iterate spans, canonicalize `TemplateSpan::Type(id)`
+2. Implement `TypeKey::StringIntrinsic { kind, type_arg }`: Canonicalize `type_arg`
+
+#### Priority 2: Task #48 - SubtypeChecker Visitor Pattern Refactor (North Star Rule 2)
+**Status**: ⏳ PENDING
+**File**: `src/solver/subtype.rs`
+**Problem**: `SubtypeChecker` is a "God Object" (~1000 lines) with massive match blocks. North Star Rule 2 mandates Visitor Pattern for all type operations.
+**Action**:
+1. Create `StructuralSubtypeVisitor` implementing `TypeVisitor`
+2. Move logic from `check_subtype_inner` into the visitor
+3. Enforces handling all 24+ `TypeKey` variants, preventing "missing variant" bugs
+
+#### Priority 3: Task #49 - Global Canonical Mapping (The O(1) Goal)
+**Status**: ⏳ PENDING
+**Files**: `src/solver/db.rs`, `src/solver/intern.rs`
+**Problem**: `are_types_structurally_identical` is O(N) - re-runs Canonicalizer every time.
+**Action**:
+1. Add `canonical_id(TypeId) -> TypeId` to `QueryDatabase` trait
+2. Implement in `QueryCache` using `RwLock<FxHashMap<TypeId, TypeId>>`
+3. Update `SubtypeChecker::are_types_structurally_identical` to compare `db.canonical_id(a) == db.canonical_id(b)`
+
+#### Priority 4: Task #50 - Variance Analysis for Lazy Types
+**Status**: ⏳ PENDING
+**File**: `src/solver/variance.rs`
+**Problem**: Variance-aware subtyping (Task #41) relies on resolver providing variance. Need to ensure Judge can compute this for `Lazy` types.
+**Action**: Ensure `VarianceVisitor::visit_lazy` resolves and continues variance calculation for `Box<T>` where `Box` is a type alias.
 
 ### Redefined Priorities: Total Canonicalization
 
