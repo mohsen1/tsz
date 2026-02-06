@@ -659,8 +659,8 @@ fn compile_inner(
     let mut should_save_build_info = false;
 
     // Local cache for BuildInfo-loaded compilation state
-    // Always create a local cache to preserve type checking results for declaration emit
-    let mut local_cache: Option<CompilationCache> = Some(CompilationCache::default());
+    // Only create when loading from BuildInfo (not when a cache is provided)
+    let mut local_cache: Option<CompilationCache> = None;
 
     // Load BuildInfo if incremental compilation is enabled and no cache was provided
     if cache.is_none() && (resolved.incremental || resolved.ts_build_info_file.is_some()) {
@@ -688,6 +688,9 @@ fn compile_inner(
                         );
                     }
                 }
+            } else {
+                // BuildInfo doesn't exist yet, create empty local cache for new compilation
+                local_cache = Some(CompilationCache::default());
             }
             should_save_build_info = true;
         }
@@ -1584,8 +1587,11 @@ fn read_source_files(
     }
 
     while let Some(path) = pending.pop_front() {
+        // Use cached bind result only when we know the file hasn't changed
+        // (changed_paths is provided and this file is not in it)
         if use_cache
-            && let (Some(cache), Some(changed_paths)) = (cache, changed_paths)
+            && let Some(cache) = cache
+            && let Some(changed_paths) = changed_paths
             && !changed_paths.contains(&path)
             && let (Some(_), Some(cached_deps)) =
                 (cache.bind_cache.get(&path), cache.dependencies.get(&path))
