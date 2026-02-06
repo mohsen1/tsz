@@ -8,12 +8,15 @@
 #   3. cargo fmt -- check & auto-fix
 #   4. cargo clippy -- deny all warnings
 #   5. Run all unit tests
-#   6. Conformance regression check
+#   6. Microbenchmark regression check
+#   7. Conformance regression check
 #
 # Env vars:
 #   TSZ_SKIP_HOOKS=1         Skip the entire hook
 #   TSZ_SKIP_CONFORMANCE=1   Skip the conformance regression check
+#   TSZ_SKIP_BENCH=1         Skip microbenchmark regression check
 #   TSZ_SKIP_CLEAN=1         Skip the target cleanup step
+#   TSZ_BENCH_UPDATE_BASELINE=1  Refresh local microbenchmark baseline
 
 set -e
 
@@ -24,6 +27,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 cd "$ROOT_DIR"
 
 SKIP_CONFORMANCE="${TSZ_SKIP_CONFORMANCE:-}"
+SKIP_BENCH="${TSZ_SKIP_BENCH:-}"
 SKIP_CLEAN="${TSZ_SKIP_CLEAN:-}"
 
 echo "🔧 Pre-commit checks..."
@@ -147,12 +151,35 @@ TEST_OUTPUT=$(cargo nextest run --profile precommit 2>&1) || {
 echo "$TEST_OUTPUT" | tail -5
 echo "   ✅ Tests passed"
 
-# ─── 5. Conformance regression check ────────────────────────────────────────
+# ─── 5. Microbenchmark regression check ─────────────────────────────────────
+
+if [[ "$SKIP_BENCH" == "1" ]]; then
+    echo "5️⃣  Microbenchmark check skipped (TSZ_SKIP_BENCH=1)"
+else
+    echo "5️⃣  Microbenchmark regression check..."
+    BENCH_CMD=("$ROOT_DIR/scripts/precommit-microbench.sh")
+    if [[ "${TSZ_BENCH_UPDATE_BASELINE:-}" == "1" ]]; then
+        BENCH_CMD+=("--update-baseline")
+    fi
+
+    BENCH_OUTPUT=$("${BENCH_CMD[@]}" 2>&1) || {
+        echo "$BENCH_OUTPUT" | tail -30
+        echo ""
+        echo "❌ Microbenchmark regression gate failed."
+        echo "   To bypass (not recommended): TSZ_SKIP_BENCH=1 git commit ..."
+        echo "   To refresh local baseline: TSZ_BENCH_UPDATE_BASELINE=1 git commit ..."
+        exit 1
+    }
+    echo "$BENCH_OUTPUT" | tail -12
+    echo "   ✅ Microbenchmark gate passed"
+fi
+
+# ─── 6. Conformance regression check ────────────────────────────────────────
 
 if [[ "$SKIP_CONFORMANCE" == "1" ]]; then
-    echo "5️⃣  Conformance check skipped (TSZ_SKIP_CONFORMANCE=1)"
+    echo "6️⃣  Conformance check skipped (TSZ_SKIP_CONFORMANCE=1)"
 else
-    echo "5️⃣  Conformance regression check..."
+    echo "6️⃣  Conformance regression check..."
 
     LAST_CONFORMANCE=""
     if LAST_CONFORMANCE=$("$ROOT_DIR/scripts/get-last-conformance.sh" 2>/dev/null); then
