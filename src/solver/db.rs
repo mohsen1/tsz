@@ -1757,8 +1757,15 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
     }
 
     fn contextual_property_type(&self, expected: TypeId, prop_name: &str) -> Option<TypeId> {
+        // Resolve Lazy types before property lookup
+        let resolved = if let Some(crate::solver::TypeKey::Lazy(def_id)) = self.lookup(expected) {
+            self.resolve_lazy(def_id, self.as_type_database())
+                .unwrap_or(expected)
+        } else {
+            expected
+        };
         self.query_cache
-            .contextual_property_type(expected, prop_name)
+            .contextual_property_type(resolved, prop_name)
     }
 
     fn is_property_readonly(&self, object_type: TypeId, prop_name: &str) -> bool {

@@ -547,6 +547,9 @@ impl BinderState {
             let end_label = self.create_branch_label();
             let mut fallthrough_flow = FlowNodeId::NONE;
 
+            // Push end_label as break target so break statements in cases jump here
+            self.break_targets.push(end_label);
+
             // Case block contains case clauses
             if let Some(case_block_node) = arena.get(switch_data.case_block)
                 && let Some(case_block) = arena.get_block(case_block_node)
@@ -584,6 +587,7 @@ impl BinderState {
                 }
             }
 
+            self.break_targets.pop();
             self.current_flow = end_label;
         }
     }

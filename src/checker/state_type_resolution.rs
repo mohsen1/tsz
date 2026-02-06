@@ -633,9 +633,7 @@ impl<'a> CheckerState<'a> {
             //
             // Special case: For merged class+namespace symbols, we still need the constructor type
             // to access namespace members via Foo.Bar. But we should still return Lazy for consistency.
-            if symbol.flags & symbol_flags::CLASS != 0
-                && symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) == 0
-            {
+            if symbol.flags & symbol_flags::CLASS != 0 {
                 // For classes in TYPE position, return the INSTANCE TYPE directly
                 // This is critical for nominal type checking to work correctly
                 let instance_type_opt = self.class_instance_type_from_symbol(sym_id);
@@ -743,9 +741,7 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
             // For classes, use class_instance_type_with_params_from_symbol which
             // returns both the instance type AND the type params used to build it
-            if symbol.flags & symbol_flags::CLASS != 0
-                && symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) == 0
-            {
+            if symbol.flags & symbol_flags::CLASS != 0 {
                 if let Some((instance_type, params)) =
                     self.class_instance_type_with_params_from_symbol(sym_id)
                 {
