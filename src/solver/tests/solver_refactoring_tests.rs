@@ -72,17 +72,42 @@ mod phase1_cycle_detection {
         let interner = TypeInterner::new();
         let mut checker = SubtypeChecker::new(&interner);
 
+        // Use object types that go through the structural check path (not the
+        // fast-path disjoint unit type shortcut) so total_checks is incremented.
+        let obj_a = interner.object(vec![PropertyInfo {
+            name: interner.intern_string("x"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+        }]);
+        let obj_b = interner.object(vec![PropertyInfo {
+            name: interner.intern_string("y"),
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+        }]);
+
         // Make many subtype checks to hit iteration limit
         for _ in 0..100_001 {
-            // This would normally exceed MAX_TOTAL_SUBTYPE_CHECKS
-            checker.check_subtype(TypeId::NUMBER, TypeId::STRING);
+            checker.check_subtype(obj_a, obj_b);
             if checker.depth_exceeded {
                 break;
             }
         }
 
-        // If we hit the limit, we should have depth_exceeded set
-        // (depending on actual limit values, this may or may not trigger)
+        // Should have hit the MAX_TOTAL_SUBTYPE_CHECKS limit
+        assert!(
+            checker.depth_exceeded,
+            "Should hit iteration limit after 100k structural checks"
+        );
     }
 
     #[test]

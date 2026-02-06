@@ -1940,11 +1940,7 @@ impl Server {
                     let after_close = text[close_pos + 1..].trim_start();
                     if let Some(rest) = after_close.strip_prefix(':') {
                         let ret_type = rest.trim_start();
-                        let ret_type = ret_type
-                            .split(['{', '\n'])
-                            .next()
-                            .unwrap_or("")
-                            .trim();
+                        let ret_type = ret_type.split(['{', '\n']).next().unwrap_or("").trim();
                         if !ret_type.is_empty() {
                             parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
                             parts.push(serde_json::json!({"text": " ", "kind": "space"}));
@@ -3017,9 +3013,7 @@ impl Server {
     /// Parse "name: type" or "name(params): type" or just "name" from a string.
     fn parse_name_and_type(s: &str, name_kind: &str, parts: &mut Vec<serde_json::Value>) {
         // Find where the name ends - it could be followed by ':', '(', '<', '=', or end of string
-        let name_end = s
-            .find([':', '(', '<', '='])
-            .unwrap_or(s.len());
+        let name_end = s.find([':', '(', '<', '=']).unwrap_or(s.len());
         let name_part = s[..name_end].trim_end();
 
         if !name_part.is_empty() {
