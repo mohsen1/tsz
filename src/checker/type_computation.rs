@@ -1156,15 +1156,14 @@ impl<'a> CheckerState<'a> {
             && let Some(property_name) = self.get_literal_string_from_node(access.name_or_argument)
             && numeric_string_index.is_none()
         {
-            use_index_signature_check = false;
             // Resolve type references (Ref, TypeQuery, etc.) before property access lookup
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
             let result = self.resolve_property_access_with_env(resolved_type, &property_name);
-            result_type = Some(match result {
-                PropertyAccessResult::Success { type_id, .. } => type_id,
+            result_type = match result {
+                PropertyAccessResult::Success { type_id, .. } => Some(type_id),
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                     // Use ERROR instead of UNKNOWN to prevent TS2571 errors
-                    property_type.unwrap_or(TypeId::ERROR)
+                    Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
                     // TS2339: Property does not exist on type 'unknown'
@@ -1174,18 +1173,15 @@ impl<'a> CheckerState<'a> {
                         object_type_for_access,
                         access.name_or_argument,
                     );
-                    TypeId::ERROR
+                    Some(TypeId::ERROR)
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => {
-                    // TypeScript does NOT emit TS2339 for element access (bracket notation)
-                    // when the property doesn't exist. It returns 'any' instead.
-                    // This is different from property access (dot notation) which does emit TS2339.
-                    // Only mark report_no_index if we should report a missing index signature error
-                    // (which is TS7053, not TS2339)
-                    report_no_index = true;
-                    TypeId::ANY
+                    // CRITICAL FIX: Don't immediately return ANY when property is not found.
+                    // Let it fall through to check for index signatures below.
+                    // This allows map["foo"] to work when map has [key: string]: boolean
+                    None
                 }
-            });
+            };
         }
 
         let mut result_type = result_type.unwrap_or_else(|| {
