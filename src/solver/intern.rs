@@ -2035,7 +2035,7 @@ impl TypeInterner {
             return true;
         }
 
-        // Handle Literal to Primitive
+        // Handle Literal to Primitive (including unions containing primitives)
         // Only if target is NOT a literal (we don't want "a" <: "b")
         if self
             .lookup(source)
@@ -2048,6 +2048,20 @@ impl TypeInterner {
                 // Both are literals - only subtype if identical (handled above)
                 return false;
             }
+
+            // Check if target is a union containing a compatible primitive
+            if let Some(TypeKey::Union(members)) = self.lookup(target) {
+                let members = self.type_list(members);
+                // A literal is a subtype of a union if it's a subtype of ANY member
+                for &member in members.iter() {
+                    if self.is_subtype_shallow(source, member) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            // Otherwise, check literal-to-primitive compatibility
             if let Some(lit_set) = self.literal_set_from_type(source) {
                 if let Some(target_class) = self.primitive_class_for(target) {
                     if self.literal_domain_matches_primitive(lit_set.domain, target_class) {
