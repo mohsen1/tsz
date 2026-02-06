@@ -2605,6 +2605,11 @@ impl TypeInterner {
     }
 
     fn template_span_cardinality(&self, type_id: TypeId) -> Option<usize> {
+        // Handle BOOLEAN intrinsic (expands to 2 values: true | false)
+        if type_id == TypeId::BOOLEAN {
+            return Some(2);
+        }
+
         // Handle intrinsic types that expand to string literals
         if type_id == TypeId::BOOLEAN_TRUE
             || type_id == TypeId::BOOLEAN_FALSE
@@ -2679,6 +2684,11 @@ impl TypeInterner {
     /// Get the string literal values from a type (single literal or union of literals).
     /// Returns None if the type is not a string literal or union of string literals.
     fn get_string_literal_values(&self, type_id: TypeId) -> Option<Vec<String>> {
+        // Handle BOOLEAN intrinsic (expands to two string literals)
+        if type_id == TypeId::BOOLEAN {
+            return Some(vec!["true".to_string(), "false".to_string()]);
+        }
+
         // Helper to convert a single type to a string value if possible
         let to_string_val = |id: TypeId| -> Option<String> {
             // Handle intrinsics that stringify to text
@@ -2721,14 +2731,11 @@ impl TypeInterner {
         match self.lookup(type_id) {
             Some(TypeKey::Union(list_id)) => {
                 let members = self.type_list(list_id);
-                let mut values = Vec::with_capacity(members.len());
+                let mut values = Vec::new();
                 for member in members.iter() {
-                    if let Some(val) = to_string_val(*member) {
-                        values.push(val);
-                    } else {
-                        // If any member cannot be stringified, the whole union cannot be expanded
-                        return None;
-                    }
+                    // RECURSIVE CALL: Handle boolean-in-union and nested unions correctly
+                    let member_values = self.get_string_literal_values(*member)?;
+                    values.extend(member_values);
                 }
                 Some(values)
             }
@@ -2893,21 +2900,8 @@ impl TypeInterner {
                             }
                             continue;
                         }
-                        TypeId::BOOLEAN => {
-                            // boolean expands to union of "true" | "false"
-                            // Flush pending text first
-                            if let Some(text) = pending_text.take() {
-                                if !text.is_empty() {
-                                    normalized.push(TemplateSpan::Text(self.intern_string(&text)));
-                                }
-                            }
-                            // Add the boolean union type
-                            let bool_union =
-                                self.union2(TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE);
-                            normalized.push(TemplateSpan::Type(bool_union));
-                            continue;
-                        }
                         // number, bigint, string intrinsics do NOT widen - they're kept as-is for pattern matching
+                        // BOOLEAN is also kept as-is for pattern matching - the general expansion logic handles it
                         _ => {}
                     }
 
