@@ -38,23 +38,22 @@ The tsz-2 session successfully stabilized the Solver unit tests (3524 tests pass
 - Top errors: TS2339 (48 extra), TS2322 (41 missing, 22 extra), TS2307 (15 extra)
 - Time: 5.8s
 
-**100 tests**: 69/100 passed (69%)
-- Top errors: TS2322 (6 extra), TS2349 (3 extra), TS2307 (3 extra), TS2792 (2 missing)
-
-**10 tests**: 10/10 passed (100%)
-
-### Bug Found: Union of Constructor Types (2026-02-06)
+### Bug Investigation: Union of Constructor Types (2026-02-06)
 
 **Test**: `abstractClassUnionInstantiation.ts`
-**Issue**: `new cls3()` where `cls3: typeof ConcreteA | typeof ConcreteB` incorrectly reports TS2349
-**Expected**: No error (both classes are concrete)
-**Actual**: "Type '{ new (): ConcreteA } | { new (): ConcreteB }' has no call signatures"
+**Issue**: `new cls3()` where `cls3: typeof ConcreteA | typeof ConcreteB` incorrectly reports TS2351
 
-**Root Cause**: When checking if a union type is constructible, the checker doesn't recognize that ALL members having `new` signatures makes the union constructible.
+**Partial Fix Implemented** (Commit f32c9cc85):
+- Modified `get_type_of_new_expression` to collect callable types from union members
+- Added `MultipleSignatures` variant to `CallSignaturesKind` enum
+- Updated `classify_for_call_signatures` to handle union of callables
 
-**Files to Investigate**:
-- `src/checker/` - Expression evaluation for `new` expressions
-- How union type checking handles call/construct signatures
+**Status**: Fix compiles but doesn't solve the issue yet. The union of constructors is still being reported as not constructable.
+
+**Requires Further Investigation**:
+- How is `typeof Class` represented in the type system?
+- Why doesn't the union of callable types get recognized as constructible?
+- Need to add debug tracing to understand the actual type flow
 
 ## Next Steps
 
