@@ -1378,7 +1378,20 @@ impl<'a> CheckerState<'a> {
             }
             // Use check_flow_usage to integrate both DAA and type narrowing
             // This handles TS2454 errors and applies flow-based narrowing
-            return self.check_flow_usage(idx, declared_type, sym_id);
+            let flow_type = self.check_flow_usage(idx, declared_type, sym_id);
+
+            // FIX: Flow analysis may return the original fresh type from the initializer expression.
+            // For variable references, we must respect the widening that was applied during variable
+            // declaration. If the symbol was widened (non-fresh), the flow result should also be widened.
+            // This prevents "Zombie Freshness" where CFA bypasses the widened symbol type.
+            if !self.ctx.compiler_options.sound_mode {
+                use crate::solver::freshness::{is_fresh_object_type, widen_freshness};
+                if is_fresh_object_type(self.ctx.types, flow_type) {
+                    return widen_freshness(self.ctx.types, flow_type);
+                }
+            }
+
+            return flow_type;
         }
 
         // Intrinsic names - use constant TypeIds
