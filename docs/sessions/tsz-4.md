@@ -1043,3 +1043,28 @@ Added ES5 transformation for enum declarations in `src/emitter/declarations.rs`.
 - Const enums (erased): ✓
 
 **Commit:** 591840d18
+
+### 2025-02-06 Session 19: CommonJS Import/Export Interop - COMPLETED ✅
+
+**Implementation:**
+Added proper CommonJS interop using `__importDefault` and `__importStar` helpers.
+
+**Changes:**
+- **module_commonjs.rs**: Use `__importDefault(module_var)` instead of `module_var.default`
+- **lowering_pass.rs**: Mark `import_default` helper when default imports are detected
+- **module_emission.rs**: Check for `__importDefault` instead of `.default` for inlining
+
+**Transformations Now Working:**
+- Default imports: `import d from "./mod"` → `var d = __importDefault(require("./mod"))`
+- Namespace imports: `import * as ns from "./mod"` → `var ns = __importStar(require("./mod"))`
+- Named imports: `import { a, b } from "./mod"` → `var mod_1 = require("./mod"); var a = mod_1.a;`
+
+**Test Results:**
+- ✓ `__importDefault` helper is now emitted when needed
+- ✓ `__importStar` helper continues to work correctly
+- ✓ `__createBinding` and `__setModuleDefault` helpers emitted as dependencies
+
+**Commit:** a760aa7ca
+
+This is a high-impact change that improves module interop and should significantly
+improve emit test pass rate for CommonJS module tests.
