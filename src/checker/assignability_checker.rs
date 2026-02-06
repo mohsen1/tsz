@@ -226,6 +226,7 @@ impl<'a> CheckerState<'a> {
     /// Assignability is more permissive than subtyping.
     pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::solver::CompatChecker;
+        use crate::solver::visitor::contains_infer_types;
 
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
@@ -236,8 +237,44 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(source);
         self.ensure_application_symbols_resolved(target);
 
+        // Save original types for cache key before evaluation
+        let original_source = source;
+        let original_target = target;
+
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
+
+        // Check relation cache for non-inference types
+        // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
+        // Note: Use ORIGINAL types for cache key, not evaluated types
+        let is_cacheable = !contains_infer_types(self.ctx.types, source)
+            && !contains_infer_types(self.ctx.types, target);
+
+        if is_cacheable {
+            // Pack boolean flags into a u16 bitmask for the cache key
+            // Same flags as is_subtype_of for consistency
+            let mut flags: u16 = 0;
+            if self.ctx.strict_null_checks() {
+                flags |= 1 << 0;
+            }
+            if self.ctx.strict_function_types() {
+                flags |= 1 << 1;
+            }
+            if self.ctx.exact_optional_property_types() {
+                flags |= 1 << 2;
+            }
+            if self.ctx.no_unchecked_indexed_access() {
+                flags |= 1 << 3;
+            }
+            // Note: For assignability checks, we use AnyPropagationMode::All (0)
+            // since the checker doesn't track depth like SubtypeChecker does
+            let cache_key =
+                RelationCacheKey::assignability(original_source, original_target, flags, 0);
+
+            if let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key) {
+                return cached;
+            }
+        }
 
         // Use CheckerContext as the resolver instead of TypeEnvironment
         // This enables access to symbol information for enum type detection
@@ -246,6 +283,32 @@ impl<'a> CheckerState<'a> {
         self.ctx.configure_compat_checker(&mut checker);
 
         let result = checker.is_assignable_with_overrides(source, target, &overrides);
+
+        // Cache the result for non-inference types
+        // Use ORIGINAL types for cache key (not evaluated types)
+        if is_cacheable {
+            let mut flags: u16 = 0;
+            if self.ctx.strict_null_checks() {
+                flags |= 1 << 0;
+            }
+            if self.ctx.strict_function_types() {
+                flags |= 1 << 1;
+            }
+            if self.ctx.exact_optional_property_types() {
+                flags |= 1 << 2;
+            }
+            if self.ctx.no_unchecked_indexed_access() {
+                flags |= 1 << 3;
+            }
+            let cache_key =
+                RelationCacheKey::assignability(original_source, original_target, flags, 0);
+
+            self.ctx
+                .relation_cache
+                .borrow_mut()
+                .insert(cache_key, result);
+        }
+
         trace!(
             source = source.0,
             target = target.0,
@@ -281,6 +344,7 @@ impl<'a> CheckerState<'a> {
     /// which disables strict_function_types for the check.
     pub fn is_assignable_to_bivariant(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::solver::CompatChecker;
+        use crate::solver::visitor::contains_infer_types;
 
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
@@ -291,15 +355,67 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(source);
         self.ensure_application_symbols_resolved(target);
 
+        // Save original types for cache key before evaluation
+        let original_source = source;
+        let original_target = target;
+
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
+
+        // Check relation cache for non-inference types
+        // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
+        // Note: Use ORIGINAL types for cache key, not evaluated types
+        let is_cacheable = !contains_infer_types(self.ctx.types, source)
+            && !contains_infer_types(self.ctx.types, target);
+
+        // Pack boolean flags into a u16 bitmask for the cache key
+        // Note: For bivariant checks, we do NOT set strict_function_types flag
+        // This creates a distinct cache key from regular assignability checks
+        let mut flags: u16 = 0;
+        if self.ctx.strict_null_checks() {
+            flags |= 1 << 0;
+        }
+        // strict_function_types flag is NOT set for bivariant checks
+        if self.ctx.exact_optional_property_types() {
+            flags |= 1 << 2;
+        }
+        if self.ctx.no_unchecked_indexed_access() {
+            flags |= 1 << 3;
+        }
+
+        if is_cacheable {
+            // Note: For assignability checks, we use AnyPropagationMode::All (0)
+            // since the checker doesn't track depth like SubtypeChecker does
+            let cache_key =
+                RelationCacheKey::assignability(original_source, original_target, flags, 0);
+
+            if let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key) {
+                return cached;
+            }
+        }
 
         let env = self.ctx.type_env.borrow();
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
         self.ctx.configure_compat_checker(&mut checker);
 
-        // Use bivariant callback which disables strict_function_types
+        // Override strict_function_types for bivariant checks
+        checker.set_strict_function_types(false);
+
+        // Use bivariant callback which also sets allow_void_return and allow_bivariant_rest
         let result = checker.is_assignable_to_bivariant_callback(source, target);
+
+        // Cache the result for non-inference types
+        // Use ORIGINAL types for cache key (not evaluated types)
+        if is_cacheable {
+            let cache_key =
+                RelationCacheKey::assignability(original_source, original_target, flags, 0);
+
+            self.ctx
+                .relation_cache
+                .borrow_mut()
+                .insert(cache_key, result);
+        }
+
         trace!(
             source = source.0,
             target = target.0,
