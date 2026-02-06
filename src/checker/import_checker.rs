@@ -23,6 +23,40 @@ use rustc_hash::FxHashSet;
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    /// Returns the appropriate "module not found" diagnostic code and message.
+    /// Uses TS2792 when module resolution is "classic" (system/amd/umd modules),
+    /// otherwise TS2307.
+    fn module_not_found_diagnostic(&self, module_name: &str) -> (String, u32) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+        use crate::common::ModuleKind;
+
+        let use_2792 = matches!(
+            self.ctx.compiler_options.module,
+            ModuleKind::System | ModuleKind::AMD | ModuleKind::UMD
+        );
+
+        if use_2792 {
+            (
+                format_message(
+                    diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN,
+                    &[module_name],
+                ),
+                diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN,
+            )
+        } else {
+            (
+                format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]),
+                diagnostic_codes::CANNOT_FIND_MODULE,
+            )
+        }
+    }
+
+    // =========================================================================
     // Import Member Validation
     // =========================================================================
 
@@ -386,22 +420,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Fallback: Emit generic TS2307 if no specific error was found
-        // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
+        // Fallback: Emit module-not-found error if no specific error was found
+        // Check if we've already emitted for this module (prevents duplicate emissions)
         let module_key = module_name.to_string();
         if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
             return;
         }
 
-        let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
+        // Use TS2792 when module resolution is "classic" (system/amd/umd modules),
+        // suggesting the user switch to nodenext or configure paths.
+        let (message, code) = self.module_not_found_diagnostic(module_name);
         self.ctx
             .modules_with_ts2307_emitted
             .insert(module_key.clone());
-        self.error_at_node(
-            import.module_specifier,
-            &message,
-            diagnostic_codes::CANNOT_FIND_MODULE,
-        );
+        self.error_at_node(import.module_specifier, &message, code);
     }
 
     // =========================================================================
@@ -498,9 +530,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check an import declaration for unresolved modules and missing exports.
     pub(crate) fn check_import_declaration(&mut self, stmt_idx: NodeIndex) {
-        use crate::checker::types::diagnostics::{
-            diagnostic_codes, diagnostic_messages, format_message,
-        };
+        use crate::checker::types::diagnostics::diagnostic_codes;
 
         if !self.ctx.report_unresolved_imports {
             return;
@@ -604,18 +634,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Fallback: Emit generic TS2307 if no specific error was found
-        // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
+        // Fallback: Emit module-not-found error if no specific error was found
+        // Check if we've already emitted for this module (prevents duplicate emissions)
         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
             self.ctx
                 .modules_with_ts2307_emitted
                 .insert(module_key.clone());
-            let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
-            self.error_at_node(
-                import.module_specifier,
-                &message,
-                diagnostic_codes::CANNOT_FIND_MODULE,
-            );
+            let (message, code) = self.module_not_found_diagnostic(module_name);
+            self.error_at_node(import.module_specifier, &message, code);
         }
 
         self.ctx.import_resolution_stack.pop();
