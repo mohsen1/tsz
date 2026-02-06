@@ -851,7 +851,7 @@ impl<'a> DocumentHighlightProvider<'a> {
     fn highlight_async_await(
         &self,
         node_idx: NodeIndex,
-        offset: u32,
+        _offset: u32,
     ) -> Option<Vec<DocumentHighlight>> {
         // Find the enclosing function declaration/expression/arrow
         let func_idx = self.find_enclosing_function(node_idx)?;
