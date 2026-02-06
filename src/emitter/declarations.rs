@@ -4,6 +4,8 @@ use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::ClassES5Emitter;
+use crate::transforms::enum_es5::EnumES5Transformer;
+use crate::transforms::ir_printer::IRPrinter;
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -251,7 +253,7 @@ impl<'a> Printer<'a> {
     // Declarations - Enum, Interface, Type Alias
     // =========================================================================
 
-    pub(super) fn emit_enum_declaration(&mut self, node: &Node, _idx: NodeIndex) {
+    pub(super) fn emit_enum_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(enum_decl) = self.arena.get_enum(node) else {
             return;
         };
@@ -263,7 +265,24 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Emit TypeScript-style enum
+        // ES5: Transform enum to IIFE pattern
+        // ES6+: Emit TypeScript-style enum (valid in ES6+ targets)
+        if self.ctx.target_es5 {
+            let mut transformer = EnumES5Transformer::new(self.arena);
+            if let Some(ir) = transformer.transform_enum(idx) {
+                let mut printer = IRPrinter::with_arena(self.arena);
+                printer.set_indent_level(self.writer.indent_level());
+                if let Some(source_text) = self.source_text_for_map() {
+                    printer.set_source_text(source_text);
+                }
+                self.write(&printer.emit(&ir));
+                return;
+            }
+            // If transformer returns None (e.g., const enum), emit nothing
+            return;
+        }
+
+        // ES6+: Emit TypeScript-style enum
         self.write("enum ");
         self.emit(enum_decl.name);
         self.write(" {");
