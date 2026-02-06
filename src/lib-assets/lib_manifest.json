@@ -1,0 +1,855 @@
+{
+  "version": "6.0.0-dev.20260116",
+  "source": "npm",
+  "generatedAt": "2026-02-01T14:12:19.074Z",
+  "libs": {
+    "es5.full": {
+      "fileName": "es5.full.d.ts",
+      "canonicalFileName": "lib.d.ts",
+      "references": [
+        "es5",
+        "dom",
+        "webworker.importscripts",
+        "scripthost"
+      ],
+      "size": 953
+    },
+    "decorators": {
+      "fileName": "decorators.d.ts",
+      "canonicalFileName": "lib.decorators.d.ts",
+      "references": [],
+      "size": 13153
+    },
+    "decorators.legacy": {
+      "fileName": "decorators.legacy.d.ts",
+      "canonicalFileName": "lib.decorators.legacy.d.ts",
+      "references": [],
+      "size": 1287
+    },
+    "dom.asynciterable": {
+      "fileName": "dom.asynciterable.d.ts",
+      "canonicalFileName": "lib.dom.asynciterable.d.ts",
+      "references": [],
+      "size": 933
+    },
+    "dom": {
+      "fileName": "dom.d.ts",
+      "canonicalFileName": "lib.dom.d.ts",
+      "references": [
+        "es2015",
+        "es2018.asynciterable"
+      ],
+      "size": 1963731
+    },
+    "dom.iterable": {
+      "fileName": "dom.iterable.d.ts",
+      "canonicalFileName": "lib.dom.iterable.d.ts",
+      "references": [],
+      "size": 933
+    },
+    "es2015.collection": {
+      "fileName": "es2015.collection.d.ts",
+      "canonicalFileName": "lib.es2015.collection.d.ts",
+      "references": [],
+      "size": 5190
+    },
+    "es2015.core": {
+      "fileName": "es2015.core.d.ts",
+      "canonicalFileName": "lib.es2015.core.d.ts",
+      "references": [],
+      "size": 22807
+    },
+    "es2015": {
+      "fileName": "es2015.d.ts",
+      "canonicalFileName": "lib.es2015.d.ts",
+      "references": [
+        "es5",
+        "es2015.core",
+        "es2015.collection",
+        "es2015.iterable",
+        "es2015.generator",
+        "es2015.promise",
+        "es2015.proxy",
+        "es2015.reflect",
+        "es2015.symbol",
+        "es2015.symbol.wellknown"
+      ],
+      "size": 1202
+    },
+    "es2015.generator": {
+      "fileName": "es2015.generator.d.ts",
+      "canonicalFileName": "lib.es2015.generator.d.ts",
+      "references": [
+        "es2015.iterable"
+      ],
+      "size": 2518
+    },
+    "es2015.iterable": {
+      "fileName": "es2015.iterable.d.ts",
+      "canonicalFileName": "lib.es2015.iterable.d.ts",
+      "references": [
+        "es2015.symbol"
+      ],
+      "size": 18161
+    },
+    "es2015.promise": {
+      "fileName": "es2015.promise.d.ts",
+      "canonicalFileName": "lib.es2015.promise.d.ts",
+      "references": [],
+      "size": 3161
+    },
+    "es2015.proxy": {
+      "fileName": "es2015.proxy.d.ts",
+      "canonicalFileName": "lib.es2015.proxy.d.ts",
+      "references": [],
+      "size": 5212
+    },
+    "es2015.reflect": {
+      "fileName": "es2015.reflect.d.ts",
+      "canonicalFileName": "lib.es2015.reflect.d.ts",
+      "references": [],
+      "size": 6454
+    },
+    "es2015.symbol": {
+      "fileName": "es2015.symbol.d.ts",
+      "canonicalFileName": "lib.es2015.symbol.d.ts",
+      "references": [],
+      "size": 1610
+    },
+    "es2015.symbol.wellknown": {
+      "fileName": "es2015.symbol.wellknown.d.ts",
+      "canonicalFileName": "lib.es2015.symbol.wellknown.d.ts",
+      "references": [
+        "es2015.symbol"
+      ],
+      "size": 10969
+    },
+    "es2016.array.include": {
+      "fileName": "es2016.array.include.d.ts",
+      "canonicalFileName": "lib.es2016.array.include.d.ts",
+      "references": [],
+      "size": 5165
+    },
+    "es2016": {
+      "fileName": "es2016.d.ts",
+      "canonicalFileName": "lib.es2016.d.ts",
+      "references": [
+        "es2015",
+        "es2016.array.include",
+        "es2016.intl"
+      ],
+      "size": 926
+    },
+    "es2016.full": {
+      "fileName": "es2016.full.d.ts",
+      "canonicalFileName": "lib.es2016.full.d.ts",
+      "references": [
+        "es2016",
+        "dom",
+        "webworker.importscripts",
+        "scripthost",
+        "dom.iterable"
+      ],
+      "size": 993
+    },
+    "es2016.intl": {
+      "fileName": "es2016.intl.d.ts",
+      "canonicalFileName": "lib.es2016.intl.d.ts",
+      "references": [],
+      "size": 1445
+    },
+    "es2017.arraybuffer": {
+      "fileName": "es2017.arraybuffer.d.ts",
+      "canonicalFileName": "lib.es2017.arraybuffer.d.ts",
+      "references": [],
+      "size": 876
+    },
+    "es2017": {
+      "fileName": "es2017.d.ts",
+      "canonicalFileName": "lib.es2017.d.ts",
+      "references": [
+        "es2016",
+        "es2017.arraybuffer",
+        "es2017.date",
+        "es2017.intl",
+        "es2017.object",
+        "es2017.sharedmemory",
+        "es2017.string",
+        "es2017.typedarrays"
+      ],
+      "size": 1123
+    },
+    "es2017.date": {
+      "fileName": "es2017.date.d.ts",
+      "canonicalFileName": "lib.es2017.date.d.ts",
+      "references": [],
+      "size": 1877
+    },
+    "es2017.full": {
+      "fileName": "es2017.full.d.ts",
+      "canonicalFileName": "lib.es2017.full.d.ts",
+      "references": [
+        "es2017",
+        "dom",
+        "webworker.importscripts",
+        "scripthost",
+        "dom.iterable"
+      ],
+      "size": 993
+    },
+    "es2017.intl": {
+      "fileName": "es2017.intl.d.ts",
+      "canonicalFileName": "lib.es2017.intl.d.ts",
+      "references": [],
+      "size": 1410
+    },
+    "es2017.object": {
+      "fileName": "es2017.object.d.ts",
+      "canonicalFileName": "lib.es2017.object.d.ts",
+      "references": [],
+      "size": 2434
+    },
+    "es2017.sharedmemory": {
+      "fileName": "es2017.sharedmemory.d.ts",
+      "canonicalFileName": "lib.es2017.sharedmemory.d.ts",
+      "references": [
+        "es2015.symbol",
+        "es2015.symbol.wellknown"
+      ],
+      "size": 7170
+    },
+    "es2017.string": {
+      "fileName": "es2017.string.d.ts",
+      "canonicalFileName": "lib.es2017.string.d.ts",
+      "references": [],
+      "size": 2339
+    },
+    "es2017.typedarrays": {
+      "fileName": "es2017.typedarrays.d.ts",
+      "canonicalFileName": "lib.es2017.typedarrays.d.ts",
+      "references": [],
+      "size": 1503
+    },
+    "es2018.asyncgenerator": {
+      "fileName": "es2018.asyncgenerator.d.ts",
+      "canonicalFileName": "lib.es2018.asyncgenerator.d.ts",
+      "references": [
+        "es2018.asynciterable"
+      ],
+      "size": 2653
+    },
+    "es2018.asynciterable": {
+      "fileName": "es2018.asynciterable.d.ts",
+      "canonicalFileName": "lib.es2018.asynciterable.d.ts",
+      "references": [
+        "es2015.symbol",
+        "es2015.iterable"
+      ],
+      "size": 2218
+    },
+    "es2018": {
+      "fileName": "es2018.d.ts",
+      "canonicalFileName": "lib.es2018.d.ts",
+      "references": [
+        "es2017",
+        "es2018.asynciterable",
+        "es2018.asyncgenerator",
+        "es2018.promise",
+        "es2018.regexp",
+        "es2018.intl"
+      ],
+      "size": 1049
+    },
+    "es2018.full": {
+      "fileName": "es2018.full.d.ts",
+      "canonicalFileName": "lib.es2018.full.d.ts",
+      "references": [
+        "es2018",
+        "dom",
+        "webworker.importscripts",
+        "scripthost",
+        "dom.iterable",
+        "dom.asynciterable"
+      ],
+      "size": 1035
+    },
+    "es2018.intl": {
+      "fileName": "es2018.intl.d.ts",
+      "canonicalFileName": "lib.es2018.intl.d.ts",
+      "references": [],
+      "size": 2982
+    },
+    "es2018.promise": {
+      "fileName": "es2018.promise.d.ts",
+      "canonicalFileName": "lib.es2018.promise.d.ts",
+      "references": [],
+      "size": 1314
+    },
+    "es2018.regexp": {
+      "fileName": "es2018.regexp.d.ts",
+      "canonicalFileName": "lib.es2018.regexp.d.ts",
+      "references": [],
+      "size": 1193
+    },
+    "es2019.array": {
+      "fileName": "es2019.array.d.ts",
+      "canonicalFileName": "lib.es2019.array.d.ts",
+      "references": [],
+      "size": 3124
+    },
+    "es2019": {
+      "fileName": "es2019.d.ts",
+      "canonicalFileName": "lib.es2019.d.ts",
+      "references": [
+        "es2018",
+        "es2019.array",
+        "es2019.object",
+        "es2019.string",
+        "es2019.symbol",
+        "es2019.intl"
+      ],
+      "size": 1032
+    },
+    "es2019.full": {
+      "fileName": "es2019.full.d.ts",
+      "canonicalFileName": "lib.es2019.full.d.ts",
+      "references": [
+        "es2019",
+        "dom",
+        "webworker.importscripts",
+        "scripthost",
+        "dom.iterable",
+        "dom.asynciterable"
+      ],
+      "size": 1035
+    },
+    "es2019.intl": {
+      "fileName": "es2019.intl.d.ts",
+      "canonicalFileName": "lib.es2019.intl.d.ts",
+      "references": [],
+      "size": 919
+    },
+    "es2019.object": {
+      "fileName": "es2019.object.d.ts",
+      "canonicalFileName": "lib.es2019.object.d.ts",
+      "references": [
+        "es2015.iterable"
+      ],
+      "size": 1434
+    },
+    "es2019.string": {
+      "fileName": "es2019.string.d.ts",
+      "canonicalFileName": "lib.es2019.string.d.ts",
+      "references": [],
+      "size": 1489
+    },
+    "es2019.symbol": {
+      "fileName": "es2019.symbol.d.ts",
+      "canonicalFileName": "lib.es2019.symbol.d.ts",
+      "references": [],
+      "size": 967
+    },
+    "es2020.bigint": {
+      "fileName": "es2020.bigint.d.ts",
+      "canonicalFileName": "lib.es2020.bigint.d.ts",
+      "references": [
+        "es2020.intl"
+      ],
+      "size": 38142
+    },
+    "es2020": {
+      "fileName": "es2020.d.ts",
+      "canonicalFileName": "lib.es2020.d.ts",
+      "references": [
+        "es2019",
+        "es2020.bigint",
+        "es2020.date",
+        "es2020.number",
+        "es2020.promise",
+        "es2020.sharedmemory",
+        "es2020.string",
+        "es2020.symbol.wellknown",
+        "es2020.intl"
+      ],
+      "size": 1162
+    },
+    "es2020.date": {
+      "fileName": "es2020.date.d.ts",
+      "canonicalFileName": "lib.es2020.date.d.ts",
+      "references": [
+        "es2020.intl"
+      ],
+      "size": 2917
+    },
+    "es2020.full": {
+      "fileName": "es2020.full.d.ts",
+      "canonicalFileName": "lib.es2020.full.d.ts",
+      "references": [
+        "es2020",
+        "dom",
+        "webworker.importscripts",
+        "scripthost",
+        "dom.iterable",
+        "dom.asynciterable"
+      ],
+      "size": 1035
+    },
+    "es2020.intl": {
+      "fileName": "es2020.intl.d.ts",
+      "canonicalFileName": "lib.es2020.intl.d.ts",
+      "references": [
+        "es2018.intl"
+      ],
+      "size": 22399
+    },
+    "es2020.number": {
+      "fileName": "es2020.number.d.ts",
+      "canonicalFileName": "lib.es2020.number.d.ts",
+      "references": [
+        "es2020.intl"
+      ],
+      "size": 1548
+    },
+    "es2020.promise": {
+      "fileName": "es2020.promise.d.ts",
+      "canonicalFileName": "lib.es2020.promise.d.ts",
+      "references": [],
+      "size": 1764
+    },
+    "es2020.sharedmemory": {
+      "fileName": "es2020.sharedmemory.d.ts",
+      "canonicalFileName": "lib.es2020.sharedmemory.d.ts",
+      "references": [
+        "es2020.bigint"
+      ],
+      "size": 5089
+    },
+    "es2020.string": {
+      "fileName": "es2020.string.d.ts",
+      "canonicalFileName": "lib.es2020.string.d.ts",
+      "references": [
+        "es2015.iterable",
+        "es2020.intl",
+        "es2020.symbol.wellknown"
+      ],
+      "size": 2451
+    },
+    "es2020.symbol.wellknown": {
+      "fileName": "es2020.symbol.wellknown.d.ts",
+      "canonicalFileName": "lib.es2020.symbol.wellknown.d.ts",
+      "references": [
+        "es2015.iterable",
+        "es2015.symbol"
+      ],
+      "size": 1567
+    },
+    "es2021": {
+      "fileName": "es2021.d.ts",
+      "canonicalFileName": "lib.es2021.d.ts",
+      "references": [
+        "es2020",
+        "es2021.promise",
+        "es2021.string",
+        "es2021.weakref",
+        "es2021.intl"
+      ],
+      "size": 997
+    },
+    "es2021.full": {
+      "fileName": "es2021.full.d.ts",
+      "canonicalFileName": "lib.es2021.full.d.ts",
+      "references": [
+        "es2021",
+        "dom",
+        "webworker.importscripts",
+        "scripthost",
+        "dom.iterable",
+        "dom.asynciterable"
+      ],
+      "size": 1035
+    },
+    "es2021.intl": {
+      "fileName": "es2021.intl.d.ts",
+      "canonicalFileName": "lib.es2021.intl.d.ts",
+      "references": [],
+      "size": 8206
+    },
+    "es2021.promise": {
+      "fileName": "es2021.promise.d.ts",
+      "canonicalFileName": "lib.es2021.promise.d.ts",
+      "references": [],
+      "size": 2223
+    },
+    "es2021.string": {
+      "fileName": "es2021.string.d.ts",
+      "canonicalFileName": "lib.es2021.string.d.ts",
+      "references": [],
+      "size": 1553
+    },
+    "es2021.weakref": {
+      "fileName": "es2021.weakref.d.ts",
+      "canonicalFileName": "lib.es2021.weakref.d.ts",
+      "references": [
+        "es2015.symbol.wellknown"
+      ],
+      "size": 3132
+    },
+    "es2022.array": {
+      "fileName": "es2022.array.d.ts",
+      "canonicalFileName": "lib.es2022.array.d.ts",
+      "references": [],
+      "size": 4637
+    },
+    "es2022": {
+      "fileName": "es2022.d.ts",
+      "canonicalFileName": "lib.es2022.d.ts",
+      "references": [
+        "es2021",
+        "es2022.array",
+        "es2022.error",
+        "es2022.intl",
+        "es2022.object",
+        "es2022.regexp",
+        "es2022.string"
+      ],
+      "size": 1069
+    },
+    "es2022.error": {
+      "fileName": "es2022.error.d.ts",
+      "canonicalFileName": "lib.es2022.error.d.ts",
+      "references": [
+        "es2021.promise"
+      ],
+      "size": 2340
+    },
+    "es2022.full": {
+      "fileName": "es2022.full.d.ts",
+      "canonicalFileName": "lib.es2022.full.d.ts",
+      "references": [
+        "es2022",
+        "dom",
+        "webworker.importscripts",
+        "scripthost",
+        "dom.iterable",
+        "dom.asynciterable"
+      ],
+      "size": 1035
+    },
+    "es2022.intl": {
+      "fileName": "es2022.intl.d.ts",
+      "canonicalFileName": "lib.es2022.intl.d.ts",
+      "references": [],
+      "size": 7653
+    },
+    "es2022.object": {
+      "fileName": "es2022.object.d.ts",
+      "canonicalFileName": "lib.es2022.object.d.ts",
+      "references": [],
+      "size": 1046
+    },
+    "es2022.regexp": {
+      "fileName": "es2022.regexp.d.ts",
+      "canonicalFileName": "lib.es2022.regexp.d.ts",
+      "references": [],
+      "size": 1292
+    },
+    "es2022.string": {
+      "fileName": "es2022.string.d.ts",
+      "canonicalFileName": "lib.es2022.string.d.ts",
+      "references": [],
+      "size": 1116
+    },
+    "es2023.array": {
+      "fileName": "es2023.array.d.ts",
+      "canonicalFileName": "lib.es2023.array.d.ts",
+      "references": [],
+      "size": 40197
+    },
+    "es2023.collection": {
+      "fileName": "es2023.collection.d.ts",
+      "canonicalFileName": "lib.es2023.collection.d.ts",
+      "references": [],
+      "size": 861
+    },
+    "es2023": {
+      "fileName": "es2023.d.ts",
+      "canonicalFileName": "lib.es2023.d.ts",
+      "references": [
+        "es2022",
+        "es2023.array",
+        "es2023.collection",
+        "es2023.intl"
+      ],
+      "size": 960
+    },
+    "es2023.full": {
+      "fileName": "es2023.full.d.ts",
+      "canonicalFileName": "lib.es2023.full.d.ts",
+      "references": [
+        "es2023",
+        "dom",
+        "webworker.importscripts",
+        "scripthost",
+        "dom.iterable",
+        "dom.asynciterable"
+      ],
+      "size": 1035
+    },
+    "es2023.intl": {
+      "fileName": "es2023.intl.d.ts",
+      "canonicalFileName": "lib.es2023.intl.d.ts",
+      "references": [],
+      "size": 2606
+    },
+    "es2024.arraybuffer": {
+      "fileName": "es2024.arraybuffer.d.ts",
+      "canonicalFileName": "lib.es2024.arraybuffer.d.ts",
+      "references": [],
+      "size": 2598
+    },
+    "es2024.collection": {
+      "fileName": "es2024.collection.d.ts",
+      "canonicalFileName": "lib.es2024.collection.d.ts",
+      "references": [],
+      "size": 1185
+    },
+    "es2024": {
+      "fileName": "es2024.d.ts",
+      "canonicalFileName": "lib.es2024.d.ts",
+      "references": [
+        "es2023",
+        "es2024.arraybuffer",
+        "es2024.collection",
+        "es2024.object",
+        "es2024.promise",
+        "es2024.regexp",
+        "es2024.sharedmemory",
+        "es2024.string"
+      ],
+      "size": 1127
+    },
+    "es2024.full": {
+      "fileName": "es2024.full.d.ts",
+      "canonicalFileName": "lib.es2024.full.d.ts",
+      "references": [
+        "es2024",
+        "dom",
+        "webworker.importscripts",
+        "scripthost",
+        "dom.iterable",
+        "dom.asynciterable"
+      ],
+      "size": 1035
+    },
+    "es2024.object": {
+      "fileName": "es2024.object.d.ts",
+      "canonicalFileName": "lib.es2024.object.d.ts",
+      "references": [],
+      "size": 1220
+    },
+    "es2024.promise": {
+      "fileName": "es2024.promise.d.ts",
+      "canonicalFileName": "lib.es2024.promise.d.ts",
+      "references": [],
+      "size": 1350
+    },
+    "es2024.regexp": {
+      "fileName": "es2024.regexp.d.ts",
+      "canonicalFileName": "lib.es2024.regexp.d.ts",
+      "references": [],
+      "size": 1034
+    },
+    "es2024.sharedmemory": {
+      "fileName": "es2024.sharedmemory.d.ts",
+      "canonicalFileName": "lib.es2024.sharedmemory.d.ts",
+      "references": [
+        "es2020.bigint"
+      ],
+      "size": 3038
+    },
+    "es2024.string": {
+      "fileName": "es2024.string.d.ts",
+      "canonicalFileName": "lib.es2024.string.d.ts",
+      "references": [],
+      "size": 1155
+    },
+    "es5": {
+      "fileName": "es5.d.ts",
+      "canonicalFileName": "lib.es5.d.ts",
+      "references": [
+        "decorators",
+        "decorators.legacy"
+      ],
+      "size": 218400
+    },
+    "es6": {
+      "fileName": "es6.d.ts",
+      "canonicalFileName": "lib.es6.d.ts",
+      "references": [
+        "es2015",
+        "dom",
+        "dom.iterable",
+        "webworker.importscripts",
+        "scripthost"
+      ],
+      "size": 993
+    },
+    "esnext.array": {
+      "fileName": "esnext.array.d.ts",
+      "canonicalFileName": "lib.esnext.array.d.ts",
+      "references": [],
+      "size": 1752
+    },
+    "esnext.collection": {
+      "fileName": "esnext.collection.d.ts",
+      "canonicalFileName": "lib.esnext.collection.d.ts",
+      "references": [
+        "es2024.collection"
+      ],
+      "size": 3839
+    },
+    "esnext": {
+      "fileName": "esnext.d.ts",
+      "canonicalFileName": "lib.esnext.d.ts",
+      "references": [
+        "es2024",
+        "esnext.intl",
+        "esnext.decorators",
+        "esnext.disposable",
+        "esnext.collection",
+        "esnext.array",
+        "esnext.iterator",
+        "esnext.promise",
+        "esnext.float16",
+        "esnext.error",
+        "esnext.sharedmemory",
+        "esnext.typedarrays"
+      ],
+      "size": 1286
+    },
+    "esnext.decorators": {
+      "fileName": "esnext.decorators.d.ts",
+      "canonicalFileName": "lib.esnext.decorators.d.ts",
+      "references": [
+        "es2015.symbol",
+        "decorators"
+      ],
+      "size": 1031
+    },
+    "esnext.disposable": {
+      "fileName": "esnext.disposable.d.ts",
+      "canonicalFileName": "lib.esnext.disposable.d.ts",
+      "references": [
+        "es2015.symbol",
+        "es2015.iterable",
+        "es2018.asynciterable"
+      ],
+      "size": 6767
+    },
+    "esnext.error": {
+      "fileName": "esnext.error.d.ts",
+      "canonicalFileName": "lib.esnext.error.d.ts",
+      "references": [],
+      "size": 990
+    },
+    "esnext.float16": {
+      "fileName": "esnext.float16.d.ts",
+      "canonicalFileName": "lib.esnext.float16.d.ts",
+      "references": [
+        "es2015.symbol",
+        "es2015.iterable"
+      ],
+      "size": 20489
+    },
+    "esnext.full": {
+      "fileName": "esnext.full.d.ts",
+      "canonicalFileName": "lib.esnext.full.d.ts",
+      "references": [
+        "esnext",
+        "dom",
+        "webworker.importscripts",
+        "scripthost",
+        "dom.iterable",
+        "dom.asynciterable"
+      ],
+      "size": 1035
+    },
+    "esnext.intl": {
+      "fileName": "esnext.intl.d.ts",
+      "canonicalFileName": "lib.esnext.intl.d.ts",
+      "references": [],
+      "size": 854
+    },
+    "esnext.iterator": {
+      "fileName": "esnext.iterator.d.ts",
+      "canonicalFileName": "lib.esnext.iterator.d.ts",
+      "references": [
+        "es2015.iterable"
+      ],
+      "size": 8637
+    },
+    "esnext.promise": {
+      "fileName": "esnext.promise.d.ts",
+      "canonicalFileName": "lib.esnext.promise.d.ts",
+      "references": [],
+      "size": 1619
+    },
+    "esnext.sharedmemory": {
+      "fileName": "esnext.sharedmemory.d.ts",
+      "canonicalFileName": "lib.esnext.sharedmemory.d.ts",
+      "references": [],
+      "size": 1028
+    },
+    "esnext.typedarrays": {
+      "fileName": "esnext.typedarrays.d.ts",
+      "canonicalFileName": "lib.esnext.typedarrays.d.ts",
+      "references": [],
+      "size": 3350
+    },
+    "scripthost": {
+      "fileName": "scripthost.d.ts",
+      "canonicalFileName": "lib.scripthost.d.ts",
+      "references": [],
+      "size": 9412
+    },
+    "webworker.asynciterable": {
+      "fileName": "webworker.asynciterable.d.ts",
+      "canonicalFileName": "lib.webworker.asynciterable.d.ts",
+      "references": [],
+      "size": 933
+    },
+    "webworker": {
+      "fileName": "webworker.d.ts",
+      "canonicalFileName": "lib.webworker.d.ts",
+      "references": [
+        "es2015",
+        "es2018.asynciterable"
+      ],
+      "size": 653429
+    },
+    "webworker.importscripts": {
+      "fileName": "webworker.importscripts.d.ts",
+      "canonicalFileName": "lib.webworker.importscripts.d.ts",
+      "references": [],
+      "size": 1002
+    },
+    "webworker.iterable": {
+      "fileName": "webworker.iterable.d.ts",
+      "canonicalFileName": "lib.webworker.iterable.d.ts",
+      "references": [],
+      "size": 933
+    },
+    "tsserverlibrary": {
+      "fileName": "tsserverlibrary.d.ts",
+      "canonicalFileName": "lib.tsserverlibrary.d.ts",
+      "references": [],
+      "size": 866
+    },
+    "typescript": {
+      "fileName": "typescript.d.ts",
+      "canonicalFileName": "lib.typescript.d.ts",
+      "references": [],
+      "size": 588199
+    }
+  }
+}
