@@ -287,6 +287,38 @@ TypeKey::Lazy(def_id) => {
 
 **Status**: ✅ MAJOR PROGRESS - Architectural fix implemented and working!
 
+### 2026-02-06: Indexed Access Investigation (In Progress)
+
+**Pivoted from Template Literals** to Indexed Access based on Gemini recommendation:
+- Template literal bugs #5-6 already passing in test suite
+- Indexed access failures are "cluster bugs" with high impact
+- Multiple failing tests related to indexed access on classes
+
+**Architectural Improvements Made**:
+
+1. **Fixed `evaluate_type_with_options`** to use `type_env` resolver
+   - Updated `BinderTypeDatabase` to properly propagate resolver
+   - Ensures all type evaluation goes through proper resolver
+
+2. **Added `visit_lazy` handler to `IndexAccessVisitor`**
+   - Classes/interfaces represented as Lazy types
+   - Critical for proper property resolution on indexed access
+
+3. **Added `visit_intersection` handler to `IndexAccessVisitor`**
+   - Handles classes with mixins/multiple inheritance
+   - Returns UNDEFINED when property not found (not None)
+
+**Test Status**: Still failing
+- Test case: `type FooType = C["foo"]; let x: FooType = 3;`
+- Error: "Type 'number' is not assignable to type 'FooType'"
+- Issue: IndexAccess type not being fully evaluated to concrete type
+
+**Hypothesis**: The issue may be in how assignability checking handles unevaluated IndexAccess types. The type might need to be eagerly evaluated during type annotation resolution, not just during type operations.
+
+**Committed**: `79892fdd6`
+
+**Status**: ✅ ARCHITECTURAL PROGRESS - Need deeper investigation of assignability checking
+
 ## Next Steps (Revised Strategy)
 
 **Per Gemini recommendation**: Continue TSZ-18 with focused approach to remaining bugs
