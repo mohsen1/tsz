@@ -32,14 +32,22 @@ pub static DEFAULT_CHECKER_OPTIONS: Lazy<CheckerOptions> = Lazy::new(CheckerOpti
 
 /// Shared lib files for global type resolution.
 ///
-/// NOTE: Embedded libs have been removed. This now returns an empty vector.
-/// Tests that need lib symbols should load them explicitly from disk.
-pub static SHARED_LIB_FILES: Lazy<Vec<Arc<crate::lib_loader::LibFile>>> = Lazy::new(Vec::new);
+/// Loads lib.es5.d.ts which contains core global types (Array, Object, Function, etc.).
+pub static SHARED_LIB_FILES: Lazy<Vec<Arc<crate::lib_loader::LibFile>>> =
+    Lazy::new(|| load_lib_files_from_paths());
 
 /// Shared lib contexts for checker tests.
-/// Returns empty - tests that need lib symbols should load them from disk.
-pub static SHARED_LIB_CONTEXTS: Lazy<Vec<crate::checker::context::LibContext>> =
-    Lazy::new(Vec::new);
+///
+/// Pre-compiled lib contexts from SHARED_LIB_FILES for fast test setup.
+pub static SHARED_LIB_CONTEXTS: Lazy<Vec<crate::checker::context::LibContext>> = Lazy::new(|| {
+    SHARED_LIB_FILES
+        .iter()
+        .map(|lib| crate::checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect()
+});
 
 /// Test context builder for common test setup patterns.
 /// Reduces boilerplate while allowing test-specific customization.
@@ -250,9 +258,19 @@ pub fn merge_shared_lib_symbols(binder: &mut BinderState) {
 /// If lib files are not found, returns an empty vector.
 #[inline]
 pub fn load_lib_files_for_test() -> Vec<Arc<crate::lib_loader::LibFile>> {
-    // Load lib.es5.d.ts which contains the actual type definitions (Array, Boolean, etc.)
-    // lib.d.ts is just references to other lib files
+    load_lib_files_from_paths()
+}
+
+/// Internal function to load lib files from known paths.
+/// Checks multiple locations where TypeScript libs might be installed.
+fn load_lib_files_from_paths() -> Vec<Arc<crate::lib_loader::LibFile>> {
+    // Try multiple paths where TypeScript libs might be located
     let lib_paths = [
+        // Local conformance test scripts
+        std::path::PathBuf::from("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        // Local emit test scripts
+        std::path::PathBuf::from("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
+        // Repository root (if cloned)
         std::path::PathBuf::from("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
         std::path::PathBuf::from("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
     ];
