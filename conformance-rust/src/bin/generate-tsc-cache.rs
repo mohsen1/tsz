@@ -11,8 +11,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 use walkdir::WalkDir;
 
@@ -93,7 +93,10 @@ fn resolve_tsc_path() -> Result<String> {
     // Try to find tsc without npx overhead
     // 1. Check node_modules/.bin/tsc (local install)
     if let Ok(output) = Command::new("node")
-        .args(["-e", "console.log(require.resolve('typescript/lib/tsc.js'))"])
+        .args([
+            "-e",
+            "console.log(require.resolve('typescript/lib/tsc.js'))",
+        ])
         .output()
     {
         if output.status.success() {
@@ -240,7 +243,11 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn process_test_file(path: &Path, _timeout_secs: u64, tsc_path: &str) -> Result<Option<(String, TscCacheEntry)>> {
+fn process_test_file(
+    path: &Path,
+    _timeout_secs: u64,
+    tsc_path: &str,
+) -> Result<Option<(String, TscCacheEntry)>> {
     use std::fs;
 
     // Read file content

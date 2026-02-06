@@ -20,8 +20,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
-            std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "tsz_conformance=info,warn".to_string()),
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "tsz_conformance=info,warn".to_string()),
         )
         .init();
 
@@ -61,8 +60,7 @@ fn handle_cache_status(cache_path: &str) -> anyhow::Result<()> {
     }
 
     let content = std::fs::read_to_string(path)?;
-    let cache: HashMap<String, tsc_results::TscResult> =
-        serde_json::from_str(&content)?;
+    let cache: HashMap<String, tsc_results::TscResult> = serde_json::from_str(&content)?;
 
     println!("TSC Cache Status");
     println!("  File: {}", cache_path);

@@ -10,9 +10,8 @@ use std::collections::HashMap;
 
 /// Compiled regex for parsing @ directives
 /// Matches: // @key: value
-static DIRECTIVE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*//\s*@(\w+)\s*:\s*(\S+)").unwrap()
-});
+static DIRECTIVE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*//\s*@(\w+)\s*:\s*(\S+)").unwrap());
 
 /// Parsed test directives
 #[derive(Debug, Default, Clone)]
@@ -71,7 +70,9 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
                 current_content = Vec::new();
             } else {
                 // Store as option
-                directives.options.insert(key.to_string(), value.to_string());
+                directives
+                    .options
+                    .insert(key.to_string(), value.to_string());
             }
         } else {
             // Non-directive line - add to current file content
@@ -100,8 +101,16 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
     }
 
     // Check @noCheck / @nocheck
-    if directives.options.get("noCheck").map(|v| v == "true").unwrap_or(false)
-        || directives.options.get("nocheck").map(|v| v == "true").unwrap_or(false)
+    if directives
+        .options
+        .get("noCheck")
+        .map(|v| v == "true")
+        .unwrap_or(false)
+        || directives
+            .options
+            .get("nocheck")
+            .map(|v| v == "true")
+            .unwrap_or(false)
     {
         return Some("@noCheck");
     }
@@ -121,8 +130,14 @@ mod tests {
 function foo() {}
 "#;
         let parsed = parse_test_file(content).unwrap();
-        assert_eq!(parsed.directives.options.get("strict"), Some(&"true".to_string()));
-        assert_eq!(parsed.directives.options.get("target"), Some(&"es5".to_string()));
+        assert_eq!(
+            parsed.directives.options.get("strict"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            parsed.directives.options.get("target"),
+            Some(&"es5".to_string())
+        );
     }
 
     #[test]
