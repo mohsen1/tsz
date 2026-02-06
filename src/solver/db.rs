@@ -471,6 +471,20 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Remove null and undefined from a type
     fn remove_nullish(&self, type_id: TypeId) -> TypeId;
 
+    /// Get the canonical TypeId for a type, achieving O(1) structural identity checks.
+    ///
+    /// This memoizes the Canonicalizer output so that structurally identical types
+    /// (e.g., `type A = Box<Box<string>>` and `type B = Box<Box<string>>`) return
+    /// the same canonical TypeId.
+    ///
+    /// The implementation must:
+    /// - Use a fresh Canonicalizer with empty stacks (for absolute De Bruijn indices)
+    /// - Only expand TypeAlias (DefKind::TypeAlias), preserving nominal types
+    /// - Cache the result for O(1) subsequent lookups
+    ///
+    /// Task #49: Global Canonical Mapping
+    fn canonical_id(&self, type_id: TypeId) -> TypeId;
+
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
         crate::solver::subtype::is_subtype_of(self.as_type_database(), source, target)
     }
@@ -669,6 +683,13 @@ impl QueryDatabase for TypeInterner {
         // The Checker will override this to provide the actual implementation.
         None
     }
+
+    fn canonical_id(&self, type_id: TypeId) -> TypeId {
+        // TypeInterner doesn't have caching, so compute directly
+        use crate::solver::canonicalize::Canonicalizer;
+        let mut canon = Canonicalizer::new(self, self);
+        canon.canonicalize(type_id)
+    }
 }
 
 type EvalCacheKey = (TypeId, bool);
@@ -687,6 +708,9 @@ pub struct QueryCache<'a> {
     /// Task #41: Variance cache for generic type parameters.
     /// Stores computed variance masks for DefIds to enable O(1) generic assignability.
     variance_cache: RwLock<FxHashMap<DefId, Arc<[Variance]>>>,
+    /// Task #49: Canonical cache for O(1) structural identity checks.
+    /// Maps TypeId -> canonical TypeId for structurally identical types.
+    canonical_cache: RwLock<FxHashMap<TypeId, TypeId>>,
     no_unchecked_indexed_access: AtomicBool,
 }
 
@@ -699,6 +723,7 @@ impl<'a> QueryCache<'a> {
             assignability_cache: RwLock::new(FxHashMap::default()),
             property_cache: RwLock::new(FxHashMap::default()),
             variance_cache: RwLock::new(FxHashMap::default()),
+            canonical_cache: RwLock::new(FxHashMap::default()),
             no_unchecked_indexed_access: AtomicBool::new(false),
         }
     }
@@ -722,6 +747,10 @@ impl<'a> QueryCache<'a> {
             Err(e) => e.into_inner().clear(),
         }
         match self.variance_cache.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        match self.canonical_cache.write() {
             Ok(mut cache) => cache.clear(),
             Err(e) => e.into_inner().clear(),
         }
@@ -1203,6 +1232,37 @@ impl QueryDatabase for QueryCache<'_> {
 
         cached
     }
+
+    fn canonical_id(&self, type_id: TypeId) -> TypeId {
+        // Check cache first
+        let cached = match self.canonical_cache.read() {
+            Ok(cache) => cache.get(&type_id).copied(),
+            Err(e) => e.into_inner().get(&type_id).copied(),
+        };
+
+        if let Some(canonical) = cached {
+            return canonical;
+        }
+
+        // Compute canonical form using a fresh Canonicalizer
+        // CRITICAL: Always start with empty stacks for absolute De Bruijn indices
+        // This ensures the cached TypeId represents the absolute structural form
+        use crate::solver::canonicalize::Canonicalizer;
+        let mut canon = Canonicalizer::new(self.as_type_database(), self);
+        let canonical = canon.canonicalize(type_id);
+
+        // Cache the result
+        match self.canonical_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(type_id, canonical);
+            }
+            Err(e) => {
+                e.into_inner().insert(type_id, canonical);
+            }
+        }
+
+        canonical
+    }
 }
 
 /// Wrapper that combines QueryCache with Binder access for class hierarchy lookups.
@@ -1666,6 +1726,11 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         // Use fully qualified syntax to disambiguate between
         // QueryDatabase and TypeResolver traits (both have this method)
         <QueryCache<'_> as QueryDatabase>::get_type_param_variance(self.query_cache, def_id)
+    }
+
+    fn canonical_id(&self, type_id: TypeId) -> TypeId {
+        // Delegate to QueryCache which has the canonical cache
+        self.query_cache.canonical_id(type_id)
     }
 }
 
