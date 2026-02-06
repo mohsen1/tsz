@@ -708,3 +708,40 @@ Fixed non-canonical type construction in evaluate_rules per Gemini guidance.
 **Remaining Gap:**
 - Gap C: Cache Soundness Verification (Lawyer flags in RelationCacheKey)
 
+---
+
+## Session Update (2026-02-06 - Part 9)
+
+**Completed Work:**
+- ✅ Gap C: Cache Soundness Verification - COMPLETE (commit: a799c3b96)
+
+**Gap C: Cache Soundness Verification - RESOLVED**
+Fixed cache poisoning issue where CompatChecker was not respecting compiler flags.
+
+**Changes Made:**
+
+1. **`src/solver/compat.rs`**: Added `apply_flags(flags: u16)` method to CompatChecker
+   - Applies all 8 RelationCacheKey flags to CompatChecker's own fields
+   - Also applies flags to internal SubtypeChecker fields directly
+   - Bits 0-4: strict_null_checks, strict_function_types, exact_optional_property_types, no_unchecked_indexed_access, disable_method_bivariance
+   - Bits 5-7: allow_void_return, allow_bivariant_rest, allow_bivariant_param_count
+
+2. **`src/solver/db.rs`**: Updated `QueryCache::is_assignable_to_with_flags`
+   - Now calls `checker.apply_flags(flags)` before checking
+   - Removed TODO comment about this fix
+
+**Test Results:**
+- All 25 isomorphism validation tests passing
+- Pre-existing test failures unrelated to this work (2318 "Cannot find global type" errors)
+
+**Impact**:
+- Prevents results from non-strict checks leaking into strict checks
+- Ensures cached results respect the compiler configuration
+- Completes the O(1) equality push by fixing all three identified gaps
+
+**Summary of Completed Work (This Session)**:
+- ✅ Gap A: O(1) Equality Isomorphism Validation Suite
+- ✅ Boolean Expansion O(1) Equality Gap
+- ✅ Gap B: Evaluation Rule Audit (canonical constructors)
+- ✅ Gap C: Cache Soundness Verification (Lawyer flags)
+
