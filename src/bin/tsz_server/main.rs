@@ -1598,8 +1598,6 @@ impl Server {
                     });
                     if let Some(ref modifiers) = item.kind_modifiers {
                         entry["kindModifiers"] = serde_json::json!(modifiers);
-                    } else if let Some(ref detail) = item.detail {
-                        entry["kindModifiers"] = serde_json::json!(detail);
                     } else {
                         entry["kindModifiers"] = serde_json::json!("");
                     }
