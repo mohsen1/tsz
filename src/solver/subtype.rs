@@ -26,7 +26,7 @@ use crate::solver::visitor::{
     object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
     tuple_list_id, type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
 };
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
@@ -856,6 +856,11 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub is_class_symbol: Option<&'a dyn Fn(SymbolRef) -> bool>,
     /// Controls how `any` is treated during subtype checks.
     pub any_propagation: AnyPropagationMode,
+    /// Cache for evaluate_type results within this SubtypeChecker's lifetime.
+    /// This prevents O(n²) behavior when the same type (e.g., a large union) is
+    /// evaluated multiple times across different subtype checks.
+    /// Key is (TypeId, no_unchecked_indexed_access) since that flag affects evaluation.
+    pub(crate) eval_cache: FxHashMap<(TypeId, bool), TypeId>,
 }
 
 /// Maximum total subtype checks allowed per SubtypeChecker instance.
@@ -889,6 +894,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             any_propagation: AnyPropagationMode::All,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
+            eval_cache: FxHashMap::default(),
         }
     }
 }
@@ -919,6 +925,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             any_propagation: AnyPropagationMode::All,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
+            eval_cache: FxHashMap::default(),
         }
     }
 
@@ -1784,14 +1791,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        // Fast-path: Structural identity check (Task #36)
-        // Only run if BOTH are potentially complex to avoid overhead on simple mismatches.
-        // Simple types (Intrinsic, Literal) are handled efficiently by the fall-through logic.
-        if self.is_potentially_structural(source) && self.is_potentially_structural(target) {
-            if self.are_types_structurally_identical(source, target) {
-                return SubtypeResult::True;
-            }
-        }
+        // Note: Canonicalization-based structural identity (Task #36) was previously
+        // called here as a "fast path", but it was actually SLOWER than the normal path
+        // because it allocated a fresh Canonicalizer per call (FxHashMap + Vecs) and
+        // triggered O(n²) union reduction via interner.union(). The existing QueryCache
+        // already provides O(1) memoization for repeated subtype checks.
+        // The Canonicalizer remains available for its intended purpose: detecting
+        // structural identity of recursive type aliases (graph isomorphism).
+        // See: are_types_structurally_identical() and isomorphism_tests.rs
 
         // Note: Weak type checking is handled by CompatChecker (compat.rs:167-170).
         // Removed redundant check here to avoid double-checking which caused false positives.
@@ -1853,6 +1860,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             let member_list = self.interner.type_list(members);
+
+            // Fast path: TypeId equality pre-scan before expensive structural checks.
+            // If source has the same TypeId as any union member, it's trivially a subtype.
+            // This avoids O(n × cost) structural comparisons when the match is by identity.
+            for &member in member_list.iter() {
+                if source == member {
+                    return SubtypeResult::True;
+                }
+            }
+
             for &member in member_list.iter() {
                 if self.check_subtype(source, member).is_true() {
                     return SubtypeResult::True;
@@ -3506,21 +3523,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         None
-    }
-
-    /// Check if a type is potentially structural (complex enough to benefit from canonicalization).
-    ///
-    /// Returns true for Lazy, Application, Union, Intersection, Function, Callable, Object types.
-    /// Returns false for simple Intrinsic and Literal types (where TypeId equality suffices).
-    fn is_potentially_structural(&self, type_id: TypeId) -> bool {
-        match self.interner.lookup(type_id) {
-            Some(TypeKey::Intrinsic(_)) | Some(TypeKey::Literal(_)) => false,
-            Some(TypeKey::Error) => false,
-            // All other types (Lazy, Application, Union, Intersection, Function, Callable, Object, etc.)
-            // are potentially structural and benefit from canonicalization
-            Some(_) => true,
-            None => false,
-        }
     }
 
     /// Check if two types are structurally identical using De Bruijn indices for cycles.

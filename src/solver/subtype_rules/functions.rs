@@ -864,10 +864,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Always uses TypeEvaluator with the resolver instead of query_db.evaluate_type()
     /// because the checker populates DefId→TypeId mappings in the TypeEnvironment that
     /// the query_db's resolver-less evaluator cannot access.
-    pub(crate) fn evaluate_type(&self, type_id: TypeId) -> TypeId {
+    ///
+    /// Results are cached in eval_cache to avoid re-evaluating the same type across
+    /// multiple subtype checks. This turns O(n²) evaluate calls into O(n).
+    pub(crate) fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
+        // Check local evaluation cache first.
+        // Key includes no_unchecked_indexed_access since it affects evaluation results.
+        let cache_key = (type_id, self.no_unchecked_indexed_access);
+        if let Some(&cached) = self.eval_cache.get(&cache_key) {
+            return cached;
+        }
         use crate::solver::evaluate::TypeEvaluator;
         let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
         evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access);
-        evaluator.evaluate(type_id)
+        let result = evaluator.evaluate(type_id);
+        self.eval_cache.insert(cache_key, result);
+        result
     }
 }
