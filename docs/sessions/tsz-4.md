@@ -949,6 +949,42 @@ Per the original plan and Gemini consultation, the next priorities are:
 3. `__assign` (Object Spread) - many tests use `{...obj}` ✅
 4. `for-of` Downleveling (biggest pass-rate jump)
 5. Hygiene/Rename (fixes `_this` vs `_this_1` collisions)
+6. **Enum IIFE Downleveling** ✅ (2025-02-06)
+
+### 2025-02-06 Session 18: Enum ES5 Downleveling - COMPLETED ✅
+
+**Implementation:**
+Added ES5 transformation for enum declarations in `src/emitter/declarations.rs`.
+
+**Changes:**
+- Used existing `EnumES5Transformer` (was already implemented but not being used)
+- Added ES5 check in `emit_enum_declaration`
+- Numeric enums: `enum E { A, B = 2 }` → IIFE with reverse mapping:
+  ```javascript
+  var E;
+  (function (E) {
+      E[E["A"] = 0] = "A";
+      E[E["B"] = 2] = "B";
+  })(E || (E = {}));
+  ```
+- String enums: `enum S { A = "a" }` → IIFE without reverse mapping:
+  ```javascript
+  var S;
+  (function (S) {
+      S["A"] = "a";
+  })(S || (S = {}));
+  ```
+- Const enums: Erased (no output)
+
+**Test Results:**
+- Numeric enums with auto-increment: ✓
+- Numeric enums with explicit values: ✓
+- String enums (no reverse mapping): ✓
+- Const enums (erased): ✓
+
+**Commit:** 591840d18
+
+**Next:** Continue with remaining emit improvements per Gemini's suggestions.
 
 ### 2025-02-06 Session 17: Architectural Issue Discovery
 
@@ -987,3 +1023,23 @@ Verified that these features are fully implemented:
 
 **Next Steps:**
 Need to analyze remaining 66% of emit test failures to find high-impact improvements that avoid the IR-based/directive-based architectural mismatch.
+
+### 2025-02-06 Session 18: Enum ES5 Downleveling - COMPLETED ✅
+
+**Implementation:**
+Added ES5 transformation for enum declarations in `src/emitter/declarations.rs`.
+
+**Changes:**
+- Used existing `EnumES5Transformer` (was already implemented but not being used)
+- Added ES5 check in `emit_enum_declaration`
+- Numeric enums: `enum E { A, B = 2 }` → IIFE with reverse mapping
+- String enums: `enum S { A = "a" }` → IIFE without reverse mapping
+- Const enums: Erased (no output)
+
+**Test Results:**
+- Numeric enums with auto-increment: ✓
+- Numeric enums with explicit values: ✓
+- String enums (no reverse mapping): ✓
+- Const enums (erased): ✓
+
+**Commit:** 591840d18
