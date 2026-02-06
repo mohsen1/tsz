@@ -62,45 +62,40 @@ In the Redux test:
 - **`InferVar`** or **`Infer`** type: Represents an `infer T` type variable
 - How are `infer` types represented in the type system?
 
+### Investigation Progress (2026-02-06 Continued)
+
+**Discovery**: `match_infer_function_pattern` already exists!
+- Located in `src/solver/evaluate_rules/infer_pattern.rs` (line 1129)
+- Comprehensive implementation for function type inference
+- Handles: parameter inference, return type inference, callables, unions
+
+**Test Results**:
+```typescript
+type GetReturnType<T> = T extends () => infer R ? R : never;
+type T1 = GetReturnType<() => string>; // Error: Cannot find name 'R'
+```
+
+**Key Finding**: The error "Cannot find name 'R'" suggests the issue is NOT in the Solver's pattern matching logic, but rather in:
+1. **Type lowering**: `InferType` AST nodes may not be converted to `TypeKey::Infer` correctly
+2. **Symbol scoping**: The Binder may not be declaring `infer` symbols in the correct scope
+3. **Error reporting**: The error message might be coming from name resolution, not type inference
+
+**Files Investigated**:
+- ✅ `src/solver/evaluate_rules/infer_pattern.rs` - Has `match_infer_function_pattern` (line 1129)
+- ✅ `src/solver/evaluate_rules/conditional.rs` - Calls `match_infer_pattern` at line 205
+- ✅ `src/parser/node.rs` - Has `InferTypeData` struct and `infer_types` vector
+- ❓ Type lowering from AST `InferType` to `TypeKey::Infer` - NOT FOUND YET
+
 ### Next Steps
 
-1. Understand how `infer` types are currently represented
-2. Check if conditional type evaluation handles `infer` correctly
-3. Test with a simpler `infer` case to isolate the issue
-4. Ask Gemini for approach validation before implementing fixes
-
-### Test Cases
-
-**Simple `infer` test** (for isolation):
-```typescript
-type ExtractParam<T> = T extends (x: infer P) => void ? P : never;
-type T1 = ExtractParam<(x: string) => void>; // should be string
-type T2 = ExtractParam<number>; // should be never
-```
-
-### MANDATORY Gemini Workflow
-
-Per AGENTS.md, before implementing:
-
-**Question 1 (Approach)**:
-```bash
-./scripts/ask-gemini.mjs --include=src/solver/evaluate_rules/conditional.rs --include=src/solver/types.rs "I'm debugging conditional type inference with 'infer' keywords. The issue is that 'infer TParams' and 'infer TReturn' aren't being resolved in conditional types.
-
-Test case:
-type InferThunkActionCreatorType<T> = T extends (...args: infer TParams) => infer TReturn ? TParams : T;
-
-The error shows 'Cannot find name TParams' and 'Cannot find name TReturn'.
-
-Please explain:
-1. How are 'infer' types represented in tsz (TypeKey variant)?
-2. Which function handles pattern matching for conditional types with 'infer'?
-3. What's the correct approach for capturing inferred types and substituting them?"
-```
-
-**Question 2 (Review)**: After implementation, submit for review.
+1. Find where `InferType` AST nodes are lowered to `TypeKey::Infer`
+2. Check if `TypeKey::Infer` is being created correctly
+3. Verify that `match_infer_pattern` is actually being called
+4. Ask Gemini about type lowering for `InferType`
 
 ### Progress
 
 - 2026-02-06: Initial Application Type Expansion investigation - found working correctly
 - 2026-02-06: Identified actual issue is with conditional type `infer` inference
-- 2026-02-06: Created this session file to track the new task
+- 2026-02-06: Discovered `match_infer_function_pattern` already exists
+- 2026-02-06: Investigated type lowering - need to find where `InferType` → `TypeKey::Infer`
