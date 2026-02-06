@@ -23,6 +23,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Returns Ok(Some(remapped)) if remapping succeeded,
     /// Ok(None) if the key should be filtered (remapped to never),
     /// Err(()) if we can't process and should return the original mapped type.
+    #[tracing::instrument(level = "trace", skip(self), fields(
+        param_name = ?mapped.type_param.name,
+        key_type = key_type.0,
+        has_name_type = mapped.name_type.is_some(),
+    ))]
     fn remap_key_type_for_mapped(
         &mut self,
         mapped: &MappedType,
@@ -32,10 +37,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return Ok(Some(key_type));
         };
 
+        tracing::trace!(
+            key_type_lookup = ?self.interner().lookup(key_type),
+            name_type_lookup = ?self.interner().lookup(name_type),
+            "remap_key_type_for_mapped: before substitution"
+        );
+
         let mut subst = TypeSubstitution::new();
         subst.insert(mapped.type_param.name, key_type);
         let remapped = instantiate_type(self.interner(), name_type, &subst);
+
+        tracing::trace!(
+            remapped_before_eval = remapped.0,
+            remapped_lookup = ?self.interner().lookup(remapped),
+            "remap_key_type_for_mapped: after substitution"
+        );
+
         let remapped = self.evaluate(remapped);
+
+        tracing::trace!(
+            remapped_after_eval = remapped.0,
+            remapped_eval_lookup = ?self.interner().lookup(remapped),
+            is_never = remapped == TypeId::NEVER,
+            "remap_key_type_for_mapped: after evaluation"
+        );
+
         if remapped == TypeId::NEVER {
             return Ok(None);
         }
