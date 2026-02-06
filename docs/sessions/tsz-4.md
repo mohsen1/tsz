@@ -1572,3 +1572,48 @@ Continue with other achievable tasks like:
 - Hygiene/variable renaming (avoid `_this` collisions)
 - Specific bug fixes rather than wholesale formatting improvements
 
+---
+
+### 2025-02-06 Session 30: Type-Only Import Elision Infrastructure
+
+**Task:** Implement type-only import elision to match TypeScript behavior.
+
+**Problem:**
+When you do `import { MyInterface, myValue } from './module'`, TypeScript emits only `import { myValue } from './module'` because `MyInterface` refers to an interface (type-only). Our compiler was emitting both imports.
+
+**Implementation:**
+Following Gemini's guidance, implemented a side-table approach:
+
+1. **Added `type_only_nodes: FxHashSet<NodeIndex>`** to:
+   - `CheckerContext` - Tracks type-only import specifiers during type checking
+   - `TypeCache` - Persists the information across LSP queries
+   - `PrinterOptions` - Passes to emitter (Arc-wrapped for sharing)
+
+2. **Mark specifiers as type-only** in `check_imported_members`:
+   - After validating an import exists in the module's exports table
+   - Resolve the symbol from `module_exports`
+   - Check if symbol has TYPE flags but not VALUE flags
+   - Mark the specifier node in `type_only_nodes`
+
+3. **Update emitter** in `collect_value_specifiers`:
+   - Check both explicit `import type` syntax (parser flag)
+   - AND implicit type-only imports (side-table)
+   - Elide from JavaScript output if either is true
+
+**Files Modified:**
+- `src/checker/context.rs` - Add type_only_nodes to CheckerContext and TypeCache
+- `src/checker/import_checker.rs` - Mark type-only specifiers during validation
+- `src/emitter/mod.rs` - Add type_only_nodes to PrinterOptions
+- `src/emitter/module_emission.rs` - Check side-table in collect_value_specifiers
+- `src/cli/driver_resolution.rs` - Wire type_only_nodes from type cache to printer
+
+**Known Limitation:**
+The implementation is correct but requires the `module_exports` table to be populated during binding.
+Currently, `module_exports` is only populated in test scenarios, not during normal compilation.
+This is a pre-existing limitation that affects import validation as well.
+
+**Next Steps:**
+To fully enable this feature, the binding phase needs to populate `module_exports` for all compiled files.
+This would require iterating through exported symbols in each file and building the export table.
+
+**Committed as:** (pending tests)
