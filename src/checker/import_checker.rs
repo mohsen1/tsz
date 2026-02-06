@@ -104,6 +104,37 @@ impl<'a> CheckerState<'a> {
                         &message,
                         diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
                     );
+                } else {
+                    // Import exists - check if it should be elided from JavaScript output
+                    // Get the symbol from the exports table
+                    if let Some(sym_id) = exports_table.get(import_name) {
+                        use crate::binder::symbol_flags;
+
+                        // Get the symbol (checking lib binders for cross-file resolution)
+                        let lib_binders: Vec<_> = self
+                            .ctx
+                            .lib_contexts
+                            .iter()
+                            .map(|lc| std::sync::Arc::clone(&lc.binder))
+                            .collect();
+
+                        if let Some(symbol) =
+                            self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                        {
+                            // Check if the symbol is type-only (has TYPE flags but not VALUE flags)
+                            // This correctly handles:
+                            // - Interfaces and type aliases (elided)
+                            // - Classes (not elided - have both TYPE and VALUE flags)
+                            // - Declaration merging (e.g., interface + value - not elided)
+                            let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+                            let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
+
+                            if has_type && !has_value {
+                                // Mark this specifier node as type-only for elision during emit
+                                self.ctx.type_only_nodes.insert(*element_idx);
+                            }
+                        }
+                    }
                 }
             }
         }

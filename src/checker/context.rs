@@ -254,6 +254,10 @@ pub struct TypeCache {
     /// Forward cache: class declaration NodeIndex -> computed instance TypeId.
     /// Avoids recomputing the full class instance type on every member check.
     pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
+
+    /// Set of import specifier nodes that should be elided from JavaScript output.
+    /// These are imports that reference type-only declarations (interfaces, type aliases).
+    pub type_only_nodes: FxHashSet<NodeIndex>,
 }
 
 impl TypeCache {
@@ -548,6 +552,11 @@ pub struct CheckerContext<'a> {
     /// Tracks the chain of modules being resolved to detect circular dependencies.
     pub import_resolution_stack: Vec<String>,
 
+    /// Set of import specifier nodes that should be elided from JavaScript output.
+    /// These are imports that reference type-only declarations (interfaces, type aliases).
+    /// Populated during type checking and consulted by the emitter.
+    pub type_only_nodes: FxHashSet<NodeIndex>,
+
     /// Symbol resolution depth counter for preventing stack overflow.
     /// Tracks how many nested get_type_of_symbol calls we've made.
     pub symbol_resolution_depth: Cell<u32>,
@@ -711,6 +720,7 @@ impl<'a> CheckerContext<'a> {
             is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
+            type_only_nodes: FxHashSet::default(),
             lib_contexts: Vec::new(),
             actual_lib_file_count: 0,
             flow_graph,
@@ -804,6 +814,7 @@ impl<'a> CheckerContext<'a> {
             is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
+            type_only_nodes: FxHashSet::default(),
             lib_contexts: Vec::new(),
             actual_lib_file_count: 0,
             flow_graph,
@@ -900,6 +911,7 @@ impl<'a> CheckerContext<'a> {
             is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
+            type_only_nodes: FxHashSet::default(),
             lib_contexts: Vec::new(),
             actual_lib_file_count: 0,
             flow_graph,
@@ -995,6 +1007,7 @@ impl<'a> CheckerContext<'a> {
             is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
+            type_only_nodes: FxHashSet::default(),
             lib_contexts: Vec::new(),
             actual_lib_file_count: 0,
             flow_graph,
@@ -1098,6 +1111,7 @@ impl<'a> CheckerContext<'a> {
             is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
+            type_only_nodes: FxHashSet::default(),
             lib_contexts: Vec::new(),
             actual_lib_file_count: 0,
             flow_graph,
@@ -1230,6 +1244,7 @@ impl<'a> CheckerContext<'a> {
             flow_analysis_cache: self.flow_analysis_cache.into_inner(),
             class_instance_type_to_decl: self.class_instance_type_to_decl,
             class_instance_type_cache: self.class_instance_type_cache,
+            type_only_nodes: self.type_only_nodes,
         }
     }
 
