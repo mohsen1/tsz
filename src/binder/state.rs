@@ -2175,7 +2175,7 @@ impl BinderState {
             // While/do statement
             k if k == syntax_kind_ext::WHILE_STATEMENT || k == syntax_kind_ext::DO_STATEMENT => {
                 if let Some(loop_data) = arena.get_loop(node) {
-                    let pre_loop_flow = self.current_flow;
+                    let _pre_loop_flow = self.current_flow;
                     let loop_label = self.create_loop_label();
                     if !self.current_flow.is_none() {
                         self.add_antecedent(loop_label, self.current_flow);
@@ -2222,7 +2222,8 @@ impl BinderState {
                             loop_data.condition,
                         );
                         let merge_label = self.create_branch_label();
-                        self.add_antecedent(merge_label, pre_loop_flow);
+                        // FIX: Don't add pre_loop_flow as antecedent to merge_label
+                        // The exit path must go through false_flow to preserve narrowing
                         self.add_antecedent(merge_label, false_flow);
                         self.current_flow = merge_label;
                     }
@@ -2236,7 +2237,7 @@ impl BinderState {
                     self.enter_scope(ContainerKind::Block, idx);
                     self.bind_node(arena, loop_data.initializer);
 
-                    let pre_loop_flow = self.current_flow;
+                    let _pre_loop_flow = self.current_flow;
                     let loop_label = self.create_loop_label();
                     if !self.current_flow.is_none() {
                         self.add_antecedent(loop_label, self.current_flow);
@@ -2262,7 +2263,8 @@ impl BinderState {
                             loop_data.condition,
                         );
                         let merge_label = self.create_branch_label();
-                        self.add_antecedent(merge_label, pre_loop_flow);
+                        // FIX: Don't add pre_loop_flow as antecedent to merge_label
+                        // The exit path must go through false_flow to preserve narrowing
                         self.add_antecedent(merge_label, false_flow);
                         self.current_flow = merge_label;
                     } else {
