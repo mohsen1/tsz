@@ -528,6 +528,8 @@ impl<'a> LoweringPass<'a> {
                             idx,
                             TransformDirective::ES5ArrayLiteral { array_literal: idx },
                         );
+                        // Flag that __spreadArray helper is needed
+                        self.transforms.helpers_mut().spread_array = true;
                     }
 
                     for &elem in &lit.elements.nodes {
