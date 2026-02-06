@@ -4,12 +4,14 @@
 #
 # Compares compilation performance across various file sizes and complexities.
 # Requires: hyperfine (brew install hyperfine)
+# tsgo is auto-installed locally (pinned) unless TSGO is explicitly provided.
 #
 # Usage:
 #   ./scripts/bench-vs-tsgo.sh                    # Full benchmark suite
 #   ./scripts/bench-vs-tsgo.sh --quick            # Quick smoke test (fewer runs, fewer files)
 #   ./scripts/bench-vs-tsgo.sh --json             # Export results to JSON
 #   ./scripts/bench-vs-tsgo.sh --filter 'BCT|CFA' # Run only tests matching regex
+#   ./scripts/bench-vs-tsgo.sh --filter 'utility-types' # Run only utility-types benchmarks
 #   ./scripts/bench-vs-tsgo.sh --rebuild          # Force rebuild of optimized binary
 #
 # The benchmark uses an isolated target directory (.target-bench/) to prevent
@@ -27,7 +29,18 @@ BENCH_TARGET_DIR="$PROJECT_ROOT/.target-bench"
 
 # Compilers
 TSZ="$BENCH_TARGET_DIR/dist/tsz"
-TSGO="${TSGO:-$(which tsgo 2>/dev/null || echo "")}"
+TSGO="${TSGO:-}"
+TSGO_TOOL_DIR="${TSGO_TOOL_DIR:-$BENCH_TARGET_DIR/tools/tsgo}"
+TSGO_LOCAL_BIN="$TSGO_TOOL_DIR/node_modules/.bin/tsgo"
+# pinned tsgo package for reproducible benchmark runs
+TSGO_NPM_SPEC="${TSGO_NPM_SPEC:-@typescript/native-preview@7.0.0-dev.20260206.1}"
+
+# External benchmark fixtures (not checked into git)
+EXTERNAL_BENCH_DIR="${EXTERNAL_BENCH_DIR:-$BENCH_TARGET_DIR/external}"
+UTILITY_TYPES_REPO="${UTILITY_TYPES_REPO:-https://github.com/piotrwitek/utility-types.git}"
+# pinned to v3.11.0 commit for reproducible benchmarks
+UTILITY_TYPES_REF="${UTILITY_TYPES_REF:-2ee1f6ecb241651ab22390fee7ee5349942efda2}"
+UTILITY_TYPES_DIR="$EXTERNAL_BENCH_DIR/utility-types"
 
 # Parse arguments
 QUICK_MODE=false
@@ -52,6 +65,11 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "The benchmark uses an isolated target directory (.target-bench/) to prevent"
             echo "interference from other cargo builds."
+            echo ""
+            echo "Environment overrides:"
+            echo "  TSGO=<path>            Use a specific tsgo binary (skip auto-install)"
+            echo "  TSGO_NPM_SPEC=<spec>   Override pinned npm package (default: $TSGO_NPM_SPEC)"
+            echo "  UTILITY_TYPES_REF=<sha> Override pinned utility-types commit"
             exit 0
             ;;
         *) shift ;;
@@ -104,6 +122,48 @@ file_info() {
     echo "${lines} lines, ${kb}KB"
 }
 
+ensure_tsgo() {
+    # Honor explicit TSGO override when provided by caller.
+    if [ -n "$TSGO" ]; then
+        if [ ! -x "$TSGO" ]; then
+            echo -e "${RED}✗ TSGO is set but not executable: $TSGO${NC}"
+            exit 1
+        fi
+        return
+    fi
+
+    if ! command -v npm &>/dev/null; then
+        echo -e "${RED}✗ npm not found${NC}"
+        echo "  npm is required to auto-install tsgo ($TSGO_NPM_SPEC)"
+        exit 1
+    fi
+
+    mkdir -p "$TSGO_TOOL_DIR"
+    local spec_file="$TSGO_TOOL_DIR/.tsgo-spec"
+    local installed_spec=""
+    if [ -f "$spec_file" ]; then
+        installed_spec="$(cat "$spec_file")"
+    fi
+
+    if [ ! -x "$TSGO_LOCAL_BIN" ] || [ "$installed_spec" != "$TSGO_NPM_SPEC" ]; then
+        echo -e "${CYAN}Installing tsgo locally (${TSGO_NPM_SPEC})...${NC}"
+        npm install \
+            --prefix "$TSGO_TOOL_DIR" \
+            --no-audit \
+            --no-fund \
+            --loglevel=error \
+            "$TSGO_NPM_SPEC" >/dev/null
+        printf '%s\n' "$TSGO_NPM_SPEC" > "$spec_file"
+    fi
+
+    if [ ! -x "$TSGO_LOCAL_BIN" ]; then
+        echo -e "${RED}✗ tsgo install failed: binary not found at $TSGO_LOCAL_BIN${NC}"
+        exit 1
+    fi
+
+    TSGO="$TSGO_LOCAL_BIN"
+}
+
 check_prerequisites() {
     print_header "Prerequisites Check"
     
@@ -152,16 +212,14 @@ check_prerequisites() {
     echo -e "   Size: $(ls -lh "$TSZ" | awk '{print $5}')"
     echo -e "   Built: $(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$TSZ" 2>/dev/null || stat -c '%y' "$TSZ" 2>/dev/null | cut -d. -f1)"
     
-    # Check tsgo
-    if [ -z "$TSGO" ] || [ ! -x "$TSGO" ]; then
-        echo -e "${RED}✗ tsgo not found${NC}"
-        echo "  Install with: npm install -g @typescript/native-preview"
-        exit 1
-    fi
+    # Check/install tsgo
+    ensure_tsgo
     echo -e "${GREEN}✓${NC} tsgo: $($TSGO --version 2>&1 | head -1)"
+    echo -e "   Binary: $TSGO"
 }
 
 RESULTS_CSV=""
+BENCHMARKS_RUN=0
 
 run_benchmark() {
     local name="$1"
@@ -172,6 +230,8 @@ run_benchmark() {
     if [ -n "$FILTER" ] && ! echo "$name" | grep -qE "$FILTER"; then
         return
     fi
+
+    BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
 
     local lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
     local bytes=$(wc -c < "$file" 2>/dev/null | tr -d ' ')
@@ -218,6 +278,85 @@ run_benchmark() {
         fi
     fi
     rm -f "$json_file"
+}
+
+is_benchmark_selected() {
+    local name="$1"
+    if [ -z "$FILTER" ]; then
+        return 0
+    fi
+    echo "$name" | grep -qE "$FILTER"
+}
+
+ensure_utility_types_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if [ ! -d "$UTILITY_TYPES_DIR/.git" ]; then
+        echo -e "${CYAN}Cloning utility-types fixture...${NC}"
+        git clone --quiet --no-tags --depth 1 "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_DIR"
+    fi
+
+    # If users modified the local fixture, reclone to keep benchmarks deterministic
+    if [ -n "$(git -C "$UTILITY_TYPES_DIR" status --porcelain 2>/dev/null)" ]; then
+        echo -e "${YELLOW}utility-types fixture is dirty; recloning for reproducibility...${NC}"
+        rm -rf "$UTILITY_TYPES_DIR"
+        git clone --quiet --no-tags --depth 1 "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_DIR"
+    fi
+
+    local current_ref
+    current_ref="$(git -C "$UTILITY_TYPES_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+    if [ "$current_ref" != "$UTILITY_TYPES_REF" ]; then
+        echo -e "${CYAN}Pinning utility-types to ${UTILITY_TYPES_REF:0:12}...${NC}"
+        git -C "$UTILITY_TYPES_DIR" fetch --quiet --depth 1 origin "$UTILITY_TYPES_REF"
+        git -C "$UTILITY_TYPES_DIR" checkout --quiet --detach FETCH_HEAD
+    fi
+}
+
+run_utility_types_benchmarks() {
+    local benchmark_names=(
+        "utility-types/index.ts"
+        "utility-types/utility-types.ts"
+        "utility-types/mapped-types.ts"
+        "utility-types/aliases-and-guards.ts"
+    )
+
+    local should_run=false
+    local name
+    for name in "${benchmark_names[@]}"; do
+        if is_benchmark_selected "$name"; then
+            should_run=true
+            break
+        fi
+    done
+
+    if [ "$should_run" != true ]; then
+        return
+    fi
+
+    print_header "Real-world External Library - utility-types"
+    ensure_utility_types_fixture
+    echo -e "${GREEN}✓${NC} utility-types pinned at $(git -C "$UTILITY_TYPES_DIR" rev-parse --short HEAD)"
+
+    local files
+    if [ "$QUICK_MODE" = true ]; then
+        files=("src/index.ts")
+    else
+        files=(
+            "src/index.ts"
+            "src/utility-types.ts"
+            "src/mapped-types.ts"
+            "src/aliases-and-guards.ts"
+        )
+    fi
+
+    local rel
+    for rel in "${files[@]}"; do
+        local full_path="$UTILITY_TYPES_DIR/$rel"
+        if [ -f "$full_path" ]; then
+            run_benchmark "utility-types/${rel#src/}" "$full_path"
+            echo
+        fi
+    done
 }
 
 generate_synthetic_file() {
@@ -1232,6 +1371,8 @@ main() {
             fi
         done
     fi  # End of medium/small files skip
+
+    run_utility_types_benchmarks
     
     print_header "Synthetic Benchmarks - Scaling Test"
     
@@ -1448,6 +1589,14 @@ main() {
         done
     fi
 
+    if [ "$BENCHMARKS_RUN" -eq 0 ]; then
+        echo -e "${RED}No benchmarks matched filter /$FILTER/.${NC}"
+        echo "Try one of:"
+        echo "  ./scripts/bench-vs-tsgo.sh --quick --filter 'utility-types'"
+        echo "  ./scripts/bench-vs-tsgo.sh --quick --filter 'BCT|CFA'"
+        exit 1
+    fi
+
     print_header "Results Summary"
     
     if command -v jq &>/dev/null && [ -n "$RESULTS_CSV" ]; then
@@ -1488,8 +1637,8 @@ main() {
         printf "${CYAN}%s${NC}\n" "─────────────────────────────────────────────────────────────────────────────────────────────────"
         
         # Count wins
-        local tsz_wins=$(echo -e "$RESULTS_CSV" | grep -c ",tsz," || echo "0")
-        local tsgo_wins=$(echo -e "$RESULTS_CSV" | grep -c ",tsgo," || echo "0")
+        local tsz_wins=$(echo -e "$RESULTS_CSV" | awk -F',' '$8 == "tsz" { c++ } END { print c+0 }')
+        local tsgo_wins=$(echo -e "$RESULTS_CSV" | awk -F',' '$8 == "tsgo" { c++ } END { print c+0 }')
         echo
         echo -e "${BOLD}Score:${NC} ${GREEN}tsz ${tsz_wins}${NC} vs ${YELLOW}tsgo ${tsgo_wins}${NC}"
         echo
