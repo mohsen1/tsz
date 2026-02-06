@@ -76,12 +76,12 @@ pub use tsz_common::common::{ModuleKind, NewLineKind, ScriptTarget};
 
 pub use tsz_common::limits;
 
-// Scanner module - token definitions, scanning implementation, and character codes
-pub mod scanner;
-pub use scanner::char_codes;
-pub use scanner::scanner_impl;
-pub use scanner::scanner_impl::*;
-pub use scanner::*;
+// Scanner module - re-exported from tsz-scanner workspace crate
+pub use tsz_scanner as scanner;
+pub use tsz_scanner::char_codes;
+pub use tsz_scanner::scanner_impl;
+pub use tsz_scanner::scanner_impl::*;
+pub use tsz_scanner::*;
 #[cfg(test)]
 #[path = "tests/scanner_impl_tests.rs"]
 mod scanner_impl_tests;

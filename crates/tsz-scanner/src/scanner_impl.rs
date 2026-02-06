@@ -6,10 +6,10 @@
 //! IMPORTANT: All positions are character-based (like JavaScript's string indexing),
 //! NOT byte-based. This ensures compatibility with TypeScript's scanner positions.
 
+use crate::SyntaxKind;
 use crate::char_codes::CharacterCodes;
-use crate::interner::{Atom, Interner};
-use crate::scanner::SyntaxKind;
 use std::sync::Arc;
+use tsz_common::interner::{Atom, Interner};
 use wasm_bindgen::prelude::*;
 
 // =============================================================================
@@ -1460,7 +1460,7 @@ impl ScannerState {
         let text_slice = &self.source[start..self.pos];
 
         // Check if it's a keyword first (common keywords are pre-interned)
-        self.token = crate::scanner::text_to_keyword(text_slice).unwrap_or(SyntaxKind::Identifier);
+        self.token = crate::text_to_keyword(text_slice).unwrap_or(SyntaxKind::Identifier);
 
         // Intern the identifier for O(1) comparison (reuses existing interned string)
         self.token_atom = self.interner.intern(text_slice);
@@ -1505,7 +1505,7 @@ impl ScannerState {
             self.pos += self.char_len_at(self.pos);
         }
 
-        self.token = crate::scanner::text_to_keyword(&result).unwrap_or(SyntaxKind::Identifier);
+        self.token = crate::text_to_keyword(&result).unwrap_or(SyntaxKind::Identifier);
         self.token_atom = self.interner.intern(&result);
         self.token_value.clear();
         self.token_flags |= TokenFlags::UnicodeEscape as u32;
@@ -1587,7 +1587,7 @@ impl ScannerState {
             self.pos += self.char_len_at(self.pos);
         }
 
-        self.token = crate::scanner::text_to_keyword(&result).unwrap_or(SyntaxKind::Identifier);
+        self.token = crate::text_to_keyword(&result).unwrap_or(SyntaxKind::Identifier);
         self.token_atom = self.interner.intern(&result);
         self.token_value.clear();
         self.token_flags |= TokenFlags::UnicodeEscape as u32;
@@ -2421,8 +2421,8 @@ impl ScannerState {
                 self.pos += self.char_len_at(self.pos);
             }
             self.token_value = self.substring(self.token_start, self.pos);
-            self.token = crate::scanner::text_to_keyword(&self.token_value)
-                .unwrap_or(SyntaxKind::Identifier);
+            self.token =
+                crate::text_to_keyword(&self.token_value).unwrap_or(SyntaxKind::Identifier);
             return self.token;
         }
 
@@ -2559,8 +2559,8 @@ impl ScannerState {
                     }
                 }
                 if all_valid {
-                    self.token = crate::scanner::text_to_keyword(&self.token_value)
-                        .unwrap_or(SyntaxKind::Identifier);
+                    self.token =
+                        crate::text_to_keyword(&self.token_value).unwrap_or(SyntaxKind::Identifier);
                 }
             }
         }
