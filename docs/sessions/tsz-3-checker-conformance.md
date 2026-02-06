@@ -273,3 +273,33 @@ Maybe the issue is NOT about rest flags at all. Let me check:
 2. Is there an issue with how `[any]` (tuple) vs `any[]` (array) are compared?
 3. Could the issue be in tuple subtyping rather than function subtyping?
 
+---
+
+## 2026-02-06 Deep Logic Trace
+
+### Traced Through functions.rs Lines 305-331
+
+The logic SHOULD work:
+1. `target_has_rest` = true ✓
+2. `rest_elem_type` = `Some(get_array_element_type(any[]))`
+3. `get_array_element_type(any[])` should return `ANY` (per tuples.rs:372-377)
+4. `rest_is_top` = `true && matches!(Some(ANY), Some(ANY | UNKNOWN))` = `true`
+5. Should return `SubtypeResult::True` at line 311
+
+**But test is failing!** This means:
+- Either `get_array_element_type(any[])` is NOT returning `ANY`
+- Or `target.params.last().type_id` is NOT `any[]` during comparison
+
+### Current Status
+
+**Investigation**: ~280 lines documented in session file
+**Constraint**: Disk space low (had cargo clean)
+**Impact**: Blocks dozens of conformance tests
+**Recommendation from Gemini**: Continue with targeted tracing
+
+**Next Step** (for follow-up session):
+Use tracing with specific filters to see actual TypeId values during comparison:
+```bash
+TSZ_LOG="wasm::solver::subtype=trace" cargo test ...
+```
+
