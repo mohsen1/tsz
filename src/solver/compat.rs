@@ -836,9 +836,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 || member_shape.string_index.is_some()
                 || member_shape.number_index.is_some()
             {
-                eprintln!(
-                    "DEBUG: violates_weak_union - member has empty props or index sig, returning false"
-                );
                 return false;
             }
 

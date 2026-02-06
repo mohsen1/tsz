@@ -14,62 +14,16 @@ use super::*;
 mod generic_strictness_tests {
     use super::*;
 
-    /// Test that generic with constraint uses constraint, not `any`
-    ///
-    /// NOTE: Currently ignored - generic constraint usage in strict subtyping is not fully
-    /// implemented. Generic types should use their constraint for subtyping checks, not
-    /// be treated as `any`.
-    #[test]
-    fn test_generic_with_constraint_uses_constraint_not_any() {
-        let interner = TypeInterner::new();
-        let mut checker = CompatChecker::new(&interner);
-
-        // Create a generic type with constraint: T extends { id: number }
-        let identifiable_constraint = interner.object(vec![PropertyInfo {
-            name: interner.intern_string("id"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        }]);
-
-        let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-            name: interner.intern_string("T"),
-            constraint: Some(identifiable_constraint),
-            default: None,
-            is_const: false,
-        }));
-
-        // Create an instance with the constraint satisfied
-        let obj_with_id = interner.object(vec![
-            PropertyInfo {
-                name: interner.intern_string("id"),
-                type_id: TypeId::NUMBER,
-                write_type: TypeId::NUMBER,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-            },
-            PropertyInfo {
-                name: interner.intern_string("name"),
-                type_id: TypeId::STRING,
-                write_type: TypeId::STRING,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-            },
-        ]);
-
-        // This should be assignable - constraint is satisfied
-        assert!(checker.is_assignable(obj_with_id, t_param));
-    }
+    // DELETED: test_generic_with_constraint_uses_constraint_not_any
+    // This test expected is_assignable(source, T) to return TRUE when source satisfies T's constraint.
+    // This is incorrect TypeScript behavior. A type parameter T is opaque - even if source
+    // satisfies the constraint, source is NOT assignable to T because T could be instantiated
+    // with a more specific subtype that source doesn't satisfy.
+    //
+    // Example: If T extends { id: number }, T could be instantiated as { id: number, tag: 'special' }
+    // The test source { id: 5, name: 'hi' } does NOT have the 'tag' property, so it's not assignable.
+    //
+    // See test_generic_constraint_violation_fails below for the correct test (constraint violations fail).
 
     #[test]
     fn test_generic_constraint_violation_fails() {
@@ -113,9 +67,9 @@ mod generic_strictness_tests {
 
     /// Test that unconstrained generic falls back to Unknown
     ///
-    /// NOTE: Currently ignored - unconstrained generic fallback to Unknown is not fully
-    /// implemented. When checking against an unconstrained generic, the checker should
-    /// use Unknown as the fallback type, but this is not working correctly.
+    /// Unconstrained type parameters behave like unknown for assignability checking.
+    /// While unknown is a "top type" (everything is assignable TO it), it does NOT
+    /// accept all types (unknown is not assignable TO most types).
     #[test]
     fn test_unconstrained_generic_fallback_to_unknown() {
         let interner = TypeInterner::new();
@@ -130,91 +84,25 @@ mod generic_strictness_tests {
         }));
 
         // When checking against unconstrained generic, use Unknown (not Any)
-        // Unknown is a top type but not assignable without check
         let number_type = TypeId::NUMBER;
 
-        // Number should be assignable to unconstrained generic
-        // (unconstrained generic effectively becomes Unknown, which is a top type)
+        // Number should NOT be assignable to unconstrained generic
+        // T behaves like unknown, and unknown doesn't accept concrete types
+        // (T could be instantiated as string, which number is not assignable to)
         let result = checker.is_assignable(number_type, t_param_unconstrained);
-        assert!(result);
+        assert!(
+            !result,
+            "Concrete type should not be assignable to opaque type parameter"
+        );
     }
 
     /// Test that multiple generic constraints are correctly combined
     ///
-    /// NOTE: Currently ignored - multiple generic constraint combination is not fully
-    /// implemented. The type checker should combine multiple constraints using
-    /// intersection types, but this is not working correctly.
-    #[test]
-    fn test_multiple_generic_constraints() {
-        let interner = TypeInterner::new();
-        let mut checker = CompatChecker::new(&interner);
-
-        // T extends { length: number }
-        let length_constraint = interner.object(vec![PropertyInfo {
-            name: interner.intern_string("length"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        }]);
-
-        // U extends { name: string }
-        let name_constraint = interner.object(vec![PropertyInfo {
-            name: interner.intern_string("name"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        }]);
-
-        let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-            name: interner.intern_string("T"),
-            constraint: Some(length_constraint),
-            default: None,
-            is_const: false,
-        }));
-
-        let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-            name: interner.intern_string("U"),
-            constraint: Some(name_constraint),
-            default: None,
-            is_const: false,
-        }));
-
-        // Object satisfying both constraints
-        let combined = interner.object(vec![
-            PropertyInfo {
-                name: interner.intern_string("length"),
-                type_id: TypeId::NUMBER,
-                write_type: TypeId::NUMBER,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-            },
-            PropertyInfo {
-                name: interner.intern_string("name"),
-                type_id: TypeId::STRING,
-                write_type: TypeId::STRING,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-            },
-        ]);
-
-        // Should satisfy both constraints
-        assert!(checker.is_assignable(combined, t_param));
-        assert!(checker.is_assignable(combined, u_param));
-    }
+    /// NOTE: This test was deleted because it had incorrect expectations.
+    /// The test expected is_assignable(source, T) to return TRUE when source satisfies T's constraint.
+    /// This is wrong - type parameters are opaque and don't accept concrete types even if they
+    /// satisfy the constraint. See deleted test_generic_with_constraint_uses_constraint_not_any
+    /// for detailed explanation.
 
     #[test]
     fn test_generic_function_with_constraints() {
