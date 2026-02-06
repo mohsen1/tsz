@@ -148,7 +148,7 @@ This ensures that objects with completely disjoint properties are not considered
 
 ---
 
-## Redefined Priorities (2026-02-05 by Gemini)
+## Redefined Priorities (2026-02-06 by Gemini)
 
 ### ✅ Priority 1: Index Signature Inference - DELETED TESTS (Commit c1460e42c)
 
@@ -231,6 +231,72 @@ const result = foo(arg);
 **Checker Tests**: 3 remaining (control flow / narrowing - pre-existing issues)
 
 The solver stabilization has significantly progressed. Remaining issues are primarily in the checker's control flow analysis, not the type solver itself.
+
+---
+
+## New Priorities (2026-02-06 by Gemini)
+
+### 🔴 Priority 1: Generic Fallback (1 test)
+**Test**: `test_generic_parameter_without_constraint_fallback_to_unknown`
+**Component**: `src/solver/infer.rs`
+
+**Why This Is #1**: This is the last remaining "pure Solver" failure. It represents a fundamental gap in the inference algorithm: when no candidates are found for a generic type parameter, it must resolve to a default (usually `unknown` in modern TS, or its constraint).
+
+**Value**: High. Ensures robustness for all generic function calls where arguments are omitted or don't provide inference candidates.
+
+**Approach**: Modify `resolve_inferences` in `src/solver/infer.rs`. If a type parameter has no candidates and no default, it should fallback to `unknown` (or its constraint).
+
+---
+
+### Priority 2: Narrowing `any` (1 test)
+**Test**: `test_narrow_by_typeof_any`
+**Component**: `src/solver/narrowing.rs`
+
+**Why This Is #2**: This tests the "Lawyer" layer of the type system (handling `any`). Currently, `typeof any === "string"` likely leaves the type as `any`. It should narrow to `string`. This is critical for code that validates external data (which often comes in as `any`).
+
+**Value**: High. Common pattern in validation code.
+
+**Approach**: In `narrow()`, explicitly handle `TypeKey::Any` (or `Intrinsic::Any`). If the narrower is a primitive type predicate, allow `any` to be narrowed.
+
+---
+
+### Priority 3: Keyof Union Narrowing (1 test)
+**Test**: `test_keyof_union_string_index_and_literal_narrows`
+**Component**: `src/solver/narrowing.rs` / `src/solver/operations.rs`
+
+**Why This Is #3**: This is a complex interaction between `keyof`, unions, and index signatures. It's an edge case in structural typing.
+
+**Value**: Medium. Affects advanced mapped types and complex narrowing.
+
+**Approach**: This likely requires ensuring `keyof (A | B)` correctly distributes as `(keyof A) & (keyof B)`, and that narrowing respects this intersection.
+
+---
+
+### Priority 4: Control Flow Tests
+**Tests**: Remaining checker/flow analysis tests
+
+**Why This Is #4**: If these are Checker tests, they depend on the Solver being correct first.
+
+**Value**: Medium.
+
+---
+
+## Summary of Recommendations
+
+| Priority | Feature | Test | Component | Value |
+| :--- | :--- | :--- | :--- | :--- |
+| **1** | **Generic Fallback** | `test_generic_parameter_without_constraint_fallback_to_unknown` | `solver/infer.rs` | **Critical** (Inference correctness) |
+| **2** | **Narrowing Any** | `test_narrow_by_typeof_any` | `solver/narrowing.rs` | **High** (Safety/Validation) |
+| **3** | **Keyof Union** | `test_keyof_union_string_index_and_literal_narrows` | `solver/narrowing.rs` | **Medium** (Advanced types) |
+
+**Action Plan**:
+1. Start with **Generic Fallback**. It's the cleanest "Solver" task and fixes a core inference rule.
+2. Move to **Narrowing Any**. This is a specific rule change in the narrowing logic.
+3. Finish with **Keyof Union**. This might require deeper debugging of the `keyof` operation.
+
+---
+
+## Historical Context
 
 ### Fixed: Generic Inference with Callback Functions (commit 28888e435)
 
