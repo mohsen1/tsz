@@ -1,0 +1,1862 @@
+//! Symbol Resolver Module
+//!
+//! This module contains symbol resolution methods for CheckerState
+//! as part of Phase 2 architecture refactoring.
+//!
+//! The methods in this module handle:
+//! - Symbol type resolution helpers
+//! - Global intrinsic detection
+//! - Symbol information queries
+//! - Identifier symbol resolution
+//! - Qualified name resolution
+//! - Private identifier resolution
+//! - Type parameter resolution
+//! - Library type resolution
+//! - Type query resolution
+//! - Namespace member resolution
+//! - Global value resolution
+//! - Heritage symbol resolution
+//! - Access class resolution
+//!
+//! This module extends CheckerState with additional methods for symbol-related
+//! operations, providing cleaner APIs for common patterns.
+
+use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
+use std::sync::Arc;
+use tsz_binder::symbol_flags::CLASS;
+use tsz_binder::{SymbolId, symbol_flags};
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TypeSymbolResolution {
+    Type(SymbolId),
+    ValueOnly(SymbolId),
+    NotFound,
+}
+
+// =============================================================================
+// Symbol Resolution Methods
+// =============================================================================
+
+impl<'a> CheckerState<'a> {
+    // =========================================================================
+    // Symbol Type Resolution
+    // =========================================================================
+
+    /// Get the type of a symbol with caching.
+    ///
+    /// This is a convenience wrapper around `get_type_of_symbol` that
+    /// provides a clearer name for the operation.
+    pub fn get_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
+        self.get_type_of_symbol(sym_id)
+    }
+
+    // =========================================================================
+    // Global Symbol Detection
+    // =========================================================================
+
+    /// Check if a name refers to a global intrinsic value.
+    ///
+    /// Returns true for names like `undefined`, `NaN`, `Infinity`, etc.
+    pub fn is_global_intrinsic(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "undefined"
+                | "NaN"
+                | "Infinity"
+                | "Math"
+                | "JSON"
+                | "Object"
+                | "Array"
+                | "String"
+                | "Number"
+                | "Boolean"
+                | "Symbol"
+                | "Date"
+                | "RegExp"
+                | "Error"
+                | "Function"
+                | "Promise"
+        )
+    }
+
+    /// Check if a name refers to a global constructor.
+    ///
+    /// Returns true for built-in constructor names like `Object`, `Array`, etc.
+    pub fn is_global_constructor(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "Object"
+                | "Array"
+                | "String"
+                | "Number"
+                | "Boolean"
+                | "Symbol"
+                | "Date"
+                | "RegExp"
+                | "Error"
+                | "Function"
+                | "Promise"
+                | "Map"
+                | "Set"
+                | "WeakMap"
+                | "WeakSet"
+                | "Proxy"
+                | "Reflect"
+        )
+    }
+
+    // =========================================================================
+    // Symbol Information Queries
+    // =========================================================================
+
+    /// Get the name of a symbol.
+    ///
+    /// Returns the symbol's name as a string, or None if the symbol doesn't exist.
+    pub fn get_symbol_name(&self, sym_id: SymbolId) -> Option<String> {
+        self.ctx
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|symbol| symbol.escaped_name.clone())
+    }
+
+    /// Check if a symbol is exported.
+    ///
+    /// Returns true if the symbol has the exported flag set.
+    pub fn is_symbol_exported(&self, sym_id: SymbolId) -> bool {
+        self.ctx
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|symbol| symbol.is_exported)
+            .unwrap_or(false)
+    }
+
+    /// Check if a symbol is type-only (e.g., from `import type`).
+    ///
+    /// Returns true if the symbol has the type-only flag set.
+    pub fn is_symbol_type_only(&self, sym_id: SymbolId) -> bool {
+        self.ctx
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|symbol| symbol.is_type_only)
+            .unwrap_or(false)
+    }
+
+    // =========================================================================
+    // Symbol Property Queries
+    // =========================================================================
+
+    /// Get the value declaration of a symbol.
+    ///
+    /// Returns the primary value declaration node for the symbol, if any.
+    pub fn get_symbol_value_declaration(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<tsz_parser::parser::NodeIndex> {
+        self.ctx.binder.symbols.get(sym_id).and_then(|symbol| {
+            let decl = symbol.value_declaration;
+            if decl.0 != u32::MAX { Some(decl) } else { None }
+        })
+    }
+
+    /// Get all declarations for a symbol.
+    ///
+    /// Returns all declaration nodes associated with the symbol.
+    pub fn get_symbol_declarations(&self, sym_id: SymbolId) -> Vec<tsz_parser::parser::NodeIndex> {
+        self.ctx
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|symbol| symbol.declarations.clone())
+            .unwrap_or_default()
+    }
+
+    /// Check if a symbol has a specific flag.
+    ///
+    /// Returns true if the symbol has the specified flag bit set.
+    /// Returns false if the symbol doesn't exist.
+    pub fn symbol_has_flag(&self, sym_id: SymbolId, flag: u32) -> bool {
+        self.ctx
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|symbol| (symbol.flags & flag) != 0)
+            .unwrap_or(false)
+    }
+
+    /// Safely get symbol flags, returning 0 if symbol doesn't exist.
+    ///
+    /// This defensive accessor prevents crashes when symbol IDs are invalid
+    /// or reference symbols that don't exist in any binder.
+    pub fn symbol_flags_safe(&self, sym_id: SymbolId) -> u32 {
+        self.ctx
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|symbol| symbol.flags)
+            .unwrap_or(0)
+    }
+
+    /// Safely get symbol flags with lib binders fallback.
+    ///
+    /// Returns 0 if the symbol doesn't exist in any binder.
+    pub fn symbol_flags_with_libs(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[Arc<tsz_binder::BinderState>],
+    ) -> u32 {
+        self.ctx
+            .binder
+            .get_symbol_with_libs(sym_id, lib_binders)
+            .map(|symbol| symbol.flags)
+            .unwrap_or(0)
+    }
+
+    // =========================================================================
+    // Identifier Resolution
+    // =========================================================================
+
+    /// Collect lib binders from lib_contexts for cross-arena symbol lookup.
+    /// This enables symbol resolution across lib.d.ts files when lib_binders
+    /// is not populated in the binder (e.g., in the driver.rs path).
+    pub(crate) fn get_lib_binders(&self) -> Vec<Arc<tsz_binder::BinderState>> {
+        self.ctx
+            .lib_contexts
+            .iter()
+            .map(|lc| Arc::clone(&lc.binder))
+            .collect()
+    }
+
+    /// Check if a symbol represents a class member (property, method, accessor, or constructor).
+    ///
+    /// This filters out instance members that cannot be accessed as standalone values.
+    /// However, static members and constructors should still be accessible.
+    pub(crate) fn is_class_member_symbol(flags: u32) -> bool {
+        // Check if it's any kind of class member
+        let is_member = (flags
+            & (symbol_flags::PROPERTY
+                | symbol_flags::METHOD
+                | symbol_flags::GET_ACCESSOR
+                | symbol_flags::SET_ACCESSOR
+                | symbol_flags::CONSTRUCTOR))
+            != 0;
+
+        if !is_member {
+            return false;
+        }
+
+        // Allow constructors - they represent the class itself
+        if (flags & symbol_flags::CONSTRUCTOR) != 0 {
+            return false;
+        }
+
+        // Allow static members - they're accessible via the class name
+        if (flags & symbol_flags::STATIC) != 0 {
+            return false;
+        }
+
+        // Filter out instance members (properties, methods, accessors without STATIC)
+        true
+    }
+
+    /// Resolve an identifier node to its symbol ID.
+    ///
+    /// This function walks the scope chain from the identifier's location upward,
+    /// checking each scope's symbol table for the name. It also checks:
+    /// - Module exports
+    /// - Type parameter scope (for generic functions, classes, type aliases)
+    /// - File locals (global scope from lib.d.ts)
+    /// - Lib binders' file_locals
+    ///
+    /// Returns None if the identifier cannot be resolved to any symbol.
+    pub(crate) fn resolve_identifier_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
+        let result = self.resolve_identifier_symbol_inner(idx);
+        if let Some(sym_id) = result {
+            self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+        }
+        result
+    }
+
+    fn resolve_identifier_symbol_inner(&self, idx: NodeIndex) -> Option<SymbolId> {
+        let ignore_libs = !self.ctx.has_lib_loaded();
+        let lib_binders = if ignore_libs {
+            Vec::new()
+        } else {
+            self.get_lib_binders()
+        };
+        let is_from_lib = |sym_id: SymbolId| self.ctx.symbol_is_from_lib(sym_id);
+        let should_skip_lib_symbol = |sym_id: SymbolId| ignore_libs && is_from_lib(sym_id);
+
+        // First try the binder's resolver which checks scope chain and file_locals
+        let result = self.ctx.binder.resolve_identifier_with_filter(
+            self.ctx.arena,
+            idx,
+            &lib_binders,
+            |sym_id| {
+                if should_skip_lib_symbol(sym_id) {
+                    return false;
+                }
+                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                    let is_class_member = Self::is_class_member_symbol(symbol.flags);
+                    if is_class_member {
+                        return is_from_lib(sym_id)
+                            && (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
+                    }
+                }
+                true
+            },
+        );
+
+        // IMPORTANT: If the binder didn't find the symbol, check lib_contexts directly as a fallback.
+        // The binder's method has a bug where it only queries lib_binders when lib_symbols_merged is FALSE.
+        // After lib symbols are merged into the main binder, lib_symbols_merged is set to TRUE,
+        // causing the binder to skip lib lookup entirely. By checking lib_contexts.file_locals
+        // directly here as a fallback, we bypass that bug and ensure global symbols are always resolved.
+        // This matches the pattern used successfully in generators.rs (lookup_global_type).
+        if result.is_none() && !ignore_libs {
+            // Get the identifier name
+            let node = self.ctx.arena.get(idx)?;
+            let name = if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                ident.escaped_text.as_str()
+            } else {
+                return None;
+            };
+
+            // Check lib_contexts directly for global symbols
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    if !should_skip_lib_symbol(sym_id) {
+                        return Some(sym_id);
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Resolve an identifier symbol for type positions, skipping value-only symbols.
+    pub(crate) fn resolve_identifier_symbol_in_type_position(
+        &self,
+        idx: NodeIndex,
+    ) -> TypeSymbolResolution {
+        let result = self.resolve_identifier_symbol_in_type_position_inner(idx);
+        if let TypeSymbolResolution::Type(sym_id) = result {
+            self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+        }
+        result
+    }
+
+    fn resolve_identifier_symbol_in_type_position_inner(
+        &self,
+        idx: NodeIndex,
+    ) -> TypeSymbolResolution {
+        let node = match self.ctx.arena.get(idx) {
+            Some(node) => node,
+            None => return TypeSymbolResolution::NotFound,
+        };
+        let ident = match self.ctx.arena.get_identifier(node) {
+            Some(ident) => ident,
+            None => return TypeSymbolResolution::NotFound,
+        };
+        let name = ident.escaped_text.as_str();
+
+        let ignore_libs = !self.ctx.has_lib_loaded();
+        // Collect lib binders for cross-arena symbol lookup
+        let lib_binders = if ignore_libs {
+            Vec::new()
+        } else {
+            self.get_lib_binders()
+        };
+        let should_skip_lib_symbol =
+            |sym_id: SymbolId| ignore_libs && self.ctx.symbol_is_from_lib(sym_id);
+        let mut value_only_candidate = None;
+
+        // IMPORTANT: Check lib_contexts directly BEFORE calling binder's resolve_identifier_with_filter.
+        // The binder's method has a bug where it only queries lib_binders when lib_symbols_merged is FALSE.
+        // After lib symbols are merged into the main binder, lib_symbols_merged is set to TRUE,
+        // causing the binder to skip lib lookup entirely. By checking lib_contexts.file_locals
+        // directly here, we bypass that bug and ensure global type symbols are always resolved.
+        // This matches the pattern used successfully in generators.rs (lookup_global_type).
+        if !ignore_libs {
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    if !should_skip_lib_symbol(sym_id) {
+                        // Check if this lib symbol is acceptable as a type symbol
+                        let flags = lib_ctx
+                            .binder
+                            .get_symbol(sym_id)
+                            .map(|s| s.flags)
+                            .unwrap_or(0);
+
+                        // Namespaces and modules are value-only but should be allowed in type position
+                        let is_namespace_or_module = (flags
+                            & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                            != 0;
+
+                        if is_namespace_or_module {
+                            return TypeSymbolResolution::Type(sym_id);
+                        }
+
+                        // For ALIAS symbols, resolve to the target
+                        if flags & symbol_flags::ALIAS != 0 {
+                            let mut visited = Vec::new();
+                            if let Some(target_sym_id) =
+                                self.resolve_alias_symbol(sym_id, &mut visited)
+                            {
+                                // Check the target symbol's flags
+                                let target_flags = self
+                                    .ctx
+                                    .binder
+                                    .get_symbol_with_libs(target_sym_id, &lib_binders)
+                                    .map(|s| s.flags)
+                                    .unwrap_or(0);
+                                if (target_flags
+                                    & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                                    != 0
+                                {
+                                    return TypeSymbolResolution::Type(target_sym_id);
+                                }
+                            }
+                        }
+
+                        // Check if this is a value-only symbol
+                        let is_value_only = (self.alias_resolves_to_value_only(sym_id, None)
+                            || self.symbol_is_value_only(sym_id, None))
+                            && !self.symbol_is_type_only(sym_id, None);
+                        if is_value_only {
+                            if value_only_candidate.is_none() {
+                                value_only_candidate = Some(sym_id);
+                            }
+                        } else {
+                            // Valid type symbol found in lib
+                            return TypeSymbolResolution::Type(sym_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut accept_type_symbol = |sym_id: SymbolId| -> bool {
+            // Get symbol flags to check for special cases
+            let flags = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(sym_id, &lib_binders)
+                .map(|s| s.flags)
+                .unwrap_or(0);
+
+            // Namespaces and modules are value-only but should be allowed in type position
+            // because they can contain types (e.g., MyNamespace.ValueInterface)
+            let is_namespace_or_module =
+                (flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0;
+
+            if is_namespace_or_module {
+                return true;
+            }
+
+            // For ALIAS symbols (import equals declarations), resolve to the target
+            // and check if it's a namespace/module
+            if flags & symbol_flags::ALIAS != 0 {
+                let mut visited = Vec::new();
+                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited) {
+                    let target_flags = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(target_sym_id, &lib_binders)
+                        .map(|s| s.flags)
+                        .unwrap_or(0);
+                    if (target_flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                        != 0
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            let is_value_only = (self.alias_resolves_to_value_only(sym_id, None)
+                || self.symbol_is_value_only(sym_id, None))
+                && !self.symbol_is_type_only(sym_id, None);
+            if is_value_only {
+                if value_only_candidate.is_none() {
+                    value_only_candidate = Some(sym_id);
+                }
+                return false;
+            }
+            true
+        };
+
+        let resolved = self.ctx.binder.resolve_identifier_with_filter(
+            self.ctx.arena,
+            idx,
+            &lib_binders,
+            |sym_id| {
+                if should_skip_lib_symbol(sym_id) {
+                    return false;
+                }
+                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                    let is_class_member = Self::is_class_member_symbol(symbol.flags);
+                    if is_class_member {
+                        return false;
+                    }
+                }
+                accept_type_symbol(sym_id)
+            },
+        );
+
+        if let Some(sym_id) = resolved {
+            return TypeSymbolResolution::Type(sym_id);
+        }
+
+        if let Some(value_only) = value_only_candidate {
+            TypeSymbolResolution::ValueOnly(value_only)
+        } else {
+            TypeSymbolResolution::NotFound
+        }
+    }
+
+    /// Resolve a private identifier to its symbols across class scopes.
+    ///
+    /// Private identifiers (e.g., `#foo`) are only valid within class bodies.
+    /// This function walks the scope chain and collects all symbols with the
+    /// matching private name from class scopes.
+    ///
+    /// Returns a tuple of (symbols_found, saw_class_scope) where:
+    /// - symbols_found: Vec of SymbolIds for all matching private members
+    /// - saw_class_scope: true if any class scope was encountered
+    pub(crate) fn resolve_private_identifier_symbols(
+        &self,
+        idx: NodeIndex,
+    ) -> (Vec<SymbolId>, bool) {
+        self.ctx
+            .binder
+            .resolve_private_identifier_symbols(self.ctx.arena, idx)
+    }
+
+    /// Resolve a qualified name or identifier to a symbol ID.
+    ///
+    /// Handles both simple identifiers and qualified names (e.g., `A.B.C`).
+    /// Also resolves through alias symbols (imports).
+    pub(crate) fn resolve_qualified_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
+        let mut visited_aliases = Vec::new();
+        self.resolve_qualified_symbol_inner(idx, &mut visited_aliases, 0)
+    }
+
+    /// Resolve a qualified name or identifier for type positions.
+    pub(crate) fn resolve_qualified_symbol_in_type_position(
+        &self,
+        idx: NodeIndex,
+    ) -> TypeSymbolResolution {
+        let mut visited_aliases = Vec::new();
+        self.resolve_qualified_symbol_inner_in_type_position(idx, &mut visited_aliases, 0)
+    }
+
+    /// Inner implementation of qualified symbol resolution for type positions.
+    pub(crate) fn resolve_qualified_symbol_inner_in_type_position(
+        &self,
+        idx: NodeIndex,
+        visited_aliases: &mut Vec<SymbolId>,
+        depth: usize,
+    ) -> TypeSymbolResolution {
+        // Prevent stack overflow from deeply nested qualified names
+        const MAX_QUALIFIED_NAME_DEPTH: usize = 128;
+        if depth >= MAX_QUALIFIED_NAME_DEPTH {
+            return TypeSymbolResolution::NotFound;
+        }
+
+        let node = match self.ctx.arena.get(idx) {
+            Some(node) => node,
+            None => return TypeSymbolResolution::NotFound,
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return match self.resolve_identifier_symbol_in_type_position(idx) {
+                TypeSymbolResolution::Type(sym_id) => {
+                    let Some(sym_id) = self.resolve_alias_symbol(sym_id, visited_aliases) else {
+                        return TypeSymbolResolution::NotFound;
+                    };
+                    TypeSymbolResolution::Type(sym_id)
+                }
+                other => other,
+            };
+        }
+
+        if node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            let Some(literal) = self.ctx.arena.get_literal(node) else {
+                return TypeSymbolResolution::NotFound;
+            };
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(&literal.text) {
+                let is_value_only = (self
+                    .alias_resolves_to_value_only(sym_id, Some(&literal.text))
+                    || self.symbol_is_value_only(sym_id, Some(&literal.text)))
+                    && !self.symbol_is_type_only(sym_id, Some(&literal.text));
+                if is_value_only {
+                    return TypeSymbolResolution::ValueOnly(sym_id);
+                }
+                let Some(sym_id) = self.resolve_alias_symbol(sym_id, visited_aliases) else {
+                    return TypeSymbolResolution::NotFound;
+                };
+                return TypeSymbolResolution::Type(sym_id);
+            }
+            return TypeSymbolResolution::NotFound;
+        }
+
+        if node.kind != tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
+            return TypeSymbolResolution::NotFound;
+        }
+
+        let qn = match self.ctx.arena.get_qualified_name(node) {
+            Some(qn) => qn,
+            None => return TypeSymbolResolution::NotFound,
+        };
+        let left_sym = match self.resolve_qualified_symbol_inner_in_type_position(
+            qn.left,
+            visited_aliases,
+            depth + 1,
+        ) {
+            TypeSymbolResolution::Type(sym_id) => sym_id,
+            other => return other,
+        };
+        let Some(left_sym) = self.resolve_alias_symbol(left_sym, visited_aliases) else {
+            return TypeSymbolResolution::NotFound;
+        };
+        let right_name = match self
+            .ctx
+            .arena
+            .get(qn.right)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())
+        {
+            Some(name) => name,
+            None => return TypeSymbolResolution::NotFound,
+        };
+
+        let Some(left_symbol) = self.ctx.binder.get_symbol(left_sym) else {
+            return TypeSymbolResolution::NotFound;
+        };
+        let Some(exports) = left_symbol.exports.as_ref() else {
+            return TypeSymbolResolution::NotFound;
+        };
+
+        // First try direct exports
+        if let Some(member_sym) = exports.get(right_name) {
+            let is_value_only = (self.alias_resolves_to_value_only(member_sym, Some(right_name))
+                || self.symbol_is_value_only(member_sym, Some(right_name)))
+                && !self.symbol_is_type_only(member_sym, Some(right_name));
+            if is_value_only {
+                return TypeSymbolResolution::ValueOnly(member_sym);
+            }
+            let Some(member_sym) = self.resolve_alias_symbol(member_sym, visited_aliases) else {
+                return TypeSymbolResolution::NotFound;
+            };
+            return TypeSymbolResolution::Type(member_sym);
+        }
+
+        // If not found in direct exports, check for re-exports
+        if let Some(ref module_specifier) = left_symbol.import_module {
+            if let Some(reexported_sym) =
+                self.resolve_reexported_member_symbol(module_specifier, right_name, visited_aliases)
+            {
+                let is_value_only = (self
+                    .alias_resolves_to_value_only(reexported_sym, Some(right_name))
+                    || self.symbol_is_value_only(reexported_sym, Some(right_name)))
+                    && !self.symbol_is_type_only(reexported_sym, Some(right_name));
+                if is_value_only {
+                    return TypeSymbolResolution::ValueOnly(reexported_sym);
+                }
+                return TypeSymbolResolution::Type(reexported_sym);
+            }
+        }
+
+        TypeSymbolResolution::NotFound
+    }
+
+    /// Inner implementation of qualified symbol resolution with cycle detection.
+    pub(crate) fn resolve_qualified_symbol_inner(
+        &self,
+        idx: NodeIndex,
+        visited_aliases: &mut Vec<SymbolId>,
+        depth: usize,
+    ) -> Option<SymbolId> {
+        // Prevent stack overflow from deeply nested qualified names
+        const MAX_QUALIFIED_NAME_DEPTH: usize = 128;
+        if depth >= MAX_QUALIFIED_NAME_DEPTH {
+            return None;
+        }
+
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let sym_id = self.resolve_identifier_symbol(idx)?;
+            return self.resolve_alias_symbol(sym_id, visited_aliases);
+        }
+
+        if node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            let literal = self.ctx.arena.get_literal(node)?;
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(&literal.text) {
+                return self.resolve_alias_symbol(sym_id, visited_aliases);
+            }
+            return None;
+        }
+
+        if node.kind != tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
+            return None;
+        }
+
+        let qn = self.ctx.arena.get_qualified_name(node)?;
+        let left_sym = self.resolve_qualified_symbol_inner(qn.left, visited_aliases, depth + 1)?;
+        let left_sym = self.resolve_alias_symbol(left_sym, visited_aliases)?;
+        let right_name = self
+            .ctx
+            .arena
+            .get(qn.right)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+
+        let left_symbol = self.ctx.binder.get_symbol(left_sym)?;
+        let exports = left_symbol.exports.as_ref()?;
+
+        // First try direct exports
+        if let Some(member_sym) = exports.get(right_name) {
+            return self.resolve_alias_symbol(member_sym, visited_aliases);
+        }
+
+        // If not found in direct exports, check for re-exports
+        // This handles cases like: export { foo } from './bar'
+        if let Some(ref module_specifier) = left_symbol.import_module {
+            if let Some(reexported_sym) =
+                self.resolve_reexported_member_symbol(module_specifier, right_name, visited_aliases)
+            {
+                return Some(reexported_sym);
+            }
+        }
+
+        None
+    }
+
+    /// Resolve a re-exported member symbol by following re-export chains.
+    ///
+    /// This function handles cases where a namespace member is re-exported from
+    /// another module using `export { foo } from './bar'` or `export * from './bar'`.
+    pub(crate) fn resolve_reexported_member_symbol(
+        &self,
+        module_specifier: &str,
+        member_name: &str,
+        visited_aliases: &mut Vec<SymbolId>,
+    ) -> Option<SymbolId> {
+        let mut visited_modules = rustc_hash::FxHashSet::default();
+        self.resolve_reexported_member_symbol_inner(
+            module_specifier,
+            member_name,
+            visited_aliases,
+            &mut visited_modules,
+        )
+    }
+
+    /// Inner implementation with cycle detection for module re-exports.
+    fn resolve_reexported_member_symbol_inner(
+        &self,
+        module_specifier: &str,
+        member_name: &str,
+        visited_aliases: &mut Vec<SymbolId>,
+        visited_modules: &mut rustc_hash::FxHashSet<(String, String)>,
+    ) -> Option<SymbolId> {
+        // Cycle detection: check if we've already visited this (module, member) pair
+        let key = (module_specifier.to_string(), member_name.to_string());
+        if visited_modules.contains(&key) {
+            return None;
+        }
+        visited_modules.insert(key);
+
+        // First, check if it's a direct export from this module (ambient modules)
+        if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
+            if let Some(sym_id) = module_exports.get(member_name) {
+                return self.resolve_alias_symbol(sym_id, visited_aliases);
+            }
+        }
+
+        // Cross-file resolution: resolve the module to a target file and look up exports
+        if let Some(target_file_idx) = self.ctx.resolve_import_target(module_specifier) {
+            if let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) {
+                // Check target file's module_exports
+                if let Some((_, exports_table)) = target_binder.module_exports.iter().next() {
+                    if let Some(sym_id) = exports_table.get(member_name) {
+                        return Some(sym_id);
+                    }
+                }
+                // Fall back to target file's file_locals (for exported top-level declarations)
+                if let Some(sym_id) = target_binder.file_locals.get(member_name) {
+                    return Some(sym_id);
+                }
+            }
+        }
+
+        // Check for named re-exports: `export { foo } from 'bar'`
+        if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier) {
+            if let Some((source_module, original_name)) = file_reexports.get(member_name) {
+                let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
+                return self.resolve_reexported_member_symbol_inner(
+                    source_module,
+                    name_to_lookup,
+                    visited_aliases,
+                    visited_modules,
+                );
+            }
+        }
+
+        // Check for wildcard re-exports: `export * from 'bar'`
+        // TSC behavior: If two `export *` declarations export the same name,
+        // that name is considered AMBIGUOUS and is NOT exported
+        // (unless explicitly re-exported by name, which is checked above).
+        if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_specifier) {
+            let mut found_result: Option<SymbolId> = None;
+            let mut found_count = 0;
+
+            for source_module in source_modules {
+                if let Some(sym_id) = self.resolve_reexported_member_symbol_inner(
+                    source_module,
+                    member_name,
+                    visited_aliases,
+                    visited_modules,
+                ) {
+                    found_count += 1;
+                    if found_count == 1 {
+                        found_result = Some(sym_id);
+                    } else {
+                        // Multiple sources export the same name - ambiguous, treat as not exported
+                        return None;
+                    }
+                }
+            }
+
+            if found_result.is_some() {
+                return found_result;
+            }
+        }
+
+        None
+    }
+
+    // =========================================================================
+    // Type Parameter Resolution
+    // =========================================================================
+
+    /// Look up a type parameter by name in the current type parameter scope.
+    ///
+    /// Type parameters are scoped to their declaring generic (function, class, interface, etc.).
+    /// This function checks the current type parameter scope to resolve type parameter names.
+    pub(crate) fn lookup_type_parameter(&self, name: &str) -> Option<TypeId> {
+        self.ctx.type_parameter_scope.get(name).copied()
+    }
+
+    /// Get all type parameter bindings for passing to TypeLowering.
+    ///
+    /// Returns a vector of (name, TypeId) pairs for all type parameters in scope.
+    pub(crate) fn get_type_param_bindings(&self) -> Vec<(tsz_common::interner::Atom, TypeId)> {
+        self.ctx
+            .type_parameter_scope
+            .iter()
+            .map(|(name, &type_id)| (self.ctx.types.intern_string(name), type_id))
+            .collect()
+    }
+
+    // =========================================================================
+    // Entity Name Resolution
+    // =========================================================================
+
+    /// Get the text representation of an entity name node.
+    ///
+    /// Entity names can be simple identifiers or qualified names (e.g., `A.B.C`).
+    /// This function recursively builds the full text representation.
+    pub(crate) fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            let left = self.entity_name_text(qn.left)?;
+            let right = self.entity_name_text(qn.right)?;
+            let mut combined = String::with_capacity(left.len() + 1 + right.len());
+            combined.push_str(&left);
+            combined.push('.');
+            combined.push_str(&right);
+            return Some(combined);
+        }
+        None
+    }
+
+    /// Get the rightmost identifier text for an entity name.
+    ///
+    /// This is used to disambiguate symbol IDs that may collide across binders
+    /// by matching the actual identifier text referenced in source.
+    #[allow(dead_code)]
+    pub(crate) fn entity_name_symbol_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            return self.entity_name_symbol_text(qn.right);
+        }
+        None
+    }
+
+    // =========================================================================
+    // Symbol Resolution for Lowering
+    // =========================================================================
+
+    /// Resolve a type symbol for type lowering.
+    ///
+    /// Returns the symbol ID if the resolved symbol has the TYPE flag set.
+    /// Returns None for built-in types that have special handling in TypeLowering.
+    pub(crate) fn resolve_type_symbol_for_lowering(&self, idx: NodeIndex) -> Option<u32> {
+        use tsz_solver::types::is_compiler_managed_type;
+
+        // Skip built-in types that have special handling in TypeLowering
+        // These types use built-in TypeKey representations instead of Refs
+        if let Some(node) = self.ctx.arena.get(idx)
+            && let Some(ident) = self.ctx.arena.get_identifier(node)
+        {
+            if is_compiler_managed_type(ident.escaped_text.as_str()) {
+                return None;
+            }
+        }
+
+        let sym_id = match self.resolve_qualified_symbol_in_type_position(idx) {
+            TypeSymbolResolution::Type(sym_id) => sym_id,
+            _ => return None,
+        };
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+        if (symbol.flags & symbol_flags::TYPE) != 0 {
+            Some(sym_id.0)
+        } else {
+            None
+        }
+    }
+
+    /// Resolve a value symbol for type lowering.
+    ///
+    /// Returns the symbol ID if the resolved symbol has VALUE or ALIAS flags set.
+    pub(crate) fn resolve_value_symbol_for_lowering(&self, idx: NodeIndex) -> Option<u32> {
+        if let Some(node) = self.ctx.arena.get(idx) {
+            if node.kind == SyntaxKind::Identifier as u16
+                && let Some(sym_id) = self.resolve_identifier_symbol(idx)
+                && self.alias_resolves_to_type_only(sym_id)
+            {
+                return None;
+            }
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let mut current = idx;
+                loop {
+                    let Some(node) = self.ctx.arena.get(current) else {
+                        break;
+                    };
+                    if node.kind == SyntaxKind::Identifier as u16 {
+                        if let Some(sym_id) = self.resolve_identifier_symbol(current)
+                            && self.alias_resolves_to_type_only(sym_id)
+                        {
+                            return None;
+                        }
+                        break;
+                    }
+                    if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+                        break;
+                    }
+                    let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
+                        break;
+                    };
+                    current = qn.left;
+                }
+            }
+        }
+        let sym_id = self.resolve_qualified_symbol(idx)?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+        if symbol.is_type_only {
+            return None;
+        }
+        if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
+            return Some(sym_id.0);
+        }
+
+        // The initial resolution found a TYPE-only symbol (e.g., `interface Promise<T>`
+        // from one lib file). But the VALUE declaration (`declare var Promise`) may
+        // exist in a different lib file. Search all lib binders by name for a symbol
+        // that has the VALUE flag. This handles declaration merging across lib files.
+        let name = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|i| i.escaped_text.as_str());
+        if let Some(name) = name {
+            // Check file_locals first (may have merged value from lib)
+            if let Some(val_sym_id) = self.ctx.binder.file_locals.get(name) {
+                if let Some(val_symbol) = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(val_sym_id, &lib_binders)
+                {
+                    if (val_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0
+                        && !val_symbol.is_type_only
+                    {
+                        return Some(val_sym_id.0);
+                    }
+                }
+            }
+            // Search lib binders directly for a value declaration
+            for lib_binder in &lib_binders {
+                if let Some(val_sym_id) = lib_binder.file_locals.get(name) {
+                    if let Some(val_symbol) = lib_binder.get_symbol(val_sym_id) {
+                        if (val_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0
+                            && !val_symbol.is_type_only
+                        {
+                            return Some(val_sym_id.0);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find a VALUE symbol for a name across all lib binders.
+    ///
+    /// This handles declaration merging across lib files: `interface Promise<T>` may be
+    /// in one lib file (TYPE-only) while `declare var Promise: PromiseConstructor` is
+    /// in another (VALUE). When the initial resolution finds only the TYPE symbol,
+    /// this method searches all lib binders for the VALUE declaration.
+    ///
+    /// Returns the SymbolId of the VALUE symbol if found.
+    pub(crate) fn find_value_symbol_in_libs(&self, name: &str) -> Option<SymbolId> {
+        let lib_binders = self.get_lib_binders();
+        // Check file_locals first (may have merged value from lib)
+        if let Some(val_sym_id) = self.ctx.binder.file_locals.get(name) {
+            if let Some(val_symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(val_sym_id, &lib_binders)
+            {
+                if (val_symbol.flags & symbol_flags::VALUE) != 0 && !val_symbol.is_type_only {
+                    return Some(val_sym_id);
+                }
+            }
+        }
+        // Search lib binders directly
+        for lib_binder in &lib_binders {
+            if let Some(val_sym_id) = lib_binder.file_locals.get(name) {
+                if let Some(val_symbol) = lib_binder.get_symbol(val_sym_id) {
+                    if (val_symbol.flags & symbol_flags::VALUE) != 0 && !val_symbol.is_type_only {
+                        return Some(val_sym_id);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Find a VALUE declaration node for a name across current + lib binders.
+    ///
+    /// Returning the declaration node avoids relying on cross-binder SymbolId
+    /// identity, which can collide and lead to incorrect value/type selection.
+    pub(crate) fn find_value_declaration_in_libs(&self, name: &str) -> Option<NodeIndex> {
+        let lib_binders = self.get_lib_binders();
+
+        // Check merged/local symbols first.
+        if let Some(val_sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(val_symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(val_sym_id, &lib_binders)
+            && (val_symbol.flags & symbol_flags::VALUE) != 0
+            && !val_symbol.is_type_only
+            && !val_symbol.value_declaration.is_none()
+        {
+            return Some(val_symbol.value_declaration);
+        }
+
+        // Then scan lib binders directly.
+        for lib_binder in &lib_binders {
+            if let Some(val_sym_id) = lib_binder.file_locals.get(name)
+                && let Some(val_symbol) = lib_binder.get_symbol(val_sym_id)
+                && (val_symbol.flags & symbol_flags::VALUE) != 0
+                && !val_symbol.is_type_only
+                && !val_symbol.value_declaration.is_none()
+            {
+                return Some(val_symbol.value_declaration);
+            }
+        }
+
+        None
+    }
+
+    // =========================================================================
+    // Global Symbol Resolution
+    // =========================================================================
+
+    /// Resolve a global value symbol by name from file_locals and lib binders.
+    ///
+    /// This is used for looking up global values like `console`, `Math`, `globalThis`, etc.
+    /// It checks:
+    /// 1. Local file_locals (for user-defined globals and merged lib symbols)
+    /// 2. Lib binders' file_locals (only when lib_symbols_merged is false)
+    pub(crate) fn resolve_global_value_symbol(&self, name: &str) -> Option<SymbolId> {
+        // First check local file_locals
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+            return Some(sym_id);
+        }
+
+        // Skip lib binder scan if lib symbols are merged - they're all in file_locals already
+        if self.ctx.binder.lib_symbols_are_merged() {
+            return None;
+        }
+
+        // Legacy path: check lib binders for global symbols
+        let lib_binders = self.get_lib_binders();
+        for lib_binder in &lib_binders {
+            if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
+    // =========================================================================
+    // Heritage Symbol Resolution
+    // =========================================================================
+
+    /// Resolve a heritage clause expression to its symbol.
+    ///
+    /// Heritage clauses appear in `extends` and `implements` clauses of classes and interfaces.
+    /// This function handles:
+    /// - Simple identifiers (e.g., `class B extends A`)
+    /// - Qualified names (e.g., `class B extends Namespace.A`)
+    /// - Property access expressions (e.g., `class B extends module.A`)
+    pub(crate) fn resolve_heritage_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.resolve_identifier_symbol(idx);
+        }
+
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            return self.resolve_qualified_symbol(idx);
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            let left_sym_raw = self.resolve_heritage_symbol(access.expression)?;
+            let name = self
+                .ctx
+                .arena
+                .get(access.name_or_argument)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .map(|ident| ident.escaped_text.clone())?;
+
+            // First, check the raw symbol's direct exports (for namespace symbols)
+            if let Some(left_symbol) = self.ctx.binder.get_symbol(left_sym_raw) {
+                if let Some(exports) = left_symbol.exports.as_ref() {
+                    if let Some(member_sym) = exports.get(&name) {
+                        return Some(member_sym);
+                    }
+                }
+
+                // For import aliases (import X = require("./module")), X represents
+                // the entire module namespace. Look up the member in module_exports.
+                if let Some(ref module_specifier) = left_symbol.import_module {
+                    let mut visited_aliases = Vec::new();
+                    if let Some(member_sym) = self.resolve_reexported_member_symbol(
+                        module_specifier,
+                        &name,
+                        &mut visited_aliases,
+                    ) {
+                        return Some(member_sym);
+                    }
+                }
+            }
+
+            // Try resolving the alias to get the actual symbol (for non-require aliases
+            // like `import X = SomeNamespace`)
+            let mut visited_aliases = Vec::new();
+            if let Some(resolved_sym) =
+                self.resolve_alias_symbol(left_sym_raw, &mut visited_aliases)
+            {
+                if resolved_sym != left_sym_raw {
+                    if let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym) {
+                        if let Some(exports) = resolved_symbol.exports.as_ref() {
+                            if let Some(member_sym) = exports.get(&name) {
+                                return Some(member_sym);
+                            }
+                        }
+                        // Also check module_exports on the resolved symbol
+                        if let Some(ref module_specifier) = resolved_symbol.import_module {
+                            if let Some(member_sym) = self.resolve_reexported_member_symbol(
+                                module_specifier,
+                                &name,
+                                &mut visited_aliases,
+                            ) {
+                                return Some(member_sym);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return None;
+        }
+
+        None
+    }
+
+    /// Check if an expression is a property access on an unresolved import.
+    ///
+    /// Used to suppress TS2304 errors when TS2307 was already emitted for the module.
+    pub(crate) fn is_property_access_on_unresolved_import(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        // Handle property access expressions (e.g., B.B in extends B.B)
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                return false;
+            };
+            // Check if the left side is an unresolved import or a property access on one
+            return self.is_unresolved_import_symbol(access.expression)
+                || self.is_property_access_on_unresolved_import(access.expression);
+        }
+
+        // Handle qualified names (e.g., A.B in type position)
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
+                return false;
+            };
+            return self.is_unresolved_import_symbol(qn.left)
+                || self.is_property_access_on_unresolved_import(qn.left);
+        }
+
+        // Direct identifier - check if it's an unresolved import
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.is_unresolved_import_symbol(idx);
+        }
+
+        false
+    }
+
+    /// Check if an identifier refers to an unresolved import symbol.
+    ///
+    /// Returns true if:
+    /// - The symbol is an ALIAS (import)
+    /// - The imported module cannot be resolved through any of:
+    ///   - module_exports
+    ///   - shorthand_ambient_modules
+    ///   - declared_modules
+    ///   - CLI-resolved modules
+    pub(crate) fn is_unresolved_import_symbol(&self, idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
+            return false;
+        };
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Check if this is an ALIAS symbol (import)
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return false;
+        }
+
+        // Check if it has an import_module - if so, check if that module is resolved
+        if let Some(ref module_name) = symbol.import_module {
+            // Check various ways a module can be resolved
+            if self.ctx.binder.module_exports.contains_key(module_name) {
+                return false; // Module is resolved (has exports)
+            }
+            // Check if this is a shorthand ambient module (no body/exports)
+            // These should be treated as unresolved imports (any type)
+            if self
+                .ctx
+                .binder
+                .shorthand_ambient_modules
+                .contains(module_name)
+            {
+                return true; // Shorthand ambient module - treat as unresolved/any
+            }
+            if self.is_ambient_module_match(module_name) {
+                return false; // Ambient module pattern matches (with body/exports)
+            }
+            if let Some(ref resolved) = self.ctx.resolved_modules {
+                if resolved.contains(module_name) {
+                    return false; // CLI resolved module
+                }
+            }
+            // Module is not resolved - this is an unresolved import
+            return true;
+        }
+
+        // For import equals declarations without import_module set,
+        // check if the value_declaration is an import equals with a require
+        if !symbol.value_declaration.is_none() {
+            let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {
+                return false;
+            };
+            if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                if let Some(import) = self.ctx.arena.get_import_decl(decl_node) {
+                    if let Some(ref_node) = self.ctx.arena.get(import.module_specifier) {
+                        if ref_node.kind == SyntaxKind::StringLiteral as u16 {
+                            if let Some(lit) = self.ctx.arena.get_literal(ref_node) {
+                                let module_name = &lit.text;
+                                if !self.ctx.binder.module_exports.contains_key(module_name)
+                                    && !self
+                                        .ctx
+                                        .binder
+                                        .shorthand_ambient_modules
+                                        .contains(module_name)
+                                    && !self.ctx.binder.declared_modules.contains(module_name)
+                                    && !self
+                                        .ctx
+                                        .resolved_modules
+                                        .as_ref()
+                                        .is_some_and(|r| r.contains(module_name))
+                                    && self.ctx.resolve_import_target(module_name).is_none()
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a module specifier matches a declared or shorthand ambient module pattern.
+    ///
+    /// Supports simple wildcard patterns using `*` (e.g., "foo*baz", "*!text").
+    pub(crate) fn is_ambient_module_match(&self, module_name: &str) -> bool {
+        if self.matches_module_pattern(&self.ctx.binder.declared_modules, module_name)
+            || self.matches_module_pattern(&self.ctx.binder.shorthand_ambient_modules, module_name)
+        {
+            return true;
+        }
+
+        // Also check module_exports keys for wildcard module declarations with bodies.
+        // These are stored as exact pattern strings in module_exports.
+        self.ctx
+            .binder
+            .module_exports
+            .keys()
+            .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))
+    }
+
+    fn matches_module_pattern(
+        &self,
+        patterns: &rustc_hash::FxHashSet<String>,
+        module_name: &str,
+    ) -> bool {
+        patterns
+            .iter()
+            .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))
+    }
+
+    fn module_name_matches_pattern(pattern: &str, module_name: &str) -> bool {
+        let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
+        let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
+
+        if !pattern.contains('*') {
+            return pattern == module_name;
+        }
+
+        // Use globset for robust wildcard matching (handles multiple '*' correctly)
+        // Allow '*' to match path separators so patterns like "*!text" match "./file!text".
+        if let Ok(glob) = globset::GlobBuilder::new(pattern)
+            .literal_separator(false)
+            .build()
+        {
+            let matcher = glob.compile_matcher();
+            return matcher.is_match(module_name);
+        }
+
+        false
+    }
+
+    // =========================================================================
+    // Require/Import Resolution
+    // =========================================================================
+
+    /// Extract the module specifier from a require() call expression or
+    /// a string literal (for import equals declarations where the parser
+    /// stores only the string literal, not the full require() call).
+    ///
+    /// Returns the module path string (e.g., `'./util'` from `require('./util')`).
+    pub(crate) fn get_require_module_specifier(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+
+        // For import equals declarations, the parser stores just the string literal
+        // e.g., `import x = require('./util')` has module_specifier = StringLiteral('./util')
+        if node.kind == SyntaxKind::StringLiteral as u16 {
+            let literal = self.ctx.arena.get_literal(node)?;
+            // Strip surrounding quotes if present (parser stores raw text with quotes)
+            let text = literal.text.trim_matches(|c| c == '"' || c == '\'');
+            return Some(text.to_string());
+        }
+
+        // Handle full require() call expression (for other contexts)
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.ctx.arena.get_call_expr(node)?;
+        let callee_node = self.ctx.arena.get(call.expression)?;
+        let callee_ident = self.ctx.arena.get_identifier(callee_node)?;
+        if callee_ident.escaped_text != "require" {
+            return None;
+        }
+
+        let args = call.arguments.as_ref()?;
+        let first_arg = args.nodes.first().copied()?;
+        let arg_node = self.ctx.arena.get(first_arg)?;
+        let literal = self.ctx.arena.get_literal(arg_node)?;
+        Some(literal.text.clone())
+    }
+
+    /// Resolve a require() call to its symbol.
+    ///
+    /// For require() calls, we don't resolve to a single symbol.
+    /// Instead, compute_type_of_symbol handles this by creating a module namespace type.
+    pub(crate) fn resolve_require_call_symbol(
+        &self,
+        idx: NodeIndex,
+        _visited_aliases: Option<&mut Vec<SymbolId>>,
+    ) -> Option<SymbolId> {
+        // For require() calls, we don't resolve to a single symbol.
+        // Instead, compute_type_of_symbol handles this by creating a module namespace type.
+        // This function now just returns None to indicate no single symbol resolution.
+        let _ = self.get_require_module_specifier(idx)?;
+        // Module resolution for require() is handled in compute_type_of_symbol
+        // by creating an object type from module_exports.
+        None
+    }
+
+    /// Check if a node is a `require()` call expression.
+    ///
+    /// This is used to detect import equals declarations like `import x = require('./module')`
+    /// where we want to return ANY type instead of the literal string type.
+    #[allow(dead_code)] // Infrastructure for module resolution
+    pub(crate) fn is_require_call(&self, idx: NodeIndex) -> bool {
+        let node = match self.ctx.arena.get(idx) {
+            Some(n) => n,
+            None => return false,
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+
+        let call = match self.ctx.arena.get_call_expr(node) {
+            Some(c) => c,
+            None => return false,
+        };
+
+        let callee_node = match self.ctx.arena.get(call.expression) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        let callee_ident = match self.ctx.arena.get_identifier(callee_node) {
+            Some(ident) => ident,
+            None => return false,
+        };
+
+        callee_ident.escaped_text == "require"
+    }
+
+    // =========================================================================
+    // Type Query Resolution
+    // =========================================================================
+
+    /// Find the missing left-most identifier in a type query expression.
+    ///
+    /// For `typeof A.B.C`, if `A` is unresolved, this returns the node for `A`.
+    pub(crate) fn missing_type_query_left(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                if self.resolve_identifier_symbol(current).is_none() {
+                    return Some(current);
+                }
+                return None;
+            }
+            if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+                return None;
+            }
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            current = qn.left;
+        }
+    }
+
+    /// Report a type query missing member error.
+    ///
+    /// For `typeof A.B` where `B` is not found in `A`'s exports, emits TS2694.
+    /// Returns true if an error was reported.
+    pub(crate) fn report_type_query_missing_member(&mut self, idx: NodeIndex) -> bool {
+        let node = match self.ctx.arena.get(idx) {
+            Some(node) => node,
+            None => return false,
+        };
+        if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return false;
+        }
+        let qn = match self.ctx.arena.get_qualified_name(node) {
+            Some(qn) => qn,
+            None => return false,
+        };
+
+        let left_sym = match self.resolve_qualified_symbol(qn.left) {
+            Some(sym) => sym,
+            None => return false,
+        };
+        let lib_binders = self.get_lib_binders();
+        let left_symbol = match self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) {
+            Some(symbol) => symbol,
+            None => return false,
+        };
+
+        // Only report TS2694 for namespace/module/enum/class symbols.
+        // For regular variables (e.g., `typeof x.p` where x is a local variable),
+        // the qualified name refers to a property access, not a namespace member.
+        let is_namespace_like = left_symbol.flags
+            & (symbol_flags::MODULE
+                | CLASS
+                | symbol_flags::REGULAR_ENUM
+                | symbol_flags::CONST_ENUM
+                | symbol_flags::INTERFACE)
+            != 0;
+        if !is_namespace_like {
+            return false;
+        }
+
+        let right_name = match self
+            .ctx
+            .arena
+            .get(qn.right)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())
+        {
+            Some(name) => name,
+            None => return false,
+        };
+
+        // Check direct exports first
+        if let Some(exports) = left_symbol.exports.as_ref() {
+            if exports.has(right_name) {
+                return false;
+            }
+        }
+
+        // For classes, check if the member exists in the class's members (static members)
+        // This handles `typeof C.staticMember` where C is a class
+        if left_symbol.flags & CLASS != 0 {
+            if let Some(members) = left_symbol.members.as_ref() {
+                if members.has(right_name) {
+                    return false;
+                }
+            }
+        }
+
+        // Check for re-exports from other modules
+        // This handles cases like: export { foo } from './bar'
+        if let Some(ref module_specifier) = left_symbol.import_module {
+            let mut visited_aliases = Vec::new();
+            if self
+                .resolve_reexported_member_symbol(
+                    module_specifier,
+                    right_name,
+                    &mut visited_aliases,
+                )
+                .is_some()
+            {
+                return false;
+            }
+        }
+
+        let namespace_name = self
+            .entity_name_text(qn.left)
+            .unwrap_or_else(|| left_symbol.escaped_name.clone());
+        self.error_namespace_no_export(&namespace_name, right_name, qn.right);
+        true
+    }
+
+    // =========================================================================
+    // Test Option Resolution
+    // =========================================================================
+
+    /// Parse a boolean option from test file comments.
+    ///
+    /// Looks for patterns like `// @key: true` or `// @key: false` in the first 32 lines.
+    pub(crate) fn parse_test_option_bool(text: &str, key: &str) -> Option<bool> {
+        for line in text.lines().take(32) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let is_comment =
+                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*');
+            if !is_comment {
+                break;
+            }
+
+            let lower = trimmed.to_ascii_lowercase();
+            let Some(pos) = lower.find(key) else {
+                continue;
+            };
+            let after_key = &lower[pos + key.len()..];
+            let Some(colon_pos) = after_key.find(':') else {
+                continue;
+            };
+            let value = after_key[colon_pos + 1..].trim();
+
+            // Parse boolean value, handling comma-separated values like "true, false"
+            // Also handle trailing commas, semicolons, and other delimiters
+            let value_clean = if let Some(comma_pos) = value.find(',') {
+                &value[..comma_pos]
+            } else if let Some(semicolon_pos) = value.find(';') {
+                &value[..semicolon_pos]
+            } else {
+                value
+            }
+            .trim();
+
+            match value_clean {
+                "true" => return Some(true),
+                "false" => return Some(false),
+                _ => continue,
+            }
+        }
+        None
+    }
+
+    /// Resolve the noImplicitAny setting from source file comments.
+    pub(crate) fn resolve_no_implicit_any_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@noimplicitany") {
+            return value;
+        }
+        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+            return strict;
+        }
+        self.ctx.no_implicit_any() // Use the value from the strict flag
+    }
+
+    /// Resolve the noImplicitReturns setting from source file comments.
+    pub(crate) fn resolve_no_implicit_returns_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@noimplicitreturns") {
+            return value;
+        }
+        // noImplicitReturns is NOT enabled by strict mode by default
+        false
+    }
+
+    /// Resolve the useUnknownInCatchVariables setting from source file comments.
+    pub(crate) fn resolve_use_unknown_in_catch_variables_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@useunknownincatchvariables") {
+            return value;
+        }
+        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+            return strict;
+        }
+        self.ctx.use_unknown_in_catch_variables() // Use the value from the strict flag
+    }
+
+    /// Resolve the noImplicitThis setting from source file comments.
+    pub(crate) fn resolve_no_implicit_this_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@noimplicitthis") {
+            return value;
+        }
+        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+            return strict;
+        }
+        self.ctx.no_implicit_this()
+    }
+
+    /// Resolve the strictPropertyInitialization setting from source file comments.
+    pub(crate) fn resolve_strict_property_initialization_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@strictpropertyinitialization") {
+            return value;
+        }
+        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+            return strict;
+        }
+        self.ctx.compiler_options.strict_property_initialization
+    }
+
+    /// Resolve the strictNullChecks setting from source file comments.
+    pub(crate) fn resolve_strict_null_checks_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@strictnullchecks") {
+            return value;
+        }
+        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+            return strict;
+        }
+        self.ctx.strict_null_checks()
+    }
+
+    /// Resolve the strictFunctionTypes setting from source file comments.
+    pub(crate) fn resolve_strict_function_types_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@strictfunctiontypes") {
+            return value;
+        }
+        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+            return strict;
+        }
+        self.ctx.compiler_options.strict_function_types
+    }
+
+    pub(crate) fn resolve_allow_unreachable_code_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@allowunreachablecode") {
+            return value;
+        }
+        self.ctx.compiler_options.allow_unreachable_code
+    }
+
+    // =========================================================================
+    // Duplicate Declaration Resolution
+    // =========================================================================
+
+    /// Resolve the declaration node for duplicate identifier checking.
+    ///
+    /// For some nodes (like short-hand properties), we need to walk up to find
+    /// the actual declaration node to report the error on.
+    pub(crate) fn resolve_duplicate_decl_node(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = decl_idx;
+        for _ in 0..8 {
+            let node = self.ctx.arena.get(current)?;
+            match node.kind {
+                syntax_kind_ext::VARIABLE_DECLARATION
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::INTERFACE_DECLARATION
+                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION
+                | syntax_kind_ext::MODULE_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CONSTRUCTOR => {
+                    return Some(current);
+                }
+                _ => {
+                    if let Some(ext) = self.ctx.arena.get_extended(current) {
+                        current = ext.parent;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    // =========================================================================
+    // Class Access Resolution
+    // =========================================================================
+
+    /// Resolve the class for a member access expression.
+    ///
+    /// Returns the class declaration node and whether the access is on the constructor type.
+    /// Used for checking private/protected member accessibility.
+    pub(crate) fn resolve_class_for_access(
+        &mut self,
+        expr_idx: NodeIndex,
+        object_type: TypeId,
+    ) -> Option<(NodeIndex, bool)> {
+        if self.is_this_expression(expr_idx)
+            && let Some(ref class_info) = self.ctx.enclosing_class
+        {
+            return Some((class_info.class_idx, self.is_constructor_type(object_type)));
+        }
+
+        if self.is_super_expression(expr_idx)
+            && let Some(ref class_info) = self.ctx.enclosing_class
+            && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
+        {
+            return Some((base_idx, self.is_constructor_type(object_type)));
+        }
+
+        if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.flags & symbol_flags::CLASS != 0
+            && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+        {
+            return Some((class_idx, true));
+        }
+
+        if object_type != TypeId::ANY
+            && object_type != TypeId::ERROR
+            && let Some(class_idx) = self.get_class_decl_from_type(object_type)
+        {
+            return Some((class_idx, false));
+        }
+
+        None
+    }
+
+    /// Resolve the receiver class for a member access expression.
+    ///
+    /// Similar to `resolve_class_for_access`, but returns only the class node.
+    /// Used for determining what class the receiver belongs to.
+    pub(crate) fn resolve_receiver_class_for_access(
+        &self,
+        expr_idx: NodeIndex,
+        object_type: TypeId,
+    ) -> Option<NodeIndex> {
+        if self.is_this_expression(expr_idx) || self.is_super_expression(expr_idx) {
+            return self.ctx.enclosing_class.as_ref().map(|info| info.class_idx);
+        }
+
+        if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.flags & symbol_flags::CLASS != 0
+        {
+            return self.get_class_declaration_from_symbol(sym_id);
+        }
+
+        if object_type != TypeId::ANY
+            && object_type != TypeId::ERROR
+            && let Some(class_idx) = self.get_class_decl_from_type(object_type)
+        {
+            return Some(class_idx);
+        }
+
+        None
+    }
+}
