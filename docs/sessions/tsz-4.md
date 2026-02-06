@@ -835,41 +835,37 @@ Focus on high-impact, low-effort fixes first.
 
 ## Current Session Goal (2025-02-06 - Gemini Consulted)
 
-## Session Summary (2025-02-06)
+## Current Session Goal (2025-02-06)
 
-**Finding: All Major ES5 Downleveling Features Already Implemented**
+**Primary Goal: Fix Structural Gaps in ES5 Downleveling**
 
-Through investigation, discovered that tsz already has complete implementations for:
-- ✅ __spreadArray helper (array spread)
-- ✅ __assign helper (object spread)
-- ✅ for-of downleveling (array indexing pattern)
-- ✅ Template literal downleveling (.concat pattern)
-- ✅ Async/await downleveling (__awaiter/__generator state machines)
-- ✅ Destructuring support (binding_patterns.rs, destructuring_es5.rs)
+**Finding via Triage (per Gemini):**
+Pass rate is 33.9% with **structural issues**, not just formatting. Arrow function tests show:
 
-**Current Pass Rate: 33.9%** (148/437)
+1. **Different `this` capture patterns:**
+   - Expected: `Vector.foo = function () { log(_a); };` (uses captured `_a`)
+   - Actual: `Vector.foo = (function (_this) { return function () { log(_this); }; })(this);`
+   - Both are semantically correct but patterns differ
 
-**Failure Analysis:**
-- Triage shows failures are primarily **formatting/whitespace differences**
-- Example: `+30/-31 lines` (nearly equal line counts)
-- Core functionality works; output differs in trivia (spacing, newlines)
+2. **Nested function formatting:** Multi-line vs single-line decisions
 
-**Conclusion:**
-The ES5 downleveling infrastructure is **structurally complete**. The remaining 66% failure rate is likely due to:
-1. Exact whitespace/formatting matching with tsc
-2. Comment preservation/emission
-3. Source map precision
-4. Minor edge cases in existing implementations
+3. **Comment placement:** Comments in wrong locations (after code instead of before)
 
-**Recommendation:**
-Session should either:
-- **End** and declare "ES5 Infrastructure Complete"
-- **Pivot** to formatting/trivia matching (lower architectural value)
-- **Investigate** specific test categories to find structural gaps
+**Action Plan:**
+1. Identify which `this` capture pattern tsc uses for static methods
+2. Fix arrow function `this` capture to match exactly
+3. Fix comment preservation/emission order
+
+**Arrow Function Pass Rate:** 38.2% (47/123)
+
+**Key Files:**
+- `src/emitter/functions.rs` - Arrow function emission
+- `src/emitter/es5_bindings.rs` - ES5 this capture
+- `src/emitter/mod.rs` - Comment handling
 
 ---
 
-## Current Session Goal (2025-02-06)
+### Previous Completed Work
 
 **Discovery: Async/Await Downleveling Already Implemented** ✅
 
