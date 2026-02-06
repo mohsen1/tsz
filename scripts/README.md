@@ -30,6 +30,7 @@ node scripts/help.mjs
 | `scripts/run-fourslash.sh` | Run language service fourslash tests |
 | `scripts/test.sh` | Run Rust unit tests |
 | `scripts/bench.sh` | Run benchmarks |
+| `scripts/precommit-microbench.sh` | Fast local microbenchmark regression gate |
 | `scripts/build-wasm.sh` | Build WASM module |
 | `scripts/setup.sh` | One-stop setup (submodule, deps, hooks) |
 | `scripts/run-single-test.mjs` | Debug single file (host) |
