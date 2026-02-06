@@ -568,6 +568,39 @@ However, this doesn't solve the underlying timing issue - the interface is still
 **Session Status**: This is a deeper architectural issue requiring rework of type evaluation ordering.
 The mapped type needs to be evaluated AFTER the source interface is fully resolved.
 
+### 2026-02-06: Lazy Placeholder Implementation (In Progress)
+
+**Approach**: Following Gemini recommendation, implemented "Lazy Placeholder" pattern to break circular dependencies without using ERROR as a poison pill.
+
+**Changes Made**:
+
+1. **Lazy Placeholder in `get_type_of_symbol`** (commit: 63af58402)
+   - Changed placeholder from ERROR to `Lazy(DefId)` for INTERFACE/CLASS/TYPE_ALIAS/ENUM symbols
+   - Allows `keyof Lazy(User)` to defer evaluation instead of failing
+   - Prevents ERROR from poisoning circular type resolution
+
+2. **`get_keyof_type` handles Lazy types** (type_computation_complex.rs:576-615)
+   - Changed signature from `&self` to `&mut self`
+   - Resolves `Lazy(DefId)` via `get_type_of_symbol` before computing keyof
+   - Handles Application types by evaluating them first
+   - Recursively resolves Lazy chains
+
+3. **Added tracing** for debugging
+   - Trace placeholder creation with `sym_id`, `placeholder TypeId`, and `is_lazy` flag
+   - Trace KeyOf operand and collect_properties result
+   - Helps identify where Error types are being introduced
+
+**Current Status**:
+- Lazy placeholders are being created correctly (verified with trace: `is_lazy=true`)
+- However, mapped type evaluation still sees `KeyOf(Error)` where operand is TypeId 1 (ERROR)
+- Issue is earlier in lowering pipeline: `KeyOf(Error)` is created during lowering instead of `KeyOf(Lazy(User))`
+- The Lazy placeholder doesn't help if the KeyOf type is already created with Error operand
+
+**Next Steps**:
+Need to trace where KeyOf type is lowered (in type alias lowering) to ensure Lazy(DefId) is preserved through the lowering process. The fix needs to be applied at type lowering time, not evaluation time.
+
+**Committed**: `63af58402`
+
 ## Dependencies
 
 - **tsz-15**: Indexed Access Types (COMPLETE) - testing this implementation
