@@ -1637,9 +1637,10 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
             return result;
         }
 
-        // CRITICAL: Use TypeEvaluator with SELF as resolver (since we implemented TypeResolver)
+        // CRITICAL: Use TypeEvaluator with type_env as resolver
         // This ensures Lazy types are resolved using the TypeEnvironment
-        let mut evaluator = TypeEvaluator::with_resolver(self.as_type_database(), self);
+        let type_env = self.type_env.borrow();
+        let mut evaluator = TypeEvaluator::with_resolver(self.as_type_database(), &*type_env);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
 
         let result = evaluator.evaluate(type_id);
