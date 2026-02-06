@@ -663,26 +663,34 @@ impl<'a> LoweringPass<'a> {
             return;
         };
 
-        // Detect CommonJS helpers: import * as ns from "mod"
+        // Detect CommonJS helpers needed for imports
         if self.is_commonjs()
             && let Some(clause_node) = self.arena.get(import_decl.import_clause)
             && let Some(clause) = self.arena.get_import_clause(clause_node)
             && !clause.is_type_only
-            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
         {
-            // NAMESPACE_IMPORT = 275
-            if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+            // Default import: import d from "mod" -> needs __importDefault
+            if !clause.name.is_none() {
                 let helpers = self.transforms.helpers_mut();
-                helpers.import_star = true;
-                helpers.create_binding = true; // __importStar depends on __createBinding
-            } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-                && !named_imports.name.is_none()
-                && named_imports.elements.nodes.is_empty()
-            {
-                // "default" import with empty named imports (also needs importStar)
-                let helpers = self.transforms.helpers_mut();
-                helpers.import_star = true;
-                helpers.create_binding = true;
+                helpers.import_default = true;
+            }
+
+            // Namespace import: import * as ns from "mod" -> needs __importStar
+            if let Some(bindings_node) = self.arena.get(clause.named_bindings) {
+                // NAMESPACE_IMPORT = 275
+                if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                    let helpers = self.transforms.helpers_mut();
+                    helpers.import_star = true;
+                    helpers.create_binding = true; // __importStar depends on __createBinding
+                } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+                    && !named_imports.name.is_none()
+                    && named_imports.elements.nodes.is_empty()
+                {
+                    // "default" import with empty named imports (also needs importStar)
+                    let helpers = self.transforms.helpers_mut();
+                    helpers.import_star = true;
+                    helpers.create_binding = true;
+                }
             }
         }
 
