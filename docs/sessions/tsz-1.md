@@ -21,13 +21,20 @@
 2. ✅ Implemented `TypeKey::StringIntrinsic { kind, type_arg }`: Canonicalize `type_arg`
 
 #### Priority 2: Task #48 - SubtypeChecker Visitor Pattern Refactor (North Star Rule 2)
-**Status**: ⏳ PENDING
+**Status**: 🔄 IN PROGRESS
 **File**: `src/solver/subtype.rs`
 **Problem**: `SubtypeChecker` is a "God Object" (~1000 lines) with massive match blocks. North Star Rule 2 mandates Visitor Pattern for all type operations.
 **Action**:
-1. Create `StructuralSubtypeVisitor` implementing `TypeVisitor`
-2. Move logic from `check_subtype_inner` into the visitor
-3. Enforces handling all 24+ `TypeKey` variants, preventing "missing variant" bugs
+1. ✅ Create `SubtypeVisitor` implementing `TypeVisitor` (commit: a318e7642)
+2. ⏳ Move logic from `check_subtype_inner` into the visitor
+3. ⏳ Enforce handling all 24+ `TypeKey` variants, preventing "missing variant" bugs
+
+**Progress** (Task #48.1 Complete):
+- Created `SubtypeVisitor<'a, 'b, R>` struct with `checker` and `target` fields
+- Implemented `TypeVisitor` trait with all required methods
+- Core intrinsics (intrinsic, literal) fully implemented
+- Union/Intersection handling implemented
+- Stub implementations for complex types (object, function, callable)
 
 #### Priority 3: Task #49 - Global Canonical Mapping (The O(1) Goal)
 **Status**: ⏳ PENDING
