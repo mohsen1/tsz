@@ -449,6 +449,8 @@ pub mod diagnostic_codes {
     pub const ARGUMENT_NOT_ASSIGNABLE_TO_PARAMETER: u32 = 2345;
     pub const CANNOT_INVOKE_EXPRESSION_WHOSE_TYPE_LACKS_CALL_SIGNATURE: u32 = 2348;
     pub const CANNOT_INVOKE_NON_FUNCTION: u32 = 2349;
+    /// TS6234: This expression is not callable because it is a 'get' accessor. Did you mean to access it without '()'?
+    pub const GET_ACCESSOR_NOT_CALLABLE: u32 = 6234;
     pub const CANNOT_INVOKE_POSSIBLY_UNDEFINED: u32 = 2722;
     pub const CANNOT_FIND_NAME_DID_YOU_MEAN: u32 = 2552; // Cannot find name '{0}'. Did you mean '{1}'?
     /// TS2583: Cannot find name '{0}'. Do you need to change your target library?

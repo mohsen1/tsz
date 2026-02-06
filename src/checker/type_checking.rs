@@ -1996,6 +1996,81 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if an expression is a property access to a get accessor.
+    ///
+    /// Used to emit TS6234 instead of TS2349 when a getter is accidentally called:
+    /// ```typescript
+    /// class Test { get property(): number { return 1; } }
+    /// x.property(); // TS6234: not callable because it's a get accessor
+    /// ```
+    pub(crate) fn is_get_accessor_call(&self, expr_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
+
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+
+        // Get the property name
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        let prop_name = &ident.escaped_text;
+
+        // Check via symbol flags if the property is a getter
+        if let Some(sym_id) = self
+            .ctx
+            .binder
+            .node_symbols
+            .get(&access.name_or_argument.0)
+            .copied()
+        {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                if (symbol.flags & crate::binder::symbol_flags::GET_ACCESSOR) != 0 {
+                    return true;
+                }
+            }
+        }
+
+        // Check if the object type is a class instance with a get accessor for this property
+        if let Some(&obj_type) = self.ctx.node_types.get(&access.expression.0) {
+            if let Some(class_idx) = self.ctx.class_instance_type_to_decl.get(&obj_type).copied() {
+                if let Some(class_node) = self.ctx.arena.get(class_idx) {
+                    if let Some(class) = self.ctx.arena.get_class(class_node) {
+                        for &member_idx in &class.members.nodes {
+                            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                                continue;
+                            };
+                            if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                                if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                                    if let Some(acc_name_node) = self.ctx.arena.get(accessor.name) {
+                                        if let Some(acc_ident) =
+                                            self.ctx.arena.get_identifier(acc_name_node)
+                                        {
+                                            if acc_ident.escaped_text == *prop_name {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     /// Check if a type has a 'prototype' property.
     ///
     /// Functions with a prototype property can be used as constructors.

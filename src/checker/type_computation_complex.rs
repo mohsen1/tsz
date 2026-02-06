@@ -1143,6 +1143,9 @@ impl<'a> CheckerState<'a> {
                 // Only emit TS2348 for types that have construct signatures but zero call signatures
                 if self.is_constructor_type(callee_type) {
                     self.error_class_constructor_without_new_at(callee_type, call.expression);
+                } else if self.is_get_accessor_call(call.expression) {
+                    // TS6234: Calling a get accessor as a function
+                    self.error_get_accessor_not_callable_at(call.expression);
                 } else {
                     // For other non-callable types, emit the generic not-callable error
                     self.error_not_callable_at(callee_type, call.expression);
