@@ -20,9 +20,9 @@ use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::types::*;
 use crate::solver::utils;
 use crate::solver::visitor::{
-    application_id, array_element_type, callable_shape_id, conditional_type_id, enum_components,
-    function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind, is_this_type,
-    keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
+    TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
+    enum_components, function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind,
+    is_this_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
     tuple_list_id, type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
 };
@@ -609,6 +609,190 @@ impl TypeResolver for TypeEnvironment {
 /// Maximum number of unique type pairs to track in cycle detection.
 /// Prevents unbounded memory growth in pathological cases.
 pub const MAX_IN_PROGRESS_PAIRS: usize = limits::MAX_IN_PROGRESS_PAIRS as usize;
+
+// =============================================================================
+// Task #48: SubtypeVisitor - Visitor Pattern for Subtype Checking
+// =============================================================================
+
+/// Visitor for structural subtype checking.
+///
+/// This visitor implements the North Star Rule 2 (Visitor Pattern for type operations).
+/// It wraps a mutable reference to SubtypeChecker and the target type, dispatching
+/// to the appropriate checker methods based on the source type's structure.
+///
+/// ## Design
+///
+/// - **Binary Relation**: Subtyping is binary (A <: B), but visitor is unary (visits A).
+///   The target type B is stored as a field.
+/// - **Coinduction**: All recursive checks MUST go through `self.checker.check_subtype()`
+///   to ensure cycle detection works correctly.
+/// - **Pre-checks**: Special cases (apparent shapes, target-is-union) remain in
+///   `check_subtype_inner` before dispatching to the visitor.
+pub struct SubtypeVisitor<'a, 'b, R: TypeResolver> {
+    /// Reference to the parent checker (for recursive checks and state).
+    pub checker: &'a mut SubtypeChecker<'b, R>,
+    /// The target type we're checking against (the "B" in "A <: B").
+    pub target: TypeId,
+}
+
+impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
+    type Output = SubtypeResult;
+
+    // Default: return False for unimplemented variants
+    fn default_output() -> Self::Output {
+        SubtypeResult::False
+    }
+
+    // Core intrinsics - delegate to checker
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        if let Some(t_kind) = intrinsic_kind(self.checker.interner, self.target) {
+            return self.checker.check_intrinsic_subtype(kind, t_kind);
+        }
+        if self.checker.is_boxed_primitive_subtype(kind, self.target) {
+            SubtypeResult::True
+        } else {
+            SubtypeResult::False
+        }
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        if let Some(t_kind) = intrinsic_kind(self.checker.interner, self.target) {
+            return self.checker.check_literal_to_intrinsic(value, t_kind);
+        }
+        if let Some(t_lit) = literal_value(self.checker.interner, self.target) {
+            return if value == &t_lit {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+        SubtypeResult::False
+    }
+
+    fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
+        if let Some(t_elem) = array_element_type(self.checker.interner, self.target) {
+            self.checker.check_subtype(element_type, t_elem)
+        } else {
+            SubtypeResult::False
+        }
+    }
+
+    fn visit_tuple(&mut self, _list_id: u32) -> Self::Output {
+        // TODO: Implement tuple subtype checking in Task #48.2
+        SubtypeResult::False
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        // Union <: Target requires ALL members to be subtypes
+        let member_list = self.checker.interner.type_list(TypeListId(list_id));
+        for &member in member_list.iter() {
+            if !self.checker.check_subtype(member, self.target).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+        SubtypeResult::True
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        // Intersection <: Target requires AT LEAST ONE member to be subtype
+        let member_list = self.checker.interner.type_list(TypeListId(list_id));
+        for &member in member_list.iter() {
+            if self.checker.check_subtype(member, self.target).is_true() {
+                return SubtypeResult::True;
+            }
+        }
+        SubtypeResult::False
+    }
+
+    fn visit_type_parameter(&mut self, param_info: &TypeParamInfo) -> Self::Output {
+        self.checker
+            .check_type_parameter_subtype(param_info, self.target)
+    }
+
+    fn visit_recursive(&mut self, _de_bruijn_index: u32) -> Self::Output {
+        // Recursive references are valid in coinductive semantics
+        SubtypeResult::True
+    }
+
+    fn visit_lazy(&mut self, _def_id: u32) -> Self::Output {
+        // Lazy types are handled as pre-checks in check_subtype_inner
+        // For now, fall through to default (False)
+        SubtypeResult::False
+    }
+
+    fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
+        // Readonly T <: T and T <: Readonly T
+        self.checker.check_subtype(inner_type, self.target)
+    }
+
+    fn visit_string_intrinsic(
+        &mut self,
+        _kind: StringIntrinsicKind,
+        _type_arg: TypeId,
+    ) -> Self::Output {
+        // String intrinsics are handled by evaluation
+        SubtypeResult::False
+    }
+
+    fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> Self::Output {
+        // Enums are handled as pre-checks in check_subtype_inner
+        self.checker.check_subtype(member_type, self.target)
+    }
+
+    // Stub implementations for remaining variants
+    // These will be filled in as we refactor the check_subtype_inner logic
+    fn visit_object(&mut self, _shape_id: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_object_with_index(&mut self, _shape_id: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_function(&mut self, _shape_id: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_callable(&mut self, _shape_id: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_bound_parameter(&mut self, _de_bruijn_index: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_application(&mut self, _app_id: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_conditional(&mut self, _cond_id: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_mapped(&mut self, _mapped_id: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_index_access(&mut self, _object_type: TypeId, _key_type: TypeId) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_template_literal(&mut self, _template_id: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_type_query(&mut self, _symbol_ref: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_keyof(&mut self, _type_id: TypeId) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_this_type(&mut self) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_infer(&mut self, _param_info: &TypeParamInfo) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_module_namespace(&mut self, _symbol_ref: u32) -> Self::Output {
+        SubtypeResult::False
+    }
+    fn visit_error(&mut self) -> Self::Output {
+        SubtypeResult::False
+    }
+}
 
 /// Subtype checking context.
 /// Maintains the "seen" set for cycle detection.
