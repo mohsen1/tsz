@@ -573,6 +573,7 @@ impl<'a> AsyncES5Transformer<'a> {
         }
 
         // Don't recurse into nested functions
+        // This check must happen before recursing into any children
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
             || node.kind == syntax_kind_ext::ARROW_FUNCTION
