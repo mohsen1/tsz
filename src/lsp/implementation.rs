@@ -10,28 +10,12 @@
 //! 4. For each class/interface, check heritage clauses for the target name
 //! 5. Return locations of implementing classes/interfaces
 
-use crate::binder::BinderState;
-use crate::lsp::position::{LineMap, Location, Position, Range};
+use crate::lsp::position::{Location, Position, Range};
 use crate::lsp::utils::find_node_at_offset;
-use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, modifier_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
-/// Go to Implementation provider.
-///
-/// This struct provides LSP "Go to Implementation" functionality by:
-/// 1. Converting a position to a byte offset
-/// 2. Finding the AST node at that offset
-/// 3. Resolving the node to a symbol (interface or abstract class)
-/// 4. Scanning the file for classes with matching heritage clauses
-/// 5. Returning the locations of implementing declarations
-pub struct GoToImplementationProvider<'a> {
-    arena: &'a NodeArena,
-    binder: &'a BinderState,
-    line_map: &'a LineMap,
-    file_name: String,
-    source_text: &'a str,
-}
+define_lsp_provider!(binder GoToImplementationProvider, "Go to Implementation provider.");
 
 /// The kind of target the user is searching implementations for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,23 +38,6 @@ pub struct ImplementationResult {
 }
 
 impl<'a> GoToImplementationProvider<'a> {
-    /// Create a new Go to Implementation provider.
-    pub fn new(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        line_map: &'a LineMap,
-        file_name: String,
-        source_text: &'a str,
-    ) -> Self {
-        Self {
-            arena,
-            binder,
-            line_map,
-            file_name,
-            source_text,
-        }
-    }
-
     /// Get the escaped_text for an identifier node, reading directly from IdentifierData.
     ///
     /// This bypasses the interner-based `get_identifier_text` which requires the interner
