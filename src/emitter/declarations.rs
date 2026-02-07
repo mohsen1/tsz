@@ -504,6 +504,11 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Skip abstract property declarations (they don't exist at runtime)
+        if self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16) {
+            return;
+        }
+
         // For JavaScript: Skip property declarations that are TypeScript-only
         // (declarations with type annotation but no initializer)
         if prop.initializer.is_none() && !prop.type_annotation.is_none() {
