@@ -50,6 +50,33 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         for &stmt_idx in &block.statements.nodes {
+            // Emit leading comments before this statement
+            if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                if let Some(text) = self.source_text {
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        let c_end = self.all_comments[self.comment_emit_idx].end;
+                        if c_end <= actual_start {
+                            let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                            let c_trailing =
+                                self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                            let comment_text = crate::printer::safe_slice::slice(
+                                text,
+                                c_pos as usize,
+                                c_end as usize,
+                            );
+                            self.write(comment_text);
+                            if c_trailing {
+                                self.write_line();
+                            }
+                            self.comment_emit_idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
             let before_len = self.writer.len();
             self.emit(stmt_idx);
             // Only add newline if something was actually emitted
