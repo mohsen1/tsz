@@ -13,7 +13,6 @@ tsz-scanner = { workspace = true }
 tsz-parser = { workspace = true }
 tsz-binder = { workspace = true }
 rustc-hash = { workspace = true }
-salsa = { workspace = true }
 ena = { workspace = true }
 indexmap = { workspace = true }
 bitflags = { workspace = true }
@@ -25,9 +24,6 @@ serde = { workspace = true }
 
 [dev-dependencies]
 rayon = { workspace = true }
-
-[features]
-experimental_salsa = []
 
 [lints]
 workspace = true

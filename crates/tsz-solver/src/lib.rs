@@ -1,9 +1,8 @@
-//! Phase 7.5: Query-Based Structural Solver
+//! Query-Based Structural Solver
 //!
-//! This module implements a declarative, query-based type solver architecture
-//! that replaces the legacy imperative checker. It uses:
+//! This module implements a declarative, query-based type solver architecture.
+//! It uses:
 //!
-//! - **Salsa**: For incremental recomputation and query memoization
 //! - **Ena**: For unification (Union-Find) in generic type inference
 //! - **Custom TypeKey**: Structural type representation with interning
 //! - **Cycle Detection**: Coinductive semantics for recursive types
@@ -12,7 +11,6 @@
 //! - O(1) type equality via interning (TypeId comparison)
 //! - Automatic cycle handling via coinductive semantics
 //! - Lazy evaluation - only compute types that are queried
-//! - Incremental recomputation via Salsa queries
 mod apparent;
 mod application;
 pub mod binary_ops;
@@ -44,9 +42,6 @@ pub mod objects;
 pub mod operations;
 pub mod operations_property;
 pub mod recursion;
-// salsa_db is feature-gated until salsa API is updated
-#[cfg(feature = "experimental_salsa")]
-pub mod salsa_db;
 pub mod sound;
 mod subtype;
 mod subtype_rules;
@@ -88,8 +83,6 @@ pub use narrowing::*;
 pub use object_literal::*;
 pub use objects::*;
 pub use operations::*;
-#[cfg(feature = "experimental_salsa")]
-pub use salsa_db::*;
 pub use sound::*;
 pub use subtype::*;
 pub use types::Visibility;
