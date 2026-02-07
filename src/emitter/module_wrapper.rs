@@ -130,7 +130,11 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_module_wrapper_body(&mut self, source_node: &crate::parser::node::Node) {
         let prev_module = self.ctx.options.module;
         let prev_auto_detect = self.ctx.auto_detect_module;
+        let prev_original = self.ctx.original_module_kind;
 
+        // Remember the actual module kind (AMD/UMD/System) so export assignments
+        // can emit `return X` instead of `module.exports = X` in AMD.
+        self.ctx.original_module_kind = Some(prev_module);
         self.ctx.options.module = ModuleKind::CommonJS;
         self.ctx.auto_detect_module = false;
 
@@ -138,5 +142,6 @@ impl<'a> Printer<'a> {
 
         self.ctx.options.module = prev_module;
         self.ctx.auto_detect_module = prev_auto_detect;
+        self.ctx.original_module_kind = prev_original;
     }
 }

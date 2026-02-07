@@ -26,31 +26,22 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.write("}");
             }
-            // Emit trailing comments after the block's closing brace
-            self.emit_trailing_comments(node.end);
+            // Trailing comments are handled by the calling context
+            // (class member loop, statement loop, etc.)
             return;
         }
 
-        // Single-line blocks:
-        // 1. If source was single-line and block has one statement, keep it single-line
-        // 2. OR if block has a single simple return statement (TypeScript behavior)
+        // Single-line blocks: preserve single-line formatting from source.
+        // tsc only emits single-line blocks when the original source was single-line.
+        // It never collapses multi-line blocks to single lines.
         let is_single_statement = block.statements.nodes.len() == 1;
-
-        // Check if it's a simple return statement
-        let is_simple_return =
-            is_single_statement && self.is_simple_return_statement(block.statements.nodes[0]);
-
-        // Emit single-line if:
-        // 1. Source was single-line OR
-        // 2. It's a simple return statement (TypeScript behavior for callbacks)
-        let should_emit_single_line =
-            is_single_statement && (self.is_single_line(node) || is_simple_return);
+        let should_emit_single_line = is_single_statement && self.is_single_line(node);
 
         if should_emit_single_line {
             self.write("{ ");
             self.emit(block.statements.nodes[0]);
             self.write(" }");
-            self.emit_trailing_comments(node.end);
+            // Trailing comments are handled by the calling context
             return;
         }
 
@@ -59,18 +50,51 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         for &stmt_idx in &block.statements.nodes {
+            // Emit leading comments before this statement
+            if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                if let Some(text) = self.source_text {
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        let c_end = self.all_comments[self.comment_emit_idx].end;
+                        if c_end <= actual_start {
+                            let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                            let c_trailing =
+                                self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                            let comment_text = crate::printer::safe_slice::slice(
+                                text,
+                                c_pos as usize,
+                                c_end as usize,
+                            );
+                            self.write(comment_text);
+                            if c_trailing {
+                                self.write_line();
+                            }
+                            self.comment_emit_idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
             let before_len = self.writer.len();
             self.emit(stmt_idx);
             // Only add newline if something was actually emitted
             if self.writer.len() > before_len {
+                // Emit trailing comments on the same line as the statement
+                // (e.g., `foo(); // comment` should keep `// comment` on the same line)
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    self.emit_trailing_comments(token_end);
+                }
                 self.write_line();
             }
         }
 
         self.decrease_indent();
         self.write("}");
-        // Emit trailing comments after the block's closing brace
-        self.emit_trailing_comments(node.end);
+        // Trailing comments after the block's closing brace are handled by
+        // the calling context (class member loop, statement loop, etc.)
     }
 
     pub(super) fn emit_variable_statement(&mut self, node: &Node) {
@@ -281,6 +305,18 @@ impl<'a> Printer<'a> {
                     safe_slice::slice(text, comment.pos as usize, comment.end as usize);
                 if !comment_text.is_empty() {
                     self.write(comment_text);
+                }
+                // Advance the global comment index past this comment so it
+                // won't be emitted again by the end-of-file comment sweep.
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c = &self.all_comments[self.comment_emit_idx];
+                    if c.pos >= comment.pos as u32 && c.end <= comment.end as u32 {
+                        self.comment_emit_idx += 1;
+                        break;
+                    } else if c.end > comment.end as u32 {
+                        break;
+                    }
+                    self.comment_emit_idx += 1;
                 }
             }
         }

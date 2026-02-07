@@ -2742,6 +2742,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.checker.no_implicit_this = true;
         options.checker.use_unknown_in_catch_variables = true;
         options.checker.always_strict = true;
+        options.printer.always_strict = true;
     }
     // Individual strict flag overrides (must come after --strict expansion)
     if let Some(val) = args.strict_null_checks {
@@ -2770,6 +2771,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if let Some(val) = args.always_strict {
         options.checker.always_strict = val;
+        options.printer.always_strict = val;
     }
     if let Some(val) = args.allow_unreachable_code {
         options.checker.allow_unreachable_code = val;

@@ -889,7 +889,18 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if self.ctx.is_commonjs() {
+        // Check if we're inside an AMD/UMD wrapper (original module was AMD/UMD)
+        let is_amd_or_umd = matches!(
+            self.ctx.original_module_kind,
+            Some(ModuleKind::AMD) | Some(ModuleKind::UMD)
+        );
+
+        if is_amd_or_umd && export_assign.is_export_equals {
+            // AMD/UMD: export = expr → return expr;
+            self.write("return ");
+            self.emit_expression(export_assign.expression);
+            self.write_semicolon();
+        } else if self.ctx.is_commonjs() {
             // CommonJS: export = expr → module.exports = expr;
             //           export default expr → exports.default = expr;
             if export_assign.is_export_equals {

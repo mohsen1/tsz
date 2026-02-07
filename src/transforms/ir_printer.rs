@@ -374,57 +374,14 @@ impl<'a> IRPrinter<'a> {
                 // 1. Arrow-to-function conversions (is_expression_body)
                 // 2. Functions that were single-line in source (is_source_single_line)
                 // 3. Anonymous functions with simple return bodies (callbacks, etc.)
-                let is_source_single_line = body_source_range
-                    .and_then(|(pos, end)| {
-                        self.source_text.map(|text| {
-                            let start = pos as usize;
-                            let end = std::cmp::min(end as usize, text.len());
-                            if start < end {
-                                !text[start..end].contains('\n')
-                            } else {
-                                false
-                            }
-                        })
-                    })
-                    .unwrap_or(false);
-
-                // Check if this is an anonymous function with a simple return
-                // Used for callbacks like array.every(function(val) { return val.isSunk; })
-                let is_simple_anonymous_return = name.is_none()
-                    && body.len() == 1
-                    && matches!(&body[0], IRNode::ReturnStatement(Some(_)));
-
-                // For simple anonymous returns, check if this appears to be a compact callback
-                // vs a longer prototype method. We use a heuristic: if the source is NOT
-                // explicitly multi-line (has newlines in body), treat it as a callback.
-                let is_likely_callback = is_simple_anonymous_return
-                    && body_source_range.is_some()
-                    && !is_source_single_line
-                    && body_source_range
-                        .and_then(|(start, end)| {
-                            self.source_text.map(|_text| {
-                                let len = (end - start) as usize;
-                                // Check if body range is compact (< 80 chars) despite spanning multiple lines
-                                // This handles cases like: function (val) {\n    return val.x;\n    }
-                                // which is technically multi-line but should be treated as a compact callback
-                                len < 80
-                            })
-                        })
-                        .unwrap_or(false);
+                let is_source_single_line = self.is_body_source_single_line(*body_source_range);
 
                 // Determine if we should emit single-line:
-                // - For arrow-to-function conversions: single-line
-                // - For compact callbacks (short bodies, even if multi-line in source): single-line
+                // - For arrow-to-function conversions: always single-line
                 // - For functions that were single-line in source: single-line
-                // - Otherwise: respect original source formatting
-                // - Generated code without source info: use simple anonymous return heuristic
-                let should_emit_single_line = if body_source_range.is_some() {
-                    // We have source range info
-                    *is_expression_body || is_source_single_line || is_likely_callback
-                } else {
-                    // No source range - use heuristic for generated code
-                    *is_expression_body || is_simple_anonymous_return
-                };
+                // tsc never collapses multi-line function bodies to single line,
+                // so we should NOT use heuristics to guess single-line for generated code.
+                let should_emit_single_line = *is_expression_body || is_source_single_line;
 
                 if !has_defaults
                     && should_emit_single_line
@@ -436,7 +393,7 @@ impl<'a> IRPrinter<'a> {
                     self.write("; }");
                     return;
                 }
-                self.emit_function_body_with_defaults(parameters, body);
+                self.emit_function_body_with_defaults(parameters, body, *body_source_range);
             }
             IRNode::LogicalOr { left, right } => {
                 self.emit_node(left);
@@ -623,13 +580,14 @@ impl<'a> IRPrinter<'a> {
                 name,
                 parameters,
                 body,
+                body_source_range,
             } => {
                 self.write("function ");
                 self.write(name);
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
-                self.emit_function_body_with_defaults(parameters, body);
+                self.emit_function_body_with_defaults(parameters, body, *body_source_range);
             }
 
             // ES5 Class Transform Specific
@@ -1128,6 +1086,8 @@ impl<'a> IRPrinter<'a> {
                 is_exported,
                 attach_to_exports,
                 should_declare_var,
+                parent_name,
+                param_name,
             } => {
                 self.emit_namespace_iife(
                     name_parts,
@@ -1136,6 +1096,8 @@ impl<'a> IRPrinter<'a> {
                     *is_exported,
                     *attach_to_exports,
                     *should_declare_var,
+                    parent_name.as_deref(),
+                    param_name.as_deref(),
                 );
             }
             IRNode::NamespaceExport {
@@ -1200,9 +1162,18 @@ impl<'a> IRPrinter<'a> {
         is_exported: bool,
         attach_to_exports: bool,
         should_declare_var: bool,
+        parent_name: Option<&str>,
+        param_name: Option<&str>,
     ) {
         let current_name = &name_parts[index];
         let is_last = index == name_parts.len() - 1;
+        // Use renamed parameter name only at the innermost (last) level for collision avoidance.
+        // Outer levels of qualified names (A.B.C) always use their original name.
+        let iife_param = if is_last {
+            param_name.unwrap_or(current_name.as_str())
+        } else {
+            current_name.as_str()
+        };
 
         // Emit var declaration only for the outermost namespace and if flag is true
         if index == 0 && should_declare_var {
@@ -1215,7 +1186,7 @@ impl<'a> IRPrinter<'a> {
         // Open IIFE: (function (name) {
         self.write_indent();
         self.write("(function (");
-        self.write(current_name);
+        self.write(iife_param);
         self.write(") {");
         self.write_line();
         self.increase_indent();
@@ -1235,7 +1206,7 @@ impl<'a> IRPrinter<'a> {
             self.write(next_name);
             self.write(";");
             self.write_line();
-            // Recurse for nested namespace
+            // Recurse for nested namespace (inner levels use name_parts[index-1] as parent)
             self.emit_namespace_iife(
                 name_parts,
                 index + 1,
@@ -1243,43 +1214,59 @@ impl<'a> IRPrinter<'a> {
                 is_exported,
                 attach_to_exports,
                 true,
+                None,
+                param_name,
             );
+            self.write_line();
         }
 
         self.decrease_indent();
         self.write_indent();
         self.write("})(");
 
-        // Argument
+        // Argument: emit the IIFE argument binding
         if index == 0 {
-            self.write(current_name);
-            if is_exported && attach_to_exports {
+            if let Some(parent) = parent_name {
+                // Nested namespace with parent: Name = Parent.Name || (Parent.Name = {})
+                self.write(current_name);
+                self.write(" = ");
+                self.write(parent);
+                self.write(".");
+                self.write(current_name);
+                self.write(" || (");
+                self.write(parent);
+                self.write(".");
+                self.write(current_name);
+                self.write(" = {})");
+            } else if is_exported && attach_to_exports {
+                self.write(current_name);
                 self.write(" = exports.");
                 self.write(current_name);
                 self.write(" || (exports.");
                 self.write(current_name);
                 self.write(" = {})");
             } else {
+                self.write(current_name);
                 self.write(" || (");
                 self.write(current_name);
                 self.write(" = {})");
             }
         } else {
-            let parent_name = &name_parts[index - 1];
+            // Qualified name parts (A.B.C): Name = Parent.Name || (Parent.Name = {})
+            let parent = &name_parts[index - 1];
             self.write(current_name);
             self.write(" = ");
-            self.write(parent_name);
+            self.write(parent);
             self.write(".");
             self.write(current_name);
             self.write(" || (");
-            self.write(parent_name);
+            self.write(parent);
             self.write(".");
             self.write(current_name);
             self.write(" = {})");
         }
 
         self.write(");");
-        self.write_line();
     }
 
     fn emit_block(&mut self, stmts: &[IRNode]) {
@@ -1303,16 +1290,62 @@ impl<'a> IRPrinter<'a> {
         self.write("}");
     }
 
+    /// Check if a body source range represents a single-line block in the source text.
+    /// Uses brace depth counting to find the matching `}` and skips leading trivia.
+    fn is_body_source_single_line(&self, body_source_range: Option<(u32, u32)>) -> bool {
+        body_source_range
+            .and_then(|(pos, end)| {
+                self.source_text.map(|text| {
+                    let start = pos as usize;
+                    let end = std::cmp::min(end as usize, text.len());
+                    if start < end {
+                        let slice = &text[start..end];
+                        if let Some(open) = slice.find('{') {
+                            let mut depth = 1;
+                            for (i, ch) in slice[open + 1..].char_indices() {
+                                match ch {
+                                    '{' => depth += 1,
+                                    '}' => {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            let inner = &slice[open..open + 1 + i + 1];
+                                            return !inner.contains('\n');
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        !slice.contains('\n')
+                    } else {
+                        false
+                    }
+                })
+            })
+            .unwrap_or(false)
+    }
+
     /// Emit function body with default parameter checks prepended (ES5 style)
-    fn emit_function_body_with_defaults(&mut self, params: &[IRParam], body: &[IRNode]) {
+    fn emit_function_body_with_defaults(
+        &mut self,
+        params: &[IRParam],
+        body: &[IRNode],
+        body_source_range: Option<(u32, u32)>,
+    ) {
         // Check if any params have defaults
         let has_defaults = params.iter().any(|p| p.default_value.is_some());
 
         if !has_defaults && body.is_empty() {
-            self.write("{");
-            self.write_line();
-            self.write_indent();
-            self.write("}");
+            let is_source_single_line = self.is_body_source_single_line(body_source_range);
+
+            if is_source_single_line {
+                self.write("{ }");
+            } else {
+                self.write("{");
+                self.write_line();
+                self.write_indent();
+                self.write("}");
+            }
             return;
         }
 

@@ -232,6 +232,8 @@ pub enum IRNode {
         name: String,
         parameters: Vec<IRParam>,
         body: Vec<IRNode>,
+        /// Source range of the body block (for preserving single-line formatting)
+        body_source_range: Option<(u32, u32)>,
     },
 
     // =========================================================================
@@ -407,6 +409,13 @@ pub enum IRNode {
         /// Whether to emit the `var name;` declaration for this namespace.
         /// Set to false when merging with a class/function/enum that already declared it.
         should_declare_var: bool,
+        /// Parent namespace name for qualified binding: `NS = Parent.NS || (Parent.NS = {})`
+        parent_name: Option<String>,
+        /// Renamed IIFE parameter name when a member collides with the namespace name.
+        /// E.g., namespace A { export class A {} } => `(function (A_1) { ... A_1.A = A; })`
+        /// Only the function parameter and namespace exports use this name;
+        /// the var declaration and argument still use the original name.
+        param_name: Option<String>,
     },
 
     /// Namespace export: `NS.foo = ...;`
@@ -601,6 +610,7 @@ impl IRNode {
             name: name.into(),
             parameters: params,
             body,
+            body_source_range: None,
         }
     }
 

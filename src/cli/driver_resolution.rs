@@ -1688,12 +1688,16 @@ pub(crate) fn emit_outputs(
             printer_options.type_only_nodes = type_only_nodes;
 
             // Run the lowering pass to generate transform directives
-            let ctx = crate::emit_context::EmitContext::with_options(printer_options.clone());
+            let mut ctx = crate::emit_context::EmitContext::with_options(printer_options.clone());
+            // Enable auto-detect module: when module is None and file has imports/exports,
+            // the emitter should switch to CommonJS (matching tsc behavior)
+            ctx.auto_detect_module = true;
             let transforms =
                 crate::lowering_pass::LoweringPass::new(&file.arena, &ctx).run(file.source_file);
 
             let mut printer =
                 Printer::with_transforms_and_options(&file.arena, transforms, printer_options);
+            printer.set_auto_detect_module(true);
             // Always set source text for comment preservation and single-line detection
             if let Some(source_text) = file
                 .arena
