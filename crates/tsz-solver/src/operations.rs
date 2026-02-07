@@ -387,6 +387,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     CallResult::NotCallable { type_id: func_type }
                 }
             }
+            // The `Function` intrinsic type is callable in TypeScript and returns `any`.
+            // This matches tsc behavior: `declare const f: Function; f()` is valid.
+            TypeKey::Intrinsic(IntrinsicKind::Function) => CallResult::Success(TypeId::ANY),
+            // `any` is callable and returns `any`
+            TypeKey::Intrinsic(IntrinsicKind::Any) => CallResult::Success(TypeId::ANY),
+            // `error` propagates as error
+            TypeKey::Error => CallResult::Success(TypeId::ERROR),
             _ => CallResult::NotCallable { type_id: func_type },
         }
     }

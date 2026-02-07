@@ -1814,6 +1814,111 @@ impl<'a> CheckerState<'a> {
     /// - `type_id`: The type ID to check
     ///
     /// Returns true if the type is a constructor type.
+    /// Replace `Function` type members with a callable type for call resolution.
+    ///
+    /// When the callee type is exactly the Function type, returns `TypeId::ANY` directly.
+    /// When the callee type is a union containing Function members, replaces those
+    /// members with a synthetic function `(...args: any[]) => any` so that
+    /// `resolve_union_call` in the solver can handle it.
+    pub(crate) fn replace_function_type_for_call(
+        &mut self,
+        callee_type_orig: TypeId,
+        callee_type_for_call: TypeId,
+    ) -> TypeId {
+        // Direct Function type - return ANY (which is callable)
+        if self.is_global_function_type(callee_type_orig) {
+            return TypeId::ANY;
+        }
+
+        // Check if callee_type_for_call is a union containing Function members
+        if let Some(tsz_solver::TypeKey::Union(list_id)) =
+            self.ctx.types.lookup(callee_type_for_call)
+        {
+            let members = self.ctx.types.type_list(list_id);
+            let orig_members = if let Some(tsz_solver::TypeKey::Union(orig_list)) =
+                self.ctx.types.lookup(callee_type_orig)
+            {
+                Some(self.ctx.types.type_list(orig_list).to_vec())
+            } else {
+                None
+            };
+
+            let mut has_function = false;
+            let mut new_members = Vec::new();
+
+            for (i, &member) in members.iter().enumerate() {
+                // Check if this member corresponds to a Function type in the original
+                let is_func = if let Some(ref orig) = orig_members {
+                    i < orig.len() && self.is_global_function_type(orig[i])
+                } else {
+                    false
+                };
+
+                if is_func {
+                    has_function = true;
+                    // Replace Function member with a synthetic callable returning any
+                    // Use a simple function: (...args: any[]) => any
+                    let rest_param = tsz_solver::ParamInfo {
+                        name: Some(self.ctx.types.intern_string("args")),
+                        type_id: TypeId::ANY,
+                        optional: false,
+                        rest: true,
+                    };
+                    let func_shape = tsz_solver::FunctionShape {
+                        params: vec![rest_param],
+                        this_type: None,
+                        return_type: TypeId::ANY,
+                        type_params: vec![],
+                        type_predicate: None,
+                        is_constructor: false,
+                        is_method: false,
+                    };
+                    let func_type = self.ctx.types.function(func_shape);
+                    new_members.push(func_type);
+                } else {
+                    new_members.push(member);
+                }
+            }
+
+            if has_function {
+                return self.ctx.types.union(new_members);
+            }
+        }
+
+        callee_type_for_call
+    }
+
+    /// Check if a type is the global `Function` interface type from lib.d.ts.
+    ///
+    /// In TypeScript, the `Function` type is callable (returns `any`) even though
+    /// the `Function` interface has no call signatures. This method identifies
+    /// the Function type so the caller can handle it specially.
+    pub(crate) fn is_global_function_type(&mut self, type_id: TypeId) -> bool {
+        // Quick check for the intrinsic Function type
+        if type_id == TypeId::FUNCTION {
+            return true;
+        }
+
+        // Check if the type matches the global Function interface type.
+        // The Function type annotation resolves to a Lazy(DefId) pointing to the
+        // Function symbol. We look up the global Function symbol and compare.
+        let lib_binders = self.get_lib_binders();
+        if let Some(func_sym_id) = self
+            .ctx
+            .binder
+            .get_global_type_with_libs("Function", &lib_binders)
+        {
+            let func_type = self.type_reference_symbol_type(func_sym_id);
+            if type_id == func_type {
+                return true;
+            }
+        }
+
+        // Also check union members: if all callable members resolve through Function
+        // (e.g., `Function | (() => void)` should still be callable)
+        false
+    }
+
     pub(crate) fn is_constructor_type(&self, type_id: TypeId) -> bool {
         // Any type is always considered a constructor type (TypeScript compatibility)
         if type_id == TypeId::ANY {

@@ -1188,6 +1188,30 @@ impl<'a> CheckerState<'a> {
         // This handles interfaces with call signatures, merged declarations, etc.
         let callee_type_for_call = self.resolve_ref_type(callee_type_for_call);
 
+        // The `Function` interface from lib.d.ts has no call signatures, but in TypeScript
+        // it is callable and returns `any`. Check if the callee is the Function boxed type
+        // or the Function intrinsic and handle it like `any`.
+        // The `Function` interface from lib.d.ts has no call signatures, but in TypeScript
+        // it is callable and returns `any`. We check both the intrinsic TypeId::FUNCTION
+        // and the global Function interface type resolved from lib.d.ts.
+        // For unions containing Function members, we replace those members with a
+        // synthetic callable that returns `any` so resolve_union_call succeeds.
+        let callee_type_for_call =
+            self.replace_function_type_for_call(callee_type, callee_type_for_call);
+        if callee_type_for_call == TypeId::ANY {
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
+                args,
+                |_i, _arg_count| None,
+                check_excess_properties,
+            );
+            return if nullish_cause.is_some() {
+                self.ctx.types.union(vec![TypeId::ANY, TypeId::UNDEFINED])
+            } else {
+                TypeId::ANY
+            };
+        }
+
         // Ensure all Ref types in callee/args are resolved into type_env for assignability.
         self.ensure_refs_resolved(callee_type_for_call);
         for &arg_type in &arg_types {
