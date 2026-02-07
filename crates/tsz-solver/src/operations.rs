@@ -719,6 +719,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let rest_tuple_inference =
             self.rest_tuple_inference_target(&instantiated_params, arg_types, &var_map);
         let rest_tuple_start = rest_tuple_inference.as_ref().map(|(start, _, _)| *start);
+        let has_context_sensitive_args = arg_types.iter().enumerate().any(|(i, &arg_type)| {
+            if rest_tuple_start.is_some_and(|start| i >= start) {
+                return false;
+            }
+            self.is_contextually_sensitive(arg_type)
+        });
 
         // === Round 1: Process non-contextual arguments ===
         // These are arguments like arrays, primitives, and objects that don't need
@@ -734,8 +740,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 break;
             };
 
-            // Skip contextually sensitive arguments (will process in Round 2)
-            if self.is_contextually_sensitive(arg_type) {
+            // Skip contextually sensitive arguments (will process in Round 2).
+            if has_context_sensitive_args && self.is_contextually_sensitive(arg_type) {
                 continue;
             }
 
@@ -795,59 +801,61 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             );
         }
 
-        // === Fixing: Resolve variables with enough information ===
-        // This "fixes" type variables that have candidates from Round 1,
-        // preventing Round 2 from overriding them with lower-priority constraints.
-        if let Err(_) = infer_ctx.fix_current_variables() {
-            // Fixing failed - this might indicate a constraint conflict
-            // Continue with partial fixing, final resolution will detect errors
-        }
-
-        // === Round 2: Process contextual arguments ===
-        // These are arguments like lambdas that need contextual typing.
-        // Now that non-contextual arguments have been processed, we can provide
-        // proper contextual types to lambdas based on fixed type variables.
-        for (i, &arg_type) in arg_types.iter().enumerate() {
-            if rest_tuple_start.is_some_and(|start| i >= start) {
-                continue;
-            }
-            let Some(target_type) =
-                self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
-            else {
-                break;
-            };
-
-            // Only process contextually sensitive arguments in Round 2
-            if !self.is_contextually_sensitive(arg_type) {
-                continue;
+        if has_context_sensitive_args {
+            // === Fixing: Resolve variables with enough information ===
+            // This "fixes" type variables that have candidates from Round 1,
+            // preventing Round 2 from overriding them with lower-priority constraints.
+            if let Err(_) = infer_ctx.fix_current_variables() {
+                // Fixing failed - this might indicate a constraint conflict
+                // Continue with partial fixing, final resolution will detect errors
             }
 
-            // Check if target_type contains placeholders BEFORE any re-instantiation
-            placeholder_visited.clear();
-            let target_has_placeholders =
-                self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited);
-
-            if !target_has_placeholders {
-                // No placeholders in target - direct assignability check
-                if !self.checker.is_assignable_to(arg_type, target_type) {
-                    return CallResult::ArgumentTypeMismatch {
-                        index: i,
-                        expected: target_type,
-                        actual: arg_type,
-                    };
+            // === Round 2: Process contextual arguments ===
+            // These are arguments like lambdas that need contextual typing.
+            // Now that non-contextual arguments have been processed, we can provide
+            // proper contextual types to lambdas based on fixed type variables.
+            for (i, &arg_type) in arg_types.iter().enumerate() {
+                if rest_tuple_start.is_some_and(|start| i >= start) {
+                    continue;
                 }
-            } else {
-                // Target has placeholders - collect constraints using the original target_type
-                // This preserves the connection to inference variables (e.g., U in (x: T) => U)
-                // IMPORTANT: Use target_type directly, not contextual_target, to maintain
-                // the placeholder connection for unresolved type parameters
-                self.constrain_types(
-                    &mut infer_ctx,
-                    &var_map,
-                    arg_type,
-                    target_type,
-                    crate::types::InferencePriority::ReturnType,
-                );
+                let Some(target_type) =
+                    self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
+                else {
+                    break;
+                };
+
+                // Only process contextually sensitive arguments in Round 2
+                if !self.is_contextually_sensitive(arg_type) {
+                    continue;
+                }
+
+                // Check if target_type contains placeholders BEFORE any re-instantiation
+                placeholder_visited.clear();
+                let target_has_placeholders =
+                    self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited);
+
+                if !target_has_placeholders {
+                    // No placeholders in target - direct assignability check
+                    if !self.checker.is_assignable_to(arg_type, target_type) {
+                        return CallResult::ArgumentTypeMismatch {
+                            index: i,
+                            expected: target_type,
+                            actual: arg_type,
+                        };
+                    }
+                } else {
+                    // Target has placeholders - collect constraints using the original target_type
+                    // This preserves the connection to inference variables (e.g., U in (x: T) => U)
+                    // IMPORTANT: Use target_type directly, not contextual_target, to maintain
+                    // the placeholder connection for unresolved type parameters
+                    self.constrain_types(
+                        &mut infer_ctx,
+                        &var_map,
+                        arg_type,
+                        target_type,
+                        crate::types::InferencePriority::ReturnType,
+                    );
+                }
             }
         }
 

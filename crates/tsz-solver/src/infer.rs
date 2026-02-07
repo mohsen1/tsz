@@ -3581,6 +3581,12 @@ impl<'a> InferenceContext<'a> {
     /// Strengthen constraints by analyzing relationships between type parameters.
     /// For example, if T <: U and we know T = string, then U must be at least string.
     pub fn strengthen_constraints(&mut self) -> Result<(), InferenceError> {
+        // Fast path: a single type parameter cannot participate in inter-parameter
+        // propagation or SCC unification.
+        if self.type_params.len() <= 1 {
+            return Ok(());
+        }
+
         // Phase 1: Detect and unify circular constraints (SCCs)
         // This ensures that type parameters in cycles (T extends U, U extends T)
         // are treated as a single equivalence class for inference.

@@ -1822,6 +1822,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_atom: Option<Atom>,
     ) -> PropertyAccessResult {
         let app = self.interner().type_application(app_id);
+        let app_type = self.interner().application(app.base, app.args.clone());
         let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
 
         // Get the base type (should be a Ref to class/interface/alias)
@@ -1829,7 +1830,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             Some(k) => k,
             None => {
                 return PropertyAccessResult::PropertyNotFound {
-                    type_id: self.interner().application(app.base, app.args.clone()),
+                    type_id: app_type,
                     property_name: prop_atom,
                 };
             }
@@ -1862,7 +1863,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     instantiate_type_with_infer(self.interner(), prop.type_id, &substitution);
 
                 // Handle `this` types
-                let app_type = self.interner().application(app.base, app.args.clone());
                 use crate::instantiate::substitute_this_type;
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
@@ -1874,7 +1874,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             return PropertyAccessResult::PropertyNotFound {
-                type_id: self.interner().application(app.base, app.args.clone()),
+                type_id: app_type,
                 property_name: prop_atom,
             };
         }
@@ -1902,7 +1902,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let instantiated_prop_type =
                     instantiate_type_with_infer(self.interner(), prop.type_id, &substitution);
 
-                let app_type = self.interner().application(app.base, app.args.clone());
                 use crate::instantiate::substitute_this_type;
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
@@ -1922,7 +1921,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             return PropertyAccessResult::PropertyNotFound {
-                type_id: self.interner().application(app.base, app.args.clone()),
+                type_id: app_type,
                 property_name: prop_atom,
             };
         }
@@ -1963,8 +1962,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Task 2.3: Handle `this` Types
                 // Array methods may return `this` or `this[]` which need to be
                 // substituted with the actual Application type (e.g., `T[]`)
-                let app_type = self.interner().application(app.base, app.args.clone());
-
                 use crate::instantiate::substitute_this_type;
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
@@ -1976,7 +1973,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             return PropertyAccessResult::PropertyNotFound {
-                type_id: self.interner().application(app.base, app.args.clone()),
+                type_id: app_type,
                 property_name: prop_atom,
             };
         }
@@ -1984,10 +1981,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // We only handle Lazy types (def_id references)
         let TypeKey::Lazy(def_id) = base_key else {
             // For non-Lazy bases (e.g., TypeParameter), fall back to structural evaluation
-            let evaluated = self.db.evaluate_type_with_options(
-                self.interner().application(app.base, app.args.clone()),
-                self.no_unchecked_indexed_access,
-            );
+            let evaluated = self
+                .db
+                .evaluate_type_with_options(app_type, self.no_unchecked_indexed_access);
             return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
         };
 
@@ -1996,10 +1992,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             Some(id) => id,
             None => {
                 // Can't convert def_id to symbol_id - fall back to structural evaluation
-                let evaluated = self.db.evaluate_type_with_options(
-                    self.interner().application(app.base, app.args.clone()),
-                    self.no_unchecked_indexed_access,
-                );
+                let evaluated = self
+                    .db
+                    .evaluate_type_with_options(app_type, self.no_unchecked_indexed_access);
                 return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
             }
         };
@@ -2017,10 +2012,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         let Some(body_type) = body_type else {
             // Resolution failed - fall back to structural evaluation
-            let evaluated = self.db.evaluate_type_with_options(
-                self.interner().application(app.base, app.args.clone()),
-                self.no_unchecked_indexed_access,
-            );
+            let evaluated = self
+                .db
+                .evaluate_type_with_options(app_type, self.no_unchecked_indexed_access);
             return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
         };
 
@@ -2038,7 +2032,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             Some(k) => k,
             None => {
                 return PropertyAccessResult::PropertyNotFound {
-                    type_id: self.interner().application(app.base, app.args.clone()),
+                    type_id: app_type,
                     property_name: prop_atom,
                 };
             }
@@ -2111,16 +2105,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 // Property not found
                 PropertyAccessResult::PropertyNotFound {
-                    type_id: self.interner().application(app.base, app.args.clone()),
+                    type_id: app_type,
                     property_name: prop_atom,
                 }
             }
             // For non-Object body types (e.g., type aliases to unions), fall back to evaluation
             _ => {
-                let evaluated = self.db.evaluate_type_with_options(
-                    self.interner().application(app.base, app.args.clone()),
-                    self.no_unchecked_indexed_access,
-                );
+                let evaluated = self
+                    .db
+                    .evaluate_type_with_options(app_type, self.no_unchecked_indexed_access);
                 self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
             }
         }

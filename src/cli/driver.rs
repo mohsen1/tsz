@@ -1970,18 +1970,9 @@ fn collect_diagnostics(
         // run, add additional `module_exports` entries keyed by the raw specifiers, pointing at
         // the resolved target file's export table.
         for (specifier, _) in &module_specifiers {
-            if let Some(resolved) = resolve_module_specifier(
-                Path::new(&file.file_name),
-                specifier,
-                options,
-                base_dir,
-                &mut resolution_cache,
-                &program_paths,
-            ) {
-                let canonical = canonicalize_or_owned(&resolved);
-                if let Some(target_file_name) = canonical_to_file_name.get(&canonical)
-                    && let Some(exports) = binder.module_exports.get(target_file_name).cloned()
-                {
+            if let Some(&target_idx) = resolved_module_paths.get(&(file_idx, specifier.clone())) {
+                let target_file_name = &program.files[target_idx].file_name;
+                if let Some(exports) = binder.module_exports.get(target_file_name).cloned() {
                     binder.module_exports.insert(specifier.clone(), exports);
                 }
             }
@@ -2029,28 +2020,12 @@ fn collect_diagnostics(
         // Set per-file is_external_module cache to preserve state across file bindings
         checker.ctx.is_external_module_by_file = Some(Arc::clone(&is_external_module_by_file));
 
-        // Build resolved_modules set for backward compatibility
-        // Only include modules that were successfully resolved (not in error map)
+        // Build resolved_modules set for backward compatibility.
+        // Only include specifiers that were already resolved into a known target file.
         let mut resolved_modules = rustc_hash::FxHashSet::default();
         for (specifier, _) in &module_specifiers {
-            // Check if this specifier is in resolved_module_paths (successfully resolved)
             if resolved_module_paths.contains_key(&(file_idx, specifier.clone())) {
                 resolved_modules.insert(specifier.clone());
-            } else if !resolved_module_errors.contains_key(&(file_idx, specifier.clone())) {
-                // Not in error map either - might be external module, check with old resolver
-                if let Some(resolved) = resolve_module_specifier(
-                    Path::new(&file.file_name),
-                    specifier,
-                    options,
-                    base_dir,
-                    &mut resolution_cache,
-                    &program_paths,
-                ) {
-                    let canonical = canonicalize_or_owned(&resolved);
-                    if program_paths.contains(&canonical) {
-                        resolved_modules.insert(specifier.clone());
-                    }
-                }
             }
         }
         checker.ctx.resolved_modules = Some(resolved_modules);
