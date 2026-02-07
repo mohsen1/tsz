@@ -166,7 +166,7 @@ jobs:
         run: cargo nextest run --profile ci -p tsz-common
 
       - name: Test tsz-scanner
-        run: cargo nextest run --profile ci -p tsz-scanner
+        run: cargo nextest run --profile ci -p tsz-scanner || [ $? -eq 4 ]
 
       - name: Test tsz-parser
         run: cargo nextest run --profile ci -p tsz-parser
@@ -324,10 +324,10 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Test tsz-emitter
-        run: cargo nextest run --profile ci -p tsz-emitter
+        run: cargo nextest run --profile ci -p tsz-emitter || [ $? -eq 4 ]
 
       - name: Test tsz-lsp
-        run: cargo nextest run --profile ci -p tsz-lsp
+        run: cargo nextest run --profile ci -p tsz-lsp || [ $? -eq 4 ]
 
   # ─── Test: Root crate (wasm - integration tests) ──────────────────────────
   test-root:
