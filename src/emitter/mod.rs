@@ -634,10 +634,23 @@ impl<'a> Printer<'a> {
                     });
 
                 if !skip {
-                    let export_name = names.first().copied();
-                    self.emit_commonjs_export(names.as_ref(), is_default, |this| {
-                        this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
-                    });
+                    // For non-default function declarations, the preamble already
+                    // emitted `exports.X = X;` (function declarations are hoisted).
+                    // Skip the per-statement export to avoid duplicates.
+                    let is_hoisted_func =
+                        node.kind == syntax_kind_ext::FUNCTION_DECLARATION && !is_default;
+                    if is_hoisted_func {
+                        let prev_module = self.ctx.options.module;
+                        self.ctx.options.module = ModuleKind::None;
+                        let export_name = names.first().copied();
+                        self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                        self.ctx.options.module = prev_module;
+                    } else {
+                        let export_name = names.first().copied();
+                        self.emit_commonjs_export(names.as_ref(), is_default, |this| {
+                            this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                        });
+                    }
                 }
             }
 
