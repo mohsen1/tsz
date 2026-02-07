@@ -455,10 +455,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let target_shape = self.interner.object_shape(target_shape_id);
 
-        // If target has string index signature, skip excess property check
+        // If target has string index signature, skip excess property check entirely
         if target_shape.string_index.is_some() {
             return true;
         }
+
+        let has_number_index = target_shape.number_index.is_some();
 
         // Collect all target properties (including base types if intersection)
         let target_properties = self.collect_target_properties(target);
@@ -466,6 +468,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Check each source property
         for prop_info in &source_shape.properties {
             if !target_properties.contains(&prop_info.name) {
+                // If target has a numeric index signature, numeric-named properties are allowed
+                if has_number_index {
+                    let name_str = self.interner.resolve_atom(prop_info.name);
+                    if name_str.parse::<f64>().is_ok() {
+                        continue;
+                    }
+                }
                 // Excess property found!
                 return false;
             }
@@ -524,10 +533,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let target_shape = self.interner.object_shape(target_shape_id);
 
-        // If target has string index signature, skip excess property check
+        // If target has string index signature, skip excess property check entirely
         if target_shape.string_index.is_some() {
             return None;
         }
+
+        let has_number_index = target_shape.number_index.is_some();
 
         // Collect all target properties (including base types if intersection)
         let target_properties = self.collect_target_properties(resolved_target);
@@ -535,6 +546,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Check each source property
         for prop_info in &source_shape.properties {
             if !target_properties.contains(&prop_info.name) {
+                // If target has a numeric index signature, numeric-named properties are allowed
+                if has_number_index {
+                    let name_str = self.interner.resolve_atom(prop_info.name);
+                    if name_str.parse::<f64>().is_ok() {
+                        continue;
+                    }
+                }
                 // Excess property found!
                 return Some(prop_info.name);
             }

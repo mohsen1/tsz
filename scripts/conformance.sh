@@ -226,7 +226,7 @@ run_tests() {
     fi
 
     if [ "$show_summary" = true ]; then
-        # Stream output in real-time AND capture for post-summary
+        # Capture output so we can reorder: test contents first, final results last
         local tmpfile
         tmpfile=$(mktemp)
         trap "rm -f '$tmpfile'" EXIT
@@ -237,10 +237,13 @@ run_tests() {
             --cache-file "$CACHE_FILE" \
             --tsz-binary "$TSZ_BIN" \
             --workers $WORKERS \
-            "${extra_args[@]}" 2>&1 | tee "$tmpfile" || runner_exit=$?
+            "${extra_args[@]}" > "$tmpfile" 2>&1 || runner_exit=$?
 
         local output
         output=$(cat "$tmpfile")
+
+        # Print per-test lines (PASS/FAIL/SKIP) in real-time order
+        grep -E '^(PASS|FAIL|SKIP) ' "$tmpfile" 2>/dev/null || true
 
         # Extract failing test paths (up to 10) from captured output
         local failing_tests=()
@@ -257,7 +260,7 @@ run_tests() {
             fi
         done <<< "$output"
 
-        # Print test file contents after results
+        # Print test file contents BEFORE final results
         if [ ${#failing_tests[@]} -gt 0 ]; then
             echo ""
             echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
@@ -277,14 +280,9 @@ run_tests() {
             echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
         fi
 
-        # Re-print summary line(s) last so they're easy to find
-        local summary_lines
-        summary_lines=$(grep -E '(^(Total|Pass rate|Passed|Failed|Skipped)|passed.*failed|conformance)' "$tmpfile" 2>/dev/null || true)
-        if [ -n "$summary_lines" ]; then
-            echo ""
-            echo -e "${GREEN}═══ Summary ═══${NC}"
-            echo "$summary_lines"
-        fi
+        # Print final results block LAST
+        echo ""
+        sed -n '/^=\{10,\}/,/^=\{10,\}/p' "$tmpfile" 2>/dev/null || true
 
         rm -f "$tmpfile"
     else
