@@ -60,49 +60,18 @@ Test directory: TypeScript/tests/cases/conformance
 EOF
 }
 
-# Build binaries if needed
+# Build binaries (always rebuilds to pick up code changes; cargo no-ops if unchanged)
 ensure_binaries() {
-    local need_tsz=false
-    local need_conformance=false
+    echo -e "${YELLOW}Building tsz...${NC}"
+    cd "$REPO_ROOT"
+    cargo build --release --bin tsz
+    echo ""
 
-    if [ ! -f "$TSZ_BIN" ]; then
-        need_tsz=true
-    fi
-
-    if [ ! -f "$CACHE_GEN_BIN" ] || [ ! -f "$RUNNER_BIN" ]; then
-        need_conformance=true
-    fi
-
-    if [ "$need_tsz" = true ]; then
-        echo -e "${YELLOW}Building tsz...${NC}"
-        cd "$REPO_ROOT"
-        cargo build --release --bin tsz
-        echo ""
-    fi
-
-    if [ "$need_conformance" = true ]; then
-        echo -e "${YELLOW}Building conformance runner...${NC}"
-        cd "$REPO_ROOT/crates/conformance"
-        cargo build --release
-        cd "$REPO_ROOT"
-        echo ""
-    fi
-
-    # Final check
-    if [ ! -f "$TSZ_BIN" ]; then
-        echo "Error: tsz binary not found at $TSZ_BIN after build"
-        exit 1
-    fi
-
-    if [ ! -f "$CACHE_GEN_BIN" ]; then
-        echo "Error: generate-tsc-cache binary not found at $CACHE_GEN_BIN after build"
-        exit 1
-    fi
-
-    if [ ! -f "$RUNNER_BIN" ]; then
-        echo "Error: tsz-conformance binary not found at $RUNNER_BIN after build"
-        exit 1
-    fi
+    echo -e "${YELLOW}Building conformance runner...${NC}"
+    cd "$REPO_ROOT/crates/conformance"
+    cargo build --release
+    cd "$REPO_ROOT"
+    echo ""
 }
 
 download_cache() {
@@ -306,6 +275,15 @@ run_tests() {
             done
 
             echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+        fi
+
+        # Re-print summary line(s) last so they're easy to find
+        local summary_lines
+        summary_lines=$(grep -E '(^(Total|Pass rate|Passed|Failed|Skipped)|passed.*failed|conformance)' "$tmpfile" 2>/dev/null || true)
+        if [ -n "$summary_lines" ]; then
+            echo ""
+            echo -e "${GREEN}═══ Summary ═══${NC}"
+            echo "$summary_lines"
         fi
 
         rm -f "$tmpfile"
