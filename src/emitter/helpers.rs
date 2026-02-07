@@ -239,44 +239,43 @@ impl<'a> Printer<'a> {
 
     /// Check if the source text has a trailing comma after the last element
     /// in a list (object literal, array literal, etc.)
+    ///
+    /// Scans backwards from the closing bracket/brace to find if there's a
+    /// comma before it (skipping whitespace). The parser includes the trailing
+    /// comma in the last element's `end` position, so we scan backwards from
+    /// the container's closing delimiter instead.
     pub(super) fn has_trailing_comma_in_source(
         &self,
         container: &crate::parser::node::Node,
-        elements: &[NodeIndex],
+        _elements: &[NodeIndex],
     ) -> bool {
         let Some(text) = self.source_text else {
             return false;
         };
-        let Some(&last_elem_idx) = elements.last() else {
-            return false;
-        };
-        let Some(last_elem) = self.arena.get(last_elem_idx) else {
-            return false;
-        };
 
-        // Scan from the last element's end to the container's end,
-        // looking for a comma before the closing brace/bracket
-        let start = last_elem.end as usize;
         let end = std::cmp::min(container.end as usize, text.len());
-        if start >= end {
+        if end == 0 {
             return false;
         }
 
         let bytes = text.as_bytes();
-        for i in start..end {
-            match bytes[i] {
+
+        // Find the closing bracket/brace by scanning backwards from the container end
+        let mut pos = end;
+        while pos > 0 {
+            pos -= 1;
+            match bytes[pos] {
+                b'}' | b']' | b')' => break,
+                _ => continue,
+            }
+        }
+
+        // Scan backwards from the closing bracket to find comma (skipping whitespace)
+        while pos > 0 {
+            pos -= 1;
+            match bytes[pos] {
                 b',' => return true,
-                b'}' | b']' | b')' => return false,
                 b' ' | b'\t' | b'\r' | b'\n' => continue,
-                b'/' => {
-                    // Skip comments
-                    if i + 1 < end {
-                        if bytes[i + 1] == b'/' || bytes[i + 1] == b'*' {
-                            return false; // Conservative: stop scanning
-                        }
-                    }
-                    return false;
-                }
                 _ => return false,
             }
         }
