@@ -59,10 +59,10 @@ If a change touches the solver, checker, parser, or binder hot paths, benchmark 
 ```bash
 # Quick before/after comparison
 cargo build --release
-hyperfine './target/release/tsz check test-files/large-project/'
+hyperfine './target/release/tsz check benches/'
 
 # Detailed profiling (do NOT bind to port 3000)
-samply record --no-open ./target/release/tsz check test-files/large-project/
+samply record --no-open ./target/release/tsz check benches/
 ```
 
 If you don't have a large project handy, use the conformance suite or `benches/` as a proxy.
