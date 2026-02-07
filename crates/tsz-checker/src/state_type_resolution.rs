@@ -360,150 +360,23 @@ impl<'a> CheckerState<'a> {
                 return result;
             }
 
+            // Handle Array/ReadonlyArray without type arguments
             if name == "Array" || name == "ReadonlyArray" {
-                if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
-                    return type_id;
-                }
-                // Array/ReadonlyArray not found - check if lib files are loaded
-                // When --noLib is used, emit TS2318 instead of silently creating Array type
-                if !self.ctx.has_lib_loaded() {
-                    // No lib files loaded - emit TS2318 for missing global type
-                    self.error_cannot_find_global_type(name, type_name_idx);
-                    // Still process type arguments to avoid cascading errors
-                    if let Some(args) = &type_ref.type_arguments {
-                        for &arg_idx in &args.nodes {
-                            let _ = self.get_type_from_type_node(arg_idx);
-                        }
-                    }
-                    return TypeId::ERROR;
-                }
-                // Lib files are loaded but Array not found - this shouldn't happen normally
-                // Fall back to creating Array type for graceful degradation
-                let elem_type = type_ref
-                    .type_arguments
-                    .as_ref()
-                    .and_then(|args| args.nodes.first().copied())
-                    .map(|idx| self.get_type_from_type_node(idx))
-                    .unwrap_or(TypeId::ERROR);
-                let array_type = self.ctx.types.array(elem_type);
-                if name == "ReadonlyArray" {
-                    return self
-                        .ctx
-                        .types
-                        .intern(tsz_solver::TypeKey::ReadonlyType(array_type));
-                }
-                return array_type;
+                return self.resolve_array_type_reference(name, type_name_idx, type_ref);
             }
 
-            // Check for built-in types (primitive keywords)
-            match name {
-                "number" => return TypeId::NUMBER,
-                "string" => return TypeId::STRING,
-                "boolean" => return TypeId::BOOLEAN,
-                "void" => return TypeId::VOID,
-                "any" => return TypeId::ANY,
-                "never" => return TypeId::NEVER,
-                "unknown" => return TypeId::UNKNOWN,
-                "undefined" => return TypeId::UNDEFINED,
-                "null" => return TypeId::NULL,
-                "object" => return TypeId::OBJECT,
-                "bigint" => return TypeId::BIGINT,
-                "symbol" => return TypeId::SYMBOL,
-                _ => {}
+            // Built-in primitive keywords
+            if let Some(builtin) = Self::resolve_primitive_keyword(name) {
+                return builtin;
             }
 
-            // Check if this is a type parameter (generic type like T in function<T>)
+            // Type parameter (generic like T in function<T>)
             if let Some(type_param) = self.lookup_type_parameter(name) {
                 return type_param;
             }
 
-            if name != "Array" && name != "ReadonlyArray" {
-                match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
-                    TypeSymbolResolution::Type(sym_id) => {
-                        // TS2314: Check if this generic type requires type arguments
-                        let type_params = self.get_type_params_for_symbol(sym_id);
-                        let required_count =
-                            type_params.iter().filter(|p| p.default.is_none()).count();
-
-                        if required_count > 0 {
-                            self.error_generic_type_requires_type_arguments_at(
-                                name,
-                                required_count,
-                                idx,
-                            );
-                            // Continue to resolve - we still want type inference to work
-                        }
-
-                        // Apply default type arguments if no explicit args were provided
-                        // This handles cases like: type Box<T = string> = ...; let x: Box;
-                        if type_ref
-                            .type_arguments
-                            .as_ref()
-                            .is_none_or(|args| args.nodes.is_empty())
-                        {
-                            // No explicit type arguments provided
-                            let has_defaults = type_params.iter().any(|p| p.default.is_some());
-
-                            if has_defaults {
-                                // Collect default type arguments
-                                let default_args: Vec<TypeId> = type_params
-                                    .iter()
-                                    .map(|p| p.default.unwrap_or(TypeId::UNKNOWN))
-                                    .collect();
-
-                                // Create a Lazy type with DefId for proper type parameter substitution
-                                let def_id = self.ctx.get_or_create_def_id(sym_id);
-                                let base_type_id =
-                                    self.ctx.types.intern(tsz_solver::TypeKey::Lazy(def_id));
-
-                                // Create TypeApplication with defaults
-                                return self.ctx.types.application(base_type_id, default_args);
-                            }
-                        }
-                    }
-                    TypeSymbolResolution::ValueOnly(_) => {
-                        self.error_value_only_type_at(name, type_name_idx);
-                        return TypeId::ERROR;
-                    }
-                    TypeSymbolResolution::NotFound => {}
-                }
-            }
-
-            // Phase 4.2.1: Create DefIds for type aliases (but not classes/interfaces)
-            // This enables type_reference_symbol_type to use DefId-based resolution
-            match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
-                TypeSymbolResolution::Type(sym_id) => {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        && symbol.flags & symbol_flags::TYPE_ALIAS != 0
-                    {
-                        // Create DefId for type alias
-                        let _def_id = self.ctx.get_or_create_def_id(sym_id);
-                        // Fall through to resolve_named_type_reference below
-                    }
-                }
-                TypeSymbolResolution::ValueOnly(_) => {}
-                TypeSymbolResolution::NotFound => {}
-            }
-
-            if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
-                return type_id;
-            }
-            if name == "await" {
-                self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
-                return TypeId::ERROR;
-            }
-            if self.is_known_global_type_name(name) {
-                // TS2318/TS2583: Emit error for missing global type
-                // The type is a known global type but was not found in lib contexts
-                self.error_cannot_find_global_type(name, type_name_idx);
-                return TypeId::ERROR;
-            }
-            // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
-            if self.is_unresolved_import_symbol(type_name_idx) {
-                return TypeId::ANY;
-            }
-            self.error_cannot_find_name_at(name, type_name_idx);
-            return TypeId::ERROR;
+            // Named type without type arguments — check generics, apply defaults
+            return self.resolve_simple_type_reference(idx, type_name_idx, name, type_ref);
         }
 
         // Unknown type name node kind - propagate error
@@ -545,6 +418,137 @@ impl<'a> CheckerState<'a> {
                 let _ = self.get_type_from_type_node(arg_idx);
             }
         }
+        TypeId::ERROR
+    }
+
+    /// Resolve a primitive keyword like `number`, `string`, etc.
+    fn resolve_primitive_keyword(name: &str) -> Option<TypeId> {
+        match name {
+            "number" => Some(TypeId::NUMBER),
+            "string" => Some(TypeId::STRING),
+            "boolean" => Some(TypeId::BOOLEAN),
+            "void" => Some(TypeId::VOID),
+            "any" => Some(TypeId::ANY),
+            "never" => Some(TypeId::NEVER),
+            "unknown" => Some(TypeId::UNKNOWN),
+            "undefined" => Some(TypeId::UNDEFINED),
+            "null" => Some(TypeId::NULL),
+            "object" => Some(TypeId::OBJECT),
+            "bigint" => Some(TypeId::BIGINT),
+            "symbol" => Some(TypeId::SYMBOL),
+            _ => None,
+        }
+    }
+
+    /// Resolve `Array<T>` or `ReadonlyArray<T>` without explicit type arguments.
+    fn resolve_array_type_reference(
+        &mut self,
+        name: &str,
+        type_name_idx: NodeIndex,
+        type_ref: &tsz_parser::parser::node::TypeRefData,
+    ) -> TypeId {
+        if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
+            return type_id;
+        }
+        if !self.ctx.has_lib_loaded() {
+            self.error_cannot_find_global_type(name, type_name_idx);
+            if let Some(args) = &type_ref.type_arguments {
+                for &arg_idx in &args.nodes {
+                    let _ = self.get_type_from_type_node(arg_idx);
+                }
+            }
+            return TypeId::ERROR;
+        }
+        let elem_type = type_ref
+            .type_arguments
+            .as_ref()
+            .and_then(|args| args.nodes.first().copied())
+            .map(|idx| self.get_type_from_type_node(idx))
+            .unwrap_or(TypeId::ERROR);
+        let array_type = self.ctx.types.array(elem_type);
+        if name == "ReadonlyArray" {
+            self.ctx
+                .types
+                .intern(tsz_solver::TypeKey::ReadonlyType(array_type))
+        } else {
+            array_type
+        }
+    }
+
+    /// Resolve a simple (non-Array, non-primitive) type reference without type arguments.
+    /// Handles generic validation, default type arguments, and error reporting.
+    fn resolve_simple_type_reference(
+        &mut self,
+        idx: NodeIndex,
+        type_name_idx: NodeIndex,
+        name: &str,
+        type_ref: &tsz_parser::parser::node::TypeRefData,
+    ) -> TypeId {
+        if name != "Array" && name != "ReadonlyArray" {
+            match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
+                TypeSymbolResolution::Type(sym_id) => {
+                    let type_params = self.get_type_params_for_symbol(sym_id);
+                    let required_count = type_params.iter().filter(|p| p.default.is_none()).count();
+                    if required_count > 0 {
+                        self.error_generic_type_requires_type_arguments_at(
+                            name,
+                            required_count,
+                            idx,
+                        );
+                    }
+                    // Apply default type arguments if no explicit args were provided
+                    if type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_none_or(|args| args.nodes.is_empty())
+                    {
+                        let has_defaults = type_params.iter().any(|p| p.default.is_some());
+                        if has_defaults {
+                            let default_args: Vec<TypeId> = type_params
+                                .iter()
+                                .map(|p| p.default.unwrap_or(TypeId::UNKNOWN))
+                                .collect();
+                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            let base_type_id =
+                                self.ctx.types.intern(tsz_solver::TypeKey::Lazy(def_id));
+                            return self.ctx.types.application(base_type_id, default_args);
+                        }
+                    }
+                }
+                TypeSymbolResolution::ValueOnly(_) => {
+                    self.error_value_only_type_at(name, type_name_idx);
+                    return TypeId::ERROR;
+                }
+                TypeSymbolResolution::NotFound => {}
+            }
+        }
+
+        // Create DefIds for type aliases (enables DefId-based resolution)
+        if let TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position(type_name_idx)
+        {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+            {
+                let _def_id = self.ctx.get_or_create_def_id(sym_id);
+            }
+        }
+
+        if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
+            return type_id;
+        }
+        if name == "await" {
+            self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
+            return TypeId::ERROR;
+        }
+        if self.is_known_global_type_name(name) {
+            self.error_cannot_find_global_type(name, type_name_idx);
+            return TypeId::ERROR;
+        }
+        if self.is_unresolved_import_symbol(type_name_idx) {
+            return TypeId::ANY;
+        }
+        self.error_cannot_find_name_at(name, type_name_idx);
         TypeId::ERROR
     }
 
