@@ -785,6 +785,20 @@ impl<'a> CheckerState<'a> {
         // But preserve original for error messages to maintain nominal identity (e.g., D<string>)
         let object_type = self.evaluate_application_type(original_object_type);
 
+        // Handle optional chain continuations: for `o?.b.c`, when processing `.c`,
+        // the object type from `o?.b` includes `undefined` from the optional chain.
+        // But `.c` should only be reached when `o` is defined, so we strip nullish
+        // types. Only do this when this access is NOT itself an optional chain
+        // (`question_dot_token` is false) but is part of one (parent has `?.`).
+        let object_type = if !access.question_dot_token
+            && crate::optional_chain::is_optional_chain(&self.ctx.arena, access.expression)
+        {
+            let (non_nullish, _) = self.split_nullish_type(object_type);
+            non_nullish.unwrap_or(object_type)
+        } else {
+            object_type
+        };
+
         if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
             return self.get_type_of_private_property_access(
                 idx,

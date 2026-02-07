@@ -131,8 +131,13 @@ pub fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
             }
         }
         k if k == syntax_kind_ext::CALL_EXPRESSION => {
-            // Check if this call is part of an optional chain
-            // For now, check the callee expression
+            // Check if this call is part of an optional chain.
+            // A call can be optional in two ways:
+            // 1. The callee itself is optional: `o?.b()` -> callee `o?.b` has question_dot_token
+            // 2. The call has an optional token: `o.b?.()` -> call node has OPTIONAL_CHAIN flag
+            if (node.flags as u32) & tsz_parser::parser::node_flags::OPTIONAL_CHAIN != 0 {
+                return true;
+            }
             if let Some(call) = arena.get_call_expr(node) {
                 is_optional_chain(arena, call.expression)
             } else {
