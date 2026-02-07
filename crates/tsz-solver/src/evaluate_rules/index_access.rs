@@ -172,7 +172,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         let members = self.evaluator.interner().type_list(TypeListId(list_id));
         const MAX_UNION_INDEX_SIZE: usize = 100;
         if members.len() > MAX_UNION_INDEX_SIZE {
-            self.evaluator.set_depth_exceeded(true);
+            self.evaluator.mark_depth_exceeded();
             return Some(TypeId::ERROR);
         }
         let mut results = Vec::new();
@@ -657,7 +657,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Limit to prevent OOM with large unions
             const MAX_UNION_INDEX_SIZE: usize = 100;
             if members.len() > MAX_UNION_INDEX_SIZE {
-                self.set_depth_exceeded(true);
+                self.mark_depth_exceeded();
                 return TypeId::ERROR;
             }
             let mut results = Vec::new();

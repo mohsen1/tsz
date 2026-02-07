@@ -26,9 +26,8 @@
 
 use crate::TypeDatabase;
 use crate::diagnostics::{SubtypeFailureReason, SubtypeTracer};
-use crate::subtype::{MAX_SUBTYPE_DEPTH, TypeResolver};
+use crate::subtype::TypeResolver;
 use crate::types::*;
-use tsz_common::limits;
 
 #[cfg(test)]
 use crate::TypeInterner;
@@ -36,9 +35,6 @@ use crate::TypeInterner;
 use crate::diagnostics::{DiagnosticTracer, FastTracer};
 #[cfg(test)]
 use crate::subtype::NoopResolver;
-
-/// Maximum total subtype checks allowed per tracer-based check.
-const MAX_TOTAL_TRACER_CHECKS: u32 = limits::MAX_TOTAL_TRACER_CHECKS;
 
 /// Tracer-based subtype checker.
 ///
@@ -69,9 +65,8 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
         Self {
             interner,
             resolver,
-            guard: crate::recursion::RecursionGuard::new(
-                MAX_SUBTYPE_DEPTH,
-                MAX_TOTAL_TRACER_CHECKS,
+            guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::SubtypeCheck,
             ),
             strict_function_types: true,
             allow_void_return: false,

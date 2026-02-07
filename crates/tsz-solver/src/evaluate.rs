@@ -32,20 +32,9 @@ pub enum ConditionalResult {
     Deferred(TypeId),
 }
 
-/// Maximum recursion depth for type evaluation.
-/// Prevents stack overflow on deeply recursive mapped/conditional types.
-/// Also prevents OOM from infinitely expanding types like:
-/// - `interface AA<T extends AA<T>>`
-/// - `interface SelfReference<T = SelfReference>`
-pub const MAX_EVALUATE_DEPTH: u32 = 50;
-
 /// Maximum number of unique types to track in the visiting set.
 /// Prevents unbounded memory growth in pathological cases.
 pub const MAX_VISITING_SET_SIZE: usize = 10_000;
-
-/// Maximum total evaluations allowed per TypeEvaluator instance.
-/// Prevents infinite loops in pathological type evaluation scenarios.
-pub const MAX_TOTAL_EVALUATIONS: u32 = 100_000;
 
 /// Type evaluator for meta-types.
 ///
@@ -119,10 +108,11 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             resolver: &NOOP,
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
-            guard: crate::recursion::RecursionGuard::new(MAX_EVALUATE_DEPTH, MAX_TOTAL_EVALUATIONS),
-            def_guard: crate::recursion::RecursionGuard::new(
-                MAX_EVALUATE_DEPTH,
-                MAX_TOTAL_EVALUATIONS,
+            guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeEvaluation,
+            ),
+            def_guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeEvaluation,
             ),
         }
     }
@@ -137,10 +127,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             resolver,
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
-            guard: crate::recursion::RecursionGuard::new(MAX_EVALUATE_DEPTH, MAX_TOTAL_EVALUATIONS),
-            def_guard: crate::recursion::RecursionGuard::new(
-                MAX_EVALUATE_DEPTH,
-                MAX_TOTAL_EVALUATIONS,
+            guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeEvaluation,
+            ),
+            def_guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeEvaluation,
             ),
         }
     }
@@ -198,13 +189,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Check if depth limit was exceeded.
     #[inline]
     pub(crate) fn is_depth_exceeded(&self) -> bool {
-        self.guard.depth_exceeded
+        self.guard.is_exceeded()
     }
 
-    /// Set the depth exceeded flag.
+    /// Mark the guard as exceeded, causing subsequent evaluations to bail out.
+    ///
+    /// Used when an external condition (e.g. mapped key count or distribution
+    /// size exceeds its limit) means further recursive evaluation should stop.
     #[inline]
-    pub(crate) fn set_depth_exceeded(&mut self, value: bool) {
-        self.guard.depth_exceeded = value;
+    pub(crate) fn mark_depth_exceeded(&mut self) {
+        self.guard.mark_exceeded();
     }
 
     /// Evaluate a type, resolving any meta-types if possible.
@@ -253,7 +247,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Check if depth was already exceeded in a previous call
-        if self.guard.depth_exceeded {
+        if self.guard.is_exceeded() {
             return TypeId::ERROR;
         }
 
@@ -348,7 +342,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // 1. evaluate returns App (unevaluated)
                 // 2. check_subtype sees no change, calls check_subtype_inner
                 // 3. check_subtype_inner tries to evaluate again -> infinite loop
-                self.guard.depth_exceeded = true;
+                self.guard.mark_exceeded();
                 return TypeId::ERROR;
             }
 
@@ -359,7 +353,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 RecursionResult::Cycle
                 | RecursionResult::DepthExceeded
                 | RecursionResult::IterationExceeded => {
-                    self.guard.depth_exceeded = true;
+                    self.guard.mark_exceeded();
                     return TypeId::ERROR;
                 }
             }

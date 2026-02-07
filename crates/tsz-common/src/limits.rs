@@ -12,26 +12,28 @@
 //! - **Operation Counts**: Limits to prevent infinite loops in iterative algorithms
 //! - **Capacity Limits**: Pre-allocation sizes and maximum collection sizes
 //! - **WASM Limits**: Reduced limits for the constrained WASM environment
+//!
+//! # Solver recursion limits
+//!
+//! Recursion limits for the type solver (subtype checking, type evaluation,
+//! property access, etc.) are centralized in
+//! [`tsz_solver::recursion::RecursionProfile`] rather than here. This avoids
+//! duplication between `limits.rs` constants and `RecursionGuard` construction
+//! sites. The profiles are the single source of truth for solver recursion.
 
 // =============================================================================
-// Recursion Depth Limits
+// Recursion Depth Limits (Checker / Binder / Parser / Emitter)
 // =============================================================================
 // These prevent stack overflow in deeply nested type structures or AST nodes.
-
-/// Maximum depth for type node checking (type annotations, type parameters).
-/// Prevents stack overflow when processing deeply nested generic types.
-/// Value: 100 - safe for debug builds with 2MB stack (assumes ~20KB per frame)
-/// Increased from 500 which could cause stack overflow on deep nesting
-pub const MAX_TYPE_CHECK_DEPTH: u32 = 100;
+// Solver-specific recursion limits live in RecursionProfile instead.
 
 /// Maximum depth for expression type checking.
 /// Prevents stack overflow when processing deeply nested expressions.
-/// Value: 100 - safe for debug builds with 2MB stack (assumes ~20KB per frame)
-/// Increased from 500 which could cause stack overflow on deep nesting
-pub const MAX_EXPR_CHECK_DEPTH: u32 = 100;
+pub const MAX_EXPR_CHECK_DEPTH: u32 = 500;
 
 /// Maximum depth for generic type instantiation.
 /// Prevents infinite recursion in recursive generic types like `type Foo<T> = Foo<Foo<T>>`.
+/// This value is also used to emit TS2589 ("Type instantiation is excessively deep").
 pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
 
 /// Maximum depth for general checker recursion guards.
@@ -47,11 +49,8 @@ pub const MAX_CALL_DEPTH: u32 = 20;
 
 /// Maximum depth for subtype checking.
 /// Prevents infinite recursion in recursive type comparisons.
+/// Also used by the solver's SubtypeChecker `max_depth` field.
 pub const MAX_SUBTYPE_DEPTH: u32 = 100;
-
-/// Maximum depth for type evaluation (conditional types, mapped types).
-/// Prevents infinite recursion when evaluating complex type-level computations.
-pub const MAX_EVALUATE_DEPTH: u32 = 50;
 
 /// Maximum depth for type alias resolution.
 /// Prevents infinite recursion in circular type alias references.
@@ -60,10 +59,6 @@ pub const MAX_ALIAS_RESOLUTION_DEPTH: u32 = 128;
 /// Maximum depth for qualified name resolution (A.B.C.D...).
 /// Prevents infinite loops in namespace/module traversal.
 pub const MAX_QUALIFIED_NAME_DEPTH: u32 = 128;
-
-/// Maximum depth for class inheritance chains.
-/// TypeScript allows deep inheritance; 256 is generous but bounded.
-pub const MAX_CLASS_INHERITANCE_DEPTH: u32 = 256;
 
 /// Maximum depth for optional chaining expressions (a?.b?.c?.d...).
 pub const MAX_OPTIONAL_CHAIN_DEPTH: u32 = 1_000;
@@ -92,9 +87,6 @@ pub const MAX_MERGE_DEPTH: u32 = 32;
 /// Maximum depth for constraint recursion in type inference.
 pub const MAX_CONSTRAINT_RECURSION_DEPTH: u32 = 100;
 
-/// Maximum depth for mapped type property access.
-pub const MAX_MAPPED_ACCESS_DEPTH: u32 = 50;
-
 /// Maximum depth for template literal type counting.
 pub const MAX_LITERAL_COUNT_DEPTH: u32 = 50;
 
@@ -114,13 +106,6 @@ pub const MAX_FLOW_ANALYSIS_ITERATIONS: u32 = 100_000;
 /// Maximum subtype checking pairs in progress (cycle detection).
 /// Prevents memory exhaustion in complex recursive type checks.
 pub const MAX_IN_PROGRESS_PAIRS: u32 = 10_000;
-
-/// Maximum total subtype checks per compilation.
-/// Bounds the total work for pathological type patterns.
-pub const MAX_TOTAL_SUBTYPE_CHECKS: u32 = 100_000;
-
-/// Maximum total type evaluations per compilation.
-pub const MAX_TOTAL_EVALUATIONS: u32 = 100_000;
 
 /// Maximum lowering operations during AST transformation.
 pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
@@ -224,14 +209,6 @@ pub const SHARD_COUNT: usize = 1 << SHARD_BITS;
 /// Mask for extracting shard index (SHARD_COUNT - 1).
 pub const SHARD_MASK: usize = SHARD_COUNT - 1;
 
-// =============================================================================
-// Tracer Limits
-// =============================================================================
-// Used for debug tracing and profiling.
-
-/// Maximum total tracer checks (matches MAX_TOTAL_SUBTYPE_CHECKS).
-pub const MAX_TOTAL_TRACER_CHECKS: u32 = MAX_TOTAL_SUBTYPE_CHECKS;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,7 +221,6 @@ mod tests {
 
     #[test]
     fn test_wasm_limits_are_smaller() {
-        // Verify WASM limits are more conservative (this tests the non-wasm values)
         #[cfg(not(target_arch = "wasm32"))]
         {
             let _ = MAX_TYPE_RESOLUTION_OPS >= 100_000;

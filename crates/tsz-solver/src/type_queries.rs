@@ -522,7 +522,9 @@ where
     let mut checker = ContainsTypeChecker {
         db,
         predicate,
-        guard: crate::recursion::RecursionGuard::new(20, 100_000),
+        guard: crate::recursion::RecursionGuard::with_profile(
+            crate::recursion::RecursionProfile::ShallowTraversal,
+        ),
     };
     checker.check(type_id)
 }

@@ -1417,10 +1417,6 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub tracer: Option<&'a mut dyn DynSubtypeTracer>,
 }
 
-/// Maximum total subtype checks allowed per SubtypeChecker instance.
-/// Prevents infinite loops in pathological type comparison scenarios.
-pub const MAX_TOTAL_SUBTYPE_CHECKS: u32 = 100_000;
-
 impl<'a> SubtypeChecker<'a, NoopResolver> {
     /// Create a new SubtypeChecker without a resolver (basic mode).
     pub fn new(interner: &'a dyn TypeDatabase) -> SubtypeChecker<'a, NoopResolver> {
@@ -1429,14 +1425,12 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             interner,
             query_db: None,
             resolver: &NOOP,
-            guard: crate::recursion::RecursionGuard::new(
-                MAX_SUBTYPE_DEPTH,
-                MAX_TOTAL_SUBTYPE_CHECKS,
+            guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::SubtypeCheck,
             ),
             seen_refs: FxHashSet::default(),
-            def_guard: crate::recursion::RecursionGuard::new(
-                MAX_SUBTYPE_DEPTH,
-                MAX_TOTAL_SUBTYPE_CHECKS,
+            def_guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::SubtypeCheck,
             ),
             strict_function_types: true, // Default to strict (sound) behavior
             allow_void_return: false,
@@ -1464,14 +1458,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             interner,
             query_db: None,
             resolver,
-            guard: crate::recursion::RecursionGuard::new(
-                MAX_SUBTYPE_DEPTH,
-                MAX_TOTAL_SUBTYPE_CHECKS,
+            guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::SubtypeCheck,
             ),
             seen_refs: FxHashSet::default(),
-            def_guard: crate::recursion::RecursionGuard::new(
-                MAX_SUBTYPE_DEPTH,
-                MAX_TOTAL_SUBTYPE_CHECKS,
+            def_guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::SubtypeCheck,
             ),
             strict_function_types: true,
             allow_void_return: false,
@@ -1557,7 +1549,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Whether the recursion depth was exceeded during subtype checking.
     pub fn depth_exceeded(&self) -> bool {
-        self.guard.depth_exceeded
+        self.guard.is_exceeded()
     }
 
     /// Apply compiler flags from a packed u16 bitmask.

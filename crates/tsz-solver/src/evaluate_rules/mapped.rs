@@ -203,7 +203,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         #[cfg(not(target_arch = "wasm32"))]
         const MAX_MAPPED_KEYS: usize = 500;
         if key_set.string_literals.len() > MAX_MAPPED_KEYS {
-            self.set_depth_exceeded(true);
+            self.mark_depth_exceeded();
             return TypeId::ERROR;
         }
 

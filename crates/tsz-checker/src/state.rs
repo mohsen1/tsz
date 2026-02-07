@@ -116,23 +116,11 @@ pub struct CheckerState<'a> {
     pub ctx: CheckerContext<'a>,
 }
 
-/// Maximum depth for recursive type instantiation.
-pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
-
-/// Maximum depth for call expression resolution.
-pub const MAX_CALL_DEPTH: u32 = 20;
-
-/// Maximum iterations for tree-walking loops (scope chain, parent traversal).
-/// Prevents infinite loops in malformed or pathological AST structures.
-pub const MAX_TREE_WALK_ITERATIONS: usize = 10_000;
-
-/// Maximum number of type resolution operations per checker instance.
-/// Prevents timeout on deeply recursive or pathological type definitions.
-/// WASM environments have limited memory, so we use a much lower limit.
-#[cfg(target_arch = "wasm32")]
-pub const MAX_TYPE_RESOLUTION_OPS: u32 = 20_000;
-#[cfg(not(target_arch = "wasm32"))]
-pub const MAX_TYPE_RESOLUTION_OPS: u32 = 100_000;
+// Re-export from centralized limits — do NOT redefine these here.
+pub use tsz_common::limits::MAX_CALL_DEPTH;
+pub use tsz_common::limits::MAX_INSTANTIATION_DEPTH;
+pub use tsz_common::limits::MAX_TREE_WALK_ITERATIONS;
+pub use tsz_common::limits::MAX_TYPE_RESOLUTION_OPS;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EnumKind {

@@ -301,7 +301,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Limit distribution to prevent OOM with large unions
         const MAX_DISTRIBUTION_SIZE: usize = 100;
         if members.len() > MAX_DISTRIBUTION_SIZE {
-            self.set_depth_exceeded(true);
+            self.mark_depth_exceeded();
             return TypeId::ERROR;
         }
 
