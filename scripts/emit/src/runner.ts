@@ -229,6 +229,7 @@ async function findTestCases(filter: string, maxTests: number): Promise<TestCase
       : 1;
     const module = variant.module ? parseModule(variant.module)
       : directives.module ? parseModule(String(directives.module))
+      : target >= 2 ? 5  // When target >= ES2015 and no module specified, default to ES2015 modules
       : 0;
 
     const alwaysStrict = directives.strict === true || directives.alwaysstrict === true;

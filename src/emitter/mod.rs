@@ -1856,20 +1856,33 @@ impl<'a> Printer<'a> {
 
         // Emit "use strict" FIRST (before comments and helpers)
         // TypeScript emits "use strict" when:
-        // 1. Module is CommonJS/AMD/UMD
-        // 2. alwaysStrict compiler option is enabled
-        // 3. File is an ES module with target < ES2015
-        let is_es_module = self.file_is_module(&source.statements);
+        // 1. Module is CommonJS/AMD/UMD (always)
+        // 2. alwaysStrict compiler option is enabled (for non-ES-module output)
+        // But NOT when:
+        // - The source already has "use strict" (avoid duplication)
+        // - ES module output (ES2015/ESNext module kind) since ESM is implicitly strict
         let is_commonjs_or_amd = matches!(
             self.ctx.options.module,
             ModuleKind::CommonJS | ModuleKind::AMD | ModuleKind::UMD
         );
-        let target_before_es6 = !self.ctx.options.target.supports_es2015();
+        let is_es_module_output = matches!(
+            self.ctx.options.module,
+            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
+        );
 
-        if is_commonjs_or_amd
-            || (is_es_module && target_before_es6)
-            || self.ctx.options.always_strict
-        {
+        // Check if source already has "use strict" directive
+        let source_has_use_strict = self
+            .source_text
+            .map(|text| {
+                let trimmed = text.trim_start();
+                trimmed.starts_with("\"use strict\"") || trimmed.starts_with("'use strict'")
+            })
+            .unwrap_or(false);
+
+        let should_emit_use_strict = !source_has_use_strict
+            && (is_commonjs_or_amd || (self.ctx.options.always_strict && !is_es_module_output));
+
+        if should_emit_use_strict {
             self.write("\"use strict\";");
             self.write_line();
         }
