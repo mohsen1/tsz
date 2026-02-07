@@ -24,7 +24,7 @@ name = "audit-unsoundness"
 path = "src/bin/audit_unsoundness.rs"
 
 [dependencies]
-tsz = { path = "../..", package = "wasm" }
+tsz = { path = "../.." }
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
 tsz-parser = { workspace = true }
