@@ -303,6 +303,16 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
+        // Without a symbol_id we cannot inject cache entries to break the
+        // get_flow_type → check_flow → LOOP_LABEL → analyze_loop_fixed_point
+        // recursion cycle.  This happens for property-access references
+        // (e.g. `fns.length`) whose base symbol is tracked separately.
+        // Returning the entry type is safe because property access expressions
+        // are never reassigned inside loops.
+        if symbol_id.is_none() {
+            return entry_type;
+        }
+
         // If there's only one antecedent (just the entry, no back-edges), no iteration needed
         if loop_flow.antecedent.len() <= 1 {
             return entry_type;
