@@ -352,26 +352,44 @@ impl Runner {
         if let Some(tsc_result) = check_cache_metadata(&cache, &hash, mtime_ms, size) {
             debug!("Cache hit for {}", path.display());
 
-            // Cache hit - run tsz and compare
-            let compile_future = tokio::task::spawn_blocking(move || {
-                tsz_wrapper::compile_test(
-                    &content,
-                    &parsed.directives.filenames,
-                    &parsed.directives.options,
-                    &tsz_binary,
-                )
-            });
+            // Cache hit - prepare test directory (fast sync I/O)
+            let content_clone = content.clone();
+            let filenames = parsed.directives.filenames.clone();
+            let options = parsed.directives.options.clone();
 
-            // Apply timeout if configured (0 = no timeout)
-            let compile_result = if timeout_secs > 0 {
-                match tokio::time::timeout(Duration::from_secs(timeout_secs), compile_future).await
+            let prepared = tokio::task::spawn_blocking(move || {
+                tsz_wrapper::prepare_test_dir(&content_clone, &filenames, &options)
+            })
+            .await??;
+
+            // Spawn tsz process with kill_on_drop — ensures cleanup on timeout
+            let child = tokio::process::Command::new(&tsz_binary)
+                .arg("--project")
+                .arg(prepared.temp_dir.path())
+                .arg("--noEmit")
+                .arg("--pretty")
+                .arg("false")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()?;
+
+            // Wait with timeout — child is auto-killed on drop if timeout fires
+            let output = if timeout_secs > 0 {
+                match tokio::time::timeout(
+                    Duration::from_secs(timeout_secs),
+                    child.wait_with_output(),
+                )
+                .await
                 {
-                    Ok(result) => result??,
+                    Ok(result) => result?,
                     Err(_) => return Ok(TestResult::Timeout),
                 }
             } else {
-                compile_future.await??
+                child.wait_with_output().await?
             };
+
+            let compile_result = tsz_wrapper::parse_tsz_output(&output, prepared.options);
 
             // Check for crash
             if compile_result.crashed {

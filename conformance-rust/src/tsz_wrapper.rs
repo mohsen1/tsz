@@ -17,17 +17,17 @@ pub struct CompilationResult {
     pub options: HashMap<String, String>,
 }
 
-/// Compile a TypeScript file and extract error codes
-///
-/// # Arguments
-/// * `content` - Main file content
-/// * `filenames` - Additional files from @filename directives [(filename, content)]
-/// * `options` - Compiler options (strict, target, module, etc.)
-/// * `tsz_binary_path` - Path to tsz binary
-///
-/// # Returns
-/// * `Ok(CompilationResult)` - Compilation succeeded (may have errors)
-/// * `Err(...)` - Fatal error (not a type error)
+/// Prepared test directory ready for async compilation.
+/// The temp directory is deleted on drop, so keep this alive during compilation.
+pub struct PreparedTest {
+    /// Temp directory containing test files and tsconfig.json
+    pub temp_dir: tempfile::TempDir,
+    /// Compiler options used
+    pub options: HashMap<String, String>,
+}
+
+/// Compile a TypeScript file and extract error codes (used by tests only).
+#[cfg(test)]
 pub fn compile_test(
     content: &str,
     filenames: &[(String, String)],
@@ -135,6 +135,123 @@ pub fn compile_test(
     }
 }
 
+/// Prepare a test directory with files and tsconfig.json for compilation.
+///
+/// Returns a `PreparedTest` whose temp directory must be kept alive during compilation.
+/// Use this with `tokio::process::Command` + `kill_on_drop(true)` for proper timeout handling.
+pub fn prepare_test_dir(
+    content: &str,
+    filenames: &[(String, String)],
+    options: &HashMap<String, String>,
+) -> anyhow::Result<PreparedTest> {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new()?;
+    let dir_path = temp_dir.path();
+
+    if filenames.is_empty() {
+        let stripped_content = strip_directive_comments(content);
+        let main_file = dir_path.join("test.ts");
+        std::fs::write(&main_file, stripped_content)?;
+    } else {
+        for (filename, file_content) in filenames {
+            let sanitized = filename
+                .replace("..", "_")
+                .trim_start_matches('/')
+                .to_string();
+            let file_path = dir_path.join(&sanitized);
+            if !file_path.starts_with(dir_path) {
+                continue;
+            }
+            if let Some(parent) = file_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&file_path, file_content)?;
+        }
+    }
+
+    let tsconfig_path = dir_path.join("tsconfig.json");
+    let has_js_files = filenames.iter().any(|(name, _)| {
+        let lower = name.to_lowercase();
+        lower.ends_with(".js")
+            || lower.ends_with(".jsx")
+            || lower.ends_with(".mjs")
+            || lower.ends_with(".cjs")
+    });
+    let allow_js = options
+        .get("allowJs")
+        .or_else(|| options.get("allowjs"))
+        .map(|v| v == "true")
+        .unwrap_or(false)
+        || has_js_files;
+    let include = if allow_js {
+        serde_json::json!([
+            "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
+        ])
+    } else {
+        serde_json::json!(["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"])
+    };
+    let mut compiler_options = convert_options_to_tsconfig(options);
+    if allow_js {
+        if let serde_json::Value::Object(ref mut map) = compiler_options {
+            map.entry("allowJs")
+                .or_insert(serde_json::Value::Bool(true));
+        }
+    }
+    let tsconfig_content = serde_json::json!({
+        "compilerOptions": compiler_options,
+        "include": include,
+        "exclude": ["node_modules"]
+    });
+    std::fs::write(
+        &tsconfig_path,
+        serde_json::to_string_pretty(&tsconfig_content)?,
+    )?;
+
+    Ok(PreparedTest {
+        temp_dir,
+        options: options.clone(),
+    })
+}
+
+/// Parse tsz process output into a CompilationResult.
+pub fn parse_tsz_output(
+    output: &std::process::Output,
+    options: HashMap<String, String>,
+) -> CompilationResult {
+    if output.status.success() {
+        return CompilationResult {
+            error_codes: vec![],
+            crashed: false,
+            options,
+        };
+    }
+
+    // Check if process was killed by a signal (crash, not type errors)
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if output.status.signal().is_some() {
+            return CompilationResult {
+                error_codes: vec![],
+                crashed: true,
+                options,
+            };
+        }
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{}\n{}", stdout, stderr);
+    let diagnostics = parse_diagnostics_from_text(&combined);
+    let error_codes = extract_error_codes(&diagnostics);
+    CompilationResult {
+        error_codes,
+        crashed: false,
+        options,
+    }
+}
+
 /// Test harness-specific directives that should NOT be passed to tsconfig.json
 const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
     "filename",
@@ -214,7 +331,8 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
     serde_json::Value::Object(opts)
 }
 
-/// Compile with tsz binary (internal function)
+/// Compile with tsz binary (used by compile_test for tests only)
+#[cfg(test)]
 fn compile_tsz_with_binary(
     base_dir: &std::path::Path,
     tsz_path: &str,
