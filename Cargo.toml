@@ -244,10 +244,6 @@ inherits = "dev"
 opt-level = 2
 debug = true
 
-[profile.test]
-# Thin LTO for faster test binaries (trade-off: slightly slower test compilation)
-lto = "thin"
-
 [profile.bench]
 lto = "thin"
 
