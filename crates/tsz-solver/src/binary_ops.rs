@@ -63,6 +63,7 @@ pub enum PrimitiveClass {
 ///   - `ref_conservative`— visit_ref returns true (conservative for unresolved enums)
 ///   - `match_template_literal` — visit_template_literal returns true
 ///   - `match_unique_symbol`    — visit_unique_symbol returns true
+///   - `check_intersection_any` — visit_intersection returns true when ANY member matches
 macro_rules! primitive_visitor {
     ($name:ident, $ik:expr, $lit_pat:pat => $lit_result:expr $(, $feat:ident)*) => {
         #[allow(dead_code)]
@@ -106,19 +107,25 @@ macro_rules! primitive_visitor {
     (@method match_unique_symbol) => {
         fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> bool { true }
     };
+    (@method check_intersection_any) => {
+        fn visit_intersection(&mut self, list_id: u32) -> bool {
+            let members = self.db.type_list(TypeListId(list_id));
+            members.iter().any(|&m| self.visit_type(self.db, m))
+        }
+    };
 }
 
 primitive_visitor!(NumberLikeVisitor, IntrinsicKind::Number,
     LiteralValue::Number(_) => true,
-    check_union_all, check_constraint, recurse_enum, ref_conservative);
+    check_union_all, check_constraint, recurse_enum, ref_conservative, check_intersection_any);
 
 primitive_visitor!(StringLikeVisitor, IntrinsicKind::String,
     LiteralValue::String(_) => true,
-    check_constraint, recurse_enum, match_template_literal);
+    check_constraint, recurse_enum, match_template_literal, check_intersection_any);
 
 primitive_visitor!(BigIntLikeVisitor, IntrinsicKind::Bigint,
     LiteralValue::BigInt(_) => true,
-    check_union_all, check_constraint, recurse_enum, ref_conservative);
+    check_union_all, check_constraint, recurse_enum, ref_conservative, check_intersection_any);
 
 primitive_visitor!(BooleanLikeVisitor, IntrinsicKind::Boolean,
     LiteralValue::Boolean(_) => true);
