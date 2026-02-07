@@ -645,11 +645,13 @@ impl<'a> CheckerState<'a> {
                     && default_type != TypeId::ERROR
                     && !self.is_assignable_to(default_type, constraint_type)
                 {
-                    self.error_at_node(
-                            data.default,
-                            crate::types::diagnostics::diagnostic_messages::TYPE_NOT_SATISFY_CONSTRAINT,
-                            crate::types::diagnostics::diagnostic_codes::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED,
-                        );
+                    let type_str = self.format_type(default_type);
+                    let constraint_str = self.format_type(constraint_type);
+                    self.error_at_node_msg(
+                        data.default,
+                        crate::types::diagnostics::diagnostic_codes::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED,
+                        &[&type_str, &constraint_str],
+                    );
                 }
                 if default_type == TypeId::ERROR {
                     None

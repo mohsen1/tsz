@@ -111,6 +111,7 @@ pub fn get_message_template(code: u32) -> Option<&'static str> {
         dc::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENTS => dm::GENERIC_TYPE_REQUIRES_ARGS,
         dc::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED => dm::TYPE_NOT_SATISFY_CONSTRAINT,
         dc::TYPE_INSTANTIATION_EXCESSIVELY_DEEP => dm::TYPE_INSTANTIATION_EXCESSIVELY_DEEP,
+        dc::EXPECTED_TYPE_ARGUMENTS_BUT_GOT => dm::EXPECTED_TYPE_ARGUMENTS,
         // Function/call errors
         dc::EXPECTED_ARGUMENTS => dm::EXPECTED_ARGUMENTS,
         dc::EXPECTED_AT_LEAST_ARGUMENTS => dm::EXPECTED_AT_LEAST_ARGUMENTS,
@@ -326,6 +327,7 @@ pub mod diagnostic_messages {
     pub const GENERIC_TYPE_REQUIRES_ARGS: &str =
         "Generic type '{0}' requires {1} type argument(s).";
     pub const TYPE_IS_NOT_GENERIC: &str = "Type '{0}' is not generic.";
+    pub const EXPECTED_TYPE_ARGUMENTS: &str = "Expected {0} type arguments, but got {1}.";
     pub const TYPE_INSTANTIATION_EXCESSIVELY_DEEP: &str =
         "Type instantiation is excessively deep and possibly infinite.";
 
@@ -705,6 +707,7 @@ pub mod diagnostic_codes {
     pub const TYPE_PARAMETER_CANNOT_HAVE_VARIANCE_MODIFIER: u32 = 2637;
     pub const CONSTRAINT_OF_TYPE_PARAMETER: u32 = 2313;
     pub const TYPE_INSTANTIATION_EXCESSIVELY_DEEP: u32 = 2589;
+    pub const EXPECTED_TYPE_ARGUMENTS_BUT_GOT: u32 = 2558;
 
     // Definite assignment errors
     pub const PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT: u32 = 2564;

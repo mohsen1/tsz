@@ -24,11 +24,12 @@ impl<'a> CheckerState<'a> {
 
     /// Validate explicit type arguments against their constraints for call expressions.
     /// Reports TS2344 when a type argument doesn't satisfy its constraint.
+    /// Reports TS2558 when a non-generic function is called with type arguments.
     pub(crate) fn validate_call_type_arguments(
         &mut self,
         callee_type: TypeId,
         type_args_list: &tsz_parser::parser::NodeList,
-        _call_idx: NodeIndex,
+        call_idx: NodeIndex,
     ) {
         use tsz_solver::AssignabilityChecker;
         use tsz_solver::type_queries::{
@@ -54,6 +55,15 @@ impl<'a> CheckerState<'a> {
         };
 
         if type_params.is_empty() {
+            // TS2558: Expected 0 type arguments, but got N.
+            let got = type_args_list.nodes.len();
+            if got > 0 {
+                self.error_at_node_msg(
+                    call_idx,
+                    crate::types::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                    &["0", &got.to_string()],
+                );
+            }
             return;
         }
 
