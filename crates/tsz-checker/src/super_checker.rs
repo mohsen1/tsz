@@ -186,6 +186,39 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a node is inside a class static block.
+    ///
+    /// Returns true if inside a `static { ... }` block.
+    /// Super property access is valid in static blocks of derived classes.
+    pub(crate) fn is_in_class_static_block(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            if parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                return true;
+            }
+
+            // Check if we've left the class
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                break;
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
     // =========================================================================
     // Super Expression Validation
     // =========================================================================
@@ -422,7 +455,8 @@ impl<'a> CheckerState<'a> {
             let in_valid_context = self.is_in_constructor(idx)
                 || self.is_in_class_method_body(idx)
                 || self.is_in_class_accessor_body(idx)
-                || self.is_in_class_property_initializer(idx);
+                || self.is_in_class_property_initializer(idx)
+                || self.is_in_class_static_block(idx);
 
             if !in_valid_context {
                 self.error_at_node(

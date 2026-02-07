@@ -1652,6 +1652,16 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // Could not resolve as a heritage symbol - check if it's an identifier
                     // that references a value with a constructor type
+                    //
+                    // For property access expressions (e.g., `M1.A`, `"".bogus`),
+                    // skip TS2304 — normal type checking will emit TS2339 if the property
+                    // doesn't exist, matching tsc behavior.
+                    if let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                        && expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    {
+                        continue;
+                    }
+
                     let is_valid_constructor = if let Some(expr_node) = self.ctx.arena.get(expr_idx)
                         && expr_node.kind == SyntaxKind::Identifier as u16
                     {
