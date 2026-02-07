@@ -38,6 +38,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// Private brands are used for nominal typing of classes with private fields.
     /// If both source and target have private brands, they must be the same.
+    /// If target has a brand but source doesn't (e.g., object literal), this fails.
     /// Returns false if brands don't match, true otherwise (including when neither has a brand).
     pub(crate) fn check_private_brand_compatibility(
         &self,
@@ -53,14 +54,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             name.starts_with("__private_brand_")
         });
 
-        // If both have private brands (both are classes with private fields), check they match
+        // Check private brand compatibility
         match (source_brand, target_brand) {
             (Some(s_brand), Some(t_brand)) => {
+                // Both have private brands - they must match exactly
                 let s_brand_name = self.interner.resolve_atom(s_brand.name);
                 let t_brand_name = self.interner.resolve_atom(t_brand.name);
                 s_brand_name == t_brand_name
             }
-            _ => true, // If at least one doesn't have a brand, no conflict
+            (None, Some(_)) => {
+                // Target has a private brand but source doesn't
+                // This happens when assigning object literal to class with private members
+                // Object literals can never have private brands, so this fails
+                false
+            }
+            _ => {
+                // Neither has a brand, or source has brand but target doesn't - both OK
+                true
+            }
         }
     }
 

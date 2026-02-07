@@ -786,6 +786,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             });
         }
 
+        // Private brand incompatibility (TS2322)
+        // Check this before the structural check so we generate the right error
+        if let Some(false) = self.private_brand_assignability_override(source, target) {
+            return Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
         // Empty object target
         if self.is_empty_object_target(target) && self.is_assignable_to_empty_object(source) {
             return None;
