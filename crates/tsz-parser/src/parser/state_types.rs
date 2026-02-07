@@ -478,19 +478,33 @@ impl ParserState {
             || self.is_token(SyntaxKind::TrueKeyword)
             || self.is_token(SyntaxKind::FalseKeyword)
         {
-            return self.parse_literal_type();
+            let lit = self.parse_literal_type();
+            // Handle array types of literal types (e.g., 1[], "foo"[], true[])
+            if self.is_token(SyntaxKind::OpenBracketToken) {
+                return self.parse_array_type(start_pos, lit);
+            }
+            return lit;
         }
 
         // Handle negative numeric literal types: -1, -42
         if self.is_token(SyntaxKind::MinusToken) {
-            return self.parse_prefix_unary_literal_type();
+            let lit = self.parse_prefix_unary_literal_type();
+            // Handle array types of negative literal types (e.g., (-1)[])
+            if self.is_token(SyntaxKind::OpenBracketToken) {
+                return self.parse_array_type(start_pos, lit);
+            }
+            return lit;
         }
 
         // Handle template literal types: `hello` or `prefix${T}suffix`
         if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
             || self.is_token(SyntaxKind::TemplateHead)
         {
-            return self.parse_template_literal_type();
+            let lit = self.parse_template_literal_type();
+            if self.is_token(SyntaxKind::OpenBracketToken) {
+                return self.parse_array_type(start_pos, lit);
+            }
+            return lit;
         }
 
         // Check for type keywords (string, number, boolean, etc.)

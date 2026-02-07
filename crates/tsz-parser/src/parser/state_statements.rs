@@ -1514,7 +1514,11 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ClassKeyword);
 
         // Parse class name - keywords like 'any', 'string' can be used as class names
-        let name = if self.is_identifier_or_keyword() {
+        // EXCEPT extends/implements which start heritage clauses
+        let name = if self.is_identifier_or_keyword()
+            && !self.is_token(SyntaxKind::ExtendsKeyword)
+            && !self.is_token(SyntaxKind::ImplementsKeyword)
+        {
             self.parse_identifier_name()
         } else {
             NodeIndex::NONE
@@ -1559,7 +1563,11 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ClassKeyword);
 
         // Parse class name - keywords like 'any', 'string' can be used as class names
-        let name = if self.is_identifier_or_keyword() {
+        // EXCEPT extends/implements which start heritage clauses
+        let name = if self.is_identifier_or_keyword()
+            && !self.is_token(SyntaxKind::ExtendsKeyword)
+            && !self.is_token(SyntaxKind::ImplementsKeyword)
+        {
             self.parse_identifier_name()
         } else {
             NodeIndex::NONE
