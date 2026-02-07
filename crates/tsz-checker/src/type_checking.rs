@@ -3374,6 +3374,11 @@ impl<'a> CheckerState<'a> {
                     && self.is_parameter_declaration(decl_idx)
                     && !self.is_overload_signature_parameter(decl_idx);
 
+                // Skip `this` parameter — it's a TypeScript type annotation, not an actual parameter
+                if is_param && name == "this" {
+                    continue;
+                }
+
                 // Skip parameters starting with _ (TSC convention for intentionally unused)
                 if is_param && name.starts_with('_') {
                     continue;
