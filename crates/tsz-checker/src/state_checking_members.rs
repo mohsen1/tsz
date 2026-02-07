@@ -147,8 +147,23 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_literal(name_node)
                 .map(|lit| lit.text.to_string()),
-            // For computed property names, we can't easily check for duplicates
-            // since the value is computed at runtime
+            k if k == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                // For computed property names with string/numeric literal expressions like ["a"],
+                // extract the value for duplicate checking. tsc formats these as ["a"] in diagnostics.
+                let computed = self.ctx.arena.get_computed_property(name_node)?;
+                let expr_node = self.ctx.arena.get(computed.expression)?;
+                match expr_node.kind {
+                    ek if ek == SyntaxKind::StringLiteral as u16 => {
+                        let lit = self.ctx.arena.get_literal(expr_node)?;
+                        Some(format!("[\"{}\"]", lit.text))
+                    }
+                    ek if ek == SyntaxKind::NumericLiteral as u16 => {
+                        let lit = self.ctx.arena.get_literal(expr_node)?;
+                        Some(lit.text.to_string())
+                    }
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }

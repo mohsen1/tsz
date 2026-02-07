@@ -69,10 +69,13 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
                 current_filename = Some(value.to_string());
                 current_content = Vec::new();
             } else {
-                // Store as option
+                // Strip trailing comma from value — multi-target directives like
+                // `// @target: esnext, es2022, es2015` produce `esnext,` because
+                // the regex captures only the first non-whitespace token.
+                let clean_value = value.trim_end_matches(',');
                 directives
                     .options
-                    .insert(key.to_string(), value.to_string());
+                    .insert(key.to_string(), clean_value.to_string());
             }
         } else {
             // Non-directive line - add to current file content
