@@ -1899,25 +1899,27 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         };
 
-        // Get the current scope (where the variable is being accessed)
-        let current_scope_id = self.binder.current_scope_id;
+        // Find the enclosing scope of the usage site on-demand from the reference node.
+        // Previously this used `binder.current_scope_id` which is stale after binding
+        // completes -- it reflects the binder's final position, not the scope where
+        // the reference actually lives.
+        let Some(usage_scope_id) = self.binder.find_enclosing_scope(self.arena, reference) else {
+            return false;
+        };
 
-        // If declared in current scope, not captured
-        if decl_scope_id == current_scope_id {
+        // If declared and used in the same scope, not captured
+        if decl_scope_id == usage_scope_id {
             return false;
         }
 
-        // Check if declaration scope is an ancestor of current scope
-        // Walk up the scope chain from current scope to see if we find the declaration scope
-        let mut scope_id = current_scope_id;
+        // Check if declaration scope is an ancestor of usage scope
+        let mut scope_id = usage_scope_id;
         let mut iterations = 0;
         while !scope_id.is_none() && iterations < MAX_TREE_WALK_ITERATIONS {
             if scope_id == decl_scope_id {
-                // Found declaration scope in ancestor chain → captured variable
                 return true;
             }
 
-            // Move to parent scope
             scope_id = self
                 .binder
                 .scopes
