@@ -1134,6 +1134,117 @@ impl NodeArena {
 }
 
 // =============================================================================
+// Index-based convenience accessors: get(index) + get_TYPE(node) in one call
+// =============================================================================
+
+/// Generate `get_*_at(index: NodeIndex) -> Option<&T>` convenience methods
+/// that combine `arena.get(index)` with a typed getter in a single call.
+macro_rules! define_at_accessors {
+    ($($at_name:ident => $getter:ident -> $ret:ty);* $(;)?) => {
+        impl NodeArena {
+            $(
+                #[inline]
+                pub fn $at_name(&self, index: NodeIndex) -> Option<&$ret> {
+                    self.$getter(self.get(index)?)
+                }
+            )*
+        }
+    };
+}
+
+define_at_accessors! {
+    get_identifier_at => get_identifier -> IdentifierData;
+    get_literal_at => get_literal -> LiteralData;
+    get_binary_expr_at => get_binary_expr -> BinaryExprData;
+    get_call_expr_at => get_call_expr -> CallExprData;
+    get_access_expr_at => get_access_expr -> AccessExprData;
+    get_conditional_expr_at => get_conditional_expr -> ConditionalExprData;
+    get_qualified_name_at => get_qualified_name -> QualifiedNameData;
+    get_literal_expr_at => get_literal_expr -> LiteralExprData;
+    get_property_assignment_at => get_property_assignment -> PropertyAssignmentData;
+    get_type_assertion_at => get_type_assertion -> TypeAssertionData;
+    get_unary_expr_at => get_unary_expr -> UnaryExprData;
+    get_unary_expr_ex_at => get_unary_expr_ex -> UnaryExprDataEx;
+    get_function_at => get_function -> FunctionData;
+    get_class_at => get_class -> ClassData;
+    get_block_at => get_block -> BlockData;
+    get_source_file_at => get_source_file -> SourceFileData;
+    get_variable_at => get_variable -> VariableData;
+    get_variable_declaration_at => get_variable_declaration -> VariableDeclarationData;
+    get_interface_at => get_interface -> InterfaceData;
+    get_type_alias_at => get_type_alias -> TypeAliasData;
+    get_enum_at => get_enum -> EnumData;
+    get_enum_member_at => get_enum_member -> EnumMemberData;
+    get_module_at => get_module -> ModuleData;
+    get_module_block_at => get_module_block -> ModuleBlockData;
+    get_if_statement_at => get_if_statement -> IfStatementData;
+    get_loop_at => get_loop -> LoopData;
+    get_for_in_of_at => get_for_in_of -> ForInOfData;
+    get_switch_at => get_switch -> SwitchData;
+    get_case_clause_at => get_case_clause -> CaseClauseData;
+    get_try_at => get_try -> TryData;
+    get_catch_clause_at => get_catch_clause -> CatchClauseData;
+    get_labeled_statement_at => get_labeled_statement -> LabeledData;
+    get_jump_data_at => get_jump_data -> JumpData;
+    get_with_statement_at => get_with_statement -> IfStatementData;
+    get_import_decl_at => get_import_decl -> ImportDeclData;
+    get_import_clause_at => get_import_clause -> ImportClauseData;
+    get_named_imports_at => get_named_imports -> NamedImportsData;
+    get_specifier_at => get_specifier -> SpecifierData;
+    get_export_decl_at => get_export_decl -> ExportDeclData;
+    get_export_assignment_at => get_export_assignment -> ExportAssignmentData;
+    get_parameter_at => get_parameter -> ParameterData;
+    get_property_decl_at => get_property_decl -> PropertyDeclData;
+    get_method_decl_at => get_method_decl -> MethodDeclData;
+    get_constructor_at => get_constructor -> ConstructorData;
+    get_accessor_at => get_accessor -> AccessorData;
+    get_decorator_at => get_decorator -> DecoratorData;
+    get_type_ref_at => get_type_ref -> TypeRefData;
+    get_expression_statement_at => get_expression_statement -> ExprStatementData;
+    get_return_statement_at => get_return_statement -> ReturnData;
+    get_jsx_element_at => get_jsx_element -> JsxElementData;
+    get_jsx_opening_at => get_jsx_opening -> JsxOpeningData;
+    get_jsx_closing_at => get_jsx_closing -> JsxClosingData;
+    get_jsx_fragment_at => get_jsx_fragment -> JsxFragmentData;
+    get_jsx_attributes_at => get_jsx_attributes -> JsxAttributesData;
+    get_jsx_attribute_at => get_jsx_attribute -> JsxAttributeData;
+    get_jsx_spread_attribute_at => get_jsx_spread_attribute -> JsxSpreadAttributeData;
+    get_jsx_expression_at => get_jsx_expression -> JsxExpressionData;
+    get_jsx_text_at => get_jsx_text -> JsxTextData;
+    get_jsx_namespaced_name_at => get_jsx_namespaced_name -> JsxNamespacedNameData;
+    get_signature_at => get_signature -> SignatureData;
+    get_index_signature_at => get_index_signature -> IndexSignatureData;
+    get_heritage_clause_at => get_heritage_clause -> HeritageData;
+    get_composite_type_at => get_composite_type -> CompositeTypeData;
+    get_array_type_at => get_array_type -> ArrayTypeData;
+    get_tuple_type_at => get_tuple_type -> TupleTypeData;
+    get_function_type_at => get_function_type -> FunctionTypeData;
+    get_type_literal_at => get_type_literal -> TypeLiteralData;
+    get_conditional_type_at => get_conditional_type -> ConditionalTypeData;
+    get_mapped_type_at => get_mapped_type -> MappedTypeData;
+    get_indexed_access_type_at => get_indexed_access_type -> IndexedAccessTypeData;
+    get_literal_type_at => get_literal_type -> LiteralTypeData;
+    get_wrapped_type_at => get_wrapped_type -> WrappedTypeData;
+    get_expr_type_args_at => get_expr_type_args -> ExprWithTypeArgsData;
+    get_type_query_at => get_type_query -> TypeQueryData;
+    get_type_operator_at => get_type_operator -> TypeOperatorData;
+    get_infer_type_at => get_infer_type -> InferTypeData;
+    get_template_literal_type_at => get_template_literal_type -> TemplateLiteralTypeData;
+    get_named_tuple_member_at => get_named_tuple_member -> NamedTupleMemberData;
+    get_type_predicate_at => get_type_predicate -> TypePredicateData;
+    get_type_parameter_at => get_type_parameter -> TypeParameterData;
+    get_parenthesized_at => get_parenthesized -> ParenthesizedData;
+    get_template_expr_at => get_template_expr -> TemplateExprData;
+    get_template_span_at => get_template_span -> TemplateSpanData;
+    get_tagged_template_at => get_tagged_template -> TaggedTemplateData;
+    get_spread_at => get_spread -> SpreadData;
+    get_shorthand_property_at => get_shorthand_property -> ShorthandPropertyData;
+    get_binding_pattern_at => get_binding_pattern -> BindingPatternData;
+    get_binding_element_at => get_binding_element -> BindingElementData;
+    get_computed_property_at => get_computed_property -> ComputedPropertyData
+}
+
+// =============================================================================
 // Node View - Ergonomic wrapper for reading Nodes
 // =============================================================================
 

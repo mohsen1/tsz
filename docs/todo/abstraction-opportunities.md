@@ -72,6 +72,7 @@ Zero `TypeKey::` matches in Checker. Solver matches contained to visitor/format 
 **Priority**: High
 **Impact**: Code volume reduction, readability
 **Occurrences**: ~300 across LSP, emitter, transforms, checker
+**Status**: Partial — `define_at_accessors!` macro adds 85 `get_*_at(index)` methods; ~30 call sites migrated across 10 files
 
 ### Problem
 
@@ -149,6 +150,7 @@ Or a `TestDb` struct that bundles `TypeInterner`, `SubtypeChecker`, `InferenceCo
 **Priority**: High
 **Impact**: Maintainability, tsc error parity
 **Occurrences**: ~50 across checker and solver
+**Status**: Partially done — solver `codes` module and `get_message_template` now re-export from tsz-common (single source of truth for codes + messages)
 
 ### Problem
 
@@ -450,9 +452,9 @@ impl CheckerContext<'_> {
 | # | Pattern | Occurrences | Priority | Effort | Blocked On |
 |---|---------|-------------|----------|--------|------------|
 | 1 | Eliminate TypeKey matches in Checker | 75+ | High | Large | Judge classifier API |
-| 2 | Arena node access helpers | ~300 | High | Medium | — |
+| 2 | Arena node access helpers | ~300 | High | Medium | **Partial** (`_at` accessors + 30 sites migrated) |
 | 3 | Test setup boilerplate | ~200 | High | Low | **Done** (-19K lines) |
-| 4 | Diagnostic emission patterns | ~50 | High | Medium | — |
+| 4 | Diagnostic emission patterns | ~50 | High | Medium | **Partial** (codes/messages consolidated) |
 | 5 | Type resolution unwrapping | ~50 | Medium-High | Medium | Judge queries (partial) |
 | 6 | LSP handler initialization | ~15 | Medium | Medium | — |
 | 7 | WASM API flag getters | ~70 | Medium | Low | **Done** |

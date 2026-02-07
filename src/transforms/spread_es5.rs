@@ -187,8 +187,7 @@ impl<'a> ES5SpreadTransformer<'a> {
 
     /// Transform an array literal with spread to ES5
     pub fn transform_array_spread(&mut self, array_idx: NodeIndex) -> Option<IRNode> {
-        let node = self.arena.get(array_idx)?;
-        let literal = self.arena.get_literal_expr(node)?;
+        let literal = self.arena.get_literal_expr_at(array_idx)?;
 
         // Collect segments: arrays of non-spread elements and spread elements
         let mut segments: Vec<ArraySegment> = Vec::new();
@@ -260,8 +259,7 @@ impl<'a> ES5SpreadTransformer<'a> {
 
     /// Transform a call expression with spread arguments to ES5
     pub fn transform_call_spread(&mut self, call_idx: NodeIndex) -> Option<IRNode> {
-        let call_node = self.arena.get(call_idx)?;
-        let call = self.arena.get_call_expr(call_node)?;
+        let call = self.arena.get_call_expr_at(call_idx)?;
 
         let args = call.arguments.as_ref()?;
 
@@ -297,8 +295,7 @@ impl<'a> ES5SpreadTransformer<'a> {
         callee_idx: NodeIndex,
         args: &NodeList,
     ) -> Option<IRNode> {
-        let callee_node = self.arena.get(callee_idx)?;
-        let access = self.arena.get_access_expr(callee_node)?;
+        let access = self.arena.get_access_expr_at(callee_idx)?;
 
         // We need to cache the object to avoid double evaluation
         let object_expr = self.transform_expression(access.expression)?;
@@ -413,8 +410,7 @@ impl<'a> ES5SpreadTransformer<'a> {
 
     /// Transform an object literal with spread properties
     pub fn transform_object_spread(&mut self, object_idx: NodeIndex) -> Option<IRNode> {
-        let node = self.arena.get(object_idx)?;
-        let literal = self.arena.get_literal_expr(node)?;
+        let literal = self.arena.get_literal_expr_at(object_idx)?;
 
         // Collect segments: object literals and spread expressions
         let mut segments: Vec<ObjectSegment> = Vec::new();

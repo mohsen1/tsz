@@ -103,8 +103,7 @@ impl<'a> CommonJsTransformContext<'a> {
 
     /// Transform an import declaration
     fn transform_import(&mut self, import_idx: NodeIndex) -> Option<IRNode> {
-        let import_node = self.arena.get(import_idx)?;
-        let import = self.arena.get_import_decl(import_node)?;
+        let import = self.arena.get_import_decl_at(import_idx)?;
 
         // Get module specifier
         let module_spec = get_string_literal_text(self.arena, import.module_specifier)?;
@@ -189,8 +188,7 @@ impl<'a> CommonJsTransformContext<'a> {
 
     /// Transform an export declaration
     fn transform_export(&mut self, export_idx: NodeIndex) -> Option<IRNode> {
-        let export_node = self.arena.get(export_idx)?;
-        let export_data = self.arena.get_export_decl(export_node)?;
+        let export_data = self.arena.get_export_decl_at(export_idx)?;
 
         if export_data.is_type_only {
             return None;
@@ -273,8 +271,7 @@ impl<'a> CommonJsTransformContext<'a> {
 
     /// Transform a variable statement (check for export modifier)
     fn transform_variable_statement(&mut self, var_idx: NodeIndex) -> Option<IRNode> {
-        let var_node = self.arena.get(var_idx)?;
-        let var_data = self.arena.get_variable(var_node)?;
+        let var_data = self.arena.get_variable_at(var_idx)?;
 
         let is_exported = has_export_modifier_from_list(self.arena, &var_data.modifiers);
 
@@ -309,8 +306,7 @@ impl<'a> CommonJsTransformContext<'a> {
 
     /// Transform a function statement (check for export modifier)
     fn transform_function_statement(&mut self, func_idx: NodeIndex) -> Option<IRNode> {
-        let func_node = self.arena.get(func_idx)?;
-        let func_data = self.arena.get_function(func_node)?;
+        let func_data = self.arena.get_function_at(func_idx)?;
 
         let is_exported = has_export_modifier_from_list(self.arena, &func_data.modifiers);
 
@@ -332,8 +328,7 @@ impl<'a> CommonJsTransformContext<'a> {
 
     /// Transform a class statement (check for export modifier)
     fn transform_class_statement(&mut self, class_idx: NodeIndex) -> Option<IRNode> {
-        let class_node = self.arena.get(class_idx)?;
-        let class_data = self.arena.get_class(class_node)?;
+        let class_data = self.arena.get_class_at(class_idx)?;
 
         let is_exported = has_export_modifier_from_list(self.arena, &class_data.modifiers);
 
@@ -355,8 +350,7 @@ impl<'a> CommonJsTransformContext<'a> {
 
     /// Transform an enum statement (check for export modifier)
     fn transform_enum_statement(&mut self, enum_idx: NodeIndex) -> Option<IRNode> {
-        let enum_node = self.arena.get(enum_idx)?;
-        let enum_data = self.arena.get_enum(enum_node)?;
+        let enum_data = self.arena.get_enum_at(enum_idx)?;
 
         let is_exported = has_export_modifier_from_list(self.arena, &enum_data.modifiers);
 
@@ -378,8 +372,7 @@ impl<'a> CommonJsTransformContext<'a> {
 
     /// Transform a namespace statement (check for export modifier)
     fn transform_namespace_statement(&mut self, ns_idx: NodeIndex) -> Option<IRNode> {
-        let ns_node = self.arena.get(ns_idx)?;
-        let ns_data = self.arena.get_module(ns_node)?;
+        let ns_data = self.arena.get_module_at(ns_idx)?;
 
         let is_exported = has_export_modifier_from_list(self.arena, &ns_data.modifiers);
 

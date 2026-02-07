@@ -141,8 +141,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         force_exported: bool,
         should_declare_var: bool,
     ) -> Option<IRNode> {
-        let ns_node = self.arena.get(ns_idx)?;
-        let ns_data = self.arena.get_module(ns_node)?;
+        let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient namespaces (declare namespace)
         if has_declare_modifier(self.arena, &ns_data.modifiers) {
@@ -353,8 +352,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         ns_name: &str,
         func_idx: NodeIndex,
     ) -> Option<IRNode> {
-        let func_node = self.arena.get(func_idx)?;
-        let func_data = self.arena.get_function(func_node)?;
+        let func_data = self.arena.get_function_at(func_idx)?;
 
         // Skip declaration-only functions (no body)
         if func_data.body.is_none() {
@@ -387,8 +385,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     /// Transform an exported function
     fn transform_function_exported(&self, ns_name: &str, func_idx: NodeIndex) -> Option<IRNode> {
-        let func_node = self.arena.get(func_idx)?;
-        let func_data = self.arena.get_function(func_node)?;
+        let func_data = self.arena.get_function_at(func_idx)?;
 
         if func_data.body.is_none() {
             return None;
@@ -415,8 +412,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     /// Transform a class in namespace
     fn transform_class_in_namespace(&self, ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
-        let class_node = self.arena.get(class_idx)?;
-        let class_data = self.arena.get_class(class_node)?;
+        let class_data = self.arena.get_class_at(class_idx)?;
 
         let class_name = get_identifier_text(self.arena, class_data.name)?;
         let is_exported = has_export_modifier(self.arena, &class_data.modifiers);
@@ -441,8 +437,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     /// Transform an exported class
     fn transform_class_exported(&self, ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
-        let class_node = self.arena.get(class_idx)?;
-        let class_data = self.arena.get_class(class_node)?;
+        let class_data = self.arena.get_class_at(class_idx)?;
 
         let class_name = get_identifier_text(self.arena, class_data.name)?;
 
@@ -462,8 +457,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     /// Transform a variable statement in namespace
     fn transform_variable_in_namespace(&self, ns_name: &str, var_idx: NodeIndex) -> Option<IRNode> {
-        let var_node = self.arena.get(var_idx)?;
-        let var_data = self.arena.get_variable(var_node)?;
+        let var_data = self.arena.get_variable_at(var_idx)?;
 
         let is_exported = has_export_modifier(self.arena, &var_data.modifiers);
 
@@ -485,8 +479,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     /// Transform an exported variable
     fn transform_variable_exported(&self, ns_name: &str, var_idx: NodeIndex) -> Option<IRNode> {
-        let var_node = self.arena.get(var_idx)?;
-        let var_data = self.arena.get_variable(var_node)?;
+        let var_data = self.arena.get_variable_at(var_idx)?;
 
         let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
 
@@ -542,8 +535,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     /// Transform a nested namespace
     fn transform_nested_namespace(&self, _parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
-        let ns_node = self.arena.get(ns_idx)?;
-        let ns_data = self.arena.get_module(ns_node)?;
+        let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
         if has_declare_modifier(self.arena, &ns_data.modifiers) {
@@ -583,8 +575,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         _parent_ns: &str,
         ns_idx: NodeIndex,
     ) -> Option<IRNode> {
-        let ns_node = self.arena.get(ns_idx)?;
-        let ns_data = self.arena.get_module(ns_node)?;
+        let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
         if has_declare_modifier(self.arena, &ns_data.modifiers) {
@@ -644,8 +635,7 @@ impl<'a> NamespaceTransformContext<'a> {
 
     /// Transform a namespace declaration to IR
     pub fn transform_namespace(&self, ns_idx: NodeIndex) -> Option<IRNode> {
-        let ns_node = self.arena.get(ns_idx)?;
-        let ns_data = self.arena.get_module(ns_node)?;
+        let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient namespaces
         if has_declare_modifier(self.arena, &ns_data.modifiers) {
@@ -834,8 +824,7 @@ impl<'a> NamespaceTransformContext<'a> {
         ns_name: &str,
         func_idx: NodeIndex,
     ) -> Option<IRNode> {
-        let func_node = self.arena.get(func_idx)?;
-        let func_data = self.arena.get_function(func_node)?;
+        let func_data = self.arena.get_function_at(func_idx)?;
 
         // Skip declaration-only functions
         if func_data.body.is_none() {
@@ -872,8 +861,7 @@ impl<'a> NamespaceTransformContext<'a> {
         ns_name: &str,
         func_idx: NodeIndex,
     ) -> Option<IRNode> {
-        let func_node = self.arena.get(func_idx)?;
-        let func_data = self.arena.get_function(func_node)?;
+        let func_data = self.arena.get_function_at(func_idx)?;
 
         if func_data.body.is_none() {
             return None;
@@ -900,8 +888,7 @@ impl<'a> NamespaceTransformContext<'a> {
 
     /// Transform a class in namespace context
     fn transform_class_in_namespace(&self, ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
-        let class_node = self.arena.get(class_idx)?;
-        let class_data = self.arena.get_class(class_node)?;
+        let class_data = self.arena.get_class_at(class_idx)?;
 
         let class_name = get_identifier_text(self.arena, class_data.name)?;
         let is_exported = has_export_modifier(self.arena, &class_data.modifiers);
@@ -930,8 +917,7 @@ impl<'a> NamespaceTransformContext<'a> {
         ns_name: &str,
         class_idx: NodeIndex,
     ) -> Option<IRNode> {
-        let class_node = self.arena.get(class_idx)?;
-        let class_data = self.arena.get_class(class_node)?;
+        let class_data = self.arena.get_class_at(class_idx)?;
 
         let class_name = get_identifier_text(self.arena, class_data.name)?;
 
@@ -955,8 +941,7 @@ impl<'a> NamespaceTransformContext<'a> {
         ns_name: &str,
         var_idx: NodeIndex,
     ) -> Option<IRNode> {
-        let var_node = self.arena.get(var_idx)?;
-        let var_data = self.arena.get_variable(var_node)?;
+        let var_data = self.arena.get_variable_at(var_idx)?;
 
         let is_exported = has_export_modifier(self.arena, &var_data.modifiers);
 
@@ -983,8 +968,7 @@ impl<'a> NamespaceTransformContext<'a> {
         ns_name: &str,
         var_idx: NodeIndex,
     ) -> Option<IRNode> {
-        let var_node = self.arena.get(var_idx)?;
-        let var_data = self.arena.get_variable(var_node)?;
+        let var_data = self.arena.get_variable_at(var_idx)?;
 
         let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
 
@@ -1048,8 +1032,7 @@ impl<'a> NamespaceTransformContext<'a> {
         _parent_ns: &str,
         ns_idx: NodeIndex,
     ) -> Option<IRNode> {
-        let ns_node = self.arena.get(ns_idx)?;
-        let ns_data = self.arena.get_module(ns_node)?;
+        let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
         if has_declare_modifier(self.arena, &ns_data.modifiers) {
@@ -1090,8 +1073,7 @@ impl<'a> NamespaceTransformContext<'a> {
         _parent_ns: &str,
         ns_idx: NodeIndex,
     ) -> Option<IRNode> {
-        let ns_node = self.arena.get(ns_idx)?;
-        let ns_data = self.arena.get_module(ns_node)?;
+        let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
         if has_declare_modifier(self.arena, &ns_data.modifiers) {

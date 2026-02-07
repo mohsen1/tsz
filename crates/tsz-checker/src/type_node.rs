@@ -152,8 +152,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // Create proper type/value resolvers that look up symbols in the binder
                 // This is needed for mapped types, conditional types, and other complex types
                 let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
-                    let node = self.ctx.arena.get(node_idx)?;
-                    let ident = self.ctx.arena.get_identifier(node)?;
+                    let ident = self.ctx.arena.get_identifier_at(node_idx)?;
                     let name = ident.escaped_text.as_str();
 
                     // Skip built-in types that have special handling in TypeLowering
@@ -193,8 +192,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 };
 
                 let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
-                    let node = self.ctx.arena.get(node_idx)?;
-                    let ident = self.ctx.arena.get_identifier(node)?;
+                    let ident = self.ctx.arena.get_identifier_at(node_idx)?;
                     let name = ident.escaped_text.as_str();
 
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
@@ -263,8 +261,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         // Create a type resolver that looks up symbols in the binder
         let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
-            let node = self.ctx.arena.get(node_idx)?;
-            let ident = self.ctx.arena.get_identifier(node)?;
+            let ident = self.ctx.arena.get_identifier_at(node_idx)?;
             let name = ident.escaped_text.as_str();
 
             // Skip built-in types that have special handling in TypeLowering
@@ -304,8 +301,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         };
 
         let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
-            let node = self.ctx.arena.get(node_idx)?;
-            let ident = self.ctx.arena.get_identifier(node)?;
+            let ident = self.ctx.arena.get_identifier_at(node_idx)?;
             let name = ident.escaped_text.as_str();
 
             // Look up the symbol in file_locals
@@ -604,8 +600,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         // Create a type resolver that looks up symbols in the binder
         let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
-            let node = self.ctx.arena.get(node_idx)?;
-            let ident = self.ctx.arena.get_identifier(node)?;
+            let ident = self.ctx.arena.get_identifier_at(node_idx)?;
             let name = ident.escaped_text.as_str();
 
             // Skip built-in types that have special handling in TypeLowering
@@ -645,8 +640,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         };
 
         let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
-            let node = self.ctx.arena.get(node_idx)?;
-            let ident = self.ctx.arena.get_identifier(node)?;
+            let ident = self.ctx.arena.get_identifier_at(node_idx)?;
             let name = ident.escaped_text.as_str();
 
             // Look up the symbol in file_locals

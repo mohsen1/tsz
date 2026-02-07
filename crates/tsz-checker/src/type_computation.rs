@@ -1649,8 +1649,7 @@ impl<'a> CheckerState<'a> {
                             .nodes
                             .first()
                             .and_then(|&param_idx| {
-                                let param_node = self.ctx.arena.get(param_idx)?;
-                                let param = self.ctx.arena.get_parameter(param_node)?;
+                                let param = self.ctx.arena.get_parameter_at(param_idx)?;
                                 if param.type_annotation.is_none() {
                                     None
                                 } else {
