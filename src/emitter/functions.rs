@@ -182,10 +182,25 @@ impl<'a> Printer<'a> {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
             {
-                // Skip `this` parameter - it's TypeScript-only and erased in JS emit
+                // Skip `this` parameter - it's TypeScript-only and erased in JS emit.
+                // The parser may represent `this` as either a ThisKeyword token
+                // or as an Identifier with text "this".
                 if let Some(name_node) = self.arena.get(param.name) {
                     if name_node.kind == crate::scanner::SyntaxKind::ThisKeyword as u16 {
                         continue;
+                    }
+                    if name_node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
+                        if let Some(text) = self.source_text {
+                            let name_text = crate::printer::safe_slice::slice(
+                                text,
+                                name_node.pos as usize,
+                                name_node.end as usize,
+                            )
+                            .trim();
+                            if name_text == "this" {
+                                continue;
+                            }
+                        }
                     }
                 }
 
