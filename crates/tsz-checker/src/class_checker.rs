@@ -17,11 +17,130 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// Extracted info about a single class member (property, method, or accessor).
+struct ClassMemberInfo {
+    name: String,
+    type_id: TypeId,
+    name_idx: NodeIndex,
+    is_method: bool,
+    is_static: bool,
+}
+
 // =============================================================================
 // Class and Interface Checking Methods
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    /// Extract name, type, and flags from a class member node.
+    ///
+    /// If `skip_private` is true, returns `None` for private members.
+    fn extract_class_member_info(
+        &mut self,
+        member_idx: NodeIndex,
+        skip_private: bool,
+    ) -> Option<ClassMemberInfo> {
+        let member_node = self.ctx.arena.get(member_idx)?;
+        match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let prop = self.ctx.arena.get_property_decl(member_node)?;
+                let name = self.get_property_name(prop.name)?;
+                if skip_private && self.has_private_modifier(&prop.modifiers) {
+                    return None;
+                }
+                let is_static = self.has_static_modifier(&prop.modifiers);
+                let prop_type = if !prop.type_annotation.is_none() {
+                    self.get_type_from_type_node(prop.type_annotation)
+                } else if !prop.initializer.is_none() {
+                    self.get_type_of_node(prop.initializer)
+                } else {
+                    TypeId::ANY
+                };
+                Some(ClassMemberInfo {
+                    name,
+                    type_id: prop_type,
+                    name_idx: prop.name,
+                    is_method: false,
+                    is_static,
+                })
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let method = self.ctx.arena.get_method_decl(member_node)?;
+                let name = self.get_property_name(method.name)?;
+                if skip_private && self.has_private_modifier(&method.modifiers) {
+                    return None;
+                }
+                let is_static = self.has_static_modifier(&method.modifiers);
+                use tsz_solver::FunctionShape;
+                let signature = self.call_signature_from_method(method);
+                let method_type = self.ctx.types.function(FunctionShape {
+                    type_params: signature.type_params,
+                    params: signature.params,
+                    this_type: signature.this_type,
+                    return_type: signature.return_type,
+                    type_predicate: signature.type_predicate,
+                    is_constructor: false,
+                    is_method: true,
+                });
+                Some(ClassMemberInfo {
+                    name,
+                    type_id: method_type,
+                    name_idx: method.name,
+                    is_method: true,
+                    is_static,
+                })
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR => {
+                let accessor = self.ctx.arena.get_accessor(member_node)?;
+                let name = self.get_property_name(accessor.name)?;
+                if skip_private && self.has_private_modifier(&accessor.modifiers) {
+                    return None;
+                }
+                let is_static = self.has_static_modifier(&accessor.modifiers);
+                let accessor_type = if !accessor.type_annotation.is_none() {
+                    self.get_type_from_type_node(accessor.type_annotation)
+                } else {
+                    self.infer_getter_return_type(accessor.body)
+                };
+                Some(ClassMemberInfo {
+                    name,
+                    type_id: accessor_type,
+                    name_idx: accessor.name,
+                    is_method: false,
+                    is_static,
+                })
+            }
+            k if k == syntax_kind_ext::SET_ACCESSOR => {
+                let accessor = self.ctx.arena.get_accessor(member_node)?;
+                let name = self.get_property_name(accessor.name)?;
+                if skip_private && self.has_private_modifier(&accessor.modifiers) {
+                    return None;
+                }
+                let is_static = self.has_static_modifier(&accessor.modifiers);
+                let accessor_type = accessor
+                    .parameters
+                    .nodes
+                    .first()
+                    .and_then(|&p| self.ctx.arena.get_parameter_at(p))
+                    .map(|param| {
+                        if !param.type_annotation.is_none() {
+                            self.get_type_from_type_node(param.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        }
+                    })
+                    .unwrap_or(TypeId::ANY);
+                Some(ClassMemberInfo {
+                    name,
+                    type_id: accessor_type,
+                    name_idx: accessor.name,
+                    is_method: false,
+                    is_static,
+                })
+            }
+            _ => None,
+        }
+    }
+
     // =========================================================================
     // Inheritance Checking
     // =========================================================================
@@ -157,250 +276,33 @@ impl<'a> CheckerState<'a> {
 
         // Check each member in the derived class
         for &member_idx in &class_data.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            let Some(info) = self.extract_class_member_info(member_idx, false) else {
                 continue;
             };
-
-            // Get the member name, type, and whether it's a method
-            // Methods use bivariant checking, properties/accessors use contravariant checking
-            // Also track static modifier to ensure static only overrides static
-            let (member_name, member_type, member_name_idx, is_method, is_static) =
-                match member_node.kind {
-                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                        let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
-                            continue;
-                        };
-                        let Some(name) = self.get_property_name(prop.name) else {
-                            continue;
-                        };
-
-                        // Track whether this is a static property (don't skip - static members are checked)
-                        let is_static = self.has_static_modifier(&prop.modifiers);
-
-                        // Get the type: either from annotation or inferred from initializer
-                        let prop_type = if !prop.type_annotation.is_none() {
-                            self.get_type_from_type_node(prop.type_annotation)
-                        } else if !prop.initializer.is_none() {
-                            self.get_type_of_node(prop.initializer)
-                        } else {
-                            TypeId::ANY
-                        };
-
-                        (name, prop_type, prop.name, false, is_static) // (is_method, is_static)
-                    }
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                        let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
-                            continue;
-                        };
-                        let Some(name) = self.get_property_name(method.name) else {
-                            continue;
-                        };
-
-                        // Track whether this is a static method (don't skip - static members are checked)
-                        let is_static = self.has_static_modifier(&method.modifiers);
-
-                        // Build method type with is_method: true for bivariant checking
-                        use tsz_solver::FunctionShape;
-                        let signature = self.call_signature_from_method(method);
-                        let method_type = self.ctx.types.function(FunctionShape {
-                            type_params: signature.type_params,
-                            params: signature.params,
-                            this_type: signature.this_type,
-                            return_type: signature.return_type,
-                            type_predicate: signature.type_predicate,
-                            is_constructor: false,
-                            is_method: true, // Critical: marks this as a method for bivariant checking
-                        });
-
-                        (name, method_type, method.name, true, is_static) // (is_method, is_static)
-                    }
-                    k if k == syntax_kind_ext::GET_ACCESSOR => {
-                        let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
-                            continue;
-                        };
-                        let Some(name) = self.get_property_name(accessor.name) else {
-                            continue;
-                        };
-
-                        // Track whether this is a static accessor (don't skip - static members are checked)
-                        let is_static = self.has_static_modifier(&accessor.modifiers);
-
-                        // Get the return type
-                        let accessor_type = if !accessor.type_annotation.is_none() {
-                            self.get_type_from_type_node(accessor.type_annotation)
-                        } else {
-                            self.infer_getter_return_type(accessor.body)
-                        };
-
-                        (name, accessor_type, accessor.name, false, is_static) // (is_method, is_static)
-                    }
-                    k if k == syntax_kind_ext::SET_ACCESSOR => {
-                        let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
-                            continue;
-                        };
-                        let Some(name) = self.get_property_name(accessor.name) else {
-                            continue;
-                        };
-
-                        // Track whether this is a static accessor (don't skip - static members are checked)
-                        let is_static = self.has_static_modifier(&accessor.modifiers);
-
-                        // Get the parameter type (setters have one parameter)
-                        let accessor_type =
-                            if let Some(&first_param) = accessor.parameters.nodes.first() {
-                                if let Some(param) = self.ctx.arena.get_parameter_at(first_param) {
-                                    if !param.type_annotation.is_none() {
-                                        self.get_type_from_type_node(param.type_annotation)
-                                    } else {
-                                        TypeId::ANY
-                                    }
-                                } else {
-                                    TypeId::ANY
-                                }
-                            } else {
-                                TypeId::ANY
-                            };
-
-                        (name, accessor_type, accessor.name, false, is_static) // (is_method, is_static)
-                    }
-                    _ => continue,
-                };
+            let (member_name, member_type, member_name_idx, is_method, is_static) = (
+                info.name,
+                info.type_id,
+                info.name_idx,
+                info.is_method,
+                info.is_static,
+            );
 
             // Skip if type is ANY (no meaningful check)
             if member_type == TypeId::ANY {
                 continue;
             }
 
-            // Look for a matching member in the base class
+            // Look for a matching member in the base class (skip private members)
             for &base_member_idx in &base_class.members.nodes {
-                let Some(base_member_node) = self.ctx.arena.get(base_member_idx) else {
+                let Some(base_info) = self.extract_class_member_info(base_member_idx, true) else {
                     continue;
                 };
-
-                let (base_name, base_type, _base_is_method, base_is_static) = match base_member_node
-                    .kind
-                {
-                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                        let Some(base_prop) = self.ctx.arena.get_property_decl(base_member_node)
-                        else {
-                            continue;
-                        };
-                        let Some(name) = self.get_property_name(base_prop.name) else {
-                            continue;
-                        };
-
-                        // Skip private members (they trigger different errors, not TS2416)
-                        if self.has_private_modifier(&base_prop.modifiers) {
-                            continue;
-                        }
-
-                        // Track whether this is a static property (don't skip - static members are checked)
-                        let is_static = self.has_static_modifier(&base_prop.modifiers);
-
-                        let prop_type = if !base_prop.type_annotation.is_none() {
-                            self.get_type_from_type_node(base_prop.type_annotation)
-                        } else if !base_prop.initializer.is_none() {
-                            self.get_type_of_node(base_prop.initializer)
-                        } else {
-                            TypeId::ANY
-                        };
-
-                        (name, prop_type, false, is_static) // (is_method, is_static)
-                    }
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                        let Some(base_method) = self.ctx.arena.get_method_decl(base_member_node)
-                        else {
-                            continue;
-                        };
-                        let Some(name) = self.get_property_name(base_method.name) else {
-                            continue;
-                        };
-
-                        // Skip private members (they trigger different errors, not TS2416)
-                        if self.has_private_modifier(&base_method.modifiers) {
-                            continue;
-                        }
-
-                        // Track whether this is a static method (don't skip - static members are checked)
-                        let is_static = self.has_static_modifier(&base_method.modifiers);
-
-                        // Build method type with is_method: true for bivariant checking
-                        use tsz_solver::FunctionShape;
-                        let signature = self.call_signature_from_method(base_method);
-                        let method_type = self.ctx.types.function(FunctionShape {
-                            type_params: signature.type_params,
-                            params: signature.params,
-                            this_type: signature.this_type,
-                            return_type: signature.return_type,
-                            type_predicate: signature.type_predicate,
-                            is_constructor: false,
-                            is_method: true,
-                        });
-
-                        (name, method_type, true, is_static) // (is_method, is_static)
-                    }
-                    k if k == syntax_kind_ext::GET_ACCESSOR => {
-                        let Some(base_accessor) = self.ctx.arena.get_accessor(base_member_node)
-                        else {
-                            continue;
-                        };
-                        let Some(name) = self.get_property_name(base_accessor.name) else {
-                            continue;
-                        };
-
-                        // Skip private members (they trigger different errors, not TS2416)
-                        if self.has_private_modifier(&base_accessor.modifiers) {
-                            continue;
-                        }
-
-                        // Track whether this is a static accessor (don't skip - static members are checked)
-                        let is_static = self.has_static_modifier(&base_accessor.modifiers);
-
-                        let accessor_type = if !base_accessor.type_annotation.is_none() {
-                            self.get_type_from_type_node(base_accessor.type_annotation)
-                        } else {
-                            self.infer_getter_return_type(base_accessor.body)
-                        };
-
-                        (name, accessor_type, false, is_static) // (is_method, is_static)
-                    }
-                    k if k == syntax_kind_ext::SET_ACCESSOR => {
-                        let Some(base_accessor) = self.ctx.arena.get_accessor(base_member_node)
-                        else {
-                            continue;
-                        };
-                        let Some(name) = self.get_property_name(base_accessor.name) else {
-                            continue;
-                        };
-
-                        // Skip private members (they trigger different errors, not TS2416)
-                        if self.has_private_modifier(&base_accessor.modifiers) {
-                            continue;
-                        }
-
-                        // Track whether this is a static accessor (don't skip - static members are checked)
-                        let is_static = self.has_static_modifier(&base_accessor.modifiers);
-
-                        // Get the parameter type (setters have one parameter)
-                        let accessor_type =
-                            if let Some(&first_param) = base_accessor.parameters.nodes.first() {
-                                if let Some(param) = self.ctx.arena.get_parameter_at(first_param) {
-                                    if !param.type_annotation.is_none() {
-                                        self.get_type_from_type_node(param.type_annotation)
-                                    } else {
-                                        TypeId::ANY
-                                    }
-                                } else {
-                                    TypeId::ANY
-                                }
-                            } else {
-                                TypeId::ANY
-                            };
-
-                        (name, accessor_type, false, is_static) // (is_method, is_static)
-                    }
-                    _ => continue,
-                };
+                let (base_name, base_type, _base_is_method, base_is_static) = (
+                    base_info.name,
+                    base_info.type_id,
+                    base_info.is_method,
+                    base_info.is_static,
+                );
 
                 let base_type = instantiate_type(self.ctx.types, base_type, &substitution);
 

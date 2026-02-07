@@ -48,187 +48,85 @@ pub enum PrimitiveClass {
 // Visitor Pattern Implementations
 // =============================================================================
 
-/// Visitor to check if a type is number-like.
-struct NumberLikeVisitor<'a> {
-    db: &'a dyn TypeDatabase,
+/// Generate a `TypeVisitor` that checks whether a type belongs to a specific
+/// primitive class (number-like, string-like, etc.).
+///
+/// ## Arguments
+/// - `$name`: Visitor struct name
+/// - `$ik`: The `IntrinsicKind` to match
+/// - `$lit_pat`: Pattern to match `LiteralValue` against (use `_` for always-false)
+/// - `$lit_result`: Value to return when the pattern matches
+/// - Optional feature flags:
+///   - `check_union_all` — visit_union returns true when ALL members match
+///   - `check_constraint` — visit_type_parameter/visit_infer recurse into constraint
+///   - `recurse_enum`    — visit_enum recurses into the member type
+///   - `ref_conservative`— visit_ref returns true (conservative for unresolved enums)
+///   - `match_template_literal` — visit_template_literal returns true
+///   - `match_unique_symbol`    — visit_unique_symbol returns true
+macro_rules! primitive_visitor {
+    ($name:ident, $ik:expr, $lit_pat:pat => $lit_result:expr $(, $feat:ident)*) => {
+        #[allow(dead_code)]
+        struct $name<'a> { db: &'a dyn TypeDatabase }
+        impl<'a> TypeVisitor for $name<'a> {
+            type Output = bool;
+            fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> bool { kind == $ik }
+            #[allow(unreachable_patterns)]
+            fn visit_literal(&mut self, value: &LiteralValue) -> bool {
+                match value { $lit_pat => $lit_result, _ => false }
+            }
+            $(primitive_visitor!(@method $feat);)*
+            fn default_output() -> bool { false }
+        }
+    };
+    (@method check_union_all) => {
+        fn visit_union(&mut self, list_id: u32) -> bool {
+            let members = self.db.type_list(TypeListId(list_id));
+            !members.is_empty() && members.iter().all(|&m| self.visit_type(self.db, m))
+        }
+    };
+    (@method check_constraint) => {
+        fn visit_type_parameter(&mut self, info: &crate::types::TypeParamInfo) -> bool {
+            info.constraint.map(|c| self.visit_type(self.db, c)).unwrap_or(false)
+        }
+        fn visit_infer(&mut self, info: &crate::types::TypeParamInfo) -> bool {
+            info.constraint.map(|c| self.visit_type(self.db, c)).unwrap_or(false)
+        }
+    };
+    (@method recurse_enum) => {
+        fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> bool {
+            self.visit_type(self.db, member_type)
+        }
+    };
+    (@method ref_conservative) => {
+        fn visit_ref(&mut self, _symbol_ref: u32) -> bool { true }
+    };
+    (@method match_template_literal) => {
+        fn visit_template_literal(&mut self, _template_id: u32) -> bool { true }
+    };
+    (@method match_unique_symbol) => {
+        fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> bool { true }
+    };
 }
 
-impl<'a> TypeVisitor for NumberLikeVisitor<'a> {
-    type Output = bool;
+primitive_visitor!(NumberLikeVisitor, IntrinsicKind::Number,
+    LiteralValue::Number(_) => true,
+    check_union_all, check_constraint, recurse_enum, ref_conservative);
 
-    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
-        kind == IntrinsicKind::Number
-    }
+primitive_visitor!(StringLikeVisitor, IntrinsicKind::String,
+    LiteralValue::String(_) => true,
+    check_constraint, recurse_enum, match_template_literal);
 
-    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
-        matches!(value, LiteralValue::Number(_))
-    }
+primitive_visitor!(BigIntLikeVisitor, IntrinsicKind::Bigint,
+    LiteralValue::BigInt(_) => true,
+    check_union_all, check_constraint, recurse_enum, ref_conservative);
 
-    fn visit_union(&mut self, list_id: u32) -> Self::Output {
-        let members = self.db.type_list(TypeListId(list_id));
-        !members.is_empty() && members.iter().all(|&m| self.visit_type(self.db, m))
-    }
+primitive_visitor!(BooleanLikeVisitor, IntrinsicKind::Boolean,
+    LiteralValue::Boolean(_) => true);
 
-    fn visit_type_parameter(&mut self, info: &crate::types::TypeParamInfo) -> Self::Output {
-        info.constraint
-            .map(|c| self.visit_type(self.db, c))
-            .unwrap_or(false)
-    }
-
-    fn visit_infer(&mut self, info: &crate::types::TypeParamInfo) -> Self::Output {
-        info.constraint
-            .map(|c| self.visit_type(self.db, c))
-            .unwrap_or(false)
-    }
-
-    fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> Self::Output {
-        // Check if the enum member type is number-like
-        self.visit_type(self.db, member_type)
-    }
-
-    fn visit_ref(&mut self, _symbol_ref: u32) -> Self::Output {
-        true // Conservative: enums might be numeric
-    }
-
-    fn default_output() -> Self::Output {
-        false
-    }
-}
-
-/// Visitor to check if a type is string-like.
-struct StringLikeVisitor<'a> {
-    db: &'a dyn TypeDatabase,
-}
-
-impl<'a> TypeVisitor for StringLikeVisitor<'a> {
-    type Output = bool;
-
-    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
-        kind == IntrinsicKind::String
-    }
-
-    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
-        matches!(value, LiteralValue::String(_))
-    }
-
-    fn visit_template_literal(&mut self, _template_id: u32) -> Self::Output {
-        true
-    }
-
-    fn visit_type_parameter(&mut self, info: &crate::types::TypeParamInfo) -> Self::Output {
-        info.constraint
-            .map(|c| self.visit_type(self.db, c))
-            .unwrap_or(false)
-    }
-
-    fn visit_infer(&mut self, info: &crate::types::TypeParamInfo) -> Self::Output {
-        info.constraint
-            .map(|c| self.visit_type(self.db, c))
-            .unwrap_or(false)
-    }
-
-    fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> Self::Output {
-        // Check if the enum member type is string-like
-        self.visit_type(self.db, member_type)
-    }
-
-    fn default_output() -> Self::Output {
-        false
-    }
-}
-
-/// Visitor to check if a type is bigint-like.
-struct BigIntLikeVisitor<'a> {
-    db: &'a dyn TypeDatabase,
-}
-
-impl<'a> TypeVisitor for BigIntLikeVisitor<'a> {
-    type Output = bool;
-
-    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
-        kind == IntrinsicKind::Bigint
-    }
-
-    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
-        matches!(value, LiteralValue::BigInt(_))
-    }
-
-    fn visit_union(&mut self, list_id: u32) -> Self::Output {
-        let members = self.db.type_list(TypeListId(list_id));
-        !members.is_empty() && members.iter().all(|&m| self.visit_type(self.db, m))
-    }
-
-    fn visit_type_parameter(&mut self, info: &crate::types::TypeParamInfo) -> Self::Output {
-        info.constraint
-            .map(|c| self.visit_type(self.db, c))
-            .unwrap_or(false)
-    }
-
-    fn visit_infer(&mut self, info: &crate::types::TypeParamInfo) -> Self::Output {
-        info.constraint
-            .map(|c| self.visit_type(self.db, c))
-            .unwrap_or(false)
-    }
-
-    fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> Self::Output {
-        // Check if the enum member type is bigint-like
-        self.visit_type(self.db, member_type)
-    }
-
-    fn visit_ref(&mut self, _symbol_ref: u32) -> Self::Output {
-        true // Conservative: enums might be bigint
-    }
-
-    fn default_output() -> Self::Output {
-        false
-    }
-}
-
-/// Visitor to check if a type is boolean-like.
-struct BooleanLikeVisitor<'a> {
-    _db: &'a dyn TypeDatabase,
-}
-
-impl<'a> TypeVisitor for BooleanLikeVisitor<'a> {
-    type Output = bool;
-
-    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
-        kind == IntrinsicKind::Boolean
-    }
-
-    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
-        matches!(value, LiteralValue::Boolean(_))
-    }
-
-    fn default_output() -> Self::Output {
-        false
-    }
-}
-
-/// Visitor to check if a type is symbol-like.
-struct SymbolLikeVisitor<'a> {
-    _db: &'a dyn TypeDatabase,
-}
-
-impl<'a> TypeVisitor for SymbolLikeVisitor<'a> {
-    type Output = bool;
-
-    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
-        kind == IntrinsicKind::Symbol
-    }
-
-    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
-        false // Symbol types don't match literal values
-    }
-
-    fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> Self::Output {
-        true
-    }
-
-    fn default_output() -> Self::Output {
-        false
-    }
-}
+primitive_visitor!(SymbolLikeVisitor, IntrinsicKind::Symbol,
+    _ => false,
+    match_unique_symbol
+);
 
 /// Visitor to extract primitive class from a type.
 struct PrimitiveClassVisitor;
@@ -683,7 +581,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::SYMBOL {
             return true;
         }
-        let mut visitor = SymbolLikeVisitor { _db: self.interner };
+        let mut visitor = SymbolLikeVisitor { db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
 
@@ -692,7 +590,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::BOOLEAN || type_id == TypeId::ANY {
             return true;
         }
-        let mut visitor = BooleanLikeVisitor { _db: self.interner };
+        let mut visitor = BooleanLikeVisitor { db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
 

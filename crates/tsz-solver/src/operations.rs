@@ -2039,86 +2039,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_elems = self.interner.tuple_list(t_elems);
                 self.constrain_tuple_types(ctx, var_map, &s_elems, &t_elems, priority);
             }
-            // Array/Tuple to Object/ObjectWithIndex: constrain elements against index signatures
-            (Some(TypeKey::Array(s_elem)), Some(TypeKey::Object(t_shape_id))) => {
-                let t_shape = self.interner.object_shape(t_shape_id);
-                // Constrain array element type against target's string/number index signatures
-                if let Some(string_idx) = &t_shape.string_index {
-                    self.constrain_types(ctx, var_map, s_elem, string_idx.value_type, priority);
-                }
-                if let Some(number_idx) = &t_shape.number_index {
-                    self.constrain_types(ctx, var_map, s_elem, number_idx.value_type, priority);
-                }
+            // Array/Tuple → Object/ObjectWithIndex: constrain elements against index signatures
+            (
+                Some(TypeKey::Array(s_elem)),
+                Some(TypeKey::Object(t_shape_id) | TypeKey::ObjectWithIndex(t_shape_id)),
+            ) => {
+                self.constrain_elements_against_index_sigs(
+                    ctx,
+                    var_map,
+                    &[s_elem],
+                    t_shape_id,
+                    priority,
+                );
             }
-            (Some(TypeKey::Array(s_elem)), Some(TypeKey::ObjectWithIndex(t_shape_id))) => {
-                let t_shape = self.interner.object_shape(t_shape_id);
-                // Constrain array element type against target's string/number index signatures
-                if let Some(string_idx) = &t_shape.string_index {
-                    self.constrain_types(ctx, var_map, s_elem, string_idx.value_type, priority);
-                }
-                if let Some(number_idx) = &t_shape.number_index {
-                    self.constrain_types(ctx, var_map, s_elem, number_idx.value_type, priority);
-                }
-            }
-            (Some(TypeKey::Tuple(s_elems)), Some(TypeKey::Object(t_shape_id))) => {
+            (
+                Some(TypeKey::Tuple(s_elems)),
+                Some(TypeKey::Object(t_shape_id) | TypeKey::ObjectWithIndex(t_shape_id)),
+            ) => {
                 let s_elems = self.interner.tuple_list(s_elems);
-                let t_shape = self.interner.object_shape(t_shape_id);
-                // Constrain each tuple element against target's string/number index signatures
-                for s_elem in s_elems.iter() {
-                    let elem_type = if s_elem.rest {
-                        self.rest_element_type(s_elem.type_id)
-                    } else {
-                        s_elem.type_id
-                    };
-                    if let Some(string_idx) = &t_shape.string_index {
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            elem_type,
-                            string_idx.value_type,
-                            priority,
-                        );
-                    }
-                    if let Some(number_idx) = &t_shape.number_index {
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            elem_type,
-                            number_idx.value_type,
-                            priority,
-                        );
-                    }
-                }
-            }
-            (Some(TypeKey::Tuple(s_elems)), Some(TypeKey::ObjectWithIndex(t_shape_id))) => {
-                let s_elems = self.interner.tuple_list(s_elems);
-                let t_shape = self.interner.object_shape(t_shape_id);
-                // Constrain each tuple element against target's string/number index signatures
-                for s_elem in s_elems.iter() {
-                    let elem_type = if s_elem.rest {
-                        self.rest_element_type(s_elem.type_id)
-                    } else {
-                        s_elem.type_id
-                    };
-                    if let Some(string_idx) = &t_shape.string_index {
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            elem_type,
-                            string_idx.value_type,
-                            priority,
-                        );
-                    }
-                    if let Some(number_idx) = &t_shape.number_index {
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            elem_type,
-                            number_idx.value_type,
-                            priority,
-                        );
-                    }
-                }
+                let elem_types: Vec<TypeId> = s_elems
+                    .iter()
+                    .map(|e| {
+                        if e.rest {
+                            self.rest_element_type(e.type_id)
+                        } else {
+                            e.type_id
+                        }
+                    })
+                    .collect();
+                self.constrain_elements_against_index_sigs(
+                    ctx,
+                    var_map,
+                    &elem_types,
+                    t_shape_id,
+                    priority,
+                );
             }
             (Some(TypeKey::Function(s_fn_id)), Some(TypeKey::Function(t_fn_id))) => {
                 let s_fn = self.interner.function_shape(s_fn_id);
@@ -2850,6 +2805,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.interner.union2(prop.type_id, TypeId::UNDEFINED)
         } else {
             prop.type_id
+        }
+    }
+
+    /// Constrain each element type against the string and number index signatures
+    /// of a target object shape. Used for Array→Object and Tuple→Object inference.
+    fn constrain_elements_against_index_sigs(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        element_types: &[TypeId],
+        target_shape_id: ObjectShapeId,
+        priority: crate::types::InferencePriority,
+    ) {
+        let t_shape = self.interner.object_shape(target_shape_id);
+        let string_idx_type = t_shape.string_index.as_ref().map(|idx| idx.value_type);
+        let number_idx_type = t_shape.number_index.as_ref().map(|idx| idx.value_type);
+        for &elem in element_types {
+            if let Some(string_target) = string_idx_type {
+                self.constrain_types(ctx, var_map, elem, string_target, priority);
+            }
+            if let Some(number_target) = number_idx_type {
+                self.constrain_types(ctx, var_map, elem, number_target, priority);
+            }
         }
     }
 
