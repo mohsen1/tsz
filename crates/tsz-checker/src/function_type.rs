@@ -996,19 +996,9 @@ impl<'a> CheckerState<'a> {
                         return property_type.unwrap_or(TypeId::ERROR);
                     }
 
-                    // Check if the type is entirely nullish (no non-nullish part in union)
-                    let is_type_nullish = object_type_for_access == TypeId::NULL
-                        || object_type_for_access == TypeId::UNDEFINED;
-
-                    // For possibly-nullish values in non-strict mode, don't error
-                    // But for definitely-nullish values in non-strict mode, fall through to error reporting below
-                    if !self.ctx.compiler_options.strict_null_checks && !is_type_nullish {
-                        return self
-                            .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
-                    }
-
                     // Check if the expression is a literal null/undefined keyword (not a variable)
                     // TS18050 is only for `null.foo` and `undefined.bar`, not `x.foo` where x: null
+                    // TS18050 is emitted even without strictNullChecks, so check first
                     let is_literal_nullish =
                         if let Some(expr_node) = self.ctx.arena.get(access.expression) {
                             expr_node.kind == SyntaxKind::NullKeyword as u16
@@ -1037,6 +1027,14 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
                             &[value_name],
                         );
+                        return self
+                            .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
+                    }
+
+                    // Without strictNullChecks, null/undefined are in every type's domain,
+                    // so TS18047/TS18048/TS18049 are never emitted (matches tsc behavior).
+                    // Note: TS18050 for literal null/undefined is handled above.
+                    if !self.ctx.compiler_options.strict_null_checks {
                         return self
                             .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
                     }

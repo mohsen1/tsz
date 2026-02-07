@@ -21,18 +21,22 @@ x.prop;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let options = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        options,
     );
 
     checker.check_source_file(root);
 
     // tsc emits TS18047 "'x' is possibly 'null'" for property access on null
-    // (TS2531 is the older error code)
+    // (requires strictNullChecks)
     let ts18047_count = checker
         .ctx
         .diagnostics
@@ -59,17 +63,21 @@ x.prop;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let options = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        options,
     );
 
     checker.check_source_file(root);
 
-    // tsc emits TS18048 "'x' is possibly 'undefined'" for property access on undefined
+    // tsc emits TS18048 "'x' is possibly 'undefined'" (requires strictNullChecks)
     let ts18048_count = checker
         .ctx
         .diagnostics
@@ -96,17 +104,21 @@ x.prop;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let options = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        options,
     );
 
     checker.check_source_file(root);
 
-    // tsc emits TS18047 for property access on union types containing null
+    // tsc emits TS18047 for property access on union types containing null (requires strictNullChecks)
     let ts18047_count = checker
         .ctx
         .diagnostics

@@ -1034,24 +1034,9 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::types::diagnostics::diagnostic_codes;
 
-        // In non-strict mode, if the value is only possibly nullish (not definitely),
-        // we don't report any error because null/undefined are assignable to all types.
-        // However, if it IS definitely nullish, we fall through to error reporting below.
-        if !self.ctx.compiler_options.strict_null_checks && !is_definitely_nullish {
-            return;
-        }
-
-        // Try to get the name if the expression is an identifier
-        // Use specific error codes (TS18047/18048/18049) when name is available
-        let name = self
-            .ctx
-            .arena
-            .get(idx)
-            .and_then(|node| self.ctx.arena.get_identifier(node))
-            .map(|ident| ident.escaped_text.clone());
-
         // Check if the expression is a literal null/undefined keyword (not a variable)
         // TS18050 is only for `null.foo` and `undefined.bar`, not `x.foo` where x: null
+        // TS18050 is emitted even without strictNullChecks, so check first
         let is_literal_nullish = if let Some(node) = self.ctx.arena.get(idx) {
             use tsz_scanner::SyntaxKind;
             node.kind == SyntaxKind::NullKeyword as u16
@@ -1066,7 +1051,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // When the expression IS a literal null/undefined keyword (e.g., null.foo or undefined.bar),
-        // emit TS18050 "The value 'X' cannot be used here."
+        // emit TS18050 "The value 'X' cannot be used here." (even without strictNullChecks)
         if is_definitely_nullish && is_literal_nullish {
             let value_name = if cause == TypeId::NULL {
                 "null"
@@ -1082,6 +1067,22 @@ impl<'a> CheckerState<'a> {
             );
             return;
         }
+
+        // Without strictNullChecks, null/undefined are in every type's domain,
+        // so TS18047/TS18048/TS18049 are never emitted (matches tsc behavior).
+        // Note: TS18050 for literal null/undefined is handled above.
+        if !self.ctx.compiler_options.strict_null_checks {
+            return;
+        }
+
+        // Try to get the name if the expression is an identifier
+        // Use specific error codes (TS18047/18048/18049) when name is available
+        let name = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.clone());
 
         let (code, message) = if let Some(ref name) = name {
             // Use specific error codes with the variable name
