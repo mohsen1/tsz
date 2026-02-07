@@ -236,15 +236,33 @@ run_benchmark() {
         return
     fi
 
+    # Pre-validate: both compilers must succeed (exit 0) before benchmarking
+    local tsz_check=$($TSZ --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
+    local tsgo_check=$($TSGO --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
+
+    if [ "$tsz_check" -ne 0 ]; then
+        echo -e "${YELLOW}$name${NC} - ${RED}SKIPPED${NC} (tsz failed, check: $tsz_check)"
+        local tsz_error=$($TSZ --noEmit $extra_args "$file" 2>&1 | head -1)
+        echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
+        return
+    fi
+
+    if [ "$tsgo_check" -ne 0 ]; then
+        echo -e "${YELLOW}$name${NC} - ${RED}SKIPPED${NC} (tsgo failed, check: $tsgo_check)"
+        local tsgo_error=$($TSGO --noEmit $extra_args "$file" 2>&1 | head -1)
+        echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
+        return
+    fi
+
     BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
 
     local lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
     local bytes=$(wc -c < "$file" 2>/dev/null | tr -d ' ')
     local kb=$((bytes / 1024))
     local info="${lines} lines, ${kb}KB"
-    
+
     echo -e "${GREEN}$name${NC} ($info)"
-    
+
     # Run benchmark and capture JSON output
     local json_file=$(mktemp)
     hyperfine \
@@ -252,7 +270,6 @@ run_benchmark() {
         --min-runs "$MIN_RUNS" \
         --max-runs "$MAX_RUNS" \
         --style full \
-        --ignore-failure \
         --export-json "$json_file" \
         -n "tsz" "$TSZ --noEmit $extra_args $file 2>/dev/null" \
         -n "tsgo" "$TSGO --noEmit $extra_args $file 2>/dev/null"
@@ -295,6 +312,24 @@ run_project_benchmark() {
         return
     fi
 
+    # Pre-validate: both compilers must succeed (exit 0) before benchmarking
+    local tsz_check=$($TSZ --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
+    local tsgo_check=$($TSGO --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
+
+    if [ "$tsz_check" -ne 0 ]; then
+        echo -e "${YELLOW}$name${NC} - ${RED}SKIPPED${NC} (tsz failed, check: $tsz_check)"
+        local tsz_error=$($TSZ --noEmit -p "$tsconfig" 2>&1 | head -1)
+        echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
+        return
+    fi
+
+    if [ "$tsgo_check" -ne 0 ]; then
+        echo -e "${YELLOW}$name${NC} - ${RED}SKIPPED${NC} (tsgo failed, check: $tsgo_check)"
+        local tsgo_error=$($TSGO --noEmit -p "$tsconfig" 2>&1 | head -1)
+        echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
+        return
+    fi
+
     BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
 
     # Count total TS/TSX source lines in the project
@@ -314,7 +349,6 @@ run_project_benchmark() {
         --min-runs "$MIN_RUNS" \
         --max-runs "$MAX_RUNS" \
         --style full \
-        --ignore-failure \
         --export-json "$json_file" \
         -n "tsz" "$TSZ --noEmit -p $tsconfig 2>/dev/null" \
         -n "tsgo" "$TSGO --noEmit -p $tsconfig 2>/dev/null"
