@@ -1263,6 +1263,9 @@ impl<'a> CheckerState<'a> {
 
         self.check_class_member_name(member_idx);
 
+        // TS2302: Static members cannot reference class type parameters
+        self.check_static_member_for_class_type_param_refs(member_idx);
+
         match node.kind {
             syntax_kind_ext::PROPERTY_DECLARATION => {
                 self.check_property_declaration(member_idx);
@@ -1296,6 +1299,278 @@ impl<'a> CheckerState<'a> {
 
         if pushed_this {
             self.ctx.this_type_stack.pop();
+        }
+    }
+
+    /// Check if a type node references class type parameters (TS2302).
+    /// Called for static members to ensure they don't reference the enclosing class's type params.
+    fn check_type_node_for_class_type_param_refs(
+        &mut self,
+        type_idx: NodeIndex,
+        class_type_param_names: &[String],
+    ) {
+        use crate::types::diagnostics::diagnostic_codes;
+
+        if type_idx.is_none() || class_type_param_names.is_empty() {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+                    // Check if type_name is an identifier matching a class type param
+                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
+                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                            if class_type_param_names.contains(&ident.escaped_text) {
+                                self.error_at_node(
+                                    type_idx,
+                                    "Static members cannot reference class type parameters.",
+                                    diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_TYPE_PARAMETERS,
+                                );
+                            }
+                        }
+                    }
+                    // Also check type arguments
+                    if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+                        if let Some(ref type_args) = type_ref.type_arguments {
+                            for &arg_idx in &type_args.nodes {
+                                self.check_type_node_for_class_type_param_refs(
+                                    arg_idx,
+                                    class_type_param_names,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                if let Some(arr) = self.ctx.arena.get_array_type(node) {
+                    self.check_type_node_for_class_type_param_refs(
+                        arr.element_type,
+                        class_type_param_names,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
+                    for &elem_idx in &tuple.elements.nodes {
+                        self.check_type_node_for_class_type_param_refs(
+                            elem_idx,
+                            class_type_param_names,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+                    for &member_idx in &composite.types.nodes {
+                        self.check_type_node_for_class_type_param_refs(
+                            member_idx,
+                            class_type_param_names,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                if let Some(func_type) = self.ctx.arena.get_function_type(node) {
+                    // Exclude function type's own type parameters (they shadow class ones)
+                    let own_params = self.collect_type_param_names(&func_type.type_parameters);
+                    let filtered: Vec<String> = class_type_param_names
+                        .iter()
+                        .filter(|n| !own_params.contains(n))
+                        .cloned()
+                        .collect();
+                    let names_to_check = if own_params.is_empty() {
+                        class_type_param_names
+                    } else if filtered.is_empty() {
+                        return;
+                    } else {
+                        &filtered
+                    };
+                    for &param_idx in &func_type.parameters.nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx) {
+                            if let Some(param) = self.ctx.arena.get_parameter(param_node) {
+                                self.check_type_node_for_class_type_param_refs(
+                                    param.type_annotation,
+                                    names_to_check,
+                                );
+                            }
+                        }
+                    }
+                    self.check_type_node_for_class_type_param_refs(
+                        func_type.type_annotation,
+                        names_to_check,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE
+                || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
+            {
+                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                    self.check_type_node_for_class_type_param_refs(
+                        wrapped.type_node,
+                        class_type_param_names,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
+                    for &member_idx in &type_lit.members.nodes {
+                        self.check_type_member_for_class_type_param_refs(
+                            member_idx,
+                            class_type_param_names,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Check a type literal member for class type parameter references.
+    fn check_type_member_for_class_type_param_refs(
+        &mut self,
+        member_idx: NodeIndex,
+        class_type_param_names: &[String],
+    ) {
+        let Some(node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+        if let Some(sig) = self.ctx.arena.get_signature(node) {
+            if let Some(ref params) = sig.parameters {
+                for &param_idx in &params.nodes {
+                    if let Some(param_node) = self.ctx.arena.get(param_idx) {
+                        if let Some(param) = self.ctx.arena.get_parameter(param_node) {
+                            self.check_type_node_for_class_type_param_refs(
+                                param.type_annotation,
+                                class_type_param_names,
+                            );
+                        }
+                    }
+                }
+            }
+            self.check_type_node_for_class_type_param_refs(
+                sig.type_annotation,
+                class_type_param_names,
+            );
+        }
+    }
+
+    /// Check a static class member for references to class type parameters (TS2302).
+    /// Collect type parameter names from a type parameter list.
+    fn collect_type_param_names(
+        &self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) -> Vec<String> {
+        let Some(list) = type_parameters else {
+            return Vec::new();
+        };
+        let mut names = Vec::new();
+        for &param_idx in &list.nodes {
+            if let Some(node) = self.ctx.arena.get(param_idx)
+                && let Some(param) = self.ctx.arena.get_type_parameter(node)
+                && let Some(name_node) = self.ctx.arena.get(param.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                names.push(ident.escaped_text.clone());
+            }
+        }
+        names
+    }
+
+    /// Check a static class member for references to class type parameters (TS2302).
+    fn check_static_member_for_class_type_param_refs(&mut self, member_idx: NodeIndex) {
+        let class_type_param_names: Vec<String> = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|c| c.type_param_names.clone())
+            .unwrap_or_default();
+
+        if class_type_param_names.is_empty() {
+            return;
+        }
+
+        let Some(node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                if let Some(prop) = self.ctx.arena.get_property_decl(node) {
+                    if self.has_static_modifier(&prop.modifiers) {
+                        self.check_type_node_for_class_type_param_refs(
+                            prop.type_annotation,
+                            &class_type_param_names,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    if self.has_static_modifier(&method.modifiers) {
+                        // Exclude the method's own type parameters (they shadow class ones)
+                        let own_params = self.collect_type_param_names(&method.type_parameters);
+                        let filtered: Vec<String> = class_type_param_names
+                            .iter()
+                            .filter(|n| !own_params.contains(n))
+                            .cloned()
+                            .collect();
+                        if filtered.is_empty() {
+                            return;
+                        }
+                        for &param_idx in &method.parameters.nodes {
+                            if let Some(param_node) = self.ctx.arena.get(param_idx) {
+                                if let Some(param) = self.ctx.arena.get_parameter(param_node) {
+                                    self.check_type_node_for_class_type_param_refs(
+                                        param.type_annotation,
+                                        &filtered,
+                                    );
+                                }
+                            }
+                        }
+                        self.check_type_node_for_class_type_param_refs(
+                            method.type_annotation,
+                            &filtered,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                    if self.has_static_modifier(&accessor.modifiers) {
+                        // Exclude the accessor's own type parameters (they shadow class ones)
+                        let own_params = self.collect_type_param_names(&accessor.type_parameters);
+                        let filtered: Vec<String> = class_type_param_names
+                            .iter()
+                            .filter(|n| !own_params.contains(n))
+                            .cloned()
+                            .collect();
+                        if filtered.is_empty() {
+                            return;
+                        }
+                        for &param_idx in &accessor.parameters.nodes {
+                            if let Some(param_node) = self.ctx.arena.get(param_idx) {
+                                if let Some(param) = self.ctx.arena.get_parameter(param_node) {
+                                    self.check_type_node_for_class_type_param_refs(
+                                        param.type_annotation,
+                                        &filtered,
+                                    );
+                                }
+                            }
+                        }
+                        self.check_type_node_for_class_type_param_refs(
+                            accessor.type_annotation,
+                            &filtered,
+                        );
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2820,6 +3095,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
             // Continue with comprehensive type alias checking
             if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
+                // TS2457: Type alias name cannot be 'undefined'
+                if let Some(name_node) = self.ctx.arena.get(type_alias.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text == "undefined"
+                {
+                    use crate::types::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        type_alias.name,
+                        "Type alias name cannot be 'undefined'.",
+                        diagnostic_codes::TYPE_ALIAS_NAME_CANNOT_BE_UNDEFINED,
+                    );
+                }
                 let (_params, updates) = self.push_type_parameters(&type_alias.type_parameters);
                 // Check for unused type parameters (TS6133)
                 self.check_unused_type_params(&type_alias.type_parameters, type_alias_idx);

@@ -1842,6 +1842,12 @@ impl<'a> CheckerState<'a> {
         // This allows heritage clauses and member checks to reference the class's type parameters
         let (_type_params, type_param_updates) = self.push_type_parameters(&class.type_parameters);
 
+        // Collect class type parameter names for TS2302 checking in static members
+        let class_type_param_names: Vec<String> = type_param_updates
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+
         // Check for unused type parameters (TS6133)
         self.check_unused_type_params(&class.type_parameters, stmt_idx);
 
@@ -1969,6 +1975,7 @@ impl<'a> CheckerState<'a> {
                 in_static_property_initializer: false,
                 in_static_method: false,
                 cached_instance_this_type: None,
+                type_param_names: class_type_param_names,
             });
         }
 
@@ -2025,6 +2032,11 @@ impl<'a> CheckerState<'a> {
     ) {
         let (_type_params, type_param_updates) = self.push_type_parameters(&class.type_parameters);
 
+        let class_type_param_names: Vec<String> = type_param_updates
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+
         let class_name = self.get_class_name_from_decl(class_idx);
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
 
@@ -2038,6 +2050,7 @@ impl<'a> CheckerState<'a> {
             in_static_property_initializer: false,
             in_static_method: false,
             cached_instance_this_type: None,
+            type_param_names: class_type_param_names,
         });
 
         for &member_idx in &class.members.nodes {
