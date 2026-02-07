@@ -273,6 +273,18 @@ impl<'a> Printer<'a> {
                 if !comment_text.is_empty() {
                     self.write(comment_text);
                 }
+                // Advance the global comment index past this comment so it
+                // won't be emitted again by the end-of-file comment sweep.
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c = &self.all_comments[self.comment_emit_idx];
+                    if c.pos >= comment.pos as u32 && c.end <= comment.end as u32 {
+                        self.comment_emit_idx += 1;
+                        break;
+                    } else if c.end > comment.end as u32 {
+                        break;
+                    }
+                    self.comment_emit_idx += 1;
+                }
             }
         }
     }
