@@ -3270,11 +3270,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Skip names starting with _ (convention for intentionally unused)
-            if name.starts_with('_') {
-                continue;
-            }
-
             // Skip special/internal names
             if name == "default" || name == "__export" || name == "arguments" || name == "React"
             // JSX factory — always considered used when JSX is enabled
@@ -3282,28 +3277,36 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Skip type parameters — they are NOT checked by noUnusedLocals
+            // Skip type parameters — they are handled separately (not in binder scope)
             if (flags & symbol_flags::TYPE_PARAMETER) != 0 {
                 continue;
             }
 
-            // Skip members (properties, methods, accessors, constructors, signatures)
-            if (flags
+            // Skip non-private members (constructors, signatures, enum members, prototype)
+            // Private members ARE checked under noUnusedLocals (TS6133)
+            let is_member = (flags
                 & (symbol_flags::PROPERTY
                     | symbol_flags::METHOD
-                    | symbol_flags::CONSTRUCTOR
                     | symbol_flags::GET_ACCESSOR
-                    | symbol_flags::SET_ACCESSOR
+                    | symbol_flags::SET_ACCESSOR))
+                != 0;
+            if is_member {
+                // Only private members get unused checking — use PRIVATE flag set by binder
+                let is_private = (flags & symbol_flags::PRIVATE) != 0;
+                if !is_private {
+                    continue; // Public/protected members may be used externally
+                }
+                // Fall through to check private members
+            }
+
+            // Always skip constructors, signatures, enum members, prototype
+            if (flags
+                & (symbol_flags::CONSTRUCTOR
                     | symbol_flags::SIGNATURE
                     | symbol_flags::ENUM_MEMBER
                     | symbol_flags::PROTOTYPE))
                 != 0
             {
-                continue;
-            }
-
-            // Skip namespace/module symbols — they may contain exported members
-            if (flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)) != 0 {
                 continue;
             }
 
@@ -3341,9 +3344,16 @@ impl<'a> CheckerState<'a> {
                 let is_var = (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
                     && !self.is_parameter_declaration(decl_idx);
 
-                if is_checkable_local || is_var {
+                // Private class members (property, method, accessor)
+                let is_private_member = is_member;
+
+                // Non-exported namespaces/modules
+                let is_unused_namespace =
+                    (flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)) != 0;
+
+                if is_checkable_local || is_var || is_private_member || is_unused_namespace {
                     // TS6196 for classes, interfaces, type aliases, enums ("never used")
-                    // TS6133 for variables, functions, imports ("value never read")
+                    // TS6133 for variables, functions, imports, private members ("value never read")
                     let is_type_only = (flags & symbol_flags::CLASS) != 0
                         || (flags & symbol_flags::INTERFACE) != 0
                         || (flags & symbol_flags::TYPE_ALIAS) != 0
@@ -3376,6 +3386,11 @@ impl<'a> CheckerState<'a> {
                 let is_param = (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
                     && self.is_parameter_declaration(decl_idx)
                     && !self.is_overload_signature_parameter(decl_idx);
+
+                // Skip parameters starting with _ (TSC convention for intentionally unused)
+                if is_param && name.starts_with('_') {
+                    continue;
+                }
 
                 if is_param {
                     let msg = format!("'{}' is declared but its value is never read.", name);

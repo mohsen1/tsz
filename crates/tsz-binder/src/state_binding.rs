@@ -326,6 +326,9 @@ impl BinderState {
                             if self.has_static_modifier(arena, &method.modifiers) {
                                 flags |= symbol_flags::STATIC;
                             }
+                            if self.has_private_modifier(arena, &method.modifiers) {
+                                flags |= symbol_flags::PRIVATE;
+                            }
                             let sym_id = self.declare_symbol(name, flags, idx, false);
                             self.node_symbols.insert(method.name.0, sym_id);
                         }
@@ -347,6 +350,9 @@ impl BinderState {
                             }
                             if self.has_static_modifier(arena, &prop.modifiers) {
                                 flags |= symbol_flags::STATIC;
+                            }
+                            if self.has_private_modifier(arena, &prop.modifiers) {
+                                flags |= symbol_flags::PRIVATE;
                             }
                             let sym_id = self.declare_symbol(name, flags, idx, false);
                             self.node_symbols.insert(prop.name.0, sym_id);
@@ -376,6 +382,9 @@ impl BinderState {
                             }
                             if self.has_static_modifier(arena, &accessor.modifiers) {
                                 flags |= symbol_flags::STATIC;
+                            }
+                            if self.has_private_modifier(arena, &accessor.modifiers) {
+                                flags |= symbol_flags::PRIVATE;
                             }
                             let sym_id = self.declare_symbol(name, flags, idx, false);
                             self.node_symbols.insert(accessor.name.0, sym_id);

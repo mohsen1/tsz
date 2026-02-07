@@ -3188,6 +3188,26 @@ impl BinderState {
         false
     }
 
+    /// Check if modifiers list contains the 'private' keyword.
+    pub(crate) fn has_private_modifier(
+        &self,
+        arena: &NodeArena,
+        modifiers: &Option<NodeList>,
+    ) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::PrivateKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Check if modifiers list contains the 'declare' keyword.
     pub(crate) fn has_declare_modifier(
         &self,
