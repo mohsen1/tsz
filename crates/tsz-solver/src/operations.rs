@@ -357,6 +357,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     CallResult::NotCallable { type_id: func_type }
                 }
             }
+            TypeKey::Lazy(_) => {
+                // Resolve lazy types (interfaces, type aliases) to their actual types
+                let resolved = crate::evaluate::evaluate_type(self.interner, func_type);
+                if resolved != func_type {
+                    self.resolve_call(resolved, arg_types)
+                } else {
+                    CallResult::NotCallable { type_id: func_type }
+                }
+            }
             _ => CallResult::NotCallable { type_id: func_type },
         }
     }
@@ -3046,6 +3055,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             TypeKey::TypeParameter(param_info) => {
                 if let Some(constraint) = param_info.constraint {
                     self.resolve_new(constraint, arg_types)
+                } else {
+                    CallResult::NotCallable { type_id }
+                }
+            }
+            TypeKey::Lazy(_) => {
+                // Resolve lazy types (interfaces, type aliases) to their actual types
+                let resolved = crate::evaluate::evaluate_type(self.interner, type_id);
+                if resolved != type_id {
+                    self.resolve_new(resolved, arg_types)
                 } else {
                     CallResult::NotCallable { type_id }
                 }
