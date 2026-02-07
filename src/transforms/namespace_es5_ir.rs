@@ -162,8 +162,11 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Transform the innermost body - use the last name part for member exports
         let mut body = self.transform_namespace_body(innermost_body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        // A namespace is instantiated if it has any value declarations
+        // (variables, functions, classes, enums, sub-namespaces),
+        // even if the body produces no IR output (e.g., uninitialized exports).
+        if body.is_empty() && !self.has_value_declarations(innermost_body) {
             return None;
         }
 
@@ -185,6 +188,11 @@ impl<'a> NamespaceES5Transformer<'a> {
             parent_name: None,
             param_name,
         })
+    }
+
+    /// Check if a namespace body contains any value declarations
+    fn has_value_declarations(&self, body_idx: NodeIndex) -> bool {
+        body_has_value_declarations(self.arena, body_idx)
     }
 
     /// Flatten a module name into parts (handles both identifiers and qualified names)
@@ -283,6 +291,12 @@ impl<'a> NamespaceES5Transformer<'a> {
         {
             for &stmt_idx in &stmts.nodes {
                 if let Some(ir) = self.transform_namespace_member(ns_name, stmt_idx) {
+                    // Filter out empty sequences (e.g., from uninitialized exports)
+                    if let IRNode::Sequence(ref items) = ir {
+                        if items.is_empty() {
+                            continue;
+                        }
+                    }
                     result.push(ir);
                 }
             }
@@ -557,8 +571,11 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Transform body
         let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        // A namespace is instantiated if it has any value declarations
+        // (variables, functions, classes, enums, sub-namespaces),
+        // even if the body produces no IR output (e.g., uninitialized exports).
+        if body.is_empty() && !self.has_value_declarations(ns_data.body) {
             return None;
         }
 
@@ -605,8 +622,11 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Transform body
         let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        // A namespace is instantiated if it has any value declarations
+        // (variables, functions, classes, enums, sub-namespaces),
+        // even if the body produces no IR output (e.g., uninitialized exports).
+        if body.is_empty() && !self.has_value_declarations(ns_data.body) {
             return None;
         }
 
@@ -672,8 +692,11 @@ impl<'a> NamespaceTransformContext<'a> {
         // Transform body
         let body = self.transform_namespace_body(innermost_body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        // A namespace is instantiated if it has any value declarations
+        // (variables, functions, classes, enums, sub-namespaces),
+        // even if the body produces no IR output (e.g., uninitialized exports).
+        if body.is_empty() && !self.has_value_declarations(innermost_body) {
             return None;
         }
 
@@ -689,6 +712,11 @@ impl<'a> NamespaceTransformContext<'a> {
             parent_name: None,
             param_name: None,
         })
+    }
+
+    /// Check if a namespace body contains any value declarations
+    fn has_value_declarations(&self, body_idx: NodeIndex) -> bool {
+        body_has_value_declarations(self.arena, body_idx)
     }
 
     /// Collect all name parts by walking through nested MODULE_DECLARATION chain
@@ -1071,8 +1099,11 @@ impl<'a> NamespaceTransformContext<'a> {
         // Transform body
         let body = self.transform_namespace_body(innermost_body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        // A namespace is instantiated if it has any value declarations
+        // (variables, functions, classes, enums, sub-namespaces),
+        // even if the body produces no IR output (e.g., uninitialized exports).
+        if body.is_empty() && !self.has_value_declarations(innermost_body) {
             return None;
         }
 
@@ -1114,8 +1145,11 @@ impl<'a> NamespaceTransformContext<'a> {
         // Transform body
         let body = self.transform_namespace_body(innermost_body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        // A namespace is instantiated if it has any value declarations
+        // (variables, functions, classes, enums, sub-namespaces),
+        // even if the body produces no IR output (e.g., uninitialized exports).
+        if body.is_empty() && !self.has_value_declarations(innermost_body) {
             return None;
         }
 
@@ -1137,6 +1171,61 @@ impl<'a> NamespaceTransformContext<'a> {
 // =============================================================================
 // Helper Functions
 // =============================================================================
+
+/// Check if a namespace body (MODULE_BLOCK) contains any value declarations.
+/// Value declarations are: variables, functions, classes, enums, sub-namespaces.
+/// Type-only declarations (interfaces, type aliases) don't count.
+fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
+    let Some(body_node) = arena.get(body_idx) else {
+        return false;
+    };
+
+    let Some(block_data) = arena.get_module_block(body_node) else {
+        return false;
+    };
+
+    let Some(ref stmts) = block_data.statements else {
+        return false;
+    };
+
+    for &stmt_idx in &stmts.nodes {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::ENUM_DECLARATION
+                || k == syntax_kind_ext::MODULE_DECLARATION =>
+            {
+                return true;
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                // Check if the exported declaration is a value declaration
+                if let Some(export_data) = arena.get_export_decl(stmt_node) {
+                    if let Some(inner_node) = arena.get(export_data.export_clause) {
+                        match inner_node.kind {
+                            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                                || k == syntax_kind_ext::CLASS_DECLARATION
+                                || k == syntax_kind_ext::ENUM_DECLARATION
+                                || k == syntax_kind_ext::MODULE_DECLARATION =>
+                            {
+                                return true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    false
+}
 
 fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
