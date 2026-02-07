@@ -175,15 +175,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
                     // Also check lib_contexts if available
                     for lib_ctx in &self.ctx.lib_contexts {
-                        if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
-                            let symbol = lib_ctx.binder.get_symbol(sym_id)?;
+                        if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
+                            let symbol = lib_ctx.binder.get_symbol(lib_sym_id)?;
                             if (symbol.flags
                                 & (symbol_flags::TYPE
                                     | symbol_flags::REGULAR_ENUM
                                     | symbol_flags::CONST_ENUM))
                                 != 0
                             {
-                                return Some(sym_id.0);
+                                // Use file binder's sym_id for correct ID space after lib merge
+                                let file_sym_id =
+                                    self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                                return Some(file_sym_id.0);
                             }
                         }
                     }
@@ -210,8 +213,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
 
                     for lib_ctx in &self.ctx.lib_contexts {
-                        if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
-                            if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
+                        if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
+                            if let Some(symbol) = lib_ctx.binder.get_symbol(lib_sym_id) {
                                 if (symbol.flags
                                     & (symbol_flags::VALUE
                                         | symbol_flags::ALIAS
@@ -219,7 +222,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                         | symbol_flags::CONST_ENUM))
                                     != 0
                                 {
-                                    return Some(sym_id.0);
+                                    // Use file binder's sym_id for correct ID space after lib merge
+                                    let file_sym_id =
+                                        self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                                    return Some(file_sym_id.0);
                                 }
                             }
                         }
@@ -283,8 +289,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Also check lib_contexts if available
             for lib_ctx in &self.ctx.lib_contexts {
-                if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
-                    let symbol = lib_ctx.binder.get_symbol(sym_id)?;
+                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    let symbol = lib_ctx.binder.get_symbol(lib_sym_id)?;
                     // Check for TYPE flag or ENUM flag (enums can be used as types)
                     if (symbol.flags
                         & (symbol_flags::TYPE
@@ -292,7 +298,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             | symbol_flags::CONST_ENUM))
                         != 0
                     {
-                        return Some(sym_id.0);
+                        // Use file binder's sym_id for correct ID space after lib merge
+                        let file_sym_id =
+                            self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                        return Some(file_sym_id.0);
                     }
                 }
             }
@@ -622,8 +631,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Also check lib_contexts if available
             for lib_ctx in &self.ctx.lib_contexts {
-                if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
-                    let symbol = lib_ctx.binder.get_symbol(sym_id)?;
+                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    let symbol = lib_ctx.binder.get_symbol(lib_sym_id)?;
                     // Check for TYPE flag or ENUM flag (enums can be used as types)
                     if (symbol.flags
                         & (symbol_flags::TYPE
@@ -631,7 +640,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             | symbol_flags::CONST_ENUM))
                         != 0
                     {
-                        return Some(sym_id.0);
+                        // Use file binder's sym_id for correct ID space after lib merge
+                        let file_sym_id =
+                            self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                        return Some(file_sym_id.0);
                     }
                 }
             }

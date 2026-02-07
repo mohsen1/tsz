@@ -329,9 +329,12 @@ impl<'a> CheckerState<'a> {
 
             // Check lib_contexts directly for global symbols
             for lib_ctx in &self.ctx.lib_contexts {
-                if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
-                    if !should_skip_lib_symbol(sym_id) {
-                        return Some(sym_id);
+                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    if !should_skip_lib_symbol(lib_sym_id) {
+                        // Use file binder's sym_id for correct ID space after lib merge
+                        let file_sym_id =
+                            self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                        return Some(file_sym_id);
                     }
                 }
             }
@@ -385,12 +388,16 @@ impl<'a> CheckerState<'a> {
         // This matches the pattern used successfully in generators.rs (lookup_global_type).
         if !ignore_libs {
             for lib_ctx in &self.ctx.lib_contexts {
-                if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    // After lib merge, the file binder has the same symbols with
+                    // potentially different IDs. Use file binder's ID for returns
+                    // to avoid cross-ID-space confusion.
+                    let sym_id = self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
                     if !should_skip_lib_symbol(sym_id) {
-                        // Check if this lib symbol is acceptable as a type symbol
+                        // Check flags using lib binder (lib_sym_id is valid in lib binder)
                         let flags = lib_ctx
                             .binder
-                            .get_symbol(sym_id)
+                            .get_symbol(lib_sym_id)
                             .map(|s| s.flags)
                             .unwrap_or(0);
 
