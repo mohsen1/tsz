@@ -916,7 +916,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_call_expression_inner(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
-        use tsz_solver::{CallEvaluator, CallResult, CompatChecker, instantiate_type};
+        use tsz_solver::{CallEvaluator, CompatChecker, instantiate_type};
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -1078,12 +1078,6 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|s| !s.type_params.is_empty())
             && call.type_arguments.is_none(); // Only use two-pass if no explicit type args
 
-        tracing::debug!(
-            is_generic_call,
-            callee_shape_has_type_params = callee_shape.as_ref().map(|s| s.type_params.len()),
-            "two-pass inference check"
-        );
-
         // Create contextual context from callee type with type arguments applied
         let ctx_helper =
             ContextualTypeContext::with_expected(self.ctx.types, callee_type_for_resolution);
@@ -1226,75 +1220,81 @@ impl<'a> CheckerState<'a> {
             evaluator.resolve_call(callee_type_for_call, &arg_types)
         };
 
+        self.handle_call_result(
+            result,
+            call.expression,
+            idx,
+            args,
+            &arg_types,
+            callee_type,
+            is_super_call,
+            nullish_cause.is_some(),
+        )
+    }
+
+    /// Handle the result of a call evaluation, emitting diagnostics for errors
+    /// and applying this-substitution/mixin refinement for successes.
+    fn handle_call_result(
+        &mut self,
+        result: tsz_solver::CallResult,
+        callee_expr: NodeIndex,
+        call_idx: NodeIndex,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+        callee_type: TypeId,
+        is_super_call: bool,
+        is_optional_chain: bool,
+    ) -> TypeId {
+        use tsz_solver::CallResult;
         match result {
             CallResult::Success(return_type) => {
                 let return_type =
-                    self.apply_this_substitution_to_call_return(return_type, call.expression);
+                    self.apply_this_substitution_to_call_return(return_type, callee_expr);
                 let return_type =
-                    self.refine_mixin_call_return_type(call.expression, &arg_types, return_type);
-                if nullish_cause.is_some() {
+                    self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
+                if is_optional_chain {
                     self.ctx.types.union(vec![return_type, TypeId::UNDEFINED])
                 } else {
                     return_type
                 }
             }
-
             CallResult::NotCallable { .. } => {
-                // Special case: super() calls are valid in constructors and return void
                 if is_super_call {
                     return TypeId::VOID;
                 }
-                // Check if it's specifically a class constructor called without 'new' (TS2348)
-                // Only emit TS2348 for types that have construct signatures but zero call signatures
                 if self.is_constructor_type(callee_type) {
-                    self.error_class_constructor_without_new_at(callee_type, call.expression);
-                } else if self.is_get_accessor_call(call.expression) {
-                    // TS6234: Calling a get accessor as a function
-                    self.error_get_accessor_not_callable_at(call.expression);
+                    self.error_class_constructor_without_new_at(callee_type, callee_expr);
+                } else if self.is_get_accessor_call(callee_expr) {
+                    self.error_get_accessor_not_callable_at(callee_expr);
                 } else {
-                    // For other non-callable types, emit the generic not-callable error
-                    self.error_not_callable_at(callee_type, call.expression);
+                    self.error_not_callable_at(callee_type, callee_expr);
                 }
                 TypeId::ERROR
             }
-
             CallResult::ArgumentCountMismatch {
                 expected_min,
                 expected_max,
                 actual,
             } => {
-                // Determine which error to emit:
-                // - TS2555: "Expected at least N arguments" when got < min and there's a range
-                // - TS2554: "Expected N arguments" otherwise
                 if actual < expected_min && expected_max != Some(expected_min) {
-                    // Too few arguments with rest/optional parameters - use TS2555
-                    // expected_max is None (rest params) or Some(max) where max > min (optional params)
-                    self.error_expected_at_least_arguments_at(expected_min, actual, idx);
+                    self.error_expected_at_least_arguments_at(expected_min, actual, call_idx);
                 } else {
-                    // Either too many, or exact count expected - use TS2554
                     let expected = expected_max.unwrap_or(expected_min);
-                    self.error_argument_count_mismatch_at(expected, actual, idx);
+                    self.error_argument_count_mismatch_at(expected, actual, call_idx);
                 }
                 TypeId::ERROR
             }
-
             CallResult::ArgumentTypeMismatch {
                 index,
                 expected,
                 actual,
             } => {
-                // Report error at the specific argument
-                // Map the expanded index back to the original argument node
-                // When spread arguments are expanded, the index may exceed args.len()
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
                 if let Some(arg_idx) = arg_idx {
-                    // Check if this is a weak union violation or excess property case
-                    // In these cases, TypeScript shows TS2353 (excess property) instead of TS2322
                     if !self.should_skip_weak_union_error(actual, expected, arg_idx) {
                         self.error_argument_not_assignable_at(actual, expected, arg_idx);
                     }
                 } else if !args.is_empty() {
-                    // Fall back to the last argument (typically the spread) if mapping fails
                     let last_arg = args[args.len() - 1];
                     if !self.should_skip_weak_union_error(actual, expected, last_arg) {
                         self.error_argument_not_assignable_at(actual, expected, last_arg);
@@ -1302,9 +1302,8 @@ impl<'a> CheckerState<'a> {
                 }
                 TypeId::ERROR
             }
-
             CallResult::NoOverloadMatch { failures, .. } => {
-                self.error_no_overload_matches_at(idx, &failures);
+                self.error_no_overload_matches_at(call_idx, &failures);
                 TypeId::ERROR
             }
         }
