@@ -1224,9 +1224,11 @@ impl<'a> CheckerState<'a> {
         // stored as Application(Ref(symbol_id), [string]) and needs to be resolved
         // to the actual Callable with call signatures
         let callee_type_for_call = self.evaluate_application_type(callee_type_for_resolution);
-        // Resolve bare Ref types to their underlying callable types.
+        // Resolve lazy (Ref) types to their underlying callable types.
         // This handles interfaces with call signatures, merged declarations, etc.
-        let callee_type_for_call = self.resolve_ref_type(callee_type_for_call);
+        // Use resolve_lazy_type instead of resolve_ref_type to also resolve Lazy
+        // types nested inside intersection/union members.
+        let callee_type_for_call = self.resolve_lazy_type(callee_type_for_call);
 
         // The `Function` interface from lib.d.ts has no call signatures, but in TypeScript
         // it is callable and returns `any`. Check if the callee is the Function boxed type
