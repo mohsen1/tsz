@@ -141,6 +141,9 @@ pub struct CompilerOptions {
     /// Report errors on unused parameters
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_unused_parameters: Option<bool>,
+    /// Do not report errors on unreachable code
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub allow_unreachable_code: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -452,6 +455,10 @@ pub fn resolve_compiler_options(
         resolved.checker.no_unused_parameters = no_unused_parameters;
     }
 
+    if let Some(allow_unreachable_code) = options.allow_unreachable_code {
+        resolved.checker.allow_unreachable_code = allow_unreachable_code;
+    }
+
     if let Some(ref custom_conditions) = options.custom_conditions {
         resolved.custom_conditions = custom_conditions.clone();
     }
@@ -600,6 +607,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
         always_strict: child.always_strict.or(base.always_strict),
         no_unused_locals: child.no_unused_locals.or(base.no_unused_locals),
         no_unused_parameters: child.no_unused_parameters.or(base.no_unused_parameters),
+        allow_unreachable_code: child.allow_unreachable_code.or(base.allow_unreachable_code),
     }
 }
 
