@@ -405,6 +405,33 @@ fn test_union_boolean_literals_absorbed_into_boolean() {
 }
 
 #[test]
+fn test_union_true_false_reduces_to_boolean() {
+    let interner = TypeInterner::new();
+
+    // true | false (without explicit boolean) should normalize to boolean
+    // This matches TypeScript behavior: `true | false` === `boolean`
+    let t = interner.literal_boolean(true);
+    let f = interner.literal_boolean(false);
+    assert_eq!(
+        t,
+        TypeId::BOOLEAN_TRUE,
+        "literal_boolean(true) should use intrinsic ID"
+    );
+    assert_eq!(
+        f,
+        TypeId::BOOLEAN_FALSE,
+        "literal_boolean(false) should use intrinsic ID"
+    );
+
+    let result = interner.union2(t, f);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN,
+        "true | false should reduce to boolean"
+    );
+}
+
+#[test]
 fn test_union_bigint_literals_absorbed_into_bigint() {
     let interner = TypeInterner::new();
 
