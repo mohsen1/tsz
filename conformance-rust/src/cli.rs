@@ -16,6 +16,10 @@ pub struct Args {
     #[arg(short = 'm', long, default_value_t = 99999)]
     pub max: usize,
 
+    /// Number of tests to skip from the beginning (applied after sorting, before --max)
+    #[arg(short = 'o', long, default_value_t = 0)]
+    pub offset: usize,
+
     /// Number of parallel workers
     #[arg(short = 'w', long, default_value_t = num_cpus::get().saturating_sub(1))]
     pub workers: usize,
