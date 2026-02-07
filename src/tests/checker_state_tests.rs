@@ -29036,6 +29036,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,
+            always_strict: false,
         },
     );
     assert!(
