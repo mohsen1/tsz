@@ -3428,6 +3428,21 @@ impl BinderState {
             return true;
         }
 
+        // Allow VARIABLE + NAMESPACE_MODULE merging.
+        // TypeScript's NamespaceModuleExcludes = 0 (can merge with anything) and
+        // FunctionScopedVariableExcludes doesn't include NAMESPACE_MODULE.
+        // e.g., `namespace m2 { ... } var m2: { ... };`
+        if (existing_flags & symbol_flags::NAMESPACE_MODULE) != 0
+            && (new_flags & symbol_flags::VARIABLE) != 0
+        {
+            return true;
+        }
+        if (new_flags & symbol_flags::NAMESPACE_MODULE) != 0
+            && (existing_flags & symbol_flags::VARIABLE) != 0
+        {
+            return true;
+        }
+
         // Allow INTERFACE to merge with VALUE symbols (e.g., `interface Object` + `declare var Object`)
         // This enables global types like Object, Array, Promise to be used as both types and constructors
         if (existing_flags & symbol_flags::INTERFACE) != 0 && (new_flags & symbol_flags::VALUE) != 0
