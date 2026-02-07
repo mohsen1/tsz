@@ -294,8 +294,7 @@ impl<'a> DestructuringChecker<'a> {
 
     /// Get identifier text
     fn get_identifier_text(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.arena.get(idx)?;
-        let ident = self.arena.get_identifier(node)?;
+        let ident = self.arena.get_identifier_at(idx)?;
         Some(ident.escaped_text.clone())
     }
 
