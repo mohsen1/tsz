@@ -218,8 +218,8 @@ pub use tsz_emitter::transforms;
 // Query-based Structural Solver (Phase 7.5) - re-exported from tsz-solver workspace crate
 pub use tsz_solver as solver;
 
-// LSP (Language Server Protocol) support
-pub mod lsp;
+// LSP (Language Server Protocol) support - re-exported from tsz-lsp workspace crate
+pub use tsz_lsp as lsp;
 
 // Test Harness - Infrastructure for unit and conformance tests
 #[cfg(test)]
