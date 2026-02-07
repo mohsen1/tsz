@@ -270,6 +270,8 @@ fn load_lib_files_from_paths() -> Vec<Arc<crate::lib_loader::LibFile>> {
     let lib_paths = [
         manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
+        // TypeScript submodule source lib (available in CI after `git submodule update`)
+        manifest_dir.join("TypeScript/src/lib/es5.d.ts"),
         manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
     ];
