@@ -125,6 +125,50 @@ impl<'a> Printer<'a> {
         };
 
         self.emit(access.expression);
+
+        // Preserve multi-line property access chains from the original source.
+        // TypeScript preserves the original line break pattern. If there's a
+        // newline between expression end and the property name, we need to
+        // reproduce the original layout:
+        // - If dot is before newline: `expr.\n    name` -> emit ".\n    name"
+        // - If dot is after newline: `expr\n    .name` -> emit "\n    .name"
+        if let Some(text) = self.source_text {
+            if let Some(expr_node) = self.arena.get(access.expression) {
+                if let Some(name_node) = self.arena.get(access.name_or_argument) {
+                    let expr_end = expr_node.end as usize;
+                    let name_start = name_node.pos as usize;
+                    let between_end = std::cmp::min(name_start, text.len());
+                    let between_start = std::cmp::min(expr_end, between_end);
+                    let between = &text[between_start..between_end];
+                    if between.contains('\n') {
+                        // Find where the dot is relative to the newline
+                        if let Some(dot_pos) = between.find('.') {
+                            let after_dot = &between[dot_pos + 1..];
+                            if after_dot.contains('\n') {
+                                // Dot before newline: `expr.\n    name`
+                                self.write(".");
+                                self.write_line();
+                                self.increase_indent();
+                                self.emit(access.name_or_argument);
+                                self.decrease_indent();
+                            } else {
+                                // Newline before dot: `expr\n    .name`
+                                self.write_line();
+                                self.increase_indent();
+                                self.write(".");
+                                self.emit(access.name_or_argument);
+                                self.decrease_indent();
+                            }
+                        } else {
+                            self.write(".");
+                            self.emit(access.name_or_argument);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
         self.write(".");
         self.emit(access.name_or_argument);
     }
