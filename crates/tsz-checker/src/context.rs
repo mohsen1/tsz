@@ -1969,10 +1969,20 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             }
 
             // Look up the cached type for this symbol (constructor type for classes)
-            self.symbol_types.get(&sym_id).copied()
-        } else {
-            None
+            if let Some(&ty) = self.symbol_types.get(&sym_id) {
+                return Some(ty);
+            }
         }
+
+        // Fall back to type_env for types registered via insert_def_with_params
+        // (generic lib interfaces like PromiseLike<T>, Map<K,V>, Set<T>, etc.)
+        if let Ok(env) = self.type_env.try_borrow() {
+            if let Some(body) = env.get_def(def_id) {
+                return Some(body);
+            }
+        }
+
+        None
     }
 
     /// Get type parameters for a symbol reference (deprecated).

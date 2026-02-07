@@ -31,6 +31,7 @@ coverage/
 pkg/
 target/
 .target/
+.target-*
 
 # Tests
 TypeScript/tests/baselines/local/*
