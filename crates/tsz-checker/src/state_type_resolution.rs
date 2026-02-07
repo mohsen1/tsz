@@ -599,8 +599,7 @@ impl<'a> CheckerState<'a> {
         if decl_idx.is_none() {
             return None;
         }
-        let node = self.ctx.arena.get(decl_idx)?;
-        let class = self.ctx.arena.get_class(node)?;
+        let class = self.ctx.arena.get_class_at(decl_idx)?;
 
         // Check if we're already resolving this class - return fallback to break cycle.
         // NOTE: We don't insert here because get_class_instance_type_inner will handle it.

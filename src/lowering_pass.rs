@@ -1586,8 +1586,7 @@ impl<'a> LoweringPass<'a> {
         let clauses = heritage_clauses.as_ref()?;
 
         for &clause_idx in &clauses.nodes {
-            let clause_node = self.arena.get(clause_idx)?;
-            let heritage = self.arena.get_heritage(clause_node)?;
+            let heritage = self.arena.get_heritage_clause_at(clause_idx)?;
             if heritage.token == SyntaxKind::ExtendsKeyword as u16 {
                 return Some(clause_idx);
             }
