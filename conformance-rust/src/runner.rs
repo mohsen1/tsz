@@ -24,6 +24,13 @@ fn relative_display(path: &Path, base: &Path) -> String {
         .unwrap_or_else(|_| path.display().to_string())
 }
 
+/// Collects paths of crashed and timed-out tests for the final summary.
+#[derive(Default)]
+struct ProblemTests {
+    crashed: std::sync::Mutex<Vec<String>>,
+    timed_out: std::sync::Mutex<Vec<String>>,
+}
+
 /// Test runner
 pub struct Runner {
     args: Args,
@@ -31,6 +38,7 @@ pub struct Runner {
     cache: Arc<crate::cache::TscCache>,
     stats: Arc<TestStats>,
     error_freq: Arc<ErrorFrequency>,
+    problems: Arc<ProblemTests>,
 }
 
 impl Runner {
@@ -56,6 +64,7 @@ impl Runner {
             cache: Arc::new(cache),
             stats: Arc::new(TestStats::default()),
             error_freq: Arc::new(ErrorFrequency::default()),
+            problems: Arc::new(ProblemTests::default()),
         })
     }
 
@@ -89,6 +98,7 @@ impl Runner {
                 let cache = self.cache.clone();
                 let stats = self.stats.clone();
                 let error_freq = self.error_freq.clone();
+                let problems = self.problems.clone();
                 let tsz_binary = self.tsz_binary.clone();
                 let verbose = self.args.is_verbose();
                 let print_test = self.args.print_test;
@@ -176,10 +186,12 @@ impl Runner {
                                 }
                                 TestResult::Crashed => {
                                     stats.crashed.fetch_add(1, Ordering::SeqCst);
+                                    problems.crashed.lock().unwrap().push(rel_path.clone());
                                     println!("CRASH {}", rel_path);
                                 }
                                 TestResult::Timeout => {
                                     stats.timeout.fetch_add(1, Ordering::SeqCst);
+                                    problems.timed_out.lock().unwrap().push(rel_path.clone());
                                     println!(
                                         "⏱️  TIMEOUT {} (exceeded {}s)",
                                         rel_path, timeout_secs
@@ -202,6 +214,26 @@ impl Runner {
         // Print summary
         let stats = &self.stats;
         let error_freq = &self.error_freq;
+
+        // Re-print crashed and timed-out tests for easy visibility
+        let crashed_tests = self.problems.crashed.lock().unwrap();
+        let timed_out_tests = self.problems.timed_out.lock().unwrap();
+        if !crashed_tests.is_empty() {
+            println!();
+            println!("Crashed tests ({}):", crashed_tests.len());
+            for path in crashed_tests.iter() {
+                println!("  CRASH {}", path);
+            }
+        }
+        if !timed_out_tests.is_empty() {
+            println!();
+            println!("Timed out tests ({}):", timed_out_tests.len());
+            for path in timed_out_tests.iter() {
+                println!("  TIMEOUT {}", path);
+            }
+        }
+        drop(crashed_tests);
+        drop(timed_out_tests);
 
         println!();
         println!("{}", "=".repeat(60));
