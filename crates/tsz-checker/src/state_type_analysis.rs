@@ -1157,10 +1157,33 @@ impl<'a> CheckerState<'a> {
         value_decl: NodeIndex,
         declarations: &[NodeIndex],
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        let decl_idx = if !value_decl.is_none() {
+        // Find the class declaration. When a symbol has both CLASS and FUNCTION flags
+        // (function-class merging), value_decl may point to the function, not the class.
+        // Search all declarations to find the class node.
+        let decl_idx = if !value_decl.is_none()
+            && self
+                .ctx
+                .arena
+                .get(value_decl)
+                .and_then(|n| self.ctx.arena.get_class(n))
+                .is_some()
+        {
             value_decl
         } else {
-            declarations.first().copied().unwrap_or(NodeIndex::NONE)
+            // Search declarations for a class node
+            declarations
+                .iter()
+                .find(|&&d| {
+                    !d.is_none()
+                        && self
+                            .ctx
+                            .arena
+                            .get(d)
+                            .and_then(|n| self.ctx.arena.get_class(n))
+                            .is_some()
+                })
+                .copied()
+                .unwrap_or(NodeIndex::NONE)
         };
 
         if !decl_idx.is_none()
@@ -1174,6 +1197,15 @@ impl<'a> CheckerState<'a> {
             // Cache instance type for TYPE position resolution
             self.ctx.symbol_instance_types.insert(sym_id, instance_type);
 
+            // When a symbol has both CLASS and FUNCTION flags (function-class merging),
+            // merge the function's call signatures into the class constructor type.
+            // This allows both `new Foo(...)` (construct) and `Foo(...)` (call) to work.
+            let ctor_type = if flags & symbol_flags::FUNCTION != 0 {
+                self.merge_function_call_signatures_into_class(ctor_type, declarations)
+            } else {
+                ctor_type
+            };
+
             if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
                 let merged = self.merge_namespace_exports_into_constructor(sym_id, ctor_type);
                 return (merged, Vec::new());
@@ -1181,6 +1213,69 @@ impl<'a> CheckerState<'a> {
             return (ctor_type, Vec::new());
         }
         (TypeId::UNKNOWN, Vec::new())
+    }
+
+    /// Merge function call signatures into a class constructor type.
+    ///
+    /// When a class and function declaration share the same name (function-class merging),
+    /// the resulting type should have both construct signatures (from the class) and
+    /// call signatures (from the function).
+    fn merge_function_call_signatures_into_class(
+        &mut self,
+        ctor_type: TypeId,
+        declarations: &[NodeIndex],
+    ) -> TypeId {
+        use tsz_solver::type_queries::get_callable_shape;
+
+        // Collect call signatures from function declarations
+        let mut call_signatures = Vec::new();
+        for &decl_idx in declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(func) = self.ctx.arena.get_function(node) else {
+                continue;
+            };
+            // Only use overload signatures (no body) as call signatures
+            if func.body.is_none() {
+                call_signatures.push(self.call_signature_from_function(func, decl_idx));
+            }
+        }
+
+        if call_signatures.is_empty() {
+            // No function overload signatures to merge, check for implementation
+            for &decl_idx in declarations {
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                if self.ctx.arena.get_function(node).is_some() {
+                    // Has a function implementation - get its type and extract call sig
+                    let func_type = self.get_type_of_function(decl_idx);
+                    if let Some(shape) = get_callable_shape(self.ctx.types, func_type) {
+                        call_signatures = shape.call_signatures.clone();
+                    }
+                    break;
+                }
+            }
+        }
+
+        if call_signatures.is_empty() {
+            return ctor_type;
+        }
+
+        // Merge call signatures into the constructor type's callable shape
+        let Some(shape) = get_callable_shape(self.ctx.types, ctor_type) else {
+            return ctor_type;
+        };
+
+        self.ctx.types.callable(tsz_solver::CallableShape {
+            call_signatures,
+            construct_signatures: shape.construct_signatures.clone(),
+            properties: shape.properties.clone(),
+            string_index: shape.string_index.clone(),
+            number_index: shape.number_index.clone(),
+            symbol: None,
+        })
     }
 
     /// Compute the type of an enum member symbol.
