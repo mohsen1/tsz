@@ -1229,6 +1229,7 @@ impl<'a> IRPrinter<'a> {
                 true,
                 None,
             );
+            self.write_line();
         }
 
         self.decrease_indent();
