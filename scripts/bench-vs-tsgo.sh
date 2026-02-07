@@ -41,6 +41,10 @@ UTILITY_TYPES_REPO="${UTILITY_TYPES_REPO:-https://github.com/piotrwitek/utility-
 # pinned to v3.11.0 commit for reproducible benchmarks
 UTILITY_TYPES_REF="${UTILITY_TYPES_REF:-2ee1f6ecb241651ab22390fee7ee5349942efda2}"
 UTILITY_TYPES_DIR="$EXTERNAL_BENCH_DIR/utility-types"
+NEXTJS_REPO="${NEXTJS_REPO:-https://github.com/vercel/next.js.git}"
+# pinned canary commit for reproducible benchmarks
+NEXTJS_REF="${NEXTJS_REF:-09851e208cc62c8b6fe7a953b42c88e843129178}"
+NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
 
 # Parse arguments
 QUICK_MODE=false
@@ -70,6 +74,7 @@ while [[ $# -gt 0 ]]; do
             echo "  TSGO=<path>            Use a specific tsgo binary (skip auto-install)"
             echo "  TSGO_NPM_SPEC=<spec>   Override pinned npm package (default: $TSGO_NPM_SPEC)"
             echo "  UTILITY_TYPES_REF=<sha> Override pinned utility-types commit"
+            echo "  NEXTJS_REF=<sha>       Override pinned next.js commit"
             exit 0
             ;;
         *) shift ;;
@@ -280,12 +285,99 @@ run_benchmark() {
     rm -f "$json_file"
 }
 
+run_project_benchmark() {
+    local name="$1"
+    local tsconfig="$2"
+    local src_dir="$3"
+
+    # Skip if filter is set and name doesn't match
+    if [ -n "$FILTER" ] && ! echo "$name" | grep -qE "$FILTER"; then
+        return
+    fi
+
+    BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
+
+    # Count total TS/TSX source lines in the project
+    local lines=$(find "$src_dir" \( -name '*.ts' -o -name '*.tsx' \) -print0 2>/dev/null \
+        | xargs -0 wc -l 2>/dev/null | tail -1 | awk '{print $1}')
+    local bytes=$(find "$src_dir" \( -name '*.ts' -o -name '*.tsx' \) -print0 2>/dev/null \
+        | xargs -0 cat 2>/dev/null | wc -c | tr -d ' ')
+    local kb=$((bytes / 1024))
+    local info="${lines} lines, ${kb}KB (project)"
+
+    echo -e "${GREEN}$name${NC} ($info)"
+
+    # Run benchmark with -p (project mode)
+    local json_file=$(mktemp)
+    hyperfine \
+        --warmup "$WARMUP" \
+        --min-runs "$MIN_RUNS" \
+        --max-runs "$MAX_RUNS" \
+        --style full \
+        --ignore-failure \
+        --export-json "$json_file" \
+        -n "tsz" "$TSZ --noEmit -p $tsconfig 2>/dev/null" \
+        -n "tsgo" "$TSGO --noEmit -p $tsconfig 2>/dev/null"
+
+    # Extract times and calculate throughput
+    if [ -f "$json_file" ] && command -v jq &>/dev/null; then
+        local tsz_mean=$(jq -r '.results[] | select(.command | contains("tsz")) | .mean' "$json_file" 2>/dev/null || echo "0")
+        local tsgo_mean=$(jq -r '.results[] | select(.command | contains("tsgo")) | .mean' "$json_file" 2>/dev/null || echo "0")
+
+        if [ -n "$tsz_mean" ] && [ -n "$tsgo_mean" ] && [ "$tsz_mean" != "0" ] && [ "$tsgo_mean" != "0" ]; then
+            local tsz_lps=$(printf "%.0f" "$(echo "$lines / $tsz_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            local tsgo_lps=$(printf "%.0f" "$(echo "$lines / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            local tsz_ms=$(printf "%.2f" "$(echo "$tsz_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            local tsgo_ms=$(printf "%.2f" "$(echo "$tsgo_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+
+            local winner="tsgo"
+            local ratio
+            if (( $(echo "$tsz_mean < $tsgo_mean" | bc -l) )); then
+                winner="tsz"
+                ratio=$(printf "%.2f" "$(echo "$tsgo_mean / $tsz_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            else
+                ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            fi
+
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio}\n"
+        fi
+    fi
+    rm -f "$json_file"
+}
+
 is_benchmark_selected() {
     local name="$1"
     if [ -z "$FILTER" ]; then
         return 0
     fi
     echo "$name" | grep -qE "$FILTER"
+}
+
+ensure_nextjs_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if [ ! -d "$NEXTJS_DIR/.git" ]; then
+        echo -e "${CYAN}Cloning next.js with sparse checkout (packages/next only)...${NC}"
+        git init --quiet "$NEXTJS_DIR"
+        git -C "$NEXTJS_DIR" remote add origin "$NEXTJS_REPO"
+        # --no-cone allows mixing individual root files with directory patterns
+        # packages/next/tsconfig.json extends ../../tsconfig-tsec.json
+        git -C "$NEXTJS_DIR" sparse-checkout init --no-cone
+        git -C "$NEXTJS_DIR" sparse-checkout set \
+            '/tsconfig-tsec.json' \
+            '/packages/next/tsconfig.json' \
+            '/packages/next/src/'
+        git -C "$NEXTJS_DIR" fetch --quiet --depth 1 origin "$NEXTJS_REF"
+        git -C "$NEXTJS_DIR" checkout --quiet FETCH_HEAD
+    fi
+
+    local current_ref
+    current_ref="$(git -C "$NEXTJS_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+    if [ "$current_ref" != "$NEXTJS_REF" ]; then
+        echo -e "${CYAN}Pinning next.js to ${NEXTJS_REF:0:12}...${NC}"
+        git -C "$NEXTJS_DIR" fetch --quiet --depth 1 origin "$NEXTJS_REF"
+        git -C "$NEXTJS_DIR" checkout --quiet FETCH_HEAD
+    fi
 }
 
 ensure_utility_types_fixture() {
@@ -357,6 +449,27 @@ run_utility_types_benchmarks() {
             echo
         fi
     done
+}
+
+run_nextjs_benchmarks() {
+    if ! is_benchmark_selected "nextjs"; then
+        return
+    fi
+
+    print_header "Real-world External Project - next.js (full project)"
+    ensure_nextjs_fixture
+    echo -e "${GREEN}✓${NC} next.js pinned at $(git -C "$NEXTJS_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$NEXTJS_DIR/packages/next/tsconfig.json"
+    local src_dir="$NEXTJS_DIR/packages/next/src"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "nextjs" "$tsconfig" "$src_dir"
+    echo
 }
 
 generate_synthetic_file() {
@@ -1373,6 +1486,7 @@ main() {
     fi  # End of medium/small files skip
 
     run_utility_types_benchmarks
+    run_nextjs_benchmarks
     
     print_header "Synthetic Benchmarks - Scaling Test"
     
