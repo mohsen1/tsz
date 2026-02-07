@@ -1352,7 +1352,7 @@ impl<'a> CheckerState<'a> {
         // on the common non-closure path.
         if self.is_inside_closure()
             && let Some(sym_id) = self.get_symbol_for_identifier(idx)
-            && self.is_captured_variable(sym_id)
+            && self.is_captured_variable(sym_id, idx)
             && self.is_mutable_binding(sym_id)
         {
             // Rule #42: Reset narrowing for captured mutable bindings in closures
@@ -1469,15 +1469,14 @@ impl<'a> CheckerState<'a> {
     /// - Variables captured from OUTER scope reset narrowing (for let/var)
     ///
     /// This is determined by checking if the variable's declaration is in an ancestor scope.
-    fn is_captured_variable(&self, sym_id: SymbolId) -> bool {
+    fn is_captured_variable(&self, sym_id: SymbolId, reference: NodeIndex) -> bool {
         use tsz_binder::ScopeId;
 
         let symbol = match self.ctx.binder.get_symbol(sym_id) {
             Some(sym) => sym,
-            None => return false, // If no symbol, assume not captured
+            None => return false,
         };
 
-        // Get the declaration node
         let decl_idx = symbol.value_declaration;
         if decl_idx.is_none() {
             return false;
@@ -1490,29 +1489,34 @@ impl<'a> CheckerState<'a> {
             .find_enclosing_scope(self.ctx.arena, decl_idx)
         {
             Some(scope_id) => scope_id,
-            None => return false, // No scope info, assume not captured
+            None => return false,
         };
 
-        // Get the current scope (where the variable is being accessed)
-        // We need to get the current scope from the binder's state
-        let current_scope_id = self.ctx.binder.current_scope_id;
+        // Find the enclosing scope of the usage site (where the variable is accessed).
+        // Previously this used `binder.current_scope_id` which is stale after binding
+        // completes. Now we compute the usage scope on-demand from the reference node.
+        let usage_scope_id = match self
+            .ctx
+            .binder
+            .find_enclosing_scope(self.ctx.arena, reference)
+        {
+            Some(scope_id) => scope_id,
+            None => return false,
+        };
 
-        // If declared in current scope, not captured
-        if decl_scope_id == current_scope_id {
+        // If declared and used in the same scope, not captured
+        if decl_scope_id == usage_scope_id {
             return false;
         }
 
-        // Check if declaration scope is an ancestor of current scope
-        // Walk up the scope chain from current scope to see if we find the declaration scope
-        let mut scope_id = current_scope_id;
+        // Check if declaration scope is an ancestor of usage scope
+        let mut scope_id = usage_scope_id;
         let mut iterations = 0;
         while !scope_id.is_none() && iterations < MAX_TREE_WALK_ITERATIONS {
             if scope_id == decl_scope_id {
-                // Found declaration scope in ancestor chain → captured variable
                 return true;
             }
 
-            // Move to parent scope
             scope_id = self
                 .ctx
                 .binder
