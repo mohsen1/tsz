@@ -634,10 +634,11 @@ impl<'a> LoweringPass<'a> {
         if self.ctx.target_es5 && !for_in_of.await_modifier {
             self.transforms
                 .insert(idx, TransformDirective::ES5ForOf { for_of_node: idx });
-            // Mark __values helper for proper iteration support
-            // Current implementation uses simple array indexing, but tsc emits
-            // __values for non-array iterables with --downlevelIteration
-            self.transforms.helpers_mut().values = true;
+            // Only mark __values helper when --downlevelIteration is enabled.
+            // Without it, tsc uses simple array indexing (no __values helper).
+            if self.ctx.options.downlevel_iteration {
+                self.transforms.helpers_mut().values = true;
+            }
         }
 
         self.visit(for_in_of.initializer);
