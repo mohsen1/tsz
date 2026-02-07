@@ -135,6 +135,55 @@ pub struct CompilerOptions {
     /// Parse in strict mode and emit "use strict" for each source file
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub always_strict: Option<bool>,
+    /// Raise error on expressions and declarations with an implied 'any' type
+    #[serde(
+        default,
+        alias = "noImplicitAny",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub no_implicit_any: Option<bool>,
+    /// Enable error reporting when a function doesn't explicitly return in all code paths
+    #[serde(
+        default,
+        alias = "noImplicitReturns",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub no_implicit_returns: Option<bool>,
+    /// Enable strict null checks
+    #[serde(
+        default,
+        alias = "strictNullChecks",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub strict_null_checks: Option<bool>,
+    /// Enable strict checking of function types
+    #[serde(
+        default,
+        alias = "strictFunctionTypes",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub strict_function_types: Option<bool>,
+    /// Check for class properties that are declared but not set in the constructor
+    #[serde(
+        default,
+        alias = "strictPropertyInitialization",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub strict_property_initialization: Option<bool>,
+    /// Raise error on 'this' expressions with an implied 'any' type
+    #[serde(
+        default,
+        alias = "noImplicitThis",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub no_implicit_this: Option<bool>,
+    /// Default catch clause variables as 'unknown' instead of 'any'
+    #[serde(
+        default,
+        alias = "useUnknownInCatchVariables",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub use_unknown_in_catch_variables: Option<bool>,
     /// Report errors on unused local variables
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_unused_locals: Option<bool>,
@@ -431,6 +480,29 @@ pub fn resolve_compiler_options(
         }
     }
 
+    // Individual strict-family options (override strict if set explicitly)
+    if let Some(v) = options.no_implicit_any {
+        resolved.checker.no_implicit_any = v;
+    }
+    if let Some(v) = options.no_implicit_returns {
+        resolved.checker.no_implicit_returns = v;
+    }
+    if let Some(v) = options.strict_null_checks {
+        resolved.checker.strict_null_checks = v;
+    }
+    if let Some(v) = options.strict_function_types {
+        resolved.checker.strict_function_types = v;
+    }
+    if let Some(v) = options.strict_property_initialization {
+        resolved.checker.strict_property_initialization = v;
+    }
+    if let Some(v) = options.no_implicit_this {
+        resolved.checker.no_implicit_this = v;
+    }
+    if let Some(v) = options.use_unknown_in_catch_variables {
+        resolved.checker.use_unknown_in_catch_variables = v;
+    }
+
     if let Some(no_emit) = options.no_emit {
         resolved.no_emit = no_emit;
     }
@@ -605,6 +677,17 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
         allow_js: child.allow_js.or(base.allow_js),
         check_js: child.check_js.or(base.check_js),
         always_strict: child.always_strict.or(base.always_strict),
+        no_implicit_any: child.no_implicit_any.or(base.no_implicit_any),
+        no_implicit_returns: child.no_implicit_returns.or(base.no_implicit_returns),
+        strict_null_checks: child.strict_null_checks.or(base.strict_null_checks),
+        strict_function_types: child.strict_function_types.or(base.strict_function_types),
+        strict_property_initialization: child
+            .strict_property_initialization
+            .or(base.strict_property_initialization),
+        no_implicit_this: child.no_implicit_this.or(base.no_implicit_this),
+        use_unknown_in_catch_variables: child
+            .use_unknown_in_catch_variables
+            .or(base.use_unknown_in_catch_variables),
         no_unused_locals: child.no_unused_locals.or(base.no_unused_locals),
         no_unused_parameters: child.no_unused_parameters.or(base.no_unused_parameters),
         allow_unreachable_code: child.allow_unreachable_code.or(base.allow_unreachable_code),
