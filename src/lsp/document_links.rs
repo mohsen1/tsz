@@ -5,8 +5,7 @@
 //! specifier string literals, and returns document links with ranges covering
 //! the specifier text (without quotes).
 
-use crate::lsp::position::{LineMap, Range};
-use crate::parser::node::NodeArena;
+use crate::lsp::position::Range;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
@@ -34,23 +33,9 @@ impl DocumentLink {
     }
 }
 
-/// Provider for document links.
-pub struct DocumentLinkProvider<'a> {
-    arena: &'a NodeArena,
-    line_map: &'a LineMap,
-    source_text: &'a str,
-}
+define_lsp_provider!(minimal DocumentLinkProvider, "Provider for document links.");
 
 impl<'a> DocumentLinkProvider<'a> {
-    /// Create a new document link provider.
-    pub fn new(arena: &'a NodeArena, line_map: &'a LineMap, source_text: &'a str) -> Self {
-        Self {
-            arena,
-            line_map,
-            source_text,
-        }
-    }
-
     /// Provide all document links in the file.
     ///
     /// Walks the AST starting from `root`, finding import/export declarations

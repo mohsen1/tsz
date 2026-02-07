@@ -3,8 +3,7 @@
 //! Provides folding range information for code blocks (functions, classes, etc.),
 //! #region/#endregion markers, consecutive single-line comments, and import groups.
 
-use crate::lsp::position::LineMap;
-use crate::parser::node::{NodeAccess, NodeArena};
+use crate::parser::node::NodeAccess;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 
 /// A folding range
@@ -51,23 +50,9 @@ struct RegionDelimiter {
     label: String,
 }
 
-/// Provider for folding ranges.
-pub struct FoldingRangeProvider<'a> {
-    arena: &'a NodeArena,
-    line_map: &'a LineMap,
-    source_text: &'a str,
-}
+define_lsp_provider!(minimal FoldingRangeProvider, "Provider for folding ranges.");
 
 impl<'a> FoldingRangeProvider<'a> {
-    /// Create a new folding range provider.
-    pub fn new(arena: &'a NodeArena, line_map: &'a LineMap, source_text: &'a str) -> Self {
-        Self {
-            arena,
-            line_map,
-            source_text,
-        }
-    }
-
     /// Get all folding ranges in the document.
     pub fn get_folding_ranges(&self, root: NodeIndex) -> Vec<FoldingRange> {
         let mut ranges = Vec::new();
@@ -700,6 +685,7 @@ fn parse_region_delimiter(trimmed: &str) -> Option<RegionDelimiter> {
 #[cfg(test)]
 mod folding_tests {
     use super::*;
+    use crate::lsp::position::LineMap;
     use crate::parser::ParserState;
 
     fn get_ranges(source: &str) -> Vec<FoldingRange> {

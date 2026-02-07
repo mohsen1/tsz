@@ -4,9 +4,8 @@
 //! When editing an opening JSX tag (e.g., `<div>`), the closing tag (`</div>`)
 //! automatically syncs.
 
-use crate::lsp::position::{LineMap, Position, Range};
+use crate::lsp::position::{Position, Range};
 use crate::lsp::utils::find_node_at_offset;
-use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 
 /// Result of a linked editing request.
@@ -18,23 +17,9 @@ pub struct LinkedEditingRanges {
     pub word_pattern: Option<String>,
 }
 
-/// Provider for linked editing ranges.
-pub struct LinkedEditingProvider<'a> {
-    arena: &'a NodeArena,
-    line_map: &'a LineMap,
-    source_text: &'a str,
-}
+define_lsp_provider!(minimal LinkedEditingProvider, "Provider for linked editing ranges.");
 
 impl<'a> LinkedEditingProvider<'a> {
-    /// Create a new LinkedEditing provider.
-    pub fn new(arena: &'a NodeArena, line_map: &'a LineMap, source_text: &'a str) -> Self {
-        Self {
-            arena,
-            line_map,
-            source_text,
-        }
-    }
-
     /// Provide linked editing ranges for the given position.
     ///
     /// # Arguments

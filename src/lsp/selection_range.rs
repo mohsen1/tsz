@@ -6,9 +6,8 @@
 //! For example, in `foo.bar().baz`:
 //! - Cursor at `bar` → select `bar` → `bar()` → `foo.bar()` → `foo.bar().baz`
 
-use crate::lsp::position::{LineMap, Position, Range};
+use crate::lsp::position::{Position, Range};
 use crate::lsp::utils::find_node_at_offset;
-use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 
 /// A selection range with a parent pointer.
@@ -41,23 +40,9 @@ impl SelectionRange {
     }
 }
 
-/// Provider for selection ranges.
-pub struct SelectionRangeProvider<'a> {
-    arena: &'a NodeArena,
-    line_map: &'a LineMap,
-    source_text: &'a str,
-}
+define_lsp_provider!(minimal SelectionRangeProvider, "Provider for selection ranges.");
 
 impl<'a> SelectionRangeProvider<'a> {
-    /// Create a new selection range provider.
-    pub fn new(arena: &'a NodeArena, line_map: &'a LineMap, source_text: &'a str) -> Self {
-        Self {
-            arena,
-            line_map,
-            source_text,
-        }
-    }
-
     /// Get selection ranges for a list of positions.
     ///
     /// Returns one selection range per position, each with nested parents
@@ -159,6 +144,7 @@ impl<'a> SelectionRangeProvider<'a> {
 #[cfg(test)]
 mod selection_range_tests {
     use super::*;
+    use crate::lsp::position::LineMap;
     use crate::parser::ParserState;
 
     #[test]
