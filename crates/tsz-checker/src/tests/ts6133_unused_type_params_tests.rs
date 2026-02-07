@@ -315,3 +315,49 @@ fn test_using_declaration_not_reported_unused() {
         using_errors
     );
 }
+
+#[test]
+fn test_setter_only_private_member_not_reported_unused() {
+    // A setter without a getter is "used" by write accesses.
+    // TSC never flags setter-only private members as unused.
+    let source = r#"
+class Employee {
+    private set p(_: number) {}
+
+    m() {
+        this.p = 0;
+    }
+}
+"#;
+    // Private members are checked under noUnusedLocals, not noUnusedParameters
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut options = CheckerOptions::default();
+    options.no_unused_locals = true;
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+    let setter_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 6133 && d.message_text.contains("'p'"))
+        .collect();
+    assert!(
+        setter_errors.is_empty(),
+        "setter-only private member should not be flagged as unused, got: {:?}",
+        setter_errors
+    );
+}
