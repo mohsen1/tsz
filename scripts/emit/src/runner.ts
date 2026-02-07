@@ -46,6 +46,7 @@ interface TestCase {
   target: number;
   module: number;
   alwaysStrict: boolean;
+  sourceMap: boolean;
 }
 
 interface TestResult {
@@ -79,8 +80,8 @@ function hashString(str: string): string {
   return hash.toString(36);
 }
 
-function getCacheKey(source: string, target: number, module: number, alwaysStrict: boolean, declaration: boolean): string {
-  return hashString(`${source}:${target}:${module}:${alwaysStrict}:${declaration}`);
+function getCacheKey(source: string, target: number, module: number, alwaysStrict: boolean, declaration: boolean, sourceMap: boolean = false): string {
+  return hashString(`${source}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -233,6 +234,7 @@ async function findTestCases(filter: string, maxTests: number): Promise<TestCase
       : 0;
 
     const alwaysStrict = directives.strict === true || directives.alwaysstrict === true;
+    const sourceMap = directives.sourcemap === true;
 
     return {
       baselineFile,
@@ -243,6 +245,7 @@ async function findTestCases(filter: string, maxTests: number): Promise<TestCase
       target,
       module,
       alwaysStrict,
+      sourceMap,
     } as TestCase;
   })));
 
@@ -266,7 +269,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
 
   try {
     loadCache();
-    const cacheKey = getCacheKey(testCase.source, testCase.target, testCase.module, testCase.alwaysStrict, config.dtsOnly);
+    const cacheKey = getCacheKey(testCase.source, testCase.target, testCase.module, testCase.alwaysStrict, config.dtsOnly, testCase.sourceMap);
     let tszJs: string;
     let tszDts: string | null = null;
 
@@ -280,6 +283,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       const transpileResult = await transpiler.transpile(testCase.source, testCase.target, testCase.module, {
         declaration: config.dtsOnly,
         alwaysStrict: testCase.alwaysStrict,
+        sourceMap: testCase.sourceMap,
       });
       tszJs = transpileResult.js;
       tszDts = transpileResult.dts || null;
@@ -287,8 +291,11 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
     }
 
     if (!config.dtsOnly && testCase.expectedJs) {
-      const expected = testCase.expectedJs.replace(/\r\n/g, '\n').trim();
-      const actual = tszJs.replace(/\r\n/g, '\n').trim();
+      // Normalize sourceMappingURL filenames since we use temp file names
+      const normalizeSourceMapUrl = (s: string) =>
+        s.replace(/\/\/# sourceMappingURL=\S+/g, '//# sourceMappingURL=output.js.map');
+      const expected = normalizeSourceMapUrl(testCase.expectedJs.replace(/\r\n/g, '\n').trim());
+      const actual = normalizeSourceMapUrl(tszJs.replace(/\r\n/g, '\n').trim());
       result.jsMatch = expected === actual;
 
       if (!result.jsMatch) {
