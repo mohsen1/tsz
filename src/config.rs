@@ -639,61 +639,63 @@ fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
     }
 }
 
+/// Merge two `CompilerOptions` structs, preferring child values over base.
+/// Every `Option` field in CompilerOptions uses `.or()` — child wins when present.
+macro_rules! merge_options {
+    ($child:expr, $base:expr, $Struct:ident { $($field:ident),* $(,)? }) => {
+        $Struct { $( $field: $child.$field.or($base.$field), )* }
+    };
+}
+
 fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> CompilerOptions {
-    CompilerOptions {
-        target: child.target.or(base.target),
-        module: child.module.or(base.module),
-        module_resolution: child.module_resolution.or(base.module_resolution),
-        types_versions_compiler_version: child
-            .types_versions_compiler_version
-            .or(base.types_versions_compiler_version),
-        types: child.types.or(base.types),
-        type_roots: child.type_roots.or(base.type_roots),
-        jsx: child.jsx.or(base.jsx),
-        lib: child.lib.or(base.lib),
-        no_lib: child.no_lib.or(base.no_lib),
-        no_types_and_symbols: child.no_types_and_symbols.or(base.no_types_and_symbols),
-        base_url: child.base_url.or(base.base_url),
-        paths: child.paths.or(base.paths),
-        root_dir: child.root_dir.or(base.root_dir),
-        out_dir: child.out_dir.or(base.out_dir),
-        out_file: child.out_file.or(base.out_file),
-        declaration: child.declaration.or(base.declaration),
-        declaration_dir: child.declaration_dir.or(base.declaration_dir),
-        source_map: child.source_map.or(base.source_map),
-        declaration_map: child.declaration_map.or(base.declaration_map),
-        ts_build_info_file: child.ts_build_info_file.or(base.ts_build_info_file),
-        incremental: child.incremental.or(base.incremental),
-        strict: child.strict.or(base.strict),
-        no_emit: child.no_emit.or(base.no_emit),
-        no_emit_on_error: child.no_emit_on_error.or(base.no_emit_on_error),
-        isolated_modules: child.isolated_modules.or(base.isolated_modules),
-        custom_conditions: child.custom_conditions.or(base.custom_conditions),
-        es_module_interop: child.es_module_interop.or(base.es_module_interop),
-        allow_synthetic_default_imports: child
-            .allow_synthetic_default_imports
-            .or(base.allow_synthetic_default_imports),
-        experimental_decorators: child
-            .experimental_decorators
-            .or(base.experimental_decorators),
-        allow_js: child.allow_js.or(base.allow_js),
-        check_js: child.check_js.or(base.check_js),
-        always_strict: child.always_strict.or(base.always_strict),
-        no_implicit_any: child.no_implicit_any.or(base.no_implicit_any),
-        no_implicit_returns: child.no_implicit_returns.or(base.no_implicit_returns),
-        strict_null_checks: child.strict_null_checks.or(base.strict_null_checks),
-        strict_function_types: child.strict_function_types.or(base.strict_function_types),
-        strict_property_initialization: child
-            .strict_property_initialization
-            .or(base.strict_property_initialization),
-        no_implicit_this: child.no_implicit_this.or(base.no_implicit_this),
-        use_unknown_in_catch_variables: child
-            .use_unknown_in_catch_variables
-            .or(base.use_unknown_in_catch_variables),
-        no_unused_locals: child.no_unused_locals.or(base.no_unused_locals),
-        no_unused_parameters: child.no_unused_parameters.or(base.no_unused_parameters),
-        allow_unreachable_code: child.allow_unreachable_code.or(base.allow_unreachable_code),
-    }
+    merge_options!(
+        child,
+        base,
+        CompilerOptions {
+            target,
+            module,
+            module_resolution,
+            types_versions_compiler_version,
+            types,
+            type_roots,
+            jsx,
+            lib,
+            no_lib,
+            no_types_and_symbols,
+            base_url,
+            paths,
+            root_dir,
+            out_dir,
+            out_file,
+            declaration,
+            declaration_dir,
+            source_map,
+            declaration_map,
+            ts_build_info_file,
+            incremental,
+            strict,
+            no_emit,
+            no_emit_on_error,
+            isolated_modules,
+            custom_conditions,
+            es_module_interop,
+            allow_synthetic_default_imports,
+            experimental_decorators,
+            allow_js,
+            check_js,
+            always_strict,
+            no_implicit_any,
+            no_implicit_returns,
+            strict_null_checks,
+            strict_function_types,
+            strict_property_initialization,
+            no_implicit_this,
+            use_unknown_in_catch_variables,
+            no_unused_locals,
+            no_unused_parameters,
+            allow_unreachable_code,
+        }
+    )
 }
 
 fn parse_script_target(value: &str) -> Result<ScriptTarget> {

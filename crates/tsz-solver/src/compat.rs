@@ -1342,31 +1342,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             if s_def == t_def && source != target {
                 // Same enum DefId but different TypeIds
                 // Check if both are literal enum members (not union-based enums)
-                let s_is_enum_member = match self.interner.lookup(source) {
-                    Some(TypeKey::Enum(_, member_type)) => {
-                        matches!(
-                            self.interner.lookup(member_type),
-                            Some(TypeKey::Literal(
-                                LiteralValue::Number(_) | LiteralValue::String(_)
-                            ))
-                        )
-                    }
-                    _ => false,
-                };
-
-                let t_is_enum_member = match self.interner.lookup(target) {
-                    Some(TypeKey::Enum(_, member_type)) => {
-                        matches!(
-                            self.interner.lookup(member_type),
-                            Some(TypeKey::Literal(
-                                LiteralValue::Number(_) | LiteralValue::String(_)
-                            ))
-                        )
-                    }
-                    _ => false,
-                };
-
-                if s_is_enum_member && t_is_enum_member {
+                if self.is_literal_enum_member(source) && self.is_literal_enum_member(target) {
                     // Both are enum literals with same DefId but different values
                     // Nominal rule: E.A is NOT assignable to E.B
                     return Some(false);
@@ -1494,7 +1470,18 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     /// Get the DefId of an enum type, handling both direct Enum members and Union-based Enums.
-    ///
+    /// Check whether `type_id` is an enum whose underlying member is a string or number literal.
+    fn is_literal_enum_member(&self, type_id: TypeId) -> bool {
+        matches!(
+            self.interner.lookup(type_id),
+            Some(TypeKey::Enum(_, member_type))
+                if matches!(
+                    self.interner.lookup(member_type),
+                    Some(TypeKey::Literal(LiteralValue::Number(_) | LiteralValue::String(_)))
+                )
+        )
+    }
+
     /// Returns Some(def_id) if the type is an Enum or a Union of Enum members from the same enum.
     /// Returns None if the type is not an enum or contains mixed enums.
     fn get_enum_def_id(&self, type_id: TypeId) -> Option<crate::def::DefId> {
