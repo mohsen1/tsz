@@ -110,6 +110,7 @@ trait NodeArenaExt {
 **Priority**: High (easy win)
 **Impact**: Developer velocity, consistency
 **Occurrences**: ~200 across solver test files
+**Status**: Partially done — convenience constructors added for `PropertyInfo`, `ParamInfo`, `FunctionShape`, `CallSignature`
 
 ### Problem
 
@@ -278,6 +279,7 @@ impl ScopeWalker {
 **Priority**: Medium (easy win)
 **Impact**: Code volume, maintainability
 **Occurrences**: ~70 trivial methods
+**Status**: Done — `define_type_handle_checks!`, `define_type_flag_checks!`, `define_symbol_flag_checks!`, `define_type_creators!` macros in `src/wasm_api/types.rs` + `define_checker_type_getters!` in `type_checker.rs`
 
 ### Problem
 
@@ -449,11 +451,11 @@ impl CheckerContext<'_> {
 |---|---------|-------------|----------|--------|------------|
 | 1 | Eliminate TypeKey matches in Checker | 75+ | High | Large | Judge classifier API |
 | 2 | Arena node access helpers | ~300 | High | Medium | — |
-| 3 | Test setup boilerplate | ~200 | High | Low | — |
+| 3 | Test setup boilerplate | ~200 | High | Low | **Partial** (constructors added) |
 | 4 | Diagnostic emission patterns | ~50 | High | Medium | — |
 | 5 | Type resolution unwrapping | ~50 | Medium-High | Medium | Judge queries (partial) |
 | 6 | LSP handler initialization | ~15 | Medium | Medium | — |
-| 7 | WASM API flag getters | ~70 | Medium | Low | — |
+| 7 | WASM API flag getters | ~70 | Medium | Low | **Done** |
 | 8 | AST kind predicates | ~40 | Medium | Low | **Done** |
 | 9 | Builder `with_*` methods | ~50 | Low-Medium | Low | Skipped (too varied) |
 | 10 | `From` impls for enums | ~20 | Low | Low | **Done** |
