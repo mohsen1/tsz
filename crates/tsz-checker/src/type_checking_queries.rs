@@ -664,7 +664,6 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                 || k == SyntaxKind::NumericLiteral as u16
         ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
-            && !lit.text.is_empty()
         {
             return Some(lit.text.clone());
         }
@@ -684,7 +683,6 @@ impl<'a> CheckerState<'a> {
                         || k == SyntaxKind::NumericLiteral as u16
                 )
                 && let Some(lit) = self.ctx.arena.get_literal(expr_node)
-                && !lit.text.is_empty()
             {
                 return Some(lit.text.clone());
             }
