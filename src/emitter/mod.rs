@@ -87,6 +87,8 @@ pub struct PrinterOptions {
     pub downlevel_iteration: bool,
     /// Set of import specifier nodes that should be elided (type-only imports)
     pub type_only_nodes: Arc<FxHashSet<NodeIndex>>,
+    /// Emit "use strict" for every source file
+    pub always_strict: bool,
 }
 
 impl Default for PrinterOptions {
@@ -101,6 +103,7 @@ impl Default for PrinterOptions {
             new_line: NewLineKind::LineFeed,
             downlevel_iteration: false,
             type_only_nodes: Arc::new(FxHashSet::default()),
+            always_strict: false,
         }
     }
 }
@@ -1851,8 +1854,6 @@ impl<'a> Printer<'a> {
         // 1. Module is CommonJS/AMD/UMD
         // 2. alwaysStrict compiler option is enabled
         // 3. File is an ES module with target < ES2015
-        // For now, we emit for CommonJS (most common case)
-        // TODO: Add always_strict support to PrinterOptions
         let is_es_module = self.file_is_module(&source.statements);
         let is_commonjs_or_amd = matches!(
             self.ctx.options.module,
@@ -1860,8 +1861,10 @@ impl<'a> Printer<'a> {
         );
         let target_before_es6 = !self.ctx.options.target.supports_es2015();
 
-        // Emit for CommonJS/AMD/UMD OR (ES modules with target < ES6)
-        if is_commonjs_or_amd || (is_es_module && target_before_es6) {
+        if is_commonjs_or_amd
+            || (is_es_module && target_before_es6)
+            || self.ctx.options.always_strict
+        {
             self.write("\"use strict\";");
             self.write_line();
         }
