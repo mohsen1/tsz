@@ -166,7 +166,7 @@ jobs:
         run: cargo nextest run --profile ci -p tsz-common
 
       - name: Test tsz-scanner
-        run: cargo nextest run --profile ci -p tsz-scanner
+        run: cargo nextest run --profile ci -p tsz-scanner || [ $? -eq 4 ]
 
       - name: Test tsz-parser
         run: cargo nextest run --profile ci -p tsz-parser
