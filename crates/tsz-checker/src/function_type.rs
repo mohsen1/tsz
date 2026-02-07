@@ -219,6 +219,11 @@ impl<'a> CheckerState<'a> {
 
                 // Check all function parameters for implicit any (TS7006)
                 // This includes function declarations, expressions, arrow functions, and methods
+                tracing::debug!(
+                    has_contextual_type,
+                    contextual_type = ?self.ctx.contextual_type.map(|t| t.0),
+                    "about to check TS7006 for function param"
+                );
                 self.maybe_report_implicit_any_parameter(param, has_contextual_type);
 
                 // Check if optional or has initializer
