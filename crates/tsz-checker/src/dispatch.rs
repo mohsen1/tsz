@@ -25,6 +25,20 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         Self { checker }
     }
 
+    /// Resolve a literal type: preserve the narrow literal if we're in a const
+    /// assertion or contextual typing expects it, otherwise widen to `widened`.
+    fn resolve_literal(&mut self, literal_type: Option<TypeId>, widened: TypeId) -> TypeId {
+        match literal_type {
+            Some(lit)
+                if self.checker.ctx.in_const_assertion
+                    || self.checker.contextual_literal_type(lit).is_some() =>
+            {
+                lit
+            }
+            _ => widened,
+        }
+    }
+
     /// Dispatch type computation based on node kind.
     ///
     /// This method examines the syntax node kind and dispatches to the
@@ -41,7 +55,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == SyntaxKind::ThisKeyword as u16 => {
                 if let Some(this_type) = self.checker.current_this_type() {
                     this_type
-                } else if let Some(ref class_info) = self.checker.ctx.enclosing_class.clone() {
+                } else if let Some(ref class_info) = self.checker.ctx.enclosing_class {
                     // Inside a class but no explicit this type on stack -
                     // return the class instance type (e.g., for constructor default params)
                     if let Some(class_node) = self.checker.ctx.arena.get(class_info.class_idx)
@@ -83,59 +97,22 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.checker.get_type_of_super_keyword(idx)
             }
 
-            // Literals - preserve literal types when contextual typing expects them.
-            k if k == SyntaxKind::NumericLiteral as u16 => {
-                let literal_type = self.checker.literal_type_from_initializer(idx);
-                if let Some(literal_type) = literal_type {
-                    // Preserve literal type if in const assertion OR if contextual typing allows it
-                    if self.checker.ctx.in_const_assertion
-                        || self.checker.contextual_literal_type(literal_type).is_some()
-                    {
-                        literal_type
-                    } else {
-                        TypeId::NUMBER
-                    }
-                } else {
-                    TypeId::NUMBER
-                }
-            }
-            k if k == SyntaxKind::StringLiteral as u16 => {
-                let literal_type = self.checker.literal_type_from_initializer(idx);
-                if let Some(literal_type) = literal_type {
-                    // Preserve literal type if in const assertion OR if contextual typing allows it
-                    if self.checker.ctx.in_const_assertion
-                        || self.checker.contextual_literal_type(literal_type).is_some()
-                    {
-                        literal_type
-                    } else {
-                        TypeId::STRING
-                    }
-                } else {
-                    TypeId::STRING
-                }
-            }
-            // Boolean literals - preserve literal type when contextual typing expects it.
+            // Literals — preserve literal types when contextual typing expects them.
+            k if k == SyntaxKind::NumericLiteral as u16 => self.resolve_literal(
+                self.checker.literal_type_from_initializer(idx),
+                TypeId::NUMBER,
+            ),
+            k if k == SyntaxKind::StringLiteral as u16 => self.resolve_literal(
+                self.checker.literal_type_from_initializer(idx),
+                TypeId::STRING,
+            ),
             k if k == SyntaxKind::TrueKeyword as u16 => {
                 let literal_type = self.checker.ctx.types.literal_boolean(true);
-                // Preserve literal type if in const assertion OR if contextual typing allows it
-                if self.checker.ctx.in_const_assertion
-                    || self.checker.contextual_literal_type(literal_type).is_some()
-                {
-                    literal_type
-                } else {
-                    TypeId::BOOLEAN
-                }
+                self.resolve_literal(Some(literal_type), TypeId::BOOLEAN)
             }
             k if k == SyntaxKind::FalseKeyword as u16 => {
                 let literal_type = self.checker.ctx.types.literal_boolean(false);
-                // Preserve literal type if in const assertion OR if contextual typing allows it
-                if self.checker.ctx.in_const_assertion
-                    || self.checker.contextual_literal_type(literal_type).is_some()
-                {
-                    literal_type
-                } else {
-                    TypeId::BOOLEAN
-                }
+                self.resolve_literal(Some(literal_type), TypeId::BOOLEAN)
             }
             k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
 
@@ -225,24 +202,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     let is_valid = evaluator.is_arithmetic_operand(operand_type);
 
                     if !is_valid {
-                        // Emit TS2356 for invalid increment/decrement operand type
-                        if let Some(loc) = self.checker.get_source_location(unary.expression) {
-                            use crate::types::diagnostics::{
-                                Diagnostic, DiagnosticCategory, diagnostic_codes,
-                                diagnostic_messages,
-                            };
-                            self.checker.ctx.diagnostics.push(Diagnostic {
-                                code: diagnostic_codes::ARITHMETIC_OPERAND_MUST_BE_NUMBER,
-                                category: DiagnosticCategory::Error,
-                                message_text:
-                                    diagnostic_messages::ARITHMETIC_OPERAND_MUST_BE_NUMBER
-                                        .to_string(),
-                                file: self.checker.ctx.file_name.clone(),
-                                start: loc.start,
-                                length: loc.length(),
-                                related_information: Vec::new(),
-                            });
-                        }
+                        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.checker.error_at_node(
+                            unary.expression,
+                            diagnostic_messages::ARITHMETIC_OPERAND_MUST_BE_NUMBER,
+                            diagnostic_codes::ARITHMETIC_OPERAND_MUST_BE_NUMBER,
+                        );
                     }
                 }
 

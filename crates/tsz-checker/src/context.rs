@@ -1819,6 +1819,27 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.exact_optional_property_types
     }
 
+    /// Pack the checker's compiler options into a `u16` bitmask for use as a
+    /// `RelationCacheKey` flags field. This is the single source of truth for
+    /// flag packing — call this instead of manually constructing the bitmask.
+    pub fn pack_relation_flags(&self) -> u16 {
+        use tsz_solver::types::RelationCacheKey;
+        let mut flags: u16 = 0;
+        if self.strict_null_checks() {
+            flags |= RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+        }
+        if self.strict_function_types() {
+            flags |= RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+        }
+        if self.exact_optional_property_types() {
+            flags |= RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES;
+        }
+        if self.no_unchecked_indexed_access() {
+            flags |= RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
+        }
+        flags
+    }
+
     /// Convert CheckerOptions to JudgeConfig for the CompatChecker.
     fn as_judge_config(&self) -> JudgeConfig {
         JudgeConfig {

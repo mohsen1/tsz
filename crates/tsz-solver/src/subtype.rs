@@ -2056,39 +2056,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// This packs the Lawyer-layer flags into a compact cache key to ensure that
     /// results computed under different rules (strict vs non-strict) don't contaminate each other.
     fn make_cache_key(&self, source: TypeId, target: TypeId) -> RelationCacheKey {
-        // Pack boolean flags into a u16 bitmask:
-        // bit 0: strict_null_checks
-        // bit 1: strict_function_types
-        // bit 2: exact_optional_property_types
-        // bit 3: no_unchecked_indexed_access
-        // bit 4: disable_method_bivariance
-        // bit 5: allow_void_return
-        // bit 6: allow_bivariant_rest
-        // bit 7: allow_bivariant_param_count
         let mut flags: u16 = 0;
         if self.strict_null_checks {
-            flags |= 1 << 0;
+            flags |= RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
         }
         if self.strict_function_types {
-            flags |= 1 << 1;
+            flags |= RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
         }
         if self.exact_optional_property_types {
-            flags |= 1 << 2;
+            flags |= RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES;
         }
         if self.no_unchecked_indexed_access {
-            flags |= 1 << 3;
+            flags |= RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
         }
         if self.disable_method_bivariance {
-            flags |= 1 << 4;
+            flags |= RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE;
         }
         if self.allow_void_return {
-            flags |= 1 << 5;
+            flags |= RelationCacheKey::FLAG_ALLOW_VOID_RETURN;
         }
         if self.allow_bivariant_rest {
-            flags |= 1 << 6;
+            flags |= RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST;
         }
         if self.allow_bivariant_param_count {
-            flags |= 1 << 7;
+            flags |= RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT;
         }
 
         // CRITICAL: Calculate effective `any_mode` based on depth.

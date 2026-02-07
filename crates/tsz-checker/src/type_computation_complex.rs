@@ -1791,8 +1791,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
             _ => {
-                // Check if we're inside a class and the name matches a static member (error 2662)
-                // Clone values to avoid borrow issues
+                // Check if we're inside a class and the name matches a static member (error 2662).
+                // Clone to avoid borrowing self.ctx while calling &mut self methods below.
                 if let Some(ref class_info) = self.ctx.enclosing_class.clone()
                     && self.is_static_member(&class_info.member_nodes, name)
                 {

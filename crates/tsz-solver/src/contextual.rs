@@ -466,6 +466,37 @@ impl<'a> TypeVisitor for MethodExtractor<'a> {
     }
 }
 
+/// Extract the parameter type at `index` from a parameter list, handling rest params.
+fn extract_param_type_at(
+    db: &dyn TypeDatabase,
+    params: &[ParamInfo],
+    index: usize,
+) -> Option<TypeId> {
+    if let Some(last_param) = params.last() {
+        if last_param.rest {
+            if let Some(TypeKey::Array(elem)) = db.lookup(last_param.type_id) {
+                return Some(elem);
+            }
+            if let Some(TypeKey::Tuple(elements)) = db.lookup(last_param.type_id) {
+                let elements = db.tuple_list(elements);
+                if index < elements.len() {
+                    return Some(elements[index].type_id);
+                } else if let Some(last_elem) = elements.last()
+                    && last_elem.rest
+                {
+                    return Some(last_elem.type_id);
+                }
+            }
+            return Some(last_param.type_id);
+        }
+    }
+    if index < params.len() {
+        Some(params[index].type_id)
+    } else {
+        None
+    }
+}
+
 /// Visitor to extract parameter type from callable types.
 struct ParameterExtractor<'a> {
     db: &'a dyn TypeDatabase,
@@ -479,39 +510,6 @@ impl<'a> ParameterExtractor<'a> {
 
     fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
         self.visit_type(self.db, type_id)
-    }
-
-    fn extract_from_params(&self, params: &[ParamInfo]) -> Option<TypeId> {
-        // Check if there's a rest parameter at the end
-        if let Some(last_param) = params.last() {
-            if last_param.rest {
-                // For rest parameter, any index should get the element type
-                if let Some(TypeKey::Array(elem)) = self.db.lookup(last_param.type_id) {
-                    return Some(elem);
-                }
-                // For rest parameter with tuple type, extract the element at the given index
-                if let Some(TypeKey::Tuple(elements)) = self.db.lookup(last_param.type_id) {
-                    let elements = self.db.tuple_list(elements);
-                    // Find the tuple element at the given index
-                    if self.index < elements.len() {
-                        return Some(elements[self.index].type_id);
-                    } else if let Some(last_elem) = elements.last()
-                        && last_elem.rest
-                    {
-                        return Some(last_elem.type_id);
-                    }
-                }
-                // Return the rest parameter type itself
-                return Some(last_param.type_id);
-            }
-        }
-
-        // For non-rest parameters, check if index is within bounds
-        if self.index < params.len() {
-            Some(params[self.index].type_id)
-        } else {
-            None
-        }
     }
 }
 
@@ -528,12 +526,11 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
 
     fn visit_function(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.function_shape(FunctionShapeId(shape_id));
-        self.extract_from_params(&shape.params)
+        extract_param_type_at(self.db, &shape.params, self.index)
     }
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
-        // For callables with multiple signatures, collect parameter types from all signatures
         if shape.call_signatures.is_empty() {
             return None;
         }
@@ -541,7 +538,7 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
         let param_types: Vec<TypeId> = shape
             .call_signatures
             .iter()
-            .filter_map(|sig| self.extract_from_params(&sig.params))
+            .filter_map(|sig| extract_param_type_at(self.db, &sig.params, self.index))
             .collect();
 
         if param_types.is_empty() {
@@ -579,39 +576,6 @@ impl<'a> ParameterForCallExtractor<'a> {
         self.visit_type(self.db, type_id)
     }
 
-    fn extract_from_params(&self, params: &[ParamInfo]) -> Option<TypeId> {
-        // Check if there's a rest parameter at the end
-        if let Some(last_param) = params.last() {
-            if last_param.rest {
-                // For rest parameter, any index should get the element type
-                if let Some(TypeKey::Array(elem)) = self.db.lookup(last_param.type_id) {
-                    return Some(elem);
-                }
-                // For rest parameter with tuple type, extract the element at the given index
-                if let Some(TypeKey::Tuple(elements)) = self.db.lookup(last_param.type_id) {
-                    let elements = self.db.tuple_list(elements);
-                    // Find the tuple element at the given index
-                    if self.index < elements.len() {
-                        return Some(elements[self.index].type_id);
-                    } else if let Some(last_elem) = elements.last()
-                        && last_elem.rest
-                    {
-                        return Some(last_elem.type_id);
-                    }
-                }
-                // Return the rest parameter type itself
-                return Some(last_param.type_id);
-            }
-        }
-
-        // For non-rest parameters, check if index is within bounds
-        if self.index < params.len() {
-            Some(params[self.index].type_id)
-        } else {
-            None
-        }
-    }
-
     #[allow(dead_code)]
     fn signature_accepts_arg_count(&self, params: &[ParamInfo], arg_count: usize) -> bool {
         // Count required (non-optional) parameters
@@ -644,37 +608,33 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
     fn visit_function(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.function_shape(FunctionShapeId(shape_id));
 
-        // Check if this function signature accepts the given arg_count
-        // For arity-based overload filtering in unions of function types
         if !self.signature_accepts_arg_count(&shape.params, self.arg_count) {
             return None;
         }
 
-        self.extract_from_params(&shape.params)
+        extract_param_type_at(self.db, &shape.params, self.index)
     }
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
 
-        // Filter signatures by arity
         let mut matched = false;
         let mut param_types: Vec<TypeId> = Vec::new();
 
         for sig in &shape.call_signatures {
             if self.signature_accepts_arg_count(&sig.params, self.arg_count) {
                 matched = true;
-                if let Some(param_type) = self.extract_from_params(&sig.params) {
+                if let Some(param_type) = extract_param_type_at(self.db, &sig.params, self.index) {
                     param_types.push(param_type);
                 }
             }
         }
 
-        // If no signatures matched, fall back to all signatures
         if param_types.is_empty() && !matched {
             param_types = shape
                 .call_signatures
                 .iter()
-                .filter_map(|sig| self.extract_from_params(&sig.params))
+                .filter_map(|sig| extract_param_type_at(self.db, &sig.params, self.index))
                 .collect();
         }
 
@@ -692,14 +652,18 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
     }
 }
 
-/// Visitor to extract the yield type from Generator<Y, R, N> applications.
-struct GeneratorYieldExtractor<'a> {
+/// Visitor to extract a type argument at a given index from an Application type.
+///
+/// Used for `Generator<Y, R, N>` and similar generic types where we need to
+/// pull out a specific type parameter by position.
+struct ApplicationArgExtractor<'a> {
     db: &'a dyn TypeDatabase,
+    arg_index: usize,
 }
 
-impl<'a> GeneratorYieldExtractor<'a> {
-    fn new(db: &'a dyn TypeDatabase) -> Self {
-        Self { db }
+impl<'a> ApplicationArgExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase, arg_index: usize) -> Self {
+        Self { db, arg_index }
     }
 
     fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
@@ -707,7 +671,7 @@ impl<'a> GeneratorYieldExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for GeneratorYieldExtractor<'a> {
+impl<'a> TypeVisitor for ApplicationArgExtractor<'a> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -720,94 +684,7 @@ impl<'a> TypeVisitor for GeneratorYieldExtractor<'a> {
 
     fn visit_application(&mut self, app_id: u32) -> Self::Output {
         let app = self.db.type_application(TypeApplicationId(app_id));
-        // Generator<Y, R, N> has Y as the first type argument
-        if !app.args.is_empty() {
-            Some(app.args[0])
-        } else {
-            None
-        }
-    }
-
-    fn default_output() -> Self::Output {
-        None
-    }
-}
-
-/// Visitor to extract the return type from Generator<Y, R, N> applications.
-struct GeneratorReturnExtractor<'a> {
-    db: &'a dyn TypeDatabase,
-}
-
-impl<'a> GeneratorReturnExtractor<'a> {
-    fn new(db: &'a dyn TypeDatabase) -> Self {
-        Self { db }
-    }
-
-    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
-        self.visit_type(self.db, type_id)
-    }
-}
-
-impl<'a> TypeVisitor for GeneratorReturnExtractor<'a> {
-    type Output = Option<TypeId>;
-
-    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
-        None
-    }
-
-    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
-        None
-    }
-
-    fn visit_application(&mut self, app_id: u32) -> Self::Output {
-        let app = self.db.type_application(TypeApplicationId(app_id));
-        // Generator<Y, R, N> has R as the second type argument
-        if app.args.len() >= 2 {
-            Some(app.args[1])
-        } else {
-            None
-        }
-    }
-
-    fn default_output() -> Self::Output {
-        None
-    }
-}
-
-/// Visitor to extract the next type from Generator<Y, R, N> applications.
-struct GeneratorNextExtractor<'a> {
-    db: &'a dyn TypeDatabase,
-}
-
-impl<'a> GeneratorNextExtractor<'a> {
-    fn new(db: &'a dyn TypeDatabase) -> Self {
-        Self { db }
-    }
-
-    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
-        self.visit_type(self.db, type_id)
-    }
-}
-
-impl<'a> TypeVisitor for GeneratorNextExtractor<'a> {
-    type Output = Option<TypeId>;
-
-    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
-        None
-    }
-
-    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
-        None
-    }
-
-    fn visit_application(&mut self, app_id: u32) -> Self::Output {
-        let app = self.db.type_application(TypeApplicationId(app_id));
-        // Generator<Y, R, N> has N as the third type argument
-        if app.args.len() >= 3 {
-            Some(app.args[2])
-        } else {
-            None
-        }
+        app.args.get(self.arg_index).copied()
     }
 
     fn default_output() -> Self::Output {
@@ -1336,8 +1213,8 @@ impl<'a> ContextualTypeContext<'a> {
             };
         }
 
-        // Use visitor for Generator types
-        let mut extractor = GeneratorYieldExtractor::new(self.interner);
+        // Generator<Y, R, N> — yield type is arg 0
+        let mut extractor = ApplicationArgExtractor::new(self.interner, 0);
         extractor.extract(expected)
     }
 
@@ -1367,8 +1244,8 @@ impl<'a> ContextualTypeContext<'a> {
             };
         }
 
-        // Use visitor for Generator types
-        let mut extractor = GeneratorReturnExtractor::new(self.interner);
+        // Generator<Y, R, N> — return type is arg 1
+        let mut extractor = ApplicationArgExtractor::new(self.interner, 1);
         extractor.extract(expected)
     }
 
@@ -1399,8 +1276,8 @@ impl<'a> ContextualTypeContext<'a> {
             };
         }
 
-        // Use visitor for Generator types
-        let mut extractor = GeneratorNextExtractor::new(self.interner);
+        // Generator<Y, R, N> — next type is arg 2
+        let mut extractor = ApplicationArgExtractor::new(self.interner, 2);
         extractor.extract(expected)
     }
 

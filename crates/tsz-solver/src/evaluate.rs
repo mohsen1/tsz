@@ -36,6 +36,15 @@ pub enum ConditionalResult {
 /// Prevents unbounded memory growth in pathological cases.
 pub const MAX_VISITING_SET_SIZE: usize = 10_000;
 
+/// Controls which subtype direction makes a member redundant when simplifying
+/// a union or intersection.
+enum SubtypeDirection {
+    /// member[i] <: member[j] → member[i] is redundant (union semantics).
+    SourceSubsumedByOther,
+    /// member[j] <: member[i] → member[i] is redundant (intersection semantics).
+    OtherSubsumedBySource,
+}
+
 /// Type evaluator for meta-types.
 ///
 /// # Salsa Preparation
@@ -695,92 +704,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// - `number | 1 | 2` → `number` (literals absorbed by primitive)
     /// - `{ a: string } | { a: string; b: number }` → `{ a: string; b: number }`
     fn simplify_union_members(&mut self, members: &mut Vec<TypeId>) {
-        // Performance guard: skip large unions
-        if members.len() < 2 || members.len() > 25 {
-            return;
-        }
-
-        // Fast-path: if any member is any, entire union becomes any
-        // (But we don't modify members, just skip simplification - the interner will handle it)
-        if members.iter().any(|&id| id.is_any()) {
-            return;
-        }
-
-        // Fast-path: if any member is unknown, entire union becomes unknown
-        // (Interner handles the collapse, we just stop simplification)
+        // Union-specific early exits
         if members.iter().any(|&id| id.is_unknown()) {
             return;
         }
-
-        // OPTIMIZATION: Skip deep simplification if all members are unit types.
-        // Unit types are disjoint - no member can be a subtype of another, so the
-        // O(n²) SubtypeChecker loop would find nothing. The interner's
-        // reduce_union_subtypes already handles shallow cases (literal<:primitive).
+        // Skip if all members are unit types — they're disjoint, so the O(n²) loop
+        // would find nothing. The interner's reduce_union_subtypes handles shallow cases.
         if members.iter().all(|&id| self.interner.is_unit_type(id)) {
             return;
         }
-
-        // Skip simplification if union contains types that require full resolution
-        // These types are "complex" because their identity depends on evaluation context
-        if members.iter().any(|&id| self.is_complex_type(id)) {
-            return;
-        }
-
-        // Use SubtypeChecker with bypass_evaluation=true to prevent infinite recursion
-        // Task #37: Use MAX_SUBTYPE_DEPTH for deep structural simplification
-        use crate::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
-        let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-        checker.bypass_evaluation = true;
-        checker.max_depth = MAX_SUBTYPE_DEPTH; // Deep simplification for recursive types
-        checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
-
-        let mut i = 0;
-        while i < members.len() {
-            let mut redundant = false;
-            for j in 0..members.len() {
-                if i == j {
-                    continue;
-                }
-
-                // Fast-path: identity check is O(1)
-                if members[i] == members[j] {
-                    continue;
-                }
-
-                // If members[i] <: members[j], members[i] is redundant in the union
-                // Example: "a" | string => "a" is redundant (result: string)
-                if checker.is_subtype_of(members[i], members[j]) {
-                    redundant = true;
-                    break;
-                }
-            }
-            if redundant {
-                members.remove(i);
-            } else {
-                i += 1;
-            }
-        }
+        // In a union, A <: B means A is redundant (B subsumes it).
+        // E.g. `"a" | string` => "a" is redundant, result: `string`
+        self.remove_redundant_members(members, SubtypeDirection::SourceSubsumedByOther);
     }
 
     /// Simplify intersection members by removing redundant types using deep subtype checks.
     /// If A <: B, then A & B = A (B is redundant in the intersection).
-    ///
-    /// This uses SubtypeChecker with bypass_evaluation=true to prevent infinite
-    /// recursion, since TypeEvaluator has already evaluated all members.
-    ///
-    /// Performance: O(N²) where N is the number of members. We skip simplification
-    /// if the intersection has more than 25 members to avoid excessive computation.
-    ///
-    /// ## Strategy
-    ///
-    /// 1. **Early exit for large intersections** (>25 members) to avoid O(N²) explosion
-    /// 2. **Skip complex types** that require full resolution:
-    ///    - TypeParameter, Infer, Conditional, Mapped, IndexAccess, KeyOf, TypeQuery
-    ///    - TemplateLiteral, ReadonlyType, String manipulation types
-    ///    - Note: Lazy and Application are NOW safe (Task #37: handled by Canonicalizer)
-    /// 3. **Fast-path for any/unknown**: If any member is any, entire intersection becomes any
-    /// 4. **Identity check**: O(1) structural identity via SubtypeChecker (Task #36 fast-path)
-    /// 5. **Depth limit**: MAX_SUBTYPE_DEPTH enables deep recursive type simplification (Task #37)
     ///
     /// ## Example Reductions
     ///
@@ -788,27 +727,39 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// - `{ readonly a: string } & { a: string }` → `{ readonly a: string }`
     /// - `number & 1` → `1` (literal is more specific)
     fn simplify_intersection_members(&mut self, members: &mut Vec<TypeId>) {
-        // Performance guard: skip large intersections
-        if members.len() < 2 || members.len() > 25 {
+        // In an intersection, A <: B means B is redundant (A is more specific).
+        // We check if other members are subtypes of the candidate to remove the supertype.
+        self.remove_redundant_members(members, SubtypeDirection::OtherSubsumedBySource);
+    }
+
+    /// Remove redundant members from a type list using subtype checks.
+    ///
+    /// This is the shared O(n²) core for both union and intersection simplification.
+    /// The `direction` parameter controls which subtype relationship makes a member
+    /// redundant:
+    /// - `SourceSubsumedByOther`: member[i] <: member[j] → i is redundant (union semantics)
+    /// - `OtherSubsumedBySource`: member[j] <: member[i] → i is redundant (intersection semantics)
+    ///
+    /// Common early exits (size guards, `any` check, complex-type check) are applied here.
+    fn remove_redundant_members(&mut self, members: &mut Vec<TypeId>, direction: SubtypeDirection) {
+        // Performance guard: skip small or very large type lists
+        const MAX_SIMPLIFICATION_SIZE: usize = 25;
+        if members.len() < 2 || members.len() > MAX_SIMPLIFICATION_SIZE {
             return;
         }
 
-        // Fast-path: if any member is any, entire intersection becomes any
         if members.iter().any(|&id| id.is_any()) {
             return;
         }
 
-        // Skip simplification if intersection contains types that require full resolution
         if members.iter().any(|&id| self.is_complex_type(id)) {
             return;
         }
 
-        // Use SubtypeChecker with bypass_evaluation=true to prevent infinite recursion
-        // Task #37: Use MAX_SUBTYPE_DEPTH for deep structural simplification
         use crate::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
         let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
         checker.bypass_evaluation = true;
-        checker.max_depth = MAX_SUBTYPE_DEPTH; // Deep simplification for recursive types
+        checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
         let mut i = 0;
@@ -818,16 +769,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if i == j {
                     continue;
                 }
-
-                // Fast-path: identity check is O(1)
                 if members[i] == members[j] {
                     continue;
                 }
 
-                // If members[j] <: members[i], members[i] is redundant in the intersection
-                // Example: { a: string } & { a: string; b: number } => { a: string; b: number }
-                // The supertype is redundant, we keep the more specific type
-                if checker.is_subtype_of(members[j], members[i]) {
+                let is_subtype = match direction {
+                    SubtypeDirection::SourceSubsumedByOther => {
+                        checker.is_subtype_of(members[i], members[j])
+                    }
+                    SubtypeDirection::OtherSubsumedBySource => {
+                        checker.is_subtype_of(members[j], members[i])
+                    }
+                };
+                if is_subtype {
                     redundant = true;
                     break;
                 }
