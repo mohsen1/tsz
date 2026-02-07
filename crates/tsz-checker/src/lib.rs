@@ -120,6 +120,9 @@ mod symbol_resolver_stability_tests;
 #[path = "tests/ts2322_tests.rs"]
 mod ts2322_tests;
 #[cfg(test)]
+#[path = "tests/ts6133_unused_type_params_tests.rs"]
+mod ts6133_unused_type_params_tests;
+#[cfg(test)]
 #[path = "tests/value_usage_tests.rs"]
 mod value_usage_tests;
 // Tests that don't depend on test_fixtures, moved from root crate:

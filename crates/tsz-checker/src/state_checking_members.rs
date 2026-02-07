@@ -50,6 +50,9 @@ impl<'a> CheckerState<'a> {
 
         let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
 
+        // Check for unused type parameters (TS6133)
+        self.check_unused_type_params(&iface.type_parameters, stmt_idx);
+
         // Check each interface member for missing type references and parameter properties
         for &member_idx in &iface.members.nodes {
             self.check_type_member_for_missing_names(member_idx);
@@ -1458,6 +1461,9 @@ impl<'a> CheckerState<'a> {
         // Push type parameters (like <U> in `fn<U>(id: U)`) before checking types
         let (_type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
 
+        // Check for unused type parameters (TS6133)
+        self.check_unused_type_params(&method.type_parameters, member_idx);
+
         // Extract parameter types from contextual type (for object literal methods)
         // This enables shorthand method parameter type inference
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
@@ -2476,6 +2482,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         let (_type_params, type_param_updates) = self.push_type_parameters(&func.type_parameters);
 
+        // Check for unused type parameters (TS6133)
+        self.check_unused_type_params(&func.type_parameters, func_idx);
+
         // Check for parameter properties (error 2369)
         // Parameter properties are only allowed in constructors
         self.check_parameter_properties(&func.parameters.nodes);
@@ -2814,6 +2823,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Continue with comprehensive type alias checking
             if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
                 let (_params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+                // Check for unused type parameters (TS6133)
+                self.check_unused_type_params(&type_alias.type_parameters, type_alias_idx);
                 self.check_type_for_missing_names(type_alias.type_node);
                 self.check_type_for_parameter_properties(type_alias.type_node);
                 self.pop_type_parameters(updates);
