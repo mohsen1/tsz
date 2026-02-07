@@ -143,14 +143,14 @@ mod module_resolution_tests;
 
 pub use checker::state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 
-// Emitter - Emitter using NodeArena (Phase 0.1)
-pub mod emitter;
+// Emitter - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::emitter;
 #[cfg(test)]
 #[path = "tests/transform_api_tests.rs"]
 mod transform_api_tests;
 
-// Printer - Clean, safe AST-to-JavaScript printer
-pub mod printer;
+// Printer - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::printer;
 #[cfg(test)]
 #[path = "tests/printer_tests.rs"]
 mod printer_tests;
@@ -164,8 +164,8 @@ pub mod source_file;
 // Diagnostics - Error collection, formatting, and reporting
 pub mod diagnostics;
 
-// Enums - Enum support including const enum inlining
-pub mod enums;
+// Enums - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::enums;
 
 // Parallel processing with Rayon (Phase 0.4)
 pub mod parallel;
@@ -194,23 +194,26 @@ mod source_map_tests_3;
 #[path = "tests/source_map_tests_4.rs"]
 mod source_map_tests_4;
 
-// SourceWriter - Abstraction for emitter output with source map tracking
-pub mod source_writer;
+// SourceWriter - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::source_writer;
+#[cfg(test)]
+#[path = "tests/source_writer_tests.rs"]
+mod source_writer_tests;
 
-// EmitContext - Transform state management for the emitter
-pub mod emit_context;
+// EmitContext - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::emit_context;
 
-// TransformContext - Projection layer for AST transforms (Phase 6.1)
-pub mod transform_context;
+// TransformContext - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::transform_context;
 
-// LoweringPass - Phase 1 of Transform/Print architecture (Phase 6.1)
-pub mod lowering_pass;
+// LoweringPass - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::lowering_pass;
 
-// Declaration file emitter (Phase 6.4)
-pub mod declaration_emitter;
+// Declaration file emitter - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::declaration_emitter;
 
-// JavaScript transforms (Phase 6.5+)
-pub mod transforms;
+// JavaScript transforms - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::transforms;
 
 // Query-based Structural Solver (Phase 7.5) - re-exported from tsz-solver workspace crate
 pub use tsz_solver as solver;
