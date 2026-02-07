@@ -1871,17 +1871,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if callee_type_for_call is a union containing Function members
-        if let Some(tsz_solver::TypeKey::Union(list_id)) =
-            self.ctx.types.lookup(callee_type_for_call)
+        if let Some(members_vec) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, callee_type_for_call)
         {
-            let members = self.ctx.types.type_list(list_id);
-            let orig_members = if let Some(tsz_solver::TypeKey::Union(orig_list)) =
-                self.ctx.types.lookup(callee_type_orig)
-            {
-                Some(self.ctx.types.type_list(orig_list).to_vec())
-            } else {
-                None
-            };
+            let members = members_vec;
+            let orig_members =
+                tsz_solver::type_queries::get_union_members(self.ctx.types, callee_type_orig);
 
             let mut has_function = false;
             let mut new_members = Vec::new();

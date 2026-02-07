@@ -347,12 +347,14 @@ impl<'a> CheckerState<'a> {
             // We handle this specially by directly resolving Lazy(DefId) index access
             // types, because the TypeEvaluator might not have access to the type
             // environment's def_types map during evaluation.
-            let property_type = if let Some(TypeKey::IndexAccess(obj, _idx)) =
-                self.ctx.types.lookup(property_type)
+            let property_type = if let Some((obj, _idx)) =
+                tsz_solver::type_queries::get_index_access_types(self.ctx.types, property_type)
             {
                 // For IndexAccess types, we need to resolve the object type and get the property
                 // First, check if obj is a Lazy type that needs resolution
-                let obj_type = if let Some(TypeKey::Lazy(def_id)) = self.ctx.types.lookup(obj) {
+                let obj_type = if let Some(def_id) =
+                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, obj)
+                {
                     // Resolve the Lazy type to get the actual object type
                     if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                         self.get_type_of_symbol(sym_id)

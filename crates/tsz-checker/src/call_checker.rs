@@ -219,7 +219,7 @@ impl<'a> CheckerState<'a> {
                 && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 // Skip excess property checking for type parameters - the type parameter
                 // captures the full object type, so extra properties are allowed.
-                && !matches!(self.ctx.types.lookup(expected), Some(tsz_solver::TypeKey::TypeParameter(_)))
+                && !tsz_solver::type_queries::is_type_parameter(self.ctx.types, expected)
             {
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
             }
@@ -347,8 +347,9 @@ impl<'a> CheckerState<'a> {
                 // The solver's resolve_call doesn't handle Lazy types, so we must
                 // resolve to the concrete Function/Callable type here.
                 let resolved_func_type = {
-                    use tsz_solver::TypeKey;
-                    if let Some(TypeKey::Lazy(def_id)) = self.ctx.types.lookup(func_type) {
+                    if let Some(def_id) =
+                        tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, func_type)
+                    {
                         env.get_def(def_id).unwrap_or(func_type)
                     } else {
                         func_type

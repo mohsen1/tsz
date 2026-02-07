@@ -139,10 +139,7 @@ impl<'a> CheckerState<'a> {
             if let Some(constraint) = param.constraint {
                 // Skip validation for type parameter and infer type arguments
                 // (e.g., `Reducer<any, infer A>` - can't validate infer types)
-                if matches!(
-                    self.ctx.types.lookup(type_arg),
-                    Some(tsz_solver::TypeKey::TypeParameter(_) | tsz_solver::TypeKey::Infer(_))
-                ) {
+                if tsz_solver::type_queries::is_type_parameter(self.ctx.types, type_arg) {
                     continue;
                 }
 

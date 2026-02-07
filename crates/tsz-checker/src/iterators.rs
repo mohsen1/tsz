@@ -663,15 +663,14 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
             // Fallback: Check if object has a 'next' method that returns Promise
             if prop_name.as_ref() == "next" && prop.is_method {
                 // Check if the return type is Promise-like using Solver helper
-                if let Some(tsz_solver::TypeKey::Function(func_id)) =
-                    self.ctx.types.lookup(prop.type_id)
+                if let Some(return_type) =
+                    tsz_solver::type_queries::get_function_return_type(self.ctx.types, prop.type_id)
                 {
-                    let func = self.ctx.types.function_shape(func_id);
                     // Use Solver helper to check if return type is promise-like
                     if tsz_solver::type_queries::is_promise_like(
                         self.ctx.types,
                         self.ctx,
-                        func.return_type,
+                        return_type,
                     ) {
                         return true;
                     }

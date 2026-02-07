@@ -608,21 +608,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
 
     /// Extract the value type from an IteratorResult<T, TReturn>-like type
     fn extract_iterator_result_value(&self, type_id: TypeId) -> TypeId {
-        if let Some(type_key) = self.ctx.types.lookup(type_id) {
-            match type_key {
-                tsz_solver::TypeKey::Object(shape_id) => {
-                    let shape = self.ctx.types.object_shape(shape_id);
-                    for prop in &shape.properties {
-                        let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                        if prop_name.as_ref() == "value" {
-                            return prop.type_id;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        TypeId::ANY
+        tsz_solver::type_queries::get_object_property_type(self.ctx.types, type_id, "value")
+            .unwrap_or(TypeId::ANY)
     }
 
     /// Create a Generator<Y, R, N> type as a structural object type.

@@ -1265,17 +1265,7 @@ impl<'a> FlowAnalyzer<'a> {
     ///
     /// This matches TypeScript's behavior where `[x] = [1]` narrows `x` to `number`, not literal `1`.
     fn widen_to_primitive(&self, type_id: TypeId) -> TypeId {
-        if let Some(key) = self.interner.lookup(type_id) {
-            if let tsz_solver::types::TypeKey::Literal(ref lit) = key {
-                return match lit {
-                    tsz_solver::types::LiteralValue::String(_) => TypeId::STRING,
-                    tsz_solver::types::LiteralValue::Number(_) => TypeId::NUMBER,
-                    tsz_solver::types::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
-                    tsz_solver::types::LiteralValue::BigInt(_) => TypeId::BIGINT,
-                };
-            }
-        }
-        type_id // Non-literal types are preserved
+        tsz_solver::type_queries::widen_literal_to_primitive(self.interner, type_id)
     }
 
     /// Check if an assignment node is a mutable variable declaration (let/var) without a type annotation.
@@ -1592,22 +1582,8 @@ impl<'a> FlowAnalyzer<'a> {
     /// Check if a type is a number type (NUMBER or number literal).
     /// Used to infer result types for compound assignments when type checker results aren't available.
     fn is_number_type(&self, type_id: TypeId) -> bool {
-        // Check if it's the primitive NUMBER type
-        if type_id == TypeId::NUMBER {
-            return true;
-        }
-        // Check if it's a number literal by inspecting the type key
-        if let Some(type_key) = self.interner.lookup(type_id) {
-            if let TypeKey::Literal(_) = type_key {
-                // Could be number, bigint, or other literal
-                // For our purposes, check if it's a number literal
-                return matches!(
-                    type_key,
-                    TypeKey::Literal(tsz_solver::types::LiteralValue::Number(_))
-                );
-            }
-        }
-        false
+        type_id == TypeId::NUMBER
+            || tsz_solver::type_queries::is_number_literal(self.interner, type_id)
     }
 
     pub(crate) fn assignment_rhs_for_reference(

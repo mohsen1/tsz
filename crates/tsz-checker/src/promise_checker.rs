@@ -602,11 +602,10 @@ impl<'a> CheckerState<'a> {
     /// Check if a type is a Generator-like base type (Generator, AsyncGenerator,
     /// Iterator, AsyncIterator, IterableIterator, AsyncIterableIterator).
     fn is_generator_like_base_type(&mut self, type_id: TypeId) -> bool {
-        use tsz_solver::TypeKey;
-
         // Fast path: Check for Lazy types to known Generator-like types
-        if let Some(type_key) = self.ctx.types.lookup(type_id) {
-            if let TypeKey::Lazy(def_id) = type_key {
+        {
+            if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
+            {
                 // Use def_to_symbol_id to find the symbol
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                     if let Some(symbol) = self.get_symbol_globally(sym_id) {
