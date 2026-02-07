@@ -1053,6 +1053,69 @@ pub fn get_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate
     }
 }
 
+/// Widen a literal type to its corresponding primitive type.
+///
+/// - `1` -> `number`
+/// - `"hello"` -> `string`
+/// - `true` -> `boolean`
+/// - `1n` -> `bigint`
+///
+/// Non-literal types are returned unchanged.
+pub fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    match db.lookup(type_id) {
+        Some(TypeKey::Literal(ref lit)) => match lit {
+            crate::LiteralValue::String(_) => TypeId::STRING,
+            crate::LiteralValue::Number(_) => TypeId::NUMBER,
+            crate::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
+            crate::LiteralValue::BigInt(_) => TypeId::BIGINT,
+        },
+        _ => type_id,
+    }
+}
+
+/// Get the type of a named property from an object type.
+///
+/// Returns `None` if the type is not an object or the property doesn't exist.
+pub fn get_object_property_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    property_name: &str,
+) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            for prop in &shape.properties {
+                let prop_name = db.resolve_atom_ref(prop.name);
+                if prop_name.as_ref() == property_name {
+                    return Some(prop.type_id);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Check if a type is a Function (not Callable) and get its return type.
+///
+/// Used for checking if a function's return type is promise-like in async iterator contexts.
+pub fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Function(shape_id)) => {
+            let shape = db.function_shape(shape_id);
+            Some(shape.return_type)
+        }
+        _ => None,
+    }
+}
+
+/// Check if a type is specifically an object type with index signatures.
+///
+/// Returns true only for TypeKey::ObjectWithIndex, not for TypeKey::Object.
+pub fn is_object_with_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(db.lookup(type_id), Some(TypeKey::ObjectWithIndex(_)))
+}
+
 // =============================================================================
 // Array-Like Type Classification (for is_array_like_type)
 // =============================================================================

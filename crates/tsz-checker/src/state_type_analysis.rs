@@ -860,10 +860,8 @@ impl<'a> CheckerState<'a> {
         trace!(
             sym_id = sym_id.0,
             placeholder = placeholder.0,
-            is_lazy = matches!(
-                self.ctx.types.lookup(placeholder),
-                Some(tsz_solver::TypeKey::Lazy(_))
-            ),
+            is_lazy =
+                tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, placeholder).is_some(),
             "get_type_of_symbol: inserted placeholder"
         );
         self.ctx.symbol_types.insert(sym_id, placeholder);

@@ -22,12 +22,12 @@ impl<'a> CheckerState<'a> {
     /// For direct class references in type position (e.g., `a: A` where A is a class),
     /// this returns the instance type. For `typeof A`, returns the constructor type.
     fn resolve_type_annotation(&mut self, type_node: NodeIndex) -> TypeId {
-        use tsz_solver::types::TypeKey;
-
         let type_id = self.get_type_of_node(type_node);
 
         // Check if this is a direct Lazy reference to a class symbol
-        let is_class_lazy = if let Some(TypeKey::Lazy(def_id)) = self.ctx.types.lookup(type_id) {
+        let is_class_lazy = if let Some(def_id) =
+            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
+        {
             if let Some(sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id).copied() {
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                     symbol.flags & symbol_flags::CLASS != 0

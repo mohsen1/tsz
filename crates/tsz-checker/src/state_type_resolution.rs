@@ -795,17 +795,17 @@ impl<'a> CheckerState<'a> {
                     // type directly instead of Lazy wrapper. The Lazy type causes issues with flow
                     // analysis - it returns ANY instead of the proper type. For regular interfaces
                     // (Object without index signatures), return Lazy to preserve error formatting.
-                    match self.ctx.types.lookup(structural_type) {
-                        Some(tsz_solver::TypeKey::ObjectWithIndex(_)) => {
-                            self.ctx.leave_recursion();
-                            return structural_type;
-                        }
-                        _ => {
-                            // Return Lazy wrapper for regular interfaces
-                            let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
-                            self.ctx.leave_recursion();
-                            return lazy_type;
-                        }
+                    if tsz_solver::type_queries::is_object_with_index_type(
+                        self.ctx.types,
+                        structural_type,
+                    ) {
+                        self.ctx.leave_recursion();
+                        return structural_type;
+                    } else {
+                        // Return Lazy wrapper for regular interfaces
+                        let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
+                        self.ctx.leave_recursion();
+                        return lazy_type;
                     }
                 }
                 if !symbol.value_declaration.is_none() {

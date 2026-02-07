@@ -413,7 +413,6 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::SymbolId;
         use tsz_binder::symbol_flags;
         use tsz_solver::type_queries::{AbstractClassCheckKind, classify_for_abstract_check};
-        use tsz_solver::types::TypeKey;
 
         // Prevent infinite loops in circular type references
         if !visited.insert(type_id) {
@@ -421,9 +420,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Special handling for Callable types - check if the symbol is abstract
-        if let Some(TypeKey::Callable(shape_id)) = self.ctx.types.lookup(type_id) {
-            let shape = self.ctx.types.callable_shape(shape_id);
-            if let Some(sym_id) = shape.symbol {
+        if let Some(callable_shape) =
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+        {
+            if let Some(sym_id) = callable_shape.symbol {
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                     return (symbol.flags & symbol_flags::ABSTRACT) != 0;
                 }
@@ -432,7 +432,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Special handling for Lazy types - need to check via context
-        if let Some(TypeKey::Lazy(def_id)) = self.ctx.types.lookup(type_id) {
+        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id) {
             // Try to get the SymbolId for this DefId
             if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -520,9 +520,8 @@ impl<'a> CheckerState<'a> {
     /// lacks the type environment. This method pre-resolves the constraint so the
     /// solver can find construct signatures.
     fn resolve_type_param_for_construct(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::TypeKey;
-
-        let Some(TypeKey::TypeParameter(info)) = self.ctx.types.lookup(type_id) else {
+        let Some(info) = tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, type_id)
+        else {
             return type_id;
         };
 
@@ -541,7 +540,9 @@ impl<'a> CheckerState<'a> {
             constraint: Some(resolved_constraint),
             ..info.clone()
         };
-        self.ctx.types.intern(TypeKey::TypeParameter(new_info))
+        self.ctx
+            .types
+            .intern(tsz_solver::TypeKey::TypeParameter(new_info))
     }
 
     /// Get type from a union type node (A | B).
@@ -1584,13 +1585,15 @@ impl<'a> CheckerState<'a> {
                 && declared_type != TypeId::ERROR
             {
                 // Check if declared_type has ReadonlyType modifier or ObjectWithIndex - if so, preserve it
-                match self.ctx.types.lookup(declared_type) {
-                    Some(tsz_solver::TypeKey::ReadonlyType(_)) => declared_type,
-                    Some(tsz_solver::TypeKey::ObjectWithIndex(_)) => {
-                        // Always preserve ObjectWithIndex types through flow analysis
-                        declared_type
-                    }
-                    _ => flow_type,
+                if tsz_solver::type_queries::is_readonly_type(self.ctx.types, declared_type)
+                    || tsz_solver::type_queries::is_object_with_index_type(
+                        self.ctx.types,
+                        declared_type,
+                    )
+                {
+                    declared_type
+                } else {
+                    flow_type
                 }
             } else {
                 flow_type
@@ -1608,9 +1611,9 @@ impl<'a> CheckerState<'a> {
             let result_type = if !is_const {
                 // Mutable variable (let/var)
                 // If declared type is ObjectWithIndex, always preserve it
-                if matches!(
-                    self.ctx.types.lookup(declared_type),
-                    Some(tsz_solver::TypeKey::ObjectWithIndex(_))
+                if tsz_solver::type_queries::is_object_with_index_type(
+                    self.ctx.types,
+                    declared_type,
                 ) {
                     declared_type
                 } else if flow_type != declared_type && flow_type != TypeId::ERROR {
@@ -1961,15 +1964,9 @@ impl<'a> CheckerState<'a> {
     /// If `type_id` is an object type with a synthetic `"new"` member, return that member type.
     /// This supports constructor-like interfaces that lower construct signatures as properties.
     fn constructor_type_from_new_property(&self, type_id: TypeId) -> Option<TypeId> {
-        use tsz_solver::TypeKey;
-
-        let Some(key) = self.ctx.types.lookup(type_id) else {
+        let Some(shape_id) = tsz_solver::type_queries::get_object_shape_id(self.ctx.types, type_id)
+        else {
             return None;
-        };
-
-        let shape_id = match key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => shape_id,
-            _ => return None,
         };
 
         let new_atom = self.ctx.types.intern_string("new");
