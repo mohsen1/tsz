@@ -777,13 +777,8 @@ impl ParserState {
                     && has_following_expression
                     && !self.in_parameter_default_context()
                 {
-                    // TS1359: await expression outside async function (general case)
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "An 'await' expression is only allowed within an async function.",
-                        diagnostic_codes::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
-                    );
-                    // Fall through to parse as await expression
+                    // Parse as await expression - the checker will emit TS1308
+                    // (not TS1359 from the parser) to match TSC behavior
                 } else if self.in_parameter_default_context() && has_following_expression {
                     // TS2524: 'await' expressions cannot be used in a parameter initializer
                     // This only applies when there IS a following expression (e.g., `async (a = await foo)`)

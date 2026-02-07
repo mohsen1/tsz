@@ -353,6 +353,8 @@ pub mod diagnostic_messages {
         "'async' modifier cannot appear on a type member.";
     pub const AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION: &str =
         "An 'await' expression is only allowed within an async function.";
+    /// TS1308
+    pub const AWAIT_OUTSIDE_ASYNC: &str = "'await' expressions are only allowed within async functions and at the top levels of modules.";
     pub const AWAIT_IN_PARAMETER_DEFAULT: &str =
         "'await' expressions cannot be used in a parameter initializer.";
 
