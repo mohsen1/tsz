@@ -298,6 +298,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 if has_static_modifier(self.arena, &prop_data.modifiers) {
                     return None;
                 }
+                // Skip abstract properties (they don't exist at runtime)
+                if has_abstract_modifier(self.arena, &prop_data.modifiers) {
+                    return None;
+                }
                 // Skip private fields (they use WeakMap pattern)
                 if is_private_identifier(self.arena, prop_data.name) {
                     return None;
@@ -1188,6 +1192,11 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 // Only static properties
                 if !has_static_modifier(self.arena, &prop_data.modifiers) {
+                    continue;
+                }
+
+                // Skip abstract properties (they don't exist at runtime)
+                if has_abstract_modifier(self.arena, &prop_data.modifiers) {
                     continue;
                 }
 
