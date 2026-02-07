@@ -2899,8 +2899,7 @@ impl<'a> CheckerState<'a> {
                     .declarations
                     .iter()
                     .filter_map(|&decl_idx| {
-                        let node = self.ctx.arena.get(decl_idx)?;
-                        let constructor = self.ctx.arena.get_constructor(node)?;
+                        let constructor = self.ctx.arena.get_constructor_at(decl_idx)?;
                         // Only count constructors with a body as implementations
                         if !constructor.body.is_none() {
                             Some(decl_idx)

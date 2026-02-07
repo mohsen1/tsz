@@ -144,9 +144,7 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
                     {
                         if let Some(named_exports) = arena.get_named_imports(clause_node) {
                             for &spec_idx in &named_exports.elements.nodes {
-                                if let Some(spec) =
-                                    arena.get(spec_idx).and_then(|n| arena.get_specifier(n))
-                                {
+                                if let Some(spec) = arena.get_specifier_at(spec_idx) {
                                     if spec.is_type_only {
                                         continue;
                                     }

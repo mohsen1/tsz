@@ -761,13 +761,11 @@ impl<'a> CheckerState<'a> {
     /// Get the base class node index from a class declaration.
     /// Returns None if the class doesn't extend anything.
     pub(crate) fn get_base_class_idx(&self, class_idx: NodeIndex) -> Option<NodeIndex> {
-        let node = self.ctx.arena.get(class_idx)?;
-        let class = self.ctx.arena.get_class(node)?;
+        let class = self.ctx.arena.get_class_at(class_idx)?;
         let heritage_clauses = class.heritage_clauses.as_ref()?;
 
         for &clause_idx in &heritage_clauses.nodes {
-            let clause_node = self.ctx.arena.get(clause_idx)?;
-            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+            let heritage = self.ctx.arena.get_heritage_clause_at(clause_idx)?;
             if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
                 continue;
             }
@@ -1749,8 +1747,7 @@ impl<'a> CheckerState<'a> {
             return self.class_instance_type_from_symbol(sym_id);
         }
 
-        let node = self.ctx.arena.get(class_idx)?;
-        let class = self.ctx.arena.get_class(node)?;
+        let class = self.ctx.arena.get_class_at(class_idx)?;
         Some(if is_static {
             self.get_class_constructor_type(class_idx, class)
         } else {
