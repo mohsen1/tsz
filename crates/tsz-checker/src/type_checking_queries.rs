@@ -1170,7 +1170,9 @@ impl<'a> CheckerState<'a> {
     ) {
         use tsz_scanner::SyntaxKind;
 
-        if !self.ctx.no_unused_locals() {
+        // Type parameters are checked under noUnusedParameters, not noUnusedLocals.
+        // See: unusedTypeParametersNotCheckedByNoUnusedLocals conformance test.
+        if !self.ctx.no_unused_parameters() {
             return;
         }
 
