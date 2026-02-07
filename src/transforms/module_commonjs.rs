@@ -394,9 +394,7 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
             } else {
                 // Named imports: import { a, b } from "..."
                 for &spec_idx in &named_imports.elements.nodes {
-                    if let Some(spec_node) = arena.get(spec_idx)
-                        && let Some(spec) = arena.get_specifier(spec_node)
-                    {
+                    if let Some(spec) = arena.get_specifier_at(spec_idx) {
                         if spec.is_type_only {
                             continue;
                         }

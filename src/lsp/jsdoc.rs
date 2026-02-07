@@ -41,10 +41,7 @@ pub fn inline_param_jsdocs(
 ) -> FxHashMap<String, String> {
     let mut result = FxHashMap::default();
 
-    let Some(root_node) = arena.get(root) else {
-        return result;
-    };
-    let Some(sf_data) = arena.get_source_file(root_node) else {
+    let Some(sf_data) = arena.get_source_file_at(root) else {
         return result;
     };
     let comments = &sf_data.comments;
@@ -157,12 +154,8 @@ pub fn jsdoc_for_node(
         }
     }
 
-    let comments = if let Some(root_node) = arena.get(root) {
-        if let Some(sf_data) = arena.get_source_file(root_node) {
-            &sf_data.comments
-        } else {
-            return String::new();
-        }
+    let comments = if let Some(sf_data) = arena.get_source_file_at(root) {
+        &sf_data.comments
     } else {
         return String::new();
     };

@@ -309,22 +309,17 @@ fn assert_bound_state_resolves_param_impl(
             continue;
         };
         let name = arena
-            .get(func.name)
-            .and_then(|name_node| arena.get_identifier(name_node))
+            .get_identifier_at(func.name)
             .map(|ident| ident.escaped_text.as_str());
         if name != Some(function_name) {
             continue;
         }
         for &param_idx in &func.parameters.nodes {
-            let Some(param_node) = arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = arena.get_parameter(param_node) else {
+            let Some(param) = arena.get_parameter_at(param_idx) else {
                 continue;
             };
             let param_text = arena
-                .get(param.name)
-                .and_then(|param_name_node| arena.get_identifier(param_name_node))
+                .get_identifier_at(param.name)
                 .map(|ident| ident.escaped_text.as_str());
             if param_text != Some(param_name) {
                 continue;
@@ -356,10 +351,7 @@ fn assert_bound_state_resolves_param_impl(
         if idx == param_name_idx {
             continue;
         }
-        let Some(node) = arena.get(idx) else {
-            continue;
-        };
-        let Some(ident) = arena.get_identifier(node) else {
+        let Some(ident) = arena.get_identifier_at(idx) else {
             continue;
         };
         if ident.escaped_text != param_name {
@@ -453,8 +445,7 @@ fn find_function_param_and_usage(
             continue;
         };
         let name = arena
-            .get(func.name)
-            .and_then(|name_node| arena.get_identifier(name_node))
+            .get_identifier_at(func.name)
             .map(|ident| ident.escaped_text.as_str());
         if name != Some(function_name) {
             continue;
@@ -462,15 +453,11 @@ fn find_function_param_and_usage(
 
         function_body = func.body;
         for &param_idx in &func.parameters.nodes {
-            let Some(param_node) = arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = arena.get_parameter(param_node) else {
+            let Some(param) = arena.get_parameter_at(param_idx) else {
                 continue;
             };
             let param_text = arena
-                .get(param.name)
-                .and_then(|param_name_node| arena.get_identifier(param_name_node))
+                .get_identifier_at(param.name)
                 .map(|ident| ident.escaped_text.as_str());
             if param_text == Some(param_name) {
                 param_name_idx = param.name;
@@ -496,10 +483,7 @@ fn find_function_param_and_usage(
         if idx == param_name_idx {
             continue;
         }
-        let Some(node) = arena.get(idx) else {
-            continue;
-        };
-        let Some(ident) = arena.get_identifier(node) else {
+        let Some(ident) = arena.get_identifier_at(idx) else {
             continue;
         };
         if ident.escaped_text != param_name {
@@ -708,8 +692,7 @@ export function getModuleInstanceStateForAliasTarget(
             continue;
         };
         let name = arena
-            .get(func.name)
-            .and_then(|name_node| arena.get_identifier(name_node))
+            .get_identifier_at(func.name)
             .map(|ident| ident.escaped_text.as_str());
         if name == Some("getModuleInstanceStateForAliasTarget") {
             function_body = func.body;
@@ -774,10 +757,7 @@ export function getModuleInstanceStateForAliasTarget(
         let Some(for_data) = arena.get_for_in_of(node) else {
             continue;
         };
-        let Some(expr_node) = arena.get(for_data.expression) else {
-            continue;
-        };
-        let Some(ident) = arena.get_identifier(expr_node) else {
+        let Some(ident) = arena.get_identifier_at(for_data.expression) else {
             continue;
         };
         if ident.escaped_text == "statements" {

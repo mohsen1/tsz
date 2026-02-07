@@ -211,14 +211,12 @@ impl<'a> CheckerState<'a> {
         class_expr_idx: NodeIndex,
         func: &tsz_parser::parser::node::FunctionData,
     ) -> Option<usize> {
-        let class_node = self.ctx.arena.get(class_expr_idx)?;
-        let class_data = self.ctx.arena.get_class(class_node)?;
+        let class_data = self.ctx.arena.get_class_at(class_expr_idx)?;
         let heritage_clauses = class_data.heritage_clauses.as_ref()?;
 
         let mut base_name = None;
         for &clause_idx in &heritage_clauses.nodes {
-            let clause_node = self.ctx.arena.get(clause_idx)?;
-            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+            let heritage = self.ctx.arena.get_heritage_clause_at(clause_idx)?;
             if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
                 continue;
             }
@@ -242,10 +240,8 @@ impl<'a> CheckerState<'a> {
         let base_name = base_name?;
         let mut arg_index = 0usize;
         for &param_idx in &func.parameters.nodes {
-            let param_node = self.ctx.arena.get(param_idx)?;
-            let param = self.ctx.arena.get_parameter(param_node)?;
-            let name_node = self.ctx.arena.get(param.name)?;
-            let ident = self.ctx.arena.get_identifier(name_node)?;
+            let param = self.ctx.arena.get_parameter_at(param_idx)?;
+            let ident = self.ctx.arena.get_identifier_at(param.name)?;
             if ident.escaped_text == "this" {
                 continue;
             }
@@ -788,12 +784,10 @@ impl<'a> CheckerState<'a> {
     fn class_symbol_from_new_expr(&self, idx: tsz_parser::parser::NodeIndex) -> Option<SymbolId> {
         use tsz_binder::symbol_flags;
 
-        let node = self.ctx.arena.get(idx)?;
-        let call_expr = self.ctx.arena.get_call_expr(node)?;
+        let call_expr = self.ctx.arena.get_call_expr_at(idx)?;
 
         // Get the expression being instantiated
-        let expr_node = self.ctx.arena.get(call_expr.expression)?;
-        let ident = self.ctx.arena.get_identifier(expr_node)?;
+        let ident = self.ctx.arena.get_identifier_at(call_expr.expression)?;
 
         // Try to find the symbol
         let sym_id = self

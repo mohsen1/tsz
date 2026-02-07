@@ -368,10 +368,8 @@ impl<'a> FlowAnalyzer<'a> {
                 // CRITICAL: Skip parens/assertions to find the actual access node
                 // Handles cases like (obj.isString)() and (obj.isString as any)()
                 let callee_idx = self.skip_parens_and_assertions(call.expression);
-                let callee_node = self.arena.get(callee_idx)?;
-
                 // Check for PropertyAccess or ElementAccess
-                if let Some(access) = self.arena.get_access_expr(callee_node) {
+                if let Some(access) = self.arena.get_access_expr_at(callee_idx) {
                     return Some(access.expression);
                 }
 
@@ -1004,8 +1002,7 @@ impl<'a> FlowAnalyzer<'a> {
 
             // Get the property name for this segment
             let prop_name = if current_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let name_node = self.arena.get(access.name_or_argument)?;
-                let ident = self.arena.get_identifier(name_node)?;
+                let ident = self.arena.get_identifier_at(access.name_or_argument)?;
                 self.interner.intern_string(&ident.escaped_text)
             } else {
                 // Element access
@@ -1482,8 +1479,7 @@ impl<'a> FlowAnalyzer<'a> {
             if access.question_dot_token {
                 return None;
             }
-            let name_node = self.arena.get(access.name_or_argument)?;
-            let ident = self.arena.get_identifier(name_node)?;
+            let ident = self.arena.get_identifier_at(access.name_or_argument)?;
             let name = self.interner.intern_string(&ident.escaped_text);
             return Some((access.expression, name));
         }
@@ -2065,8 +2061,7 @@ impl<'a> FlowAnalyzer<'a> {
         &self,
         condition: NodeIndex,
     ) -> Option<(TypeGuard, NodeIndex, bool)> {
-        let node = self.arena.get(condition)?;
-        let call = self.arena.get_call_expr(node)?;
+        let call = self.arena.get_call_expr_at(condition)?;
 
         // Task 10: Check for Array.isArray(x) calls
         if let Some((guard, target)) = self.check_array_is_array(call, condition) {
@@ -2175,8 +2170,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// For `typeof x === "string"`, returns the node for `x`.
     /// For `x === null`, returns the node for `x`.
     fn get_comparison_target(&self, condition: NodeIndex) -> Option<NodeIndex> {
-        let cond_node = self.arena.get(condition)?;
-        let bin = self.arena.get_binary_expr(cond_node)?;
+        let bin = self.arena.get_binary_expr_at(condition)?;
 
         // For typeof expressions, the target is the operand of typeof
         if let Some(typeof_node) = self.get_typeof_operand(bin.left) {

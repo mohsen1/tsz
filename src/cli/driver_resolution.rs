@@ -194,10 +194,7 @@ pub(crate) fn collect_module_specifiers(
 ) -> Vec<(String, NodeIndex)> {
     let mut specifiers = Vec::new();
 
-    let Some(node) = arena.get(source_file) else {
-        return specifiers;
-    };
-    let Some(source) = arena.get_source_file(node) else {
+    let Some(source) = arena.get_source_file_at(source_file) else {
         return specifiers;
     };
 
@@ -235,8 +232,7 @@ pub(crate) fn collect_module_specifiers(
             if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
                 specifiers.push((strip_quotes(text), export_decl.module_specifier));
             } else if !export_decl.export_clause.is_none()
-                && let Some(clause_node) = arena.get(export_decl.export_clause)
-                && let Some(import_decl) = arena.get_import_decl(clause_node)
+                && let Some(import_decl) = arena.get_import_decl_at(export_decl.export_clause)
                 && let Some(text) = arena.get_literal_text(import_decl.module_specifier)
             {
                 specifiers.push((strip_quotes(text), import_decl.module_specifier));
@@ -297,10 +293,7 @@ pub(crate) fn collect_import_bindings(
     source_file: NodeIndex,
 ) -> Vec<(String, Vec<String>)> {
     let mut bindings = Vec::new();
-    let Some(node) = arena.get(source_file) else {
-        return bindings;
-    };
-    let Some(source) = arena.get_source_file(node) else {
+    let Some(source) = arena.get_source_file_at(source_file) else {
         return bindings;
     };
 
@@ -308,10 +301,7 @@ pub(crate) fn collect_import_bindings(
         if stmt_idx.is_none() {
             continue;
         }
-        let Some(stmt) = arena.get(stmt_idx) else {
-            continue;
-        };
-        let Some(import_decl) = arena.get_import_decl(stmt) else {
+        let Some(import_decl) = arena.get_import_decl_at(stmt_idx) else {
             continue;
         };
         let Some(specifier) = arena.get_literal_text(import_decl.module_specifier) else {
@@ -331,10 +321,7 @@ pub(crate) fn collect_export_binding_nodes(
     source_file: NodeIndex,
 ) -> Vec<(String, Vec<NodeIndex>)> {
     let mut bindings = Vec::new();
-    let Some(node) = arena.get(source_file) else {
-        return bindings;
-    };
-    let Some(source) = arena.get_source_file(node) else {
+    let Some(source) = arena.get_source_file_at(source_file) else {
         return bindings;
     };
 
@@ -342,10 +329,7 @@ pub(crate) fn collect_export_binding_nodes(
         if stmt_idx.is_none() {
             continue;
         }
-        let Some(stmt) = arena.get(stmt_idx) else {
-            continue;
-        };
-        let Some(export_decl) = arena.get_export_decl(stmt) else {
+        let Some(export_decl) = arena.get_export_decl_at(stmt_idx) else {
             continue;
         };
         if export_decl.export_clause.is_none() {
@@ -396,10 +380,7 @@ pub(crate) fn collect_star_export_specifiers(
     source_file: NodeIndex,
 ) -> Vec<String> {
     let mut specifiers = Vec::new();
-    let Some(node) = arena.get(source_file) else {
-        return specifiers;
-    };
-    let Some(source) = arena.get_source_file(node) else {
+    let Some(source) = arena.get_source_file_at(source_file) else {
         return specifiers;
     };
 
@@ -407,10 +388,7 @@ pub(crate) fn collect_star_export_specifiers(
         if stmt_idx.is_none() {
             continue;
         }
-        let Some(stmt) = arena.get(stmt_idx) else {
-            continue;
-        };
-        let Some(export_decl) = arena.get_export_decl(stmt) else {
+        let Some(export_decl) = arena.get_export_decl_at(stmt_idx) else {
             continue;
         };
         if !export_decl.export_clause.is_none() {
@@ -456,10 +434,7 @@ fn collect_import_local_names(
                         names.push(name.to_string());
                     }
                     for &spec_idx in &named.elements.nodes {
-                        let Some(spec_node) = arena.get(spec_idx) else {
-                            continue;
-                        };
-                        let Some(spec) = arena.get_specifier(spec_node) else {
+                        let Some(spec) = arena.get_specifier_at(spec_idx) else {
                             continue;
                         };
                         let local_ident = if !spec.name.is_none() {

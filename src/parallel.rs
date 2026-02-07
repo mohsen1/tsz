@@ -1280,11 +1280,7 @@ pub struct CheckResult {
 fn collect_functions(arena: &NodeArena, source_file: NodeIndex) -> Vec<NodeIndex> {
     let mut functions = Vec::new();
 
-    let Some(node) = arena.get(source_file) else {
-        return functions;
-    };
-
-    let Some(sf) = arena.get_source_file(node) else {
+    let Some(sf) = arena.get_source_file_at(source_file) else {
         return functions;
     };
 

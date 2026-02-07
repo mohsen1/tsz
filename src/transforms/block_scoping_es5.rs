@@ -301,8 +301,7 @@ pub fn collect_loop_vars(arena: &NodeArena, initializer_idx: NodeIndex) -> Vec<S
         && let Some(decl_list) = arena.get_variable(node)
     {
         for &decl_idx in &decl_list.declarations.nodes {
-            if let Some(decl_node) = arena.get(decl_idx)
-                && let Some(decl) = arena.get_variable_declaration(decl_node)
+            if let Some(decl) = arena.get_variable_declaration_at(decl_idx)
                 && let Some(name_node) = arena.get(decl.name)
                 && name_node.kind == SyntaxKind::Identifier as u16
                 && let Some(ident) = arena.get_identifier(name_node)

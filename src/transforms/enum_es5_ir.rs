@@ -43,8 +43,7 @@ use crate::transforms::ir::*;
 
 /// Transform an enum declaration to IR nodes
 pub fn transform_enum_to_ir(arena: &NodeArena, enum_idx: NodeIndex) -> Option<IRNode> {
-    let enum_node = arena.get(enum_idx)?;
-    let enum_data = arena.get_enum(enum_node)?;
+    let enum_data = arena.get_enum_at(enum_idx)?;
 
     // Check for const enum - erase by default
     if is_const_enum(arena, &enum_data.modifiers) {
@@ -92,8 +91,7 @@ fn transform_enum_members(
         } else if is_string_literal(arena, member_data.initializer) {
             // String enum
             last_value = None; // Reset - can't continue after string
-            let lit_node = arena.get(member_data.initializer);
-            if let Some(lit) = lit_node.and_then(|n| arena.get_literal(n)) {
+            if let Some(lit) = arena.get_literal_at(member_data.initializer) {
                 EnumMemberValue::String(lit.text.clone())
             } else {
                 EnumMemberValue::Auto(0)

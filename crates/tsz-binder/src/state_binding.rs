@@ -1307,12 +1307,8 @@ impl BinderState {
         body_idx: NodeIndex,
         module_symbol_id: SymbolId,
     ) {
-        let Some(node) = arena.get(body_idx) else {
-            return;
-        };
-
         // Get the module block statements
-        let statements = if let Some(module_block) = arena.get_module_block(node) {
+        let statements = if let Some(module_block) = arena.get_module_block_at(body_idx) {
             if let Some(stmts) = &module_block.statements {
                 &stmts.nodes
             } else {
@@ -1860,16 +1856,10 @@ impl BinderState {
     }
 
     pub(crate) fn is_array_mutation_call(&self, arena: &NodeArena, call_idx: NodeIndex) -> bool {
-        let Some(call_node) = arena.get(call_idx) else {
+        let Some(call) = arena.get_call_expr_at(call_idx) else {
             return false;
         };
-        let Some(call) = arena.get_call_expr(call_node) else {
-            return false;
-        };
-        let Some(callee_node) = arena.get(call.expression) else {
-            return false;
-        };
-        let Some(access) = arena.get_access_expr(callee_node) else {
+        let Some(access) = arena.get_access_expr_at(call.expression) else {
             return false;
         };
         if access.question_dot_token {

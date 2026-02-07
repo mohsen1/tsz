@@ -66,11 +66,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if this is a private identifier (starts with #)
-        if let Some(node) = self.ctx.arena.get(name_idx) {
-            if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                let name_str = &ident.escaped_text;
-                return name_str.starts_with('#');
-            }
+        if let Some(ident) = self.ctx.arena.get_identifier_at(name_idx) {
+            let name_str = &ident.escaped_text;
+            return name_str.starts_with('#');
         }
 
         false

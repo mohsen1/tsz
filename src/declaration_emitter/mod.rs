@@ -332,10 +332,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Vec<(String, SymbolId)> {
         let mut symbols = Vec::new();
 
-        let Some(clause_node) = arena.get(clause_idx) else {
-            return symbols;
-        };
-        let Some(clause) = arena.get_import_clause(clause_node) else {
+        let Some(clause) = arena.get_import_clause_at(clause_idx) else {
             return symbols;
         };
 
@@ -351,25 +348,21 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Named imports: import { A, B, C as D } from './mod'
         if !clause.named_bindings.is_none() {
-            if let Some(bindings_node) = arena.get(clause.named_bindings) {
-                if let Some(bindings) = arena.get_named_imports(bindings_node) {
-                    // Process each specifier
-                    for &spec_idx in &bindings.elements.nodes {
-                        if let Some(spec_node) = arena.get(spec_idx) {
-                            if let Some(spec) = arena.get_specifier(spec_node) {
-                                // Use the property_name if present (for 'as' imports), otherwise use name
-                                let name_idx = if !spec.property_name.is_none() {
-                                    spec.property_name
-                                } else {
-                                    spec.name
-                                };
+            if let Some(bindings) = arena.get_named_imports_at(clause.named_bindings) {
+                // Process each specifier
+                for &spec_idx in &bindings.elements.nodes {
+                    if let Some(spec) = arena.get_specifier_at(spec_idx) {
+                        // Use the property_name if present (for 'as' imports), otherwise use name
+                        let name_idx = if !spec.property_name.is_none() {
+                            spec.property_name
+                        } else {
+                            spec.name
+                        };
 
-                                if let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) {
-                                    // Get the name from the symbol
-                                    if let Some(symbol) = binder.symbols.get(sym_id) {
-                                        symbols.push((symbol.escaped_name.clone(), sym_id));
-                                    }
-                                }
+                        if let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) {
+                            // Get the name from the symbol
+                            if let Some(symbol) = binder.symbols.get(sym_id) {
+                                symbols.push((symbol.escaped_name.clone(), sym_id));
                             }
                         }
                     }

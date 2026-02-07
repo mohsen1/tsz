@@ -40,10 +40,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         let mut parent_symbols = Vec::new();
         if let Some(heritage_clauses) = &class.heritage_clauses {
             for &clause_idx in &heritage_clauses.nodes {
-                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
-                    continue;
-                };
-                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                let Some(heritage) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
                     continue;
                 };
                 if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
@@ -52,13 +49,10 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                 let Some(&type_idx) = heritage.types.nodes.first() else {
                     continue;
                 };
-                let Some(type_node) = self.ctx.arena.get(type_idx) else {
-                    continue;
-                };
                 let expr_idx = self
                     .ctx
                     .arena
-                    .get_expr_type_args(type_node)
+                    .get_expr_type_args_at(type_idx)
                     .map(|e| e.expression)
                     .unwrap_or(type_idx);
 

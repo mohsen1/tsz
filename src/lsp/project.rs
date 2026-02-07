@@ -217,8 +217,7 @@ impl ProjectFile {
         }
 
         let arena = self.parser.get_arena();
-        let root_node = arena.get(self.root)?;
-        let source_file = arena.get_source_file(root_node)?;
+        let source_file = arena.get_source_file_at(self.root)?;
         let mut reparse_start = change_start;
 
         for &stmt_idx in &source_file.statements.nodes {
@@ -285,10 +284,7 @@ impl ProjectFile {
     ) -> bool {
         let old_suffix_nodes = {
             let arena = self.parser.get_arena();
-            let Some(root_node) = arena.get(self.root) else {
-                return false;
-            };
-            let Some(source_file) = arena.get_source_file(root_node) else {
+            let Some(source_file) = arena.get_source_file_at(self.root) else {
                 return false;
             };
             let prefix_len = plan.prefix_nodes.len();
@@ -543,10 +539,7 @@ impl ProjectFile {
         let binder = self.binder();
         let mut nodes = Vec::new();
 
-        let Some(root_node) = arena.get(self.root()) else {
-            return Vec::new();
-        };
-        let Some(source_file) = arena.get_source_file(root_node) else {
+        let Some(source_file) = arena.get_source_file_at(self.root()) else {
             return Vec::new();
         };
 
@@ -607,10 +600,7 @@ impl ProjectFile {
         };
         let local_name = symbol.escaped_name.as_str();
 
-        let Some(root_node) = arena.get(self.root()) else {
-            return names;
-        };
-        let Some(source_file) = arena.get_source_file(root_node) else {
+        let Some(source_file) = arena.get_source_file_at(self.root()) else {
             return names;
         };
 
@@ -647,10 +637,7 @@ impl ProjectFile {
             if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS {
                 if let Some(named) = arena.get_named_imports(clause_node) {
                     for &spec_idx in &named.elements.nodes {
-                        let Some(spec_node) = arena.get(spec_idx) else {
-                            continue;
-                        };
-                        let Some(spec) = arena.get_specifier(spec_node) else {
+                        let Some(spec) = arena.get_specifier_at(spec_idx) else {
                             continue;
                         };
 
@@ -690,10 +677,7 @@ impl ProjectFile {
         let mut targets = Vec::new();
         let arena = self.arena();
 
-        let Some(root_node) = arena.get(self.root()) else {
-            return targets;
-        };
-        let Some(source_file) = arena.get_source_file(root_node) else {
+        let Some(source_file) = arena.get_source_file_at(self.root()) else {
             return targets;
         };
 
@@ -718,10 +702,7 @@ impl ProjectFile {
                 continue;
             }
 
-            let Some(clause_node) = arena.get(import.import_clause) else {
-                continue;
-            };
-            let Some(clause) = arena.get_import_clause(clause_node) else {
+            let Some(clause) = arena.get_import_clause_at(import.import_clause) else {
                 continue;
             };
 
@@ -768,10 +749,7 @@ impl ProjectFile {
             }
 
             for &spec_idx in &named.elements.nodes {
-                let Some(spec_node) = arena.get(spec_idx) else {
-                    continue;
-                };
-                let Some(spec) = arena.get_specifier(spec_node) else {
+                let Some(spec) = arena.get_specifier_at(spec_idx) else {
                     continue;
                 };
 
@@ -833,18 +811,12 @@ impl ProjectFile {
         let arena = self.arena();
         let binder = self.binder();
 
-        let Some(clause_node) = arena.get(clause_idx) else {
-            return;
-        };
-        let Some(named) = arena.get_named_imports(clause_node) else {
+        let Some(named) = arena.get_named_imports_at(clause_idx) else {
             return;
         };
 
         for &spec_idx in &named.elements.nodes {
-            let Some(spec_node) = arena.get(spec_idx) else {
-                continue;
-            };
-            let Some(spec) = arena.get_specifier(spec_node) else {
+            let Some(spec) = arena.get_specifier_at(spec_idx) else {
                 continue;
             };
 
@@ -931,11 +903,8 @@ impl ProjectFile {
                 let mut decls = Vec::new();
                 self.collect_variable_declarations(decl_idx, &mut decls);
                 decls.into_iter().any(|decl_idx| {
-                    let Some(decl_node) = arena.get(decl_idx) else {
-                        return false;
-                    };
                     arena
-                        .get_variable_declaration(decl_node)
+                        .get_variable_declaration_at(decl_idx)
                         .and_then(|decl| arena.get_identifier_text(decl.name))
                         == Some(export_name)
                 })
@@ -1237,8 +1206,7 @@ impl Project {
         call_idx: NodeIndex,
         arena: &NodeArena,
     ) -> Option<NodeIndex> {
-        let call_node = arena.get(call_idx)?;
-        let call_data = arena.get_call_expr(call_node)?;
+        let call_data = arena.get_call_expr_at(call_idx)?;
 
         // Check if this is import() or require()
         let is_import = self.is_import_keyword(call_data.expression, arena);

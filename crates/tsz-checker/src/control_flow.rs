@@ -1698,11 +1698,9 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Handle default values: when RHS is empty, check for default value in pattern element
         if rhs.is_none() && self.assignment_targets_reference_internal(pattern, target) {
-            if let Some(node) = self.arena.get(pattern) {
-                if let Some(binding) = self.arena.get_binding_element(node) {
-                    if !binding.initializer.is_none() {
-                        return Some(binding.initializer);
-                    }
+            if let Some(binding) = self.arena.get_binding_element_at(pattern) {
+                if !binding.initializer.is_none() {
+                    return Some(binding.initializer);
                 }
             }
         }

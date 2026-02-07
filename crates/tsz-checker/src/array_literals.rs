@@ -26,11 +26,7 @@ impl<'a> ArrayLiteralChecker<'a> {
     pub fn collect_elements(&self, array_literal_idx: NodeIndex) -> Vec<ArrayLiteralElement> {
         let mut elements = Vec::new();
 
-        let Some(node) = self.arena.get(array_literal_idx) else {
-            return elements;
-        };
-
-        let Some(literal) = self.arena.get_literal_expr(node) else {
+        let Some(literal) = self.arena.get_literal_expr_at(array_literal_idx) else {
             return elements;
         };
 

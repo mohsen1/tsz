@@ -133,13 +133,8 @@ impl TsSourceFile {
             return Vec::new();
         };
 
-        // Get the node first, then get source file data
-        let Some(node) = arena.get(root_idx) else {
-            return Vec::new();
-        };
-
         // Get statements from the source file node
-        if let Some(sf) = arena.get_source_file(node) {
+        if let Some(sf) = arena.get_source_file_at(root_idx) {
             sf.statements.nodes.iter().map(|idx| idx.0).collect()
         } else {
             Vec::new()

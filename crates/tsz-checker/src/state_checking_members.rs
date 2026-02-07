@@ -2800,16 +2800,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn check_export_declaration(&mut self, export_idx: NodeIndex) {
-        if let Some(node) = self.ctx.arena.get(export_idx) {
-            if let Some(export_decl) = self.ctx.arena.get_export_decl(node) {
-                // Check module specifier for unresolved modules (TS2792)
-                if !export_decl.module_specifier.is_none() {
-                    self.check_export_module_specifier(export_idx);
-                }
-                // Check the wrapped declaration
-                if !export_decl.export_clause.is_none() {
-                    self.check_statement(export_decl.export_clause);
-                }
+        if let Some(export_decl) = self.ctx.arena.get_export_decl_at(export_idx) {
+            // Check module specifier for unresolved modules (TS2792)
+            if !export_decl.module_specifier.is_none() {
+                self.check_export_module_specifier(export_idx);
+            }
+            // Check the wrapped declaration
+            if !export_decl.export_clause.is_none() {
+                self.check_statement(export_decl.export_clause);
             }
         }
     }

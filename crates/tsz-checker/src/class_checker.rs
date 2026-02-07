@@ -248,13 +248,9 @@ impl<'a> CheckerState<'a> {
                         // Get the parameter type (setters have one parameter)
                         let accessor_type =
                             if let Some(&first_param) = accessor.parameters.nodes.first() {
-                                if let Some(param_node) = self.ctx.arena.get(first_param) {
-                                    if let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                                        if !param.type_annotation.is_none() {
-                                            self.get_type_from_type_node(param.type_annotation)
-                                        } else {
-                                            TypeId::ANY
-                                        }
+                                if let Some(param) = self.ctx.arena.get_parameter_at(first_param) {
+                                    if !param.type_annotation.is_none() {
+                                        self.get_type_from_type_node(param.type_annotation)
                                     } else {
                                         TypeId::ANY
                                     }
@@ -388,13 +384,9 @@ impl<'a> CheckerState<'a> {
                         // Get the parameter type (setters have one parameter)
                         let accessor_type =
                             if let Some(&first_param) = base_accessor.parameters.nodes.first() {
-                                if let Some(param_node) = self.ctx.arena.get(first_param) {
-                                    if let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                                        if !param.type_annotation.is_none() {
-                                            self.get_type_from_type_node(param.type_annotation)
-                                        } else {
-                                            TypeId::ANY
-                                        }
+                                if let Some(param) = self.ctx.arena.get_parameter_at(first_param) {
+                                    if !param.type_annotation.is_none() {
+                                        self.get_type_from_type_node(param.type_annotation)
                                     } else {
                                         TypeId::ANY
                                     }

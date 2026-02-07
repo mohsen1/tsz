@@ -1149,8 +1149,7 @@ fn convert_function_parameters(arena: &NodeArena, params: &NodeList) -> Vec<IRPa
         .nodes
         .iter()
         .filter_map(|&p| {
-            let node = arena.get(p)?;
-            let param = arena.get_parameter(node)?;
+            let param = arena.get_parameter_at(p)?;
             let name = get_identifier_text(arena, param.name)?;
             let rest = param.dot_dot_dot_token;
             // Convert default value if present
@@ -1197,12 +1196,9 @@ fn collect_variable_names(arena: &NodeArena, declarations: &NodeList) -> Vec<Str
     let mut names = Vec::new();
 
     for &decl_list_idx in &declarations.nodes {
-        if let Some(decl_list_node) = arena.get(decl_list_idx)
-            && let Some(decl_list) = arena.get_variable(decl_list_node)
-        {
+        if let Some(decl_list) = arena.get_variable_at(decl_list_idx) {
             for &decl_idx in &decl_list.declarations.nodes {
-                if let Some(decl_node) = arena.get(decl_idx)
-                    && let Some(decl) = arena.get_variable_declaration(decl_node)
+                if let Some(decl) = arena.get_variable_declaration_at(decl_idx)
                     && let Some(name) = get_identifier_text(arena, decl.name)
                 {
                     names.push(name);
@@ -1219,12 +1215,9 @@ fn convert_variable_declarations(arena: &NodeArena, declarations: &NodeList) -> 
     let mut result = Vec::new();
 
     for &decl_list_idx in &declarations.nodes {
-        if let Some(decl_list_node) = arena.get(decl_list_idx)
-            && let Some(decl_list) = arena.get_variable(decl_list_node)
-        {
+        if let Some(decl_list) = arena.get_variable_at(decl_list_idx) {
             for &decl_idx in &decl_list.declarations.nodes {
-                if let Some(decl_node) = arena.get(decl_idx)
-                    && let Some(decl) = arena.get_variable_declaration(decl_node)
+                if let Some(decl) = arena.get_variable_declaration_at(decl_idx)
                     && let Some(name) = get_identifier_text(arena, decl.name)
                 {
                     // Use AstToIr for eager lowering of initializers

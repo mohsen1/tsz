@@ -294,8 +294,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let node = self.ctx.arena.get(decl_idx)?;
-        let type_alias = self.ctx.arena.get_type_alias(node)?;
+        let type_alias = self.ctx.arena.get_type_alias_at(decl_idx)?;
 
         let mut bindings = Vec::new();
         if let Some(params) = &type_alias.type_parameters {
@@ -303,10 +302,8 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             for (&param_idx, &arg) in params.nodes.iter().zip(args.iter()) {
-                let param_node = self.ctx.arena.get(param_idx)?;
-                let param = self.ctx.arena.get_type_parameter(param_node)?;
-                let name_node = self.ctx.arena.get(param.name)?;
-                let ident = self.ctx.arena.get_identifier(name_node)?;
+                let param = self.ctx.arena.get_type_parameter_at(param_idx)?;
+                let ident = self.ctx.arena.get_identifier_at(param.name)?;
                 bindings.push((self.ctx.types.intern_string(&ident.escaped_text), arg));
             }
         } else if !args.is_empty() {
@@ -315,10 +312,8 @@ impl<'a> CheckerState<'a> {
 
         // Check if the alias RHS is directly a Promise/PromiseLike type reference
         // before lowering (e.g., Promise<T> where Promise is from lib and might not fully resolve)
-        if let Some(type_node) = self.ctx.arena.get(type_alias.type_node)
-            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
-            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        if let Some(type_ref) = self.ctx.arena.get_type_ref_at(type_alias.type_node)
+            && let Some(ident) = self.ctx.arena.get_identifier_at(type_ref.type_name)
             && self.is_promise_like_name(ident.escaped_text.as_str())
         {
             // It's Promise<...> or PromiseLike<...>
@@ -389,8 +384,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let node = self.ctx.arena.get(decl_idx)?;
-        let class = self.ctx.arena.get_class(node)?;
+        let class = self.ctx.arena.get_class_at(decl_idx)?;
 
         // Build type parameter bindings for this class
         let mut bindings = Vec::new();
@@ -399,10 +393,8 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             for (&param_idx, &arg) in params.nodes.iter().zip(args.iter()) {
-                let param_node = self.ctx.arena.get(param_idx)?;
-                let param = self.ctx.arena.get_type_parameter(param_node)?;
-                let name_node = self.ctx.arena.get(param.name)?;
-                let ident = self.ctx.arena.get_identifier(name_node)?;
+                let param = self.ctx.arena.get_type_parameter_at(param_idx)?;
+                let ident = self.ctx.arena.get_identifier_at(param.name)?;
                 bindings.push((self.ctx.types.intern_string(&ident.escaped_text), arg));
             }
         } else if !args.is_empty() {
@@ -415,8 +407,7 @@ impl<'a> CheckerState<'a> {
         };
 
         for &clause_idx in heritage_clauses.nodes.iter() {
-            let clause_node = self.ctx.arena.get(clause_idx)?;
-            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+            let heritage = self.ctx.arena.get_heritage_clause_at(clause_idx)?;
 
             // Only check extends clauses (token = ExtendsKeyword = 96)
             if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
