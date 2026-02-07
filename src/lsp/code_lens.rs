@@ -8,10 +8,8 @@
 //! Code Lenses are displayed inline in the editor and can be clicked to
 //! perform actions like "Show References" or "Run Test".
 
-use crate::binder::BinderState;
-use crate::lsp::position::{LineMap, Position, Range};
+use crate::lsp::position::{Position, Range};
 use crate::lsp::references::FindReferences;
-use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 
 /// A code lens represents a command that can be shown inline with source code.
@@ -83,33 +81,9 @@ impl CodeLens {
     }
 }
 
-/// Provider for code lenses.
-pub struct CodeLensProvider<'a> {
-    arena: &'a NodeArena,
-    binder: &'a BinderState,
-    line_map: &'a LineMap,
-    file_name: String,
-    source_text: &'a str,
-}
+define_lsp_provider!(binder CodeLensProvider, "Provider for code lenses.");
 
 impl<'a> CodeLensProvider<'a> {
-    /// Create a new code lens provider.
-    pub fn new(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        line_map: &'a LineMap,
-        file_name: String,
-        source_text: &'a str,
-    ) -> Self {
-        Self {
-            arena,
-            binder,
-            line_map,
-            file_name,
-            source_text,
-        }
-    }
-
     /// Get all code lenses for the document.
     ///
     /// Returns unresolved code lenses that can be resolved later.
@@ -345,6 +319,7 @@ impl<'a> CodeLensProvider<'a> {
 mod code_lens_tests {
     use super::*;
     use crate::binder::BinderState;
+    use crate::lsp::position::LineMap;
     use crate::parser::ParserState;
 
     #[test]

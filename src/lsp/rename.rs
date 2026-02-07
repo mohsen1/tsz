@@ -4,14 +4,13 @@
 //! prepare-rename info (tsserver-compatible), shorthand property expansion,
 //! import specifier handling, and workspace edit generation.
 
-use crate::binder::BinderState;
 use crate::binder::SymbolId;
 use crate::binder::symbol_flags;
-use crate::lsp::position::{LineMap, Position, Range};
+use crate::lsp::position::{Position, Range};
 use crate::lsp::references::FindReferences;
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_offset;
-use crate::parser::node::{NodeAccess, NodeArena};
+use crate::parser::node::NodeAccess;
 use crate::parser::{NodeIndex, modifier_flags, syntax_kind_ext};
 use crate::scanner::{self, SyntaxKind};
 use rustc_hash::FxHashMap;
@@ -250,33 +249,9 @@ impl PrepareRenameResult {
 // RenameProvider
 // ---------------------------------------------------------------------------
 
-/// Provider for Rename functionality.
-pub struct RenameProvider<'a> {
-    arena: &'a NodeArena,
-    binder: &'a BinderState,
-    line_map: &'a LineMap,
-    file_name: String,
-    source_text: &'a str,
-}
+define_lsp_provider!(binder RenameProvider, "Rename provider.");
 
 impl<'a> RenameProvider<'a> {
-    /// Create a new rename provider.
-    pub fn new(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        line_map: &'a LineMap,
-        file_name: String,
-        source_text: &'a str,
-    ) -> Self {
-        Self {
-            arena,
-            binder,
-            line_map,
-            file_name,
-            source_text,
-        }
-    }
-
     // -----------------------------------------------------------------------
     // Prepare-rename (simple -- returns Range for backward compatibility)
     // -----------------------------------------------------------------------

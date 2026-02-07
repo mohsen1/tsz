@@ -8,11 +8,9 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::binder::BinderState;
 use crate::lsp::document_symbols::SymbolKind;
-use crate::lsp::position::{LineMap, Position, Range};
+use crate::lsp::position::{Position, Range};
 use crate::lsp::utils::find_node_at_offset;
-use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
@@ -49,33 +47,9 @@ pub struct CallHierarchyOutgoingCall {
     pub from_ranges: Vec<Range>,
 }
 
-/// Provider for call hierarchy operations.
-pub struct CallHierarchyProvider<'a> {
-    arena: &'a NodeArena,
-    binder: &'a BinderState,
-    line_map: &'a LineMap,
-    file_name: String,
-    source_text: &'a str,
-}
+define_lsp_provider!(binder CallHierarchyProvider, "Provider for call hierarchy operations.");
 
 impl<'a> CallHierarchyProvider<'a> {
-    /// Create a new call hierarchy provider.
-    pub fn new(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        line_map: &'a LineMap,
-        file_name: String,
-        source_text: &'a str,
-    ) -> Self {
-        Self {
-            arena,
-            binder,
-            line_map,
-            file_name,
-            source_text,
-        }
-    }
-
     /// Prepare a call hierarchy item at the given position.
     ///
     /// Finds the function, method, or constructor at the cursor and returns
@@ -734,6 +708,7 @@ mod call_hierarchy_tests {
     use crate::binder::BinderState;
     use crate::lsp::position::LineMap;
     use crate::parser::ParserState;
+    use crate::parser::node::NodeArena;
 
     /// Helper: parse, bind, and create a provider.
     #[allow(dead_code)]

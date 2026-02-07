@@ -6,12 +6,10 @@
 //! - `isDefinition`: whether the reference is a definition site (declaration, import, etc.)
 //! - `lineText`: the full text of the line containing the reference
 
-use crate::binder::BinderState;
 use crate::binder::SymbolId;
-use crate::lsp::position::{LineMap, Location, Position, Range};
+use crate::lsp::position::{Location, Position, Range};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_offset;
-use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use rustc_hash::FxHashSet;
@@ -63,40 +61,9 @@ pub struct RenameLocation {
     pub line_text: String,
 }
 
-/// Find References provider.
-///
-/// This struct provides LSP "Find References" functionality by:
-/// 1. Converting a position to a byte offset
-/// 2. Finding the AST node at that offset
-/// 3. Resolving the node to a symbol
-/// 4. Finding all references to that symbol in the AST
-/// 5. Returning their locations with isWriteAccess / isDefinition flags
-pub struct FindReferences<'a> {
-    arena: &'a NodeArena,
-    binder: &'a BinderState,
-    line_map: &'a LineMap,
-    file_name: String,
-    source_text: &'a str,
-}
+define_lsp_provider!(binder FindReferences, "Find References provider.");
 
 impl<'a> FindReferences<'a> {
-    /// Create a new Find References provider.
-    pub fn new(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        line_map: &'a LineMap,
-        file_name: String,
-        source_text: &'a str,
-    ) -> Self {
-        Self {
-            arena,
-            binder,
-            line_map,
-            file_name,
-            source_text,
-        }
-    }
-
     /// Find all references to the symbol at the given position.
     ///
     /// Returns a list of locations where the symbol is referenced.

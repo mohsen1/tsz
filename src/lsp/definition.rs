@@ -2,12 +2,11 @@
 //!
 //! Given a position in the source, finds where the symbol at that position is defined.
 
-use crate::binder::{BinderState, SymbolId, symbol_flags};
-use crate::lsp::position::{LineMap, Location, Position, Range};
+use crate::binder::{SymbolId, symbol_flags};
+use crate::lsp::position::{Location, Position, Range};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
-use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 
 /// Well-known built-in global identifiers that are provided by the runtime
@@ -187,39 +186,9 @@ pub struct DefinitionInfo {
     pub is_ambient: bool,
 }
 
-/// Go-to-Definition provider.
-///
-/// This struct provides LSP "Go to Definition" functionality by:
-/// 1. Converting a position to a byte offset
-/// 2. Finding the AST node at that offset
-/// 3. Resolving the node to a symbol
-/// 4. Returning the symbol's declaration locations
-pub struct GoToDefinition<'a> {
-    arena: &'a NodeArena,
-    binder: &'a BinderState,
-    line_map: &'a LineMap,
-    file_name: String,
-    source_text: &'a str,
-}
+define_lsp_provider!(binder GoToDefinition, "Go-to-Definition provider.");
 
 impl<'a> GoToDefinition<'a> {
-    /// Create a new Go-to-Definition provider.
-    pub fn new(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        line_map: &'a LineMap,
-        file_name: String,
-        source_text: &'a str,
-    ) -> Self {
-        Self {
-            arena,
-            binder,
-            line_map,
-            file_name,
-            source_text,
-        }
-    }
-
     /// Get the definition location(s) for the symbol at the given position.
     ///
     /// Returns a list of locations because a symbol can have multiple declarations

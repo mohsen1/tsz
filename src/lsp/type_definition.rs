@@ -7,44 +7,15 @@
 //! - `let x: Foo = ...` → Go to Definition goes to the variable declaration
 //! - `let x: Foo = ...` → Go to Type Definition goes to `interface Foo { ... }`
 
-use crate::binder::BinderState;
-use crate::lsp::position::{LineMap, Location, Position, Range};
+use crate::lsp::position::{Location, Position, Range};
 use crate::lsp::resolver::ScopeWalker;
 use crate::lsp::utils::find_node_at_offset;
-use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
-/// Provider for Go to Type Definition.
-///
-/// Unlike Go to Definition which navigates to where a symbol is declared,
-/// Type Definition navigates to where the symbol's *type* is defined.
-pub struct TypeDefinitionProvider<'a> {
-    arena: &'a NodeArena,
-    binder: &'a BinderState,
-    line_map: &'a LineMap,
-    file_name: String,
-    source_text: &'a str,
-}
+define_lsp_provider!(binder TypeDefinitionProvider, "Provider for Go to Type Definition.");
 
 impl<'a> TypeDefinitionProvider<'a> {
-    /// Create a new Type Definition provider.
-    pub fn new(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        line_map: &'a LineMap,
-        file_name: String,
-        source_text: &'a str,
-    ) -> Self {
-        Self {
-            arena,
-            binder,
-            line_map,
-            file_name,
-            source_text,
-        }
-    }
-
     /// Get the type definition location for the symbol at the given position.
     ///
     /// Returns the location(s) where the type is defined. For primitive types
@@ -331,6 +302,7 @@ impl<'a> TypeDefinitionProvider<'a> {
 mod type_definition_tests {
     use super::*;
     use crate::binder::BinderState;
+    use crate::lsp::position::LineMap;
     use crate::parser::ParserState;
 
     #[test]
