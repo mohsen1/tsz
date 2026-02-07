@@ -294,11 +294,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Ok(None) => continue,
                 Err(()) => return self.interner().mapped(mapped.clone()),
             };
-            // Use visitor helper instead of lookup + match (North Star Rule 3)
-            let remapped_name = match crate::visitor::literal_string(self.interner(), remapped) {
-                Some(name) => name,
-                None => return self.interner().mapped(mapped.clone()),
-            };
+            // Extract property name(s) from remapped key.
+            // Handle unions: `as \`${K}1\` | \`${K}2\`` produces multiple properties per key.
+            let remapped_names: Vec<Atom> =
+                if let Some(name) = crate::visitor::literal_string(self.interner(), remapped) {
+                    vec![name]
+                } else if let Some(TypeKey::Union(list_id)) = self.interner().lookup(remapped) {
+                    let members = self.interner().type_list(list_id);
+                    let names: Vec<Atom> = members
+                        .iter()
+                        .filter_map(|&m| crate::visitor::literal_string(self.interner(), m))
+                        .collect();
+                    if names.is_empty() {
+                        return self.interner().mapped(mapped.clone());
+                    }
+                    names
+                } else {
+                    return self.interner().mapped(mapped.clone());
+                };
 
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
@@ -316,16 +329,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let (optional, readonly) =
                 self.get_mapped_modifiers(mapped, is_homomorphic, source_object, key_name);
 
-            properties.push(PropertyInfo {
-                name: remapped_name,
-                type_id: property_type,
-                write_type: property_type,
-                optional,
-                readonly,
-                is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-            });
+            for remapped_name in remapped_names {
+                properties.push(PropertyInfo {
+                    name: remapped_name,
+                    type_id: property_type,
+                    write_type: property_type,
+                    optional,
+                    readonly,
+                    is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                });
+            }
         }
 
         let string_index = if key_set.has_string {

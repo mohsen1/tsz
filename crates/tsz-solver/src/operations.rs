@@ -187,8 +187,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         db: &dyn TypeDatabase,
         type_id: TypeId,
     ) -> Option<FunctionShape> {
+        Self::get_contextual_signature_for_arity(db, type_id, None)
+    }
+
+    /// Get the contextual signature for a type, optionally filtering by argument count.
+    /// When `arg_count` is provided, selects the first overload whose arity matches.
+    pub fn get_contextual_signature_for_arity(
+        db: &dyn TypeDatabase,
+        type_id: TypeId,
+        arg_count: Option<usize>,
+    ) -> Option<FunctionShape> {
         struct ContextualSignatureVisitor<'a> {
             db: &'a dyn TypeDatabase,
+            arg_count: Option<usize>,
         }
 
         impl<'a> TypeVisitor for ContextualSignatureVisitor<'a> {
@@ -221,22 +232,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
                 let shape = self.db.callable_shape(CallableShapeId(shape_id));
 
-                // For contextual typing, we look at call signatures (not construct signatures).
-                // If there are multiple (overloads), we pick the first one for now.
-                // TODO: Handle overloads properly by selecting the best match
-                if let Some(sig) = shape.call_signatures.first() {
-                    Some(FunctionShape {
-                        type_params: sig.type_params.clone(),
-                        params: sig.params.clone(),
-                        this_type: sig.this_type,
-                        return_type: sig.return_type,
-                        type_predicate: sig.type_predicate.clone(),
-                        is_constructor: false,
-                        is_method: sig.is_method,
-                    })
+                // For contextual typing, look at call signatures (not construct signatures).
+                // If arg_count is provided, select the first overload whose arity matches.
+                let sig = if let Some(count) = self.arg_count {
+                    shape
+                        .call_signatures
+                        .iter()
+                        .find(|sig| {
+                            let min_args =
+                                sig.params.iter().filter(|p| !p.optional && !p.rest).count();
+                            let has_rest = sig.params.iter().any(|p| p.rest);
+                            count >= min_args && (has_rest || count <= sig.params.len())
+                        })
+                        .or(shape.call_signatures.first())
                 } else {
-                    None
-                }
+                    shape.call_signatures.first()
+                };
+
+                sig.map(|sig| FunctionShape {
+                    type_params: sig.type_params.clone(),
+                    params: sig.params.clone(),
+                    this_type: sig.this_type,
+                    return_type: sig.return_type,
+                    type_predicate: sig.type_predicate.clone(),
+                    is_constructor: false,
+                    is_method: sig.is_method,
+                })
             }
 
             fn visit_application(&mut self, app_id: u32) -> Self::Output {
@@ -307,7 +328,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Future: Handle Intersection (pick first callable member)
         }
 
-        let mut visitor = ContextualSignatureVisitor { db };
+        let mut visitor = ContextualSignatureVisitor { db, arg_count };
         visitor.visit_type(db, type_id)
     }
 

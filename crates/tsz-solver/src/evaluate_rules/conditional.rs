@@ -224,6 +224,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         tail_recursion_count += 1;
                         continue;
                     }
+                    // Also detect Application that expands to Conditional (common pattern):
+                    // type TrimLeft<T> = T extends ` ${infer R}` ? TrimLeft<R> : T;
+                    // The true branch `TrimLeft<R>` is an Application, not a Conditional.
+                    if let Some(TypeKey::Application(_)) = self.interner().lookup(cond.false_type) {
+                        let expanded = self.evaluate(cond.false_type);
+                        if let Some(TypeKey::Conditional(next_cond_id)) =
+                            self.interner().lookup(expanded)
+                        {
+                            let next_cond = self.interner().conditional_type(next_cond_id);
+                            current_cond = (*next_cond).clone();
+                            tail_recursion_count += 1;
+                            continue;
+                        }
+                        return expanded;
+                    }
                 }
 
                 // Not a tail-recursive case - evaluate normally
@@ -251,6 +266,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     current_cond = (*next_cond).clone();
                     tail_recursion_count += 1;
                     continue;
+                }
+                // Also detect Application that expands to Conditional (tail-call through
+                // type alias like `TrimLeft<R>` which is Application, not Conditional)
+                if let Some(TypeKey::Application(_)) = self.interner().lookup(result_branch) {
+                    let expanded = self.evaluate(result_branch);
+                    if let Some(TypeKey::Conditional(next_cond_id)) =
+                        self.interner().lookup(expanded)
+                    {
+                        let next_cond = self.interner().conditional_type(next_cond_id);
+                        current_cond = (*next_cond).clone();
+                        tail_recursion_count += 1;
+                        continue;
+                    }
+                    return expanded;
                 }
             }
 

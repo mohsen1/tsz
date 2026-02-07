@@ -1956,89 +1956,119 @@ fn collect_diagnostics(
         }
     }
 
-    // Process files in the work queue
-    while let Some(file_idx) = work_queue.pop_front() {
-        let file = &program.files[file_idx];
-        let file_path = PathBuf::from(&file.file_name);
+    // --- FILE CHECKING ---
+    //
+    // Two paths:
+    // 1. Non-cached (first build, CI): Check ALL files in parallel using rayon.
+    //    No dependency cascade needed since we're checking everything.
+    // 2. Cached (watch mode): Sequential work queue with export-hash-based
+    //    dependency cascade for incremental invalidation.
 
-        let mut binder = create_binder_from_bound_file(file, program, file_idx);
-        let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
+    if cache.is_none() {
+        // --- PARALLEL PATH: No cache, check all files concurrently ---
+        let _parallel_span =
+            tracing::info_span!("parallel_check_files", files = work_queue.len()).entered();
 
-        // Bridge multi-file module resolution for ES module imports.
-        //
-        // `MergedProgram.module_exports` is keyed by *file paths*, but import symbols store the raw
-        // module specifier string (e.g. "./math", "../utils/helpers"). For this file's checker
-        // run, add additional `module_exports` entries keyed by the raw specifiers, pointing at
-        // the resolved target file's export table.
-        for (specifier, _) in &module_specifiers {
-            if let Some(resolved) = resolve_module_specifier(
-                Path::new(&file.file_name),
-                specifier,
-                options,
-                base_dir,
-                &mut resolution_cache,
-                &program_paths,
-            ) {
-                let canonical = canonicalize_or_owned(&resolved);
-                if let Some(target_file_name) = canonical_to_file_name.get(&canonical)
-                    && let Some(exports) = binder.module_exports.get(target_file_name).cloned()
-                {
-                    binder.module_exports.insert(specifier.clone(), exports);
-                }
-            }
-        }
-        let cached = cache
-            .as_deref_mut()
-            .and_then(|cache| cache.type_caches.remove(&file_path));
-        let compiler_options = options.checker.clone();
-        let mut checker = if let Some(cached) = cached {
-            CheckerState::with_cache(
-                &file.arena,
-                &binder,
-                &query_cache,
-                file.file_name.clone(),
-                cached,
-                compiler_options,
-            )
-        } else {
-            CheckerState::new(
-                &file.arena,
-                &binder,
-                &query_cache,
-                file.file_name.clone(),
-                compiler_options,
-            )
+        // Pre-compute per-file module bridging (sequential, fast — uses resolved_module_paths)
+        let per_file_binders: Vec<BinderState> = {
+            let _prep_span = tracing::info_span!("prepare_binders").entered();
+            work_queue
+                .iter()
+                .map(|&file_idx| {
+                    let file = &program.files[file_idx];
+                    let mut binder = create_binder_from_bound_file(file, program, file_idx);
+                    let module_specifiers =
+                        collect_module_specifiers(&file.arena, file.source_file);
+
+                    // Bridge raw module specifiers to resolved export tables using
+                    // the pre-computed resolved_module_paths map (no FS calls needed).
+                    for (specifier, _) in &module_specifiers {
+                        if let Some(&target_idx) =
+                            resolved_module_paths.get(&(file_idx, specifier.clone()))
+                        {
+                            let target_file_name = &program.files[target_idx].file_name;
+                            if let Some(exports) =
+                                binder.module_exports.get(target_file_name).cloned()
+                            {
+                                binder.module_exports.insert(specifier.clone(), exports);
+                            }
+                        }
+                    }
+                    binder
+                })
+                .collect()
         };
-        checker.ctx.report_unresolved_imports = true;
-        // Set lib contexts for global symbol resolution (console, Array, Promise, etc.)
-        if !lib_contexts.is_empty() {
-            checker.ctx.set_lib_contexts(lib_contexts.to_vec());
-            // Set actual lib file count for has_lib_loaded() check
-            // This enables proper filtering of lib symbols in check_duplicate_identifiers
-            checker.ctx.set_actual_lib_file_count(lib_contexts.len());
-        }
-        // Set cross-file resolution context for import type resolution
-        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-        checker.ctx.set_all_binders(Arc::clone(&all_binders));
-        checker
-            .ctx
-            .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
-        checker
-            .ctx
-            .set_resolved_module_errors(Arc::clone(&resolved_module_errors));
-        checker.ctx.set_current_file_idx(file_idx);
-        // Set per-file is_external_module cache to preserve state across file bindings
-        checker.ctx.is_external_module_by_file = Some(Arc::clone(&is_external_module_by_file));
 
-        // Build resolved_modules set for backward compatibility
-        // Only include modules that were successfully resolved (not in error map)
-        let mut resolved_modules = rustc_hash::FxHashSet::default();
-        for (specifier, _) in &module_specifiers {
-            // Check if this specifier is in resolved_module_paths (successfully resolved)
-            if resolved_module_paths.contains_key(&(file_idx, specifier.clone())) {
-                resolved_modules.insert(specifier.clone());
-            } else if !resolved_module_errors.contains_key(&(file_idx, specifier.clone())) {
-                // Not in error map either - might be external module, check with old resolver
+        let work_items: Vec<usize> = work_queue.into_iter().collect();
+        let no_check = options.no_check;
+        let compiler_options = options.checker.clone();
+        let lib_ctx_for_parallel = lib_contexts.to_vec();
+
+        // Check all files in parallel — each file gets its own CheckerState.
+        // TypeInterner (DashMap) and QueryCache (RwLock) are already thread-safe.
+        #[cfg(not(target_arch = "wasm32"))]
+        let file_results: Vec<Vec<Diagnostic>> = {
+            use rayon::prelude::*;
+            work_items
+                .par_iter()
+                .zip(per_file_binders.into_par_iter())
+                .map(|(&file_idx, binder)| {
+                    check_file_for_parallel(
+                        file_idx,
+                        binder,
+                        program,
+                        &query_cache,
+                        &compiler_options,
+                        &lib_ctx_for_parallel,
+                        &all_arenas,
+                        &all_binders,
+                        &resolved_module_paths,
+                        &resolved_module_errors,
+                        &is_external_module_by_file,
+                        no_check,
+                    )
+                })
+                .collect()
+        };
+
+        #[cfg(target_arch = "wasm32")]
+        let file_results: Vec<Vec<Diagnostic>> = work_items
+            .iter()
+            .zip(per_file_binders.into_iter())
+            .map(|(&file_idx, binder)| {
+                check_file_for_parallel(
+                    file_idx,
+                    binder,
+                    program,
+                    &query_cache,
+                    &compiler_options,
+                    &lib_ctx_for_parallel,
+                    &all_arenas,
+                    &all_binders,
+                    &resolved_module_paths,
+                    &resolved_module_errors,
+                    &is_external_module_by_file,
+                    no_check,
+                )
+            })
+            .collect();
+
+        for file_diags in file_results {
+            diagnostics.extend(file_diags);
+        }
+    } else {
+        // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
+
+        // Process files in the work queue
+        while let Some(file_idx) = work_queue.pop_front() {
+            let file = &program.files[file_idx];
+            let file_path = PathBuf::from(&file.file_name);
+
+            let mut binder = create_binder_from_bound_file(file, program, file_idx);
+            let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
+
+            // Bridge multi-file module resolution for ES module imports.
+            for (specifier, _) in &module_specifiers {
                 if let Some(resolved) = resolve_module_specifier(
                     Path::new(&file.file_name),
                     specifier,
@@ -2048,61 +2078,114 @@ fn collect_diagnostics(
                     &program_paths,
                 ) {
                     let canonical = canonicalize_or_owned(&resolved);
-                    if program_paths.contains(&canonical) {
-                        resolved_modules.insert(specifier.clone());
+                    if let Some(target_file_name) = canonical_to_file_name.get(&canonical)
+                        && let Some(exports) = binder.module_exports.get(target_file_name).cloned()
+                    {
+                        binder.module_exports.insert(specifier.clone(), exports);
                     }
                 }
             }
-        }
-        checker.ctx.resolved_modules = Some(resolved_modules);
-        let mut file_diagnostics = Vec::new();
-        for parse_diagnostic in &file.parse_diagnostics {
-            file_diagnostics.push(parse_diagnostic_to_checker(
-                &file.file_name,
-                parse_diagnostic,
-            ));
-        }
-        // Module resolution errors (TS2307, TS2834, TS2835, TS2792) are now handled by the checker
-        // via resolved_module_errors map, so we don't emit them here anymore.
-        // Skip full type checking when --noCheck is set; only parse/emit diagnostics are reported.
-        if !options.no_check {
-            let _check_span = tracing::info_span!("check_file", file = %file.file_name).entered();
-            checker.check_source_file(file.source_file);
-            file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
-        }
+            let cached = cache
+                .as_deref_mut()
+                .and_then(|cache| cache.type_caches.remove(&file_path));
+            let compiler_options = options.checker.clone();
+            let mut checker = if let Some(cached) = cached {
+                CheckerState::with_cache(
+                    &file.arena,
+                    &binder,
+                    &query_cache,
+                    file.file_name.clone(),
+                    cached,
+                    compiler_options,
+                )
+            } else {
+                CheckerState::new(
+                    &file.arena,
+                    &binder,
+                    &query_cache,
+                    file.file_name.clone(),
+                    compiler_options,
+                )
+            };
+            checker.ctx.report_unresolved_imports = true;
+            if !lib_contexts.is_empty() {
+                checker.ctx.set_lib_contexts(lib_contexts.to_vec());
+                checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+            }
+            checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+            checker.ctx.set_all_binders(Arc::clone(&all_binders));
+            checker
+                .ctx
+                .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
+            checker
+                .ctx
+                .set_resolved_module_errors(Arc::clone(&resolved_module_errors));
+            checker.ctx.set_current_file_idx(file_idx);
+            checker.ctx.is_external_module_by_file = Some(Arc::clone(&is_external_module_by_file));
 
-        // Update the cache and check for export hash changes
-        if let Some(c) = cache.as_deref_mut() {
-            let new_hash = compute_export_hash(program, file, file_idx, &mut checker);
-            let old_hash = c.export_hashes.get(&file_path).copied();
-
-            // Always update cache with new results
-            c.type_caches
-                .insert(file_path.clone(), checker.extract_cache());
-            c.diagnostics
-                .insert(file_path.clone(), file_diagnostics.clone());
-            c.export_hashes.insert(file_path.clone(), new_hash);
-
-            // If export hash changed (or was missing), invalidate dependents
-            if old_hash != Some(new_hash) {
-                // Find all files that depend on this file and queue them for checking
-                if let Some(dependents) = c.reverse_dependencies.get(&file_path) {
-                    for dep_path in dependents {
-                        if let Some(&dep_idx) = canonical_to_file_idx.get(dep_path) {
-                            // Only add if not already checked (prevent infinite loops)
-                            if checked_files.insert(dep_idx) {
-                                work_queue.push_back(dep_idx);
-                                // Remove stale cache entries for the dependent
-                                c.type_caches.remove(dep_path);
-                                c.diagnostics.remove(dep_path);
-                            }
+            // Build resolved_modules set for backward compatibility
+            let mut resolved_modules = rustc_hash::FxHashSet::default();
+            for (specifier, _) in &module_specifiers {
+                if resolved_module_paths.contains_key(&(file_idx, specifier.clone())) {
+                    resolved_modules.insert(specifier.clone());
+                } else if !resolved_module_errors.contains_key(&(file_idx, specifier.clone())) {
+                    if let Some(resolved) = resolve_module_specifier(
+                        Path::new(&file.file_name),
+                        specifier,
+                        options,
+                        base_dir,
+                        &mut resolution_cache,
+                        &program_paths,
+                    ) {
+                        let canonical = canonicalize_or_owned(&resolved);
+                        if program_paths.contains(&canonical) {
+                            resolved_modules.insert(specifier.clone());
                         }
                     }
                 }
             }
-        } else {
-            // No cache available, collect diagnostics directly
-            diagnostics.extend(file_diagnostics);
+            checker.ctx.resolved_modules = Some(resolved_modules);
+            let mut file_diagnostics = Vec::new();
+            for parse_diagnostic in &file.parse_diagnostics {
+                file_diagnostics.push(parse_diagnostic_to_checker(
+                    &file.file_name,
+                    parse_diagnostic,
+                ));
+            }
+            if !options.no_check {
+                let _check_span =
+                    tracing::info_span!("check_file", file = %file.file_name).entered();
+                checker.check_source_file(file.source_file);
+                file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
+            }
+
+            // Update the cache and check for export hash changes
+            if let Some(c) = cache.as_deref_mut() {
+                let new_hash = compute_export_hash(program, file, file_idx, &mut checker);
+                let old_hash = c.export_hashes.get(&file_path).copied();
+
+                c.type_caches
+                    .insert(file_path.clone(), checker.extract_cache());
+                c.diagnostics
+                    .insert(file_path.clone(), file_diagnostics.clone());
+                c.export_hashes.insert(file_path.clone(), new_hash);
+
+                if old_hash != Some(new_hash) {
+                    if let Some(dependents) = c.reverse_dependencies.get(&file_path) {
+                        for dep_path in dependents {
+                            if let Some(&dep_idx) = canonical_to_file_idx.get(dep_path) {
+                                if checked_files.insert(dep_idx) {
+                                    work_queue.push_back(dep_idx);
+                                    c.type_caches.remove(dep_path);
+                                    c.diagnostics.remove(dep_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                diagnostics.extend(file_diagnostics);
+            }
         }
     }
 
@@ -2125,6 +2208,78 @@ fn collect_diagnostics(
     }
 
     diagnostics
+}
+
+/// Check a single file for the parallel checking path.
+///
+/// This is extracted from the work queue loop so it can be called from rayon's par_iter.
+/// Each invocation creates its own CheckerState (with its own mutable context),
+/// while sharing thread-safe structures (TypeInterner via DashMap, QueryCache via RwLock).
+fn check_file_for_parallel(
+    file_idx: usize,
+    binder: BinderState,
+    program: &MergedProgram,
+    query_cache: &crate::solver::QueryCache,
+    compiler_options: &tsz_common::CheckerOptions,
+    lib_contexts: &[LibContext],
+    all_arenas: &Arc<Vec<Arc<crate::parser::node::NodeArena>>>,
+    all_binders: &Arc<Vec<Arc<BinderState>>>,
+    resolved_module_paths: &Arc<FxHashMap<(usize, String), usize>>,
+    resolved_module_errors: &Arc<
+        FxHashMap<(usize, String), crate::checker::context::ResolutionError>,
+    >,
+    is_external_module_by_file: &Arc<FxHashMap<String, bool>>,
+    no_check: bool,
+) -> Vec<Diagnostic> {
+    let file = &program.files[file_idx];
+    let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
+
+    // Build resolved_modules from the pre-computed resolved_module_paths map
+    let resolved_modules: FxHashSet<String> = module_specifiers
+        .iter()
+        .filter(|(specifier, _)| resolved_module_paths.contains_key(&(file_idx, specifier.clone())))
+        .map(|(specifier, _)| specifier.clone())
+        .collect();
+
+    let mut checker = CheckerState::with_options(
+        &file.arena,
+        &binder,
+        query_cache,
+        file.file_name.clone(),
+        compiler_options,
+    );
+    checker.ctx.report_unresolved_imports = true;
+
+    if !lib_contexts.is_empty() {
+        checker.ctx.set_lib_contexts(lib_contexts.to_vec());
+        checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+    }
+
+    checker.ctx.set_all_arenas(Arc::clone(all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(all_binders));
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::clone(resolved_module_paths));
+    checker
+        .ctx
+        .set_resolved_module_errors(Arc::clone(resolved_module_errors));
+    checker.ctx.set_current_file_idx(file_idx);
+    checker.ctx.is_external_module_by_file = Some(Arc::clone(is_external_module_by_file));
+    checker.ctx.resolved_modules = Some(resolved_modules);
+
+    // Collect parse diagnostics
+    let mut file_diagnostics: Vec<Diagnostic> = file
+        .parse_diagnostics
+        .iter()
+        .map(|d| parse_diagnostic_to_checker(&file.file_name, d))
+        .collect();
+
+    if !no_check {
+        checker.check_source_file(file.source_file);
+        file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
+    }
+
+    file_diagnostics
 }
 
 fn compute_export_hash(

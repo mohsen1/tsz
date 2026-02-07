@@ -54,9 +54,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 total_combinations = total_combinations.saturating_mul(span_count);
                 if total_combinations > TEMPLATE_LITERAL_EXPANSION_LIMIT {
-                    // Would exceed limit - widen to string (Rule #22: Template String Expansion Limits)
-                    // TypeScript aborts template literal expansion when cardinality > 100k
-                    return TypeId::STRING;
+                    // Would exceed limit - keep the unexpanded template literal type
+                    // instead of widening to string. This is sound: subtyping uses
+                    // the backtracking matcher to check Literal <: TemplateLiteral
+                    // without expansion, so "z" won't incorrectly satisfy the template.
+                    return self.interner().template_literal(span_list.to_vec());
                 }
             }
         }
@@ -100,8 +102,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // Check if expansion would exceed limit
                     let new_size = combinations.len().saturating_mul(string_values.len());
                     if new_size > TEMPLATE_LITERAL_EXPANSION_LIMIT {
-                        // Would exceed limit - widen to string (Rule #22: Template String Expansion Limits)
-                        return TypeId::STRING;
+                        // Would exceed limit - keep the unexpanded template literal type
+                        // for sound subtyping (backtracking matcher handles this)
+                        return self.interner().template_literal(span_list.to_vec());
                     }
 
                     // Compute Cartesian product
