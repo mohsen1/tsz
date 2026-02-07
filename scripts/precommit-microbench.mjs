@@ -158,17 +158,23 @@ function main() {
 
   const baseline = readBaseline(opts.baseline);
   const nextBaseline = {
-    schema_version: 1,
+    schema_version: 2,
     profile: opts.profile,
     runs: opts.runs,
     warmup: opts.warmup,
     updated_at: new Date().toISOString(),
     cases: Object.fromEntries(
-      Object.entries(measurements).map(([name, data]) => [name, { mean_ms: data.mean_ms }])
+      Object.entries(measurements).map(([name, data]) => [
+        name,
+        {
+          mean_ms: data.mean_ms,
+          median_ms: data.median_ms,
+        },
+      ])
     ),
   };
 
-  if (!baseline || baseline.schema_version !== 1 || baseline.profile !== opts.profile) {
+  if (!baseline || baseline.schema_version !== 2 || baseline.profile !== opts.profile) {
     writeBaseline(opts.baseline, nextBaseline);
     console.log(`   Baseline initialized at ${opts.baseline}`);
     return;
@@ -177,7 +183,11 @@ function main() {
   const regressions = [];
   for (const [name, current] of Object.entries(measurements)) {
     const previous = baseline.cases?.[name];
-    if (!previous || typeof previous.mean_ms !== "number") {
+    if (
+      !previous ||
+      typeof previous.mean_ms !== "number" ||
+      typeof previous.median_ms !== "number"
+    ) {
       regressions.push({
         name,
         reason: "missing_baseline",
@@ -185,14 +195,22 @@ function main() {
       continue;
     }
 
-    const deltaPct = ((current.mean_ms - previous.mean_ms) / previous.mean_ms) * 100;
-    if (deltaPct > opts.thresholdPct) {
+    const meanDeltaPct = ((current.mean_ms - previous.mean_ms) / previous.mean_ms) * 100;
+    const medianDeltaPct = ((current.median_ms - previous.median_ms) / previous.median_ms) * 100;
+    if (meanDeltaPct > opts.thresholdPct || medianDeltaPct > opts.thresholdPct) {
       regressions.push({
         name,
         reason: "regression",
-        baselineMs: previous.mean_ms,
-        currentMs: current.mean_ms,
-        deltaPct,
+        mean: {
+          baselineMs: previous.mean_ms,
+          currentMs: current.mean_ms,
+          deltaPct: meanDeltaPct,
+        },
+        median: {
+          baselineMs: previous.median_ms,
+          currentMs: current.median_ms,
+          deltaPct: medianDeltaPct,
+        },
       });
     }
   }
@@ -205,7 +223,7 @@ function main() {
         console.error(`   - ${item.name}: missing baseline entry`);
       } else {
         console.error(
-          `   - ${item.name}: ${formatMs(item.baselineMs)} -> ${formatMs(item.currentMs)} (+${item.deltaPct.toFixed(2)}%)`
+          `   - ${item.name}: mean ${formatMs(item.mean.baselineMs)} -> ${formatMs(item.mean.currentMs)} (+${item.mean.deltaPct.toFixed(2)}%), median ${formatMs(item.median.baselineMs)} -> ${formatMs(item.median.currentMs)} (+${item.median.deltaPct.toFixed(2)}%)`
         );
       }
     }
