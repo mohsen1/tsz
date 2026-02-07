@@ -461,39 +461,33 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         let is_exported = has_export_modifier(self.arena, &var_data.modifiers);
 
-        let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
-
         if is_exported {
-            let var_names = collect_variable_names(self.arena, &var_data.declarations);
-            for name in var_names {
-                result.push(IRNode::NamespaceExport {
-                    namespace: ns_name.to_string(),
-                    name: name.clone(),
-                    value: Box::new(IRNode::Identifier(name)),
-                });
-            }
+            // For exported variables, emit directly as namespace property assignments:
+            // `Namespace.X = initializer;` instead of `var X = initializer; Namespace.X = X;`
+            Some(IRNode::Sequence(convert_exported_variable_declarations(
+                self.arena,
+                &var_data.declarations,
+                ns_name,
+            )))
+        } else {
+            Some(IRNode::Sequence(convert_variable_declarations(
+                self.arena,
+                &var_data.declarations,
+            )))
         }
-
-        Some(IRNode::Sequence(result))
     }
 
     /// Transform an exported variable
     fn transform_variable_exported(&self, ns_name: &str, var_idx: NodeIndex) -> Option<IRNode> {
         let var_data = self.arena.get_variable_at(var_idx)?;
 
-        let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
-
-        // Always export since this is from an export declaration
-        let var_names = collect_variable_names(self.arena, &var_data.declarations);
-        for name in var_names {
-            result.push(IRNode::NamespaceExport {
-                namespace: ns_name.to_string(),
-                name: name.clone(),
-                value: Box::new(IRNode::Identifier(name)),
-            });
-        }
-
-        Some(IRNode::Sequence(result))
+        // For exported variables, emit directly as namespace property assignments:
+        // `Namespace.X = initializer;` instead of `var X = initializer; Namespace.X = X;`
+        Some(IRNode::Sequence(convert_exported_variable_declarations(
+            self.arena,
+            &var_data.declarations,
+            ns_name,
+        )))
     }
 
     /// Transform an enum in namespace
@@ -1208,6 +1202,44 @@ fn collect_variable_names(arena: &NodeArena, declarations: &NodeList) -> Vec<Str
     }
 
     names
+}
+
+/// Convert exported variable declarations directly to namespace property assignments.
+/// Instead of `var X = init; NS.X = X;`, emits `NS.X = init;` (matching tsc).
+fn convert_exported_variable_declarations(
+    arena: &NodeArena,
+    declarations: &NodeList,
+    ns_name: &str,
+) -> Vec<IRNode> {
+    let mut result = Vec::new();
+
+    for &decl_list_idx in &declarations.nodes {
+        if let Some(decl_list_node) = arena.get(decl_list_idx)
+            && let Some(decl_list) = arena.get_variable(decl_list_node)
+        {
+            for &decl_idx in &decl_list.declarations.nodes {
+                if let Some(decl_node) = arena.get(decl_idx)
+                    && let Some(decl) = arena.get_variable_declaration(decl_node)
+                    && let Some(name) = get_identifier_text(arena, decl.name)
+                {
+                    let value = if !decl.initializer.is_none() {
+                        AstToIr::new(arena).convert_expression(decl.initializer)
+                    } else {
+                        // No initializer: emit `void 0` to match tsc behavior
+                        IRNode::Raw("void 0".to_string())
+                    };
+
+                    result.push(IRNode::NamespaceExport {
+                        namespace: ns_name.to_string(),
+                        name,
+                        value: Box::new(value),
+                    });
+                }
+            }
+        }
+    }
+
+    result
 }
 
 /// Convert variable declarations to proper IR (VarDecl nodes)
