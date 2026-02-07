@@ -254,6 +254,18 @@ pub struct Printer<'a> {
     /// Shared index into all_comments, monotonically advancing as comments are emitted.
     /// Used across emit_source_file and emit_block to prevent double-emission.
     pub(super) comment_emit_idx: usize,
+
+    /// All identifier texts in the source file.
+    /// Collected once at emit_source_file start for temp name collision detection.
+    /// Mirrors TypeScript's `sourceFile.identifiers` used by `makeUniqueName`.
+    pub(super) file_identifiers: FxHashSet<String>,
+
+    /// Set of generated temp names (_a, _b, etc.) to avoid collisions.
+    /// Tracks ALL generated temp names across destructuring and for-of lowering.
+    pub(super) generated_temp_names: FxHashSet<String>,
+
+    /// Whether the first for-of loop has been emitted (uses special `_i` index name).
+    pub(super) first_for_of_emitted: bool,
 }
 
 impl<'a> Printer<'a> {
@@ -298,6 +310,9 @@ impl<'a> Printer<'a> {
             emit_recursion_depth: 0,
             all_comments: Vec::new(),
             comment_emit_idx: 0,
+            file_identifiers: FxHashSet::default(),
+            generated_temp_names: FxHashSet::default(),
+            first_for_of_emitted: false,
         }
     }
 
@@ -1841,6 +1856,15 @@ impl<'a> Printer<'a> {
         if self.has_export_assignment(&source.statements) {
             self.ctx.module_state.has_export_assignment = true;
         }
+
+        // Collect all identifiers in the file for temp name collision detection.
+        // This mirrors TypeScript's `sourceFile.identifiers` used by `makeUniqueName`.
+        self.file_identifiers.clear();
+        for ident in &self.arena.identifiers {
+            self.file_identifiers.insert(ident.escaped_text.clone());
+        }
+        self.generated_temp_names.clear();
+        self.first_for_of_emitted = false;
 
         // Extract comments. Triple-slash references (/// <reference ...>) are
         // preserved in output (TypeScript keeps them in JS emit).
