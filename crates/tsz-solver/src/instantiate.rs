@@ -488,6 +488,32 @@ impl<'a> TypeInstantiator<'a> {
                     }
                     // For `any`, we need to let evaluation handle it properly
                     // so it can distribute to both branches
+                    // TypeScript treats `boolean` as `true | false` for distributive conditionals
+                    if substituted == TypeId::BOOLEAN {
+                        let cond_type = self.interner.conditional(cond.as_ref().clone());
+                        let mut results = Vec::with_capacity(2);
+                        for &member in &[TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE] {
+                            if self.depth_exceeded {
+                                return TypeId::ERROR;
+                            }
+                            let mut member_subst = self.substitution.clone();
+                            member_subst.insert(info.name, member);
+                            let instantiated =
+                                instantiate_type(self.interner, cond_type, &member_subst);
+                            if instantiated == TypeId::ERROR {
+                                self.depth_exceeded = true;
+                                return TypeId::ERROR;
+                            }
+                            let evaluated =
+                                crate::evaluate::evaluate_type(self.interner, instantiated);
+                            if evaluated == TypeId::ERROR {
+                                self.depth_exceeded = true;
+                                return TypeId::ERROR;
+                            }
+                            results.push(evaluated);
+                        }
+                        return self.interner.union(results);
+                    }
                     if let Some(TypeKey::Union(members)) = self.interner.lookup(substituted) {
                         let members = self.interner.type_list(members);
                         // Limit distribution to prevent OOM with large unions

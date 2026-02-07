@@ -744,6 +744,9 @@ impl TypeInterner {
         match key {
             TypeKey::Intrinsic(kind) => Some(kind.to_type_id()),
             TypeKey::Error => Some(TypeId::ERROR),
+            // Map boolean literals to their intrinsic IDs to avoid duplicates
+            TypeKey::Literal(LiteralValue::Boolean(true)) => Some(TypeId::BOOLEAN_TRUE),
+            TypeKey::Literal(LiteralValue::Boolean(false)) => Some(TypeId::BOOLEAN_FALSE),
             _ => None,
         }
     }
@@ -2274,6 +2277,8 @@ impl TypeInterner {
         let mut has_boolean = false;
         let mut has_bigint = false;
         let mut _has_symbol = false;
+        let mut has_true = false;
+        let mut has_false = false;
 
         // First pass: identify which primitive types are present
         for &type_id in flat.iter() {
@@ -2283,6 +2288,8 @@ impl TypeInterner {
                 TypeId::BOOLEAN => has_boolean = true,
                 TypeId::BIGINT => has_bigint = true,
                 TypeId::SYMBOL => _has_symbol = true,
+                TypeId::BOOLEAN_TRUE => has_true = true,
+                TypeId::BOOLEAN_FALSE => has_false = true,
                 _ => {
                     if let Some(TypeKey::Intrinsic(kind)) = self.lookup(type_id) {
                         match kind {
@@ -2296,6 +2303,19 @@ impl TypeInterner {
                     }
                 }
             }
+        }
+
+        // If both `true` and `false` are present without `boolean`, reduce to `boolean`
+        // TypeScript: `true | false` === `boolean`
+        if has_true && has_false && !has_boolean {
+            has_boolean = true;
+            // Replace `true` with `boolean`, remove `false`
+            for type_id in flat.iter_mut() {
+                if *type_id == TypeId::BOOLEAN_TRUE {
+                    *type_id = TypeId::BOOLEAN;
+                }
+            }
+            flat.retain(|type_id| *type_id != TypeId::BOOLEAN_FALSE);
         }
 
         // Second pass: remove literal types that have a corresponding primitive
