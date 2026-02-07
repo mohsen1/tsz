@@ -173,6 +173,7 @@ Already instrumented (search for `#[tracing::instrument]` or `trace!`):
 - Do NOT bind to port 3000. Disable profiler web UIs (`samply --no-open`, etc).
 
 ## Git Workflow
+- Work in the `main` branch. Do not create feature branches or PRs.
 - Commit frequently with clear messages
 - Push branches to remote regularly and rebase from main before and after each commit
 - Only add files you touched, do not `git add -A`
