@@ -613,6 +613,7 @@ impl<'a> Printer<'a> {
             } => {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_indent_level(self.writer.indent_level());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -851,6 +852,7 @@ impl<'a> Printer<'a> {
             } => {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_indent_level(self.writer.indent_level());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -986,6 +988,7 @@ impl<'a> Printer<'a> {
             } => {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_indent_level(self.writer.indent_level());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
