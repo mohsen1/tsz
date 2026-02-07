@@ -581,6 +581,7 @@ pub mod diagnostic_codes {
     pub const INTERFACE_CAN_ONLY_EXTEND_INTERFACE: u32 = 2422;
     pub const INTERFACE_INCORRECTLY_EXTENDS_INTERFACE: u32 = 2430; // Interface '{0}' incorrectly extends interface '{1}'.
     pub const TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF: u32 = 2456;
+    pub const TYPE_ALIAS_NAME_CANNOT_BE_UNDEFINED: u32 = 2457; // Type alias name cannot be 'undefined'.
     pub const INTERFACE_DECLARES_CONFLICTING_MEMBER: u32 = 2320;
 
     // Object literal errors

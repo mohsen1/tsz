@@ -50,6 +50,8 @@ pub struct EnclosingClassInfo {
     pub in_static_method: bool,
     /// Cached instance `this` type for members of this class.
     pub cached_instance_this_type: Option<TypeId>,
+    /// Names of the class's own type parameters (for TS2302 checking in static members).
+    pub type_param_names: Vec<String>,
 }
 
 /// Info about a label in scope for break/continue validation.
