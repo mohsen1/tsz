@@ -1824,13 +1824,10 @@ impl BinderState {
                         self.hoisted_functions.push(stmt_idx);
                     }
                     k if k == syntax_kind_ext::BLOCK => {
-                        // In ES5 and earlier, function declarations inside blocks are hoisted
-                        // to the containing function scope. In ES6+, they remain block-scoped.
-                        // Only descend into blocks to collect functions if we're in ES5 mode.
-                        if self.options.target.is_es5() {
-                            if let Some(block) = arena.get_block(node) {
-                                self.collect_hoisted_declarations(arena, &block.statements);
-                            }
+                        // Always recurse into blocks for var hoisting (var is always
+                        // function-scoped regardless of target).
+                        if let Some(block) = arena.get_block(node) {
+                            self.collect_hoisted_declarations(arena, &block.statements);
                         }
                     }
                     k if k == syntax_kind_ext::IF_STATEMENT => {
@@ -1961,13 +1958,12 @@ impl BinderState {
     pub(crate) fn collect_hoisted_from_node(&mut self, arena: &NodeArena, idx: NodeIndex) {
         if let Some(node) = arena.get(idx) {
             if node.kind == syntax_kind_ext::BLOCK {
-                // In ES5 and earlier, function declarations inside blocks are hoisted
-                // to the containing function scope. In ES6+, they remain block-scoped.
-                // Only descend into blocks to collect functions if we're in ES5 mode.
-                if self.options.target.is_es5() {
-                    if let Some(block) = arena.get_block(node) {
-                        self.collect_hoisted_declarations(arena, &block.statements);
-                    }
+                // Always recurse into blocks for var hoisting (var is always
+                // function-scoped regardless of target). Function declarations
+                // in blocks are only hoisted in ES5 mode; the ES5 check for
+                // that lives in collect_hoisted_declarations.
+                if let Some(block) = arena.get_block(node) {
+                    self.collect_hoisted_declarations(arena, &block.statements);
                 }
             } else {
                 // Handle single statement (not wrapped in a block)
