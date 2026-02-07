@@ -98,6 +98,9 @@ pub fn get_message_template(code: u32) -> Option<&'static str> {
         dc::CANNOT_FIND_NAME => dm::CANNOT_FIND_NAME,
         dc::CANNOT_FIND_NAMESPACE => dm::CANNOT_FIND_NAMESPACE,
         dc::DUPLICATE_IDENTIFIER => dm::DUPLICATE_IDENTIFIER,
+        dc::ENUM_DECLARATIONS_MUST_MERGE_WITH_NAMESPACE_OR_ENUM => {
+            dm::ENUM_DECLARATIONS_MUST_MERGE_WITH_NAMESPACE_OR_ENUM
+        }
         dc::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL => dm::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL,
         dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE => dm::PROPERTY_DOES_NOT_EXIST,
         dc::TYPE_MISSING_PROPERTIES => dm::TYPE_MISSING_PROPERTIES,
@@ -157,6 +160,8 @@ pub mod diagnostic_messages {
     pub const CANNOT_FIND_NAME: &str = "Cannot find name '{0}'.";
     pub const CANNOT_FIND_NAMESPACE: &str = "Cannot find namespace '{0}'.";
     pub const DUPLICATE_IDENTIFIER: &str = "Duplicate identifier '{0}'.";
+    pub const ENUM_DECLARATIONS_MUST_MERGE_WITH_NAMESPACE_OR_ENUM: &str =
+        "Enum declarations can only merge with namespace or other enum declarations.";
     pub const IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL: &str =
         "Import declaration conflicts with local declaration of '{0}'.";
     pub const MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS: &str =
@@ -502,6 +507,7 @@ pub mod diagnostic_codes {
 
     // Basic type errors
     pub const DUPLICATE_IDENTIFIER: u32 = 2300;
+    pub const ENUM_DECLARATIONS_MUST_MERGE_WITH_NAMESPACE_OR_ENUM: u32 = 2567;
     pub const CANNOT_FIND_NAME: u32 = 2304;
     pub const MODULE_HAS_NO_EXPORTED_MEMBER: u32 = 2305;
     pub const CANNOT_FIND_NAMESPACE: u32 = 2503;

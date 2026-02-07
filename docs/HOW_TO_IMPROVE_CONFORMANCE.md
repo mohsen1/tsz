@@ -9,50 +9,134 @@
 # Or just download the cache
 ./scripts/conformance.sh download
 
-# Run tests on specific error code
-./scripts/conformance.sh run --error-code 2339 --max 50
+# Run a quick conformance check
+./scripts/conformance.sh run --max 100
 ```
 
 ## Finding Low-Hanging Fruits
 
-### Step 1: Look at "Extra" Errors (False Positives)
-These block valid code from compiling - highest user impact:
+### The `analyze` Command (Recommended)
+
+The fastest way to find wins is the `analyze` command. It categorizes every failing test and ranks them by impact:
 
 ```bash
-# Current top error mismatches
-./scripts/conformance.sh run 2>&1 | grep -A15 "Top Error Code"
+# Analyze all tests
+./scripts/conformance.sh analyze
+
+# Analyze a slice (e.g., slice 1 of 4)
+./scripts/conformance.sh analyze --offset 0 --max 3101
+
+# Filter by category
+./scripts/conformance.sh analyze --category false-positive  # Tests where we emit errors but tsc doesn't
+./scripts/conformance.sh analyze --category all-missing      # Tests where tsc emits errors but we don't
+./scripts/conformance.sh analyze --category close            # Tests within 1-2 error codes of passing
+./scripts/conformance.sh analyze --category wrong-code       # Both emit errors but different codes
+
+# Show more results per section
+./scripts/conformance.sh analyze --top 50
 ```
 
-From our last run:
+The analysis output includes:
+
+1. **Summary** — total counts per category plus the most impactful error codes to fix
+2. **False Positives** — tests where tsc says no errors but we emit errors (fixing these = instant passing tests)
+3. **All Missing** — tests where tsc expects errors but we emit nothing (need new diagnostics)
+4. **Close to Passing** — tests that differ by only 1-2 error codes (easiest individual fixes)
+5. **Top error codes** — ranked by how many tests they affect, separately for false-positives, all-missing, and wrong-code
+
+### Reading the Analysis Output
+
 ```
-TS2339: missing=357, extra=621   # 621 false positives!
-TS1005: missing=472, extra=283   # Was 972 before ASI fix
-TS2322: missing=284, extra=426   # Type assignability false positives
-TS2345: missing=84, extra=334    # Argument type false positives
+ANALYSIS SUMMARY
+  Total failing tests analyzed: 855
+  False positives (expected=[], we emit errors):  308   ← Fix these for instant wins
+  All missing (expected errors, we emit none):    239   ← Need new diagnostic checks
+  Wrong codes (both have errors, codes differ):   308   ← Closer but not matching
+  Close to passing (diff <= 2 codes):             97    ← Easiest individual fixes
+
+  Top false-positive error codes (fix = instant wins):
+    TS2339: 72 tests     ← Property-does-not-exist false positives
+    TS2345: 68 tests     ← Argument-not-assignable false positives
+    TS2322: 62 tests     ← Type-not-assignable false positives
 ```
 
-### Step 2: Investigate High-Volume "Extra" Codes
+**Priority order:**
+1. Fix **false-positive error codes** with highest count — each fix can flip many tests to PASS
+2. Fix **close-to-passing** tests — small targeted fixes
+3. Implement **missing diagnostics** with highest count — adds new PASS tests
+
+### Step-by-Step Workflow
+
 ```bash
-# Pick the top "extra" error code and filter tests
-./scripts/conformance.sh run --error-code 2339 --verbose --max 50 2>&1
+# 1. Run analyze to find what to fix
+./scripts/conformance.sh analyze --offset 0 --max 3101
+
+# 2. Pick a high-impact error code (e.g., TS2339 with 72 false-positive tests)
+#    Find specific tests to investigate
+./scripts/conformance.sh analyze --category false-positive | grep TS2339
+
+# 3. Compare tsz vs tsc on a specific test
+./.target/release/tsz TypeScript/tests/cases/compiler/someTest.ts 2>&1
+npx tsc --noEmit --pretty false TypeScript/tests/cases/compiler/someTest.ts 2>&1
+
+# 4. Fix the compiler code
+
+# 5. Rebuild and verify
+cargo build --release -p tsz-cli --bin tsz
+./scripts/conformance.sh run --offset 0 --max 3101
+
+# 6. Run unit tests
+cargo nextest run -p tsz-checker -p tsz-solver
+
+# 7. Commit
 ```
 
-### Step 3: Find Patterns
-Look for **repeated failures with same root cause**:
+### Other Useful Commands
+
 ```bash
-# Get a specific failing test and compare
-./.target/release/tsz <test_file> --noEmit 2>&1
-npx tsc <test_file> --noEmit 2>&1
+# Run with specific error code filter
+./scripts/conformance.sh run --error-code 2339 --verbose --max 50
+
+# Run with verbose to see per-test expected/actual codes
+./scripts/conformance.sh run --verbose --max 50
+
+# Filter by test name pattern
+./scripts/conformance.sh run --filter "strict"
+
+# Run full conformance (no limits)
+./scripts/conformance.sh run
 ```
 
-### Step 4: Prioritize by Fix Complexity
+### Slicing for Parallel Work
+
+Split the full test suite across multiple agents/workers:
+
+```bash
+# Get total test count
+./scripts/conformance.sh run --max 1 2>&1 | grep "Found.*test files"
+
+# Calculate slices (e.g., 4 slices for ~12000 tests = ~3000 each)
+TOTAL=12404
+QUARTER=$((($TOTAL + 3) / 4))  # 3101
+
+# Run each slice
+./scripts/conformance.sh analyze --offset 0 --max $QUARTER           # Slice 1
+./scripts/conformance.sh analyze --offset $QUARTER --max $QUARTER    # Slice 2
+./scripts/conformance.sh analyze --offset $((QUARTER*2)) --max $QUARTER  # Slice 3
+./scripts/conformance.sh analyze --offset $((QUARTER*3)) --max $QUARTER  # Slice 4
+```
+
+## Fix Complexity Guide
 
 | Error Range | Type | Typical Complexity |
 |-------------|------|-------------------|
-| **TS1xxx** | Parser | Often simple (1-line fixes like ASI) |
-| **TS2304** | Symbol resolution | Medium |
-| **TS2339** | Property access | Medium-Hard |
-| **TS2322/2345** | Type compatibility | Hard (Solver) |
+| **TS1xxx** | Parser/syntax | Often simple (1-line fixes like ASI) |
+| **TS2300** | Duplicate identifier | Medium (declaration merging rules) |
+| **TS2304** | Symbol resolution | Medium (imports, namespaces) |
+| **TS2339** | Property access | Medium-Hard (type narrowing, generics) |
+| **TS2322/2345** | Type compatibility | Hard (Solver subtype rules) |
+| **TS7006** | Implicit any | Medium (contextual typing) |
+| **TS2567** | Enum merging | Simple (diagnostic code selection) |
 
 ## Cache Management
 
@@ -131,8 +215,8 @@ If you suspect a cache mismatch:
 
 ```bash
 # Compare outputs for a specific test
-./.target/release/tsz <test_file> --noEmit 2>&1
-npx tsc <test_file> --noEmit 2>&1
+./.target/release/tsz <test_file> 2>&1
+npx tsc --noEmit --pretty false <test_file> 2>&1
 ```
 
 ## Updating TypeScript Version
