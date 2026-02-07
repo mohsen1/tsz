@@ -5,17 +5,16 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::binder::BinderState;
 use crate::binder::symbol_flags;
 use crate::checker::state::CheckerState;
 use crate::lsp::jsdoc::{JsdocTag, ParsedJsdoc, inline_param_jsdocs, jsdoc_for_node, parse_jsdoc};
-use crate::lsp::position::{LineMap, Position};
+use crate::lsp::position::Position;
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats};
 use crate::lsp::utils::find_node_at_or_before_offset;
-use crate::parser::node::{CallExprData, NodeAccess, NodeArena};
+use crate::parser::node::{CallExprData, NodeAccess};
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::solver::{FunctionShape, TypeId, TypeInterner, TypeKey, TypePredicateTarget};
+use crate::solver::{FunctionShape, TypeId, TypeKey, TypePredicateTarget};
 
 /// Represents a parameter in a signature.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -118,56 +117,9 @@ impl SignatureDocs {
     }
 }
 
-pub struct SignatureHelpProvider<'a> {
-    arena: &'a NodeArena,
-    binder: &'a BinderState,
-    line_map: &'a LineMap,
-    interner: &'a TypeInterner,
-    source_text: &'a str,
-    file_name: String,
-    strict: bool,
-}
+define_lsp_provider!(full SignatureHelpProvider, "Signature help provider.");
 
 impl<'a> SignatureHelpProvider<'a> {
-    pub fn new(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        line_map: &'a LineMap,
-        interner: &'a TypeInterner,
-        source_text: &'a str,
-        file_name: String,
-    ) -> Self {
-        Self {
-            arena,
-            binder,
-            line_map,
-            interner,
-            source_text,
-            file_name,
-            strict: false,
-        }
-    }
-
-    pub fn with_strict(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        line_map: &'a LineMap,
-        interner: &'a TypeInterner,
-        source_text: &'a str,
-        file_name: String,
-        strict: bool,
-    ) -> Self {
-        Self {
-            arena,
-            binder,
-            line_map,
-            interner,
-            source_text,
-            file_name,
-            strict,
-        }
-    }
-
     /// Get signature help at the given position.
     ///
     /// # Arguments
