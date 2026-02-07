@@ -285,12 +285,94 @@ impl<'a> NamespaceES5Transformer<'a> {
             return result;
         };
 
+        // Track names declared by classes, functions, enums so that subsequent
+        // namespace declarations merging with them don't re-emit `var`.
+        let mut declared_names = std::collections::HashSet::new();
+
+        // First pass: collect declared names from classes, functions, enums
+        if let Some(block_data) = self.arena.get_module_block(body_node)
+            && let Some(ref stmts) = block_data.statements
+        {
+            for &stmt_idx in &stmts.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    match stmt_node.kind {
+                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                            if let Some(class_data) = self.arena.get_class(stmt_node) {
+                                if let Some(name) = get_identifier_text(self.arena, class_data.name)
+                                {
+                                    declared_names.insert(name);
+                                }
+                            }
+                        }
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                            if let Some(func_data) = self.arena.get_function(stmt_node) {
+                                if let Some(name) = get_identifier_text(self.arena, func_data.name)
+                                {
+                                    declared_names.insert(name);
+                                }
+                            }
+                        }
+                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                            if let Some(enum_data) = self.arena.get_enum(stmt_node) {
+                                if let Some(name) = get_identifier_text(self.arena, enum_data.name)
+                                {
+                                    declared_names.insert(name);
+                                }
+                            }
+                        }
+                        k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                            if let Some(export_data) = self.arena.get_export_decl(stmt_node) {
+                                if let Some(inner) = self.arena.get(export_data.export_clause) {
+                                    match inner.kind {
+                                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                                            if let Some(class_data) = self.arena.get_class(inner) {
+                                                if let Some(name) =
+                                                    get_identifier_text(self.arena, class_data.name)
+                                                {
+                                                    declared_names.insert(name);
+                                                }
+                                            }
+                                        }
+                                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                                            if let Some(func_data) = self.arena.get_function(inner)
+                                            {
+                                                if let Some(name) =
+                                                    get_identifier_text(self.arena, func_data.name)
+                                                {
+                                                    declared_names.insert(name);
+                                                }
+                                            }
+                                        }
+                                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                                            if let Some(enum_data) = self.arena.get_enum(inner) {
+                                                if let Some(name) =
+                                                    get_identifier_text(self.arena, enum_data.name)
+                                                {
+                                                    declared_names.insert(name);
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         // Check if it's a module block
         if let Some(block_data) = self.arena.get_module_block(body_node)
             && let Some(ref stmts) = block_data.statements
         {
             for &stmt_idx in &stmts.nodes {
-                if let Some(ir) = self.transform_namespace_member(ns_name, stmt_idx) {
+                if let Some(ir) = self.transform_namespace_member_with_declared(
+                    ns_name,
+                    stmt_idx,
+                    &declared_names,
+                ) {
                     // Filter out empty sequences (e.g., from uninitialized exports)
                     if let IRNode::Sequence(ref items) = ir {
                         if items.is_empty() {
@@ -303,6 +385,46 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
 
         result
+    }
+
+    /// Transform a namespace member, considering already-declared names for `should_declare_var`
+    fn transform_namespace_member_with_declared(
+        &self,
+        ns_name: &str,
+        member_idx: NodeIndex,
+        declared_names: &std::collections::HashSet<String>,
+    ) -> Option<IRNode> {
+        let member_node = self.arena.get(member_idx)?;
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                // Check if a class/function/enum already declared this name
+                let ns_data = self.arena.get_module(member_node)?;
+                let name = get_identifier_text(self.arena, ns_data.name)?;
+                let should_declare_var = !declared_names.contains(&name);
+                self.transform_nested_namespace_with_var(ns_name, member_idx, should_declare_var)
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_data) = self.arena.get_export_decl(member_node) {
+                    if let Some(inner) = self.arena.get(export_data.export_clause) {
+                        if inner.kind == syntax_kind_ext::MODULE_DECLARATION {
+                            let ns_data = self.arena.get_module(inner)?;
+                            let name = get_identifier_text(self.arena, ns_data.name)?;
+                            let should_declare_var = !declared_names.contains(&name);
+                            return self.transform_nested_namespace_exported_with_var(
+                                ns_name,
+                                export_data.export_clause,
+                                should_declare_var,
+                            );
+                        }
+                    }
+                    self.transform_namespace_member_exported(ns_name, export_data.export_clause)
+                } else {
+                    None
+                }
+            }
+            _ => self.transform_namespace_member(ns_name, member_idx),
+        }
     }
 
     /// Transform a namespace member to IR
@@ -554,6 +676,15 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     /// Transform a nested namespace
     fn transform_nested_namespace(&self, parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
+        self.transform_nested_namespace_with_var(parent_ns, ns_idx, true)
+    }
+
+    fn transform_nested_namespace_with_var(
+        &self,
+        parent_ns: &str,
+        ns_idx: NodeIndex,
+        should_declare_var: bool,
+    ) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
@@ -572,9 +703,6 @@ impl<'a> NamespaceES5Transformer<'a> {
         let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types).
-        // A namespace is instantiated if it has any value declarations
-        // (variables, functions, classes, enums, sub-namespaces),
-        // even if the body produces no IR output (e.g., uninitialized exports).
         if body.is_empty() && !self.has_value_declarations(ns_data.body) {
             return None;
         }
@@ -592,7 +720,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
-            should_declare_var: true,
+            should_declare_var,
             parent_name: Some(parent_ns.to_string()),
             param_name,
         })
@@ -603,6 +731,15 @@ impl<'a> NamespaceES5Transformer<'a> {
         &self,
         parent_ns: &str,
         ns_idx: NodeIndex,
+    ) -> Option<IRNode> {
+        self.transform_nested_namespace_exported_with_var(parent_ns, ns_idx, true)
+    }
+
+    fn transform_nested_namespace_exported_with_var(
+        &self,
+        parent_ns: &str,
+        ns_idx: NodeIndex,
+        should_declare_var: bool,
     ) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
@@ -623,9 +760,6 @@ impl<'a> NamespaceES5Transformer<'a> {
         let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types).
-        // A namespace is instantiated if it has any value declarations
-        // (variables, functions, classes, enums, sub-namespaces),
-        // even if the body produces no IR output (e.g., uninitialized exports).
         if body.is_empty() && !self.has_value_declarations(ns_data.body) {
             return None;
         }
@@ -643,7 +777,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
-            should_declare_var: true,
+            should_declare_var,
             parent_name: Some(parent_ns.to_string()),
             param_name,
         })
