@@ -2280,6 +2280,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
             };
         }
 
+        // Fall back to Object prototype properties (constructor, valueOf, hasOwnProperty, etc.)
+        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+            return result;
+        }
+
         // Property not found
         PropertyAccessResult::PropertyNotFound {
             type_id: array_type,
