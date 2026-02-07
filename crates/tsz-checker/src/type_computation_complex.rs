@@ -135,7 +135,6 @@ impl<'a> CheckerState<'a> {
     /// - Argument type checking
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::types::diagnostics::diagnostic_codes;
-        
 
         use tsz_solver::{CallEvaluator, CallResult, CompatChecker};
 

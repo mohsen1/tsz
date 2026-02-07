@@ -471,7 +471,7 @@ impl<'a> BinaryOpEvaluator<'a> {
     }
 
     /// Check if a type is number-like (number, number literal, numeric enum, or any).
-    pub fn is_number_like(&self, type_id: TypeId) -> bool {
+    fn is_number_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::NUMBER || type_id == TypeId::ANY {
             return true;
         }
@@ -480,7 +480,7 @@ impl<'a> BinaryOpEvaluator<'a> {
     }
 
     /// Check if a type is string-like (string, string literal, template literal, or any).
-    pub fn is_string_like(&self, type_id: TypeId) -> bool {
+    fn is_string_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::STRING || type_id == TypeId::ANY {
             return true;
         }
@@ -583,6 +583,26 @@ impl<'a> BinaryOpEvaluator<'a> {
         }
         let mut visitor = SymbolLikeVisitor { db: self.interner };
         visitor.visit_type(self.interner, type_id)
+    }
+
+    /// Check if a type is a valid computed property name type (TS2464).
+    ///
+    /// Valid types: string, number, symbol, any (including literals, enums,
+    /// template literals, unique symbols). For unions, ALL members must be valid.
+    /// This check is independent of strictNullChecks.
+    pub fn is_valid_computed_property_name_type(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::ANY || type_id == TypeId::NEVER || type_id == TypeId::ERROR {
+            return true;
+        }
+        // For union types, each member must individually be valid
+        if let Some(TypeKey::Union(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            return !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&m| self.is_valid_computed_property_name_type(m));
+        }
+        self.is_string_like(type_id) || self.is_number_like(type_id) || self.is_symbol_like(type_id)
     }
 
     /// Check if a type is boolean-like (boolean or boolean literal).
