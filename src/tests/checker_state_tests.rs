@@ -13849,7 +13849,6 @@ if (typeof x === "string") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_not_applied_in_closure() {
     use crate::parser::ParserState;
 
@@ -14182,7 +14181,6 @@ for (const key in { a: x }) {
 ///
 /// NOTE: Currently ignored - flow narrowing in do-while loops is not fully implemented.
 #[test]
-#[ignore]
 fn test_flow_narrowing_not_applied_in_do_while_body() {
     use crate::parser::ParserState;
 
@@ -14399,7 +14397,6 @@ x;
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_applies_for_namespace_alias_member() {
     use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
@@ -14471,7 +14468,6 @@ if (typeof Alias.value === "string") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_applies_for_namespace_element_access() {
     use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
@@ -14584,7 +14580,6 @@ if (typeof Alias.value === "string") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_cleared_by_property_assignment() {
     use crate::parser::ParserState;
 
@@ -14625,7 +14620,6 @@ if (typeof obj.prop === "string") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_cleared_by_element_assignment() {
     use crate::parser::ParserState;
 
@@ -14740,7 +14734,6 @@ if (typeof obj.prop === "string") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_cleared_by_cross_property_assignment() {
     use crate::parser::ParserState;
 
@@ -14781,7 +14774,6 @@ if (typeof obj["prop"] === "string") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_cleared_by_cross_element_assignment() {
     use crate::parser::ParserState;
 
@@ -14973,7 +14965,6 @@ if (typeof obj[key] === "string") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_cleared_by_computed_element_assignment() {
     use crate::parser::ParserState;
 
@@ -15089,7 +15080,6 @@ if (typeof arr[idx] === "string") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_cleared_by_computed_numeric_element_assignment() {
     use crate::parser::ParserState;
 
@@ -15354,7 +15344,6 @@ if (obj[key] === "a") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_applies_for_literal_element_access() {
     use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
@@ -15428,7 +15417,6 @@ if (typeof obj["prop"] === "string") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_cleared_by_property_base_assignment() {
     use crate::parser::ParserState;
 
@@ -15469,7 +15457,6 @@ if (typeof obj.prop === "string") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_cleared_by_element_base_assignment() {
     use crate::parser::ParserState;
 
@@ -15955,7 +15942,6 @@ declare const t: TupleCheck;
 /// Tests the [T] extends [U] pattern used to disable distributivity.
 /// The is_distributive flag detection is verified in solver/lower_tests.rs.
 #[test]
-#[ignore]
 fn test_tuple_wrapped_conditional_pattern() {
     use crate::parser::ParserState;
 
@@ -16142,7 +16128,6 @@ const m: string = state.message;
 /// Minimal repro: DeepPartial recursive mapped type
 /// Pattern: `{ [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }`
 #[test]
-#[ignore]
 fn test_redux_pattern_deep_partial() {
     use crate::parser::ParserState;
 
@@ -16206,7 +16191,6 @@ const partial: PartialState = { nested: { value: 42 } };
 ///
 /// NOTE: Currently ignored - see `test_redux_pattern_reducers_map_object`.
 #[test]
-#[ignore]
 fn test_redux_pattern_generic_function_with_conditional_return() {
     use crate::parser::ParserState;
 
@@ -16335,7 +16319,6 @@ declare const action: AllActions;
 /// NOTE: Currently ignored - complex Redux pattern type inference is not fully implemented.
 /// Homomorphic mapped types with conditional constraints are not correctly resolved.
 #[test]
-#[ignore]
 fn test_redux_pattern_reducers_map_object() {
     use crate::parser::ParserState;
 
@@ -17048,7 +17031,6 @@ const animal = createAnimal(Animal); // Passing abstract class as value should b
 /// concrete constructor assignments. The assignability check exists but doesn't
 /// properly detect this case or emit the expected diagnostic.
 #[test]
-#[ignore]
 fn test_abstract_to_concrete_constructor_not_assignable() {
     use crate::parser::ParserState;
 
@@ -17123,7 +17105,6 @@ var CC: typeof C = B;
 /// EXPECTED FAILURES: Instance to abstract class type assignability
 /// has issues with class type comparison. Currently expects 3 errors.
 #[test]
-#[ignore]
 fn test_concrete_extends_abstract() {
     use crate::parser::ParserState;
 
@@ -17486,7 +17467,6 @@ const s: string = strings[0]; // OK
 /// EXPECTED FAILURE: Class instance to base class type assignability
 /// has issues. Currently expects 1 error.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_best_common_type_class_hierarchy() {
     use crate::parser::ParserState;
 
@@ -20536,7 +20516,6 @@ const elem = <unknowntag />;
 
 /// Test that namespace interface members can be used as type annotations
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_namespace_type_member_interface_annotation() {
     use crate::parser::ParserState;
 
@@ -25826,7 +25805,6 @@ function test(obj: A | B | null) {
 }
 
 #[test]
-#[ignore]
 fn test_ts2339_union_all_members_need_property() {
     use crate::parser::ParserState;
 
