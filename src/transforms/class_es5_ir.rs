@@ -1183,6 +1183,12 @@ impl<'a> ES5ClassTransformer<'a> {
                     self.convert_block_body_with_alias(method_data.body, class_alias)
                 };
 
+                // Capture body source range for single-line detection
+                let body_source_range = self
+                    .arena
+                    .get(method_data.body)
+                    .map(|body_node| (body_node.pos as u32, body_node.end as u32));
+
                 // ClassName.methodName = function () { body };
                 body.push(IRNode::StaticMethod {
                     class_name: self.class_name.clone(),
@@ -1192,7 +1198,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         parameters: params,
                         body: method_body,
                         is_expression_body: false,
-                        body_source_range: None,
+                        body_source_range,
                     }),
                 });
             } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
@@ -2342,23 +2348,29 @@ impl<'a> AstToIr<'a> {
             self.current_class_alias.set(class_alias.clone());
 
             let params = self.convert_parameters(&arrow.parameters);
-            let (body, is_expression_body) = if let Some(body_node) = self.arena.get(arrow.body) {
-                if let Some(block) = self.arena.get_block(body_node) {
-                    let stmts: Vec<IRNode> = block
-                        .statements
-                        .nodes
-                        .iter()
-                        .map(|&s| self.convert_statement(s))
-                        .collect();
-                    (stmts, false)
+            let (body, is_expression_body, body_source_range) =
+                if let Some(body_node) = self.arena.get(arrow.body) {
+                    if let Some(block) = self.arena.get_block(body_node) {
+                        let stmts: Vec<IRNode> = block
+                            .statements
+                            .nodes
+                            .iter()
+                            .map(|&s| self.convert_statement(s))
+                            .collect();
+                        let range = Some((body_node.pos as u32, body_node.end as u32));
+                        (stmts, false, range)
+                    } else {
+                        // Expression body
+                        let expr = self.convert_expression(arrow.body);
+                        (
+                            vec![IRNode::ReturnStatement(Some(Box::new(expr)))],
+                            true,
+                            None,
+                        )
+                    }
                 } else {
-                    // Expression body
-                    let expr = self.convert_expression(arrow.body);
-                    (vec![IRNode::ReturnStatement(Some(Box::new(expr)))], true)
-                }
-            } else {
-                (vec![], false)
-            };
+                    (vec![], false, None)
+                };
 
             // Restore previous state
             self.this_captured.set(prev_captured);
@@ -2370,7 +2382,7 @@ impl<'a> AstToIr<'a> {
                 parameters: params,
                 body,
                 is_expression_body,
-                body_source_range: None,
+                body_source_range,
             };
 
             // Handle this capture:

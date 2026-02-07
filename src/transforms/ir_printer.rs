@@ -374,39 +374,7 @@ impl<'a> IRPrinter<'a> {
                 // 1. Arrow-to-function conversions (is_expression_body)
                 // 2. Functions that were single-line in source (is_source_single_line)
                 // 3. Anonymous functions with simple return bodies (callbacks, etc.)
-                let is_source_single_line = body_source_range
-                    .and_then(|(pos, end)| {
-                        self.source_text.map(|text| {
-                            let start = pos as usize;
-                            let end = std::cmp::min(end as usize, text.len());
-                            if start < end {
-                                let slice = &text[start..end];
-                                // Find the opening `{` and its matching `}` using depth counting.
-                                // We skip leading trivia (which may have newlines from indentation)
-                                // and only check between the braces.
-                                if let Some(open) = slice.find('{') {
-                                    let mut depth = 1;
-                                    for (i, ch) in slice[open + 1..].char_indices() {
-                                        match ch {
-                                            '{' => depth += 1,
-                                            '}' => {
-                                                depth -= 1;
-                                                if depth == 0 {
-                                                    let inner = &slice[open..open + 1 + i + 1];
-                                                    return !inner.contains('\n');
-                                                }
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                                !slice.contains('\n')
-                            } else {
-                                false
-                            }
-                        })
-                    })
-                    .unwrap_or(false);
+                let is_source_single_line = self.is_body_source_single_line(*body_source_range);
 
                 // Determine if we should emit single-line:
                 // - For arrow-to-function conversions: always single-line
@@ -1322,6 +1290,41 @@ impl<'a> IRPrinter<'a> {
         self.write("}");
     }
 
+    /// Check if a body source range represents a single-line block in the source text.
+    /// Uses brace depth counting to find the matching `}` and skips leading trivia.
+    fn is_body_source_single_line(&self, body_source_range: Option<(u32, u32)>) -> bool {
+        body_source_range
+            .and_then(|(pos, end)| {
+                self.source_text.map(|text| {
+                    let start = pos as usize;
+                    let end = std::cmp::min(end as usize, text.len());
+                    if start < end {
+                        let slice = &text[start..end];
+                        if let Some(open) = slice.find('{') {
+                            let mut depth = 1;
+                            for (i, ch) in slice[open + 1..].char_indices() {
+                                match ch {
+                                    '{' => depth += 1,
+                                    '}' => {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            let inner = &slice[open..open + 1 + i + 1];
+                                            return !inner.contains('\n');
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        !slice.contains('\n')
+                    } else {
+                        false
+                    }
+                })
+            })
+            .unwrap_or(false)
+    }
+
     /// Emit function body with default parameter checks prepended (ES5 style)
     fn emit_function_body_with_defaults(
         &mut self,
@@ -1333,29 +1336,7 @@ impl<'a> IRPrinter<'a> {
         let has_defaults = params.iter().any(|p| p.default_value.is_some());
 
         if !has_defaults && body.is_empty() {
-            // Check if the source body was single-line (e.g., `{ }`)
-            // Note: node.end may extend past the block's closing `}` into parent scope,
-            // so we find the first `}` after the opening `{` to get the actual block bounds.
-            let is_source_single_line = body_source_range
-                .and_then(|(pos, end)| {
-                    self.source_text.map(|text| {
-                        let start = pos as usize;
-                        let end = std::cmp::min(end as usize, text.len());
-                        if start < end {
-                            let slice = &text[start..end];
-                            if let Some(open) = slice.find('{') {
-                                if let Some(close_offset) = slice[open + 1..].find('}') {
-                                    let inner = &slice[open..open + 1 + close_offset + 1];
-                                    return !inner.contains('\n');
-                                }
-                            }
-                            !slice.contains('\n')
-                        } else {
-                            false
-                        }
-                    })
-                })
-                .unwrap_or(false);
+            let is_source_single_line = self.is_body_source_single_line(body_source_range);
 
             if is_source_single_line {
                 self.write("{ }");
