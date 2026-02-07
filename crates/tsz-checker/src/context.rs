@@ -374,11 +374,11 @@ pub struct CheckerContext<'a> {
     pub depth_exceeded: RefCell<bool>,
 
     /// General recursion depth counter for type checking.
-    /// Prevents stack overflow by bailing out when depth exceeds MAX_RECURSION_DEPTH.
-    pub recursion_depth: Cell<u32>,
+    /// Prevents stack overflow by bailing out when depth exceeds the limit.
+    pub recursion_depth: RefCell<tsz_solver::recursion::DepthCounter>,
 
     /// Current depth of call expression resolution.
-    pub call_depth: RefCell<u32>,
+    pub call_depth: RefCell<tsz_solver::recursion::DepthCounter>,
 
     /// Stack of expected return types for functions.
     pub return_type_stack: Vec<TypeId>,
@@ -623,8 +623,12 @@ impl<'a> CheckerContext<'a> {
             in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
-            recursion_depth: Cell::new(0),
-            call_depth: RefCell::new(0),
+            recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
+                tsz_solver::recursion::RecursionProfile::CheckerRecursion,
+            )),
+            call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
+                tsz_solver::recursion::RecursionProfile::CallResolution,
+            )),
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
@@ -725,8 +729,12 @@ impl<'a> CheckerContext<'a> {
             in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
-            recursion_depth: Cell::new(0),
-            call_depth: RefCell::new(0),
+            recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
+                tsz_solver::recursion::RecursionProfile::CheckerRecursion,
+            )),
+            call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
+                tsz_solver::recursion::RecursionProfile::CallResolution,
+            )),
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
@@ -830,8 +838,12 @@ impl<'a> CheckerContext<'a> {
             in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
-            recursion_depth: Cell::new(0),
-            call_depth: RefCell::new(0),
+            recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
+                tsz_solver::recursion::RecursionProfile::CheckerRecursion,
+            )),
+            call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
+                tsz_solver::recursion::RecursionProfile::CallResolution,
+            )),
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
@@ -934,8 +946,12 @@ impl<'a> CheckerContext<'a> {
             in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
-            recursion_depth: Cell::new(0),
-            call_depth: RefCell::new(0),
+            recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
+                tsz_solver::recursion::RecursionProfile::CheckerRecursion,
+            )),
+            call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
+                tsz_solver::recursion::RecursionProfile::CallResolution,
+            )),
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
@@ -1048,8 +1064,13 @@ impl<'a> CheckerContext<'a> {
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
             // Propagate depth from parent to prevent infinite recursion across arena boundaries
-            recursion_depth: Cell::new(parent.recursion_depth.get()),
-            call_depth: RefCell::new(0),
+            recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_initial_depth(
+                tsz_solver::recursion::RecursionProfile::CheckerRecursion.max_depth(),
+                parent.recursion_depth.borrow().depth(),
+            )),
+            call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
+                tsz_solver::recursion::RecursionProfile::CallResolution,
+            )),
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
@@ -1549,26 +1570,15 @@ impl<'a> CheckerContext<'a> {
 
     /// Enter a recursive call. Returns true if recursion is allowed,
     /// false if the depth limit has been reached (caller should bail out).
-    /// Prevents stack overflow by bailing out when depth exceeds MAX_CHECKER_RECURSION_DEPTH.
     #[inline]
     pub fn enter_recursion(&self) -> bool {
-        let depth = self.recursion_depth.get();
-        if depth >= tsz_common::limits::MAX_CHECKER_RECURSION_DEPTH {
-            return false;
-        }
-        self.recursion_depth.set(depth + 1);
-        true
+        self.recursion_depth.borrow_mut().enter()
     }
 
     /// Leave a recursive call (decrement depth counter).
     #[inline]
     pub fn leave_recursion(&self) {
-        let depth = self.recursion_depth.get();
-        debug_assert!(
-            depth > 0,
-            "leave_recursion called without matching enter_recursion"
-        );
-        self.recursion_depth.set(depth - 1);
+        self.recursion_depth.borrow_mut().leave();
     }
 
     /// Check if Promise is available in lib files or global scope.
