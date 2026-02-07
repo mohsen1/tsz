@@ -17,26 +17,8 @@ fn test_try_evaluate_mapped_constraint_keyof_object() {
     let checker = SubtypeChecker::new(&interner);
 
     let obj = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::STRING),
     ]);
 
     let constraint = interner.intern(TypeKey::KeyOf(obj));
@@ -84,16 +66,7 @@ fn test_try_get_keyof_keys_object_with_index_returns_properties() {
     let obj = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        }],
+        properties: vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
@@ -122,16 +95,7 @@ fn test_try_get_keyof_keys_resolves_reference() {
     let interner = TypeInterner::new();
 
     let def_id = DefId(10);
-    let resolved = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let resolved = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
 
     let mut env = TypeEnvironment::new();
     env.insert_def(def_id, resolved);
@@ -158,16 +122,7 @@ fn test_try_expand_application_instantiates_type_params() {
     let param_type = interner.intern(TypeKey::TypeParameter(param_info.clone()));
 
     let def_id = DefId(20);
-    let box_struct = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: param_type,
-        write_type: param_type,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let box_struct = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), param_type)]);
 
     let mut env = TypeEnvironment::new();
     env.insert_def_with_params(def_id, box_struct, vec![param_info]);

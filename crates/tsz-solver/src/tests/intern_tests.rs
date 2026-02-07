@@ -29,16 +29,7 @@ fn test_interner_deduplication() {
 #[test]
 fn test_interner_fresh_object_distinct_from_non_fresh() {
     let interner = TypeInterner::new();
-    let prop = PropertyInfo {
-        name: interner.intern_string("x"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop = PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER);
 
     let fresh = interner.object_fresh(vec![prop.clone()]);
     let non_fresh = interner.object(vec![prop]);
@@ -169,26 +160,8 @@ fn test_interner_intersection_any_over_unknown() {
 fn test_interner_intersection_flattens_and_dedups() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
 
     let inner = interner.intersection(vec![obj_a, obj_b]);
     let outer = interner.intersection(vec![inner, obj_a]);
@@ -215,26 +188,8 @@ fn test_interner_intersection_disjoint_object_literals() {
     let interner = TypeInterner::new();
 
     let kind = interner.intern_string("kind");
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: kind,
-        type_id: interner.literal_string("a"),
-        write_type: interner.literal_string("a"),
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: kind,
-        type_id: interner.literal_string("b"),
-        write_type: interner.literal_string("b"),
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(kind, interner.literal_string("a"))]);
+    let obj_b = interner.object(vec![PropertyInfo::new(kind, interner.literal_string("b"))]);
 
     let disjoint = interner.intersection(vec![obj_a, obj_b]);
     assert_eq!(disjoint, TypeId::NEVER);
@@ -249,26 +204,8 @@ fn test_interner_intersection_disjoint_object_literal_union() {
         interner.literal_string("a"),
         interner.literal_string("b"),
     ]);
-    let obj_union = interner.object(vec![PropertyInfo {
-        name: kind,
-        type_id: union,
-        write_type: union,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let obj_c = interner.object(vec![PropertyInfo {
-        name: kind,
-        type_id: interner.literal_string("c"),
-        write_type: interner.literal_string("c"),
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_union = interner.object(vec![PropertyInfo::new(kind, union)]);
+    let obj_c = interner.object(vec![PropertyInfo::new(kind, interner.literal_string("c"))]);
 
     let disjoint = interner.intersection(vec![obj_union, obj_c]);
     assert_eq!(disjoint, TypeId::NEVER);
@@ -279,26 +216,8 @@ fn test_interner_intersection_optional_object_literals_not_reduced() {
     let interner = TypeInterner::new();
 
     let kind = interner.intern_string("kind");
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: kind,
-        type_id: interner.literal_string("a"),
-        write_type: interner.literal_string("a"),
-        optional: true,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: kind,
-        type_id: interner.literal_string("b"),
-        write_type: interner.literal_string("b"),
-        optional: true,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::opt(kind, interner.literal_string("a"))]);
+    let obj_b = interner.object(vec![PropertyInfo::opt(kind, interner.literal_string("b"))]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
     assert_ne!(intersection, TypeId::NEVER);
@@ -310,48 +229,12 @@ fn test_interner_object_sorting() {
 
     // Properties in different order should produce same TypeId
     let props1 = vec![
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("a"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
     ];
     let props2 = vec![
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("a"), TypeId::STRING),
     ];
 
     let id1 = interner.object(props1);
@@ -367,16 +250,7 @@ fn test_interner_object_property_lookup_cache() {
     let mut props = Vec::with_capacity(PROPERTY_MAP_THRESHOLD + 2);
     for i in 0..(PROPERTY_MAP_THRESHOLD + 2) {
         let name = format!("prop{}", i);
-        props.push(PropertyInfo {
-            name: interner.intern_string(&name),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        });
+        props.push(PropertyInfo::new(interner.intern_string(&name), TypeId::NUMBER));
     }
 
     let obj = interner.object(props);
@@ -401,16 +275,7 @@ fn test_interner_object_property_lookup_cache() {
         PropertyLookup::NotFound
     );
 
-    let small = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("only"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let small = interner.object(vec![PropertyInfo::new(interner.intern_string("only"), TypeId::STRING)]);
     let small_shape_id = match interner.lookup(small) {
         Some(TypeKey::Object(shape_id)) => shape_id,
         other => panic!("expected object type, got {:?}", other),
@@ -516,16 +381,7 @@ fn test_intersection_visibility_merging() {
     }]);
 
     // Create object { x: string } with public visibility
-    let obj_public = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("x"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_public = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::STRING)]);
 
     // Intersection should merge visibility (Private > Public = Private)
     let intersection = interner.intersection2(obj_private, obj_public);
@@ -556,27 +412,9 @@ fn test_intersection_object_merging() {
     let interner = TypeInterner::new();
 
     // Test: { a: 1 } & { b: 2 } should merge to { a: 1, b: 2 }
-    let obj1 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
 
-    let obj2 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
 
     let intersection = interner.intersection2(obj1, obj2);
 
@@ -601,27 +439,9 @@ fn test_intersection_disjoint_property_types() {
     let lit1 = interner.literal_number(1.0);
     let lit2 = interner.literal_number(2.0);
 
-    let obj1 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: lit1,
-        write_type: lit1,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), lit1)]);
 
-    let obj2 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: lit2,
-        write_type: lit2,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), lit2)]);
 
     let intersection = interner.intersection2(obj1, obj2);
 
@@ -635,16 +455,7 @@ fn test_visibility_interning_distinct_shape_ids() {
     let interner = TypeInterner::new();
 
     // Create two objects with identical structure but different visibility
-    let obj_public = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("x"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_public = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
 
     let obj_private = interner.object(vec![PropertyInfo {
         name: interner.intern_string("x"),
@@ -877,12 +688,7 @@ fn test_partial_callable_merging_in_intersection() {
     // Create two function types
     let func1 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: None,
-            type_id: TypeId::STRING,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::unnamed(TypeId::STRING)],
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
@@ -892,12 +698,7 @@ fn test_partial_callable_merging_in_intersection() {
 
     let func2 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: None,
-            type_id: TypeId::NUMBER,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
@@ -960,12 +761,7 @@ fn test_partial_object_and_callable_merging() {
     // Create callable types
     let func1 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: None,
-            type_id: TypeId::STRING,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::unnamed(TypeId::STRING)],
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
@@ -975,12 +771,7 @@ fn test_partial_object_and_callable_merging() {
 
     let func2 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: None,
-            type_id: TypeId::NUMBER,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,

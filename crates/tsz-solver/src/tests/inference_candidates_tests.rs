@@ -65,16 +65,7 @@ fn test_infer_candidates_common_supertype() {
             visibility: Visibility::Public,
             parent_id: None,
         },
-        PropertyInfo {
-            name: breed,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(breed, TypeId::STRING),
     ]);
 
     let var = ctx.fresh_type_param(t_name, false);

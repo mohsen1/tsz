@@ -41,26 +41,8 @@ fn test_format_object_type() {
     let mut formatter = TypeFormatter::new(&interner);
 
     let obj = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("y"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER),
+        PropertyInfo::opt(interner.intern_string("y"), TypeId::STRING),
     ]);
 
     let formatted = formatter.format(obj);
@@ -205,16 +187,7 @@ fn test_property_missing_diagnostic() {
     let mut builder = DiagnosticBuilder::new(&interner);
 
     let obj1 = interner.object(vec![]);
-    let obj2 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("x"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
 
     let diag = builder.property_missing("x", obj1, obj2);
     assert_eq!(diag.code, codes::PROPERTY_MISSING);

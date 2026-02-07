@@ -34,16 +34,7 @@ fn test_object_literal_identity() {
     let env = TypeEnvironment::new();
 
     // Create two identical object types
-    let prop_a = crate::types::PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop_a = crate::types::PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER);
 
     let type1 = interner.object(vec![prop_a.clone()]);
     let type2 = interner.object(vec![prop_a]);
@@ -60,27 +51,9 @@ fn test_object_order_independence() {
     let env = TypeEnvironment::new();
 
     // Create properties in different orders
-    let prop_a = crate::types::PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop_a = crate::types::PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER);
 
-    let prop_b = crate::types::PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop_b = crate::types::PropertyInfo::new(interner.intern_string("b"), TypeId::STRING);
 
     // Properties in order [a, b]
     let type1 = interner.object(vec![prop_a.clone(), prop_b.clone()]);
@@ -99,27 +72,9 @@ fn test_optional_matters() {
     let interner = TypeInterner::new();
     let env = TypeEnvironment::new();
 
-    let prop_required = crate::types::PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop_required = crate::types::PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER);
 
-    let prop_optional = crate::types::PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: true,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop_optional = crate::types::PropertyInfo::opt(interner.intern_string("a"), TypeId::NUMBER);
 
     let type1 = interner.object(vec![prop_required]);
     let type2 = interner.object(vec![prop_optional]);
@@ -135,27 +90,9 @@ fn test_readonly_matters() {
     let interner = TypeInterner::new();
     let env = TypeEnvironment::new();
 
-    let prop_readonly = crate::types::PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: true,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop_readonly = crate::types::PropertyInfo::readonly(interner.intern_string("a"), TypeId::NUMBER);
 
-    let prop_mutable = crate::types::PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop_mutable = crate::types::PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER);
 
     let type1 = interner.object(vec![prop_readonly]);
     let type2 = interner.object(vec![prop_mutable]);
@@ -210,29 +147,11 @@ fn test_nested_object_identity() {
     let env = TypeEnvironment::new();
 
     // Create nested object types
-    let inner_prop = crate::types::PropertyInfo {
-        name: interner.intern_string("x"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let inner_prop = crate::types::PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER);
 
     let inner_type = interner.object(vec![inner_prop]);
 
-    let outer_prop = crate::types::PropertyInfo {
-        name: interner.intern_string("inner"),
-        type_id: inner_type,
-        write_type: inner_type,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let outer_prop = crate::types::PropertyInfo::new(interner.intern_string("inner"), inner_type);
 
     let type1 = interner.object(vec![outer_prop.clone()]);
     let type2 = interner.object(vec![outer_prop]);

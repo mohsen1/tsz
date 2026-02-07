@@ -161,26 +161,8 @@ fn test_compat_checker_weak_type_detection() {
     let age_atom = interner.intern_string("age");
 
     let weak_type = interner.object(vec![
-        PropertyInfo {
-            name: name_atom,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: age_atom,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::opt(name_atom, TypeId::STRING),
+        PropertyInfo::opt(age_atom, TypeId::NUMBER),
     ]);
 
     // Empty object should be assignable to weak type
@@ -190,29 +172,11 @@ fn test_compat_checker_weak_type_detection() {
 
     // Object with unrelated properties should NOT be assignable
     let unrelated_atom = interner.intern_string("unrelated");
-    let unrelated_obj = interner.object(vec![PropertyInfo {
-        name: unrelated_atom,
-        type_id: TypeId::BOOLEAN,
-        write_type: TypeId::BOOLEAN,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let unrelated_obj = interner.object(vec![PropertyInfo::new(unrelated_atom, TypeId::BOOLEAN)]);
     assert!(!checker.is_assignable(unrelated_obj, weak_type));
 
     // Object with at least one common property should be assignable
-    let matching_obj = interner.object(vec![PropertyInfo {
-        name: name_atom,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let matching_obj = interner.object(vec![PropertyInfo::new(name_atom, TypeId::STRING)]);
     assert!(checker.is_assignable(matching_obj, weak_type));
 }
 
@@ -331,28 +295,10 @@ fn test_any_in_nested_object_properties_strict_mode() {
     let a_atom = interner.intern_string("a");
 
     // Target: { a: number }
-    let target = interner.object(vec![PropertyInfo {
-        name: a_atom,
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let target = interner.object(vec![PropertyInfo::new(a_atom, TypeId::NUMBER)]);
 
     // Source: { a: any }
-    let source = interner.object(vec![PropertyInfo {
-        name: a_atom,
-        type_id: TypeId::ANY,
-        write_type: TypeId::ANY,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let source = interner.object(vec![PropertyInfo::new(a_atom, TypeId::ANY)]);
 
     // In strict mode, { a: any } should NOT be assignable to { a: number }
     // because any at depth 1 is treated as unknown
@@ -460,50 +406,14 @@ fn test_deeply_nested_any_strict_mode() {
     let b_atom = interner.intern_string("b");
 
     // Target: { a: { b: string } }
-    let inner_target = interner.object(vec![PropertyInfo {
-        name: b_atom,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let inner_target = interner.object(vec![PropertyInfo::new(b_atom, TypeId::STRING)]);
 
-    let target = interner.object(vec![PropertyInfo {
-        name: a_atom,
-        type_id: inner_target,
-        write_type: inner_target,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let target = interner.object(vec![PropertyInfo::new(a_atom, inner_target)]);
 
     // Source: { a: { b: any } }
-    let inner_source = interner.object(vec![PropertyInfo {
-        name: b_atom,
-        type_id: TypeId::ANY,
-        write_type: TypeId::ANY,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let inner_source = interner.object(vec![PropertyInfo::new(b_atom, TypeId::ANY)]);
 
-    let source = interner.object(vec![PropertyInfo {
-        name: a_atom,
-        type_id: inner_source,
-        write_type: inner_source,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let source = interner.object(vec![PropertyInfo::new(a_atom, inner_source)]);
 
     // In strict mode, { a: { b: any } } should NOT be assignable to { a: { b: string } }
     // because any at depth 2 is treated as unknown
@@ -1013,16 +923,7 @@ fn test_private_brands_in_intersection() {
     }]);
 
     // Additional type with public y
-    let additional = interner.object(vec![PropertyInfo {
-        name: y_atom,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let additional = interner.object(vec![PropertyInfo::new(y_atom, TypeId::STRING)]);
 
     // Intersection: A & { y: string }
     let intersection = interner.intersection(vec![class_a, additional]);

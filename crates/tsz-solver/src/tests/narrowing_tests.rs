@@ -13,26 +13,8 @@ fn test_find_discriminants_basic() {
     let type_add = interner.literal_string("add");
     let type_remove = interner.literal_string("remove");
 
-    let member1 = interner.object(vec![PropertyInfo {
-        name: type_name,
-        type_id: type_add,
-        write_type: type_add,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let member2 = interner.object(vec![PropertyInfo {
-        name: type_name,
-        type_id: type_remove,
-        write_type: type_remove,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let member1 = interner.object(vec![PropertyInfo::new(type_name, type_add)]);
+    let member2 = interner.object(vec![PropertyInfo::new(type_name, type_remove)]);
 
     let union = interner.union(vec![member1, member2]);
 
@@ -56,48 +38,12 @@ fn test_find_discriminants_multiple_props() {
     let type_2 = interner.literal_number(2.0);
 
     let member1 = interner.object(vec![
-        PropertyInfo {
-            name: kind_name,
-            type_id: kind_a,
-            write_type: kind_a,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: type_name,
-            type_id: type_1,
-            write_type: type_1,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(kind_name, kind_a),
+        PropertyInfo::new(type_name, type_1),
     ]);
     let member2 = interner.object(vec![
-        PropertyInfo {
-            name: kind_name,
-            type_id: kind_b,
-            write_type: kind_b,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: type_name,
-            type_id: type_2,
-            write_type: type_2,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(kind_name, kind_b),
+        PropertyInfo::new(type_name, type_2),
     ]);
 
     let union = interner.union(vec![member1, member2]);
@@ -115,26 +61,8 @@ fn test_find_discriminants_non_literal() {
 
     // type T = { type: string } | { type: string }
     // Not a discriminated union - type is not literal
-    let member1 = interner.object(vec![PropertyInfo {
-        name: type_name,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let member2 = interner.object(vec![PropertyInfo {
-        name: type_name,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let member1 = interner.object(vec![PropertyInfo::new(type_name, TypeId::STRING)]);
+    let member2 = interner.object(vec![PropertyInfo::new(type_name, TypeId::STRING)]);
 
     let union = interner.union(vec![member1, member2]);
 
@@ -155,26 +83,8 @@ fn test_find_discriminants_missing_property() {
     let type_a = interner.literal_string("a");
     let kind_b = interner.literal_string("b");
 
-    let member1 = interner.object(vec![PropertyInfo {
-        name: type_name,
-        type_id: type_a,
-        write_type: type_a,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let member2 = interner.object(vec![PropertyInfo {
-        name: kind_name,
-        type_id: kind_b,
-        write_type: kind_b,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let member1 = interner.object(vec![PropertyInfo::new(type_name, type_a)]);
+    let member2 = interner.object(vec![PropertyInfo::new(kind_name, kind_b)]);
 
     let union = interner.union(vec![member1, member2]);
 
@@ -238,48 +148,12 @@ fn test_narrow_by_discriminant() {
     let type_remove = interner.literal_string("remove");
 
     let member_add = interner.object(vec![
-        PropertyInfo {
-            name: type_name,
-            type_id: type_add,
-            write_type: type_add,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("value"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(type_name, type_add),
+        PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER),
     ]);
     let member_remove = interner.object(vec![
-        PropertyInfo {
-            name: type_name,
-            type_id: type_remove,
-            write_type: type_remove,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("id"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(type_name, type_remove),
+        PropertyInfo::new(interner.intern_string("id"), TypeId::STRING),
     ]);
 
     let union = interner.union(vec![member_add, member_remove]);
@@ -301,16 +175,7 @@ fn test_narrow_by_discriminant_no_match() {
     let type_add = interner.literal_string("add");
     let type_unknown = interner.literal_string("unknown");
 
-    let member = interner.object(vec![PropertyInfo {
-        name: type_name,
-        type_id: type_add,
-        write_type: type_add,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let member = interner.object(vec![PropertyInfo::new(type_name, type_add)]);
 
     let union = interner.union(vec![member]);
 
@@ -330,36 +195,9 @@ fn test_narrow_excluding_discriminant() {
     let type_b = interner.literal_string("b");
     let type_c = interner.literal_string("c");
 
-    let member_a = interner.object(vec![PropertyInfo {
-        name: type_name,
-        type_id: type_a,
-        write_type: type_a,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let member_b = interner.object(vec![PropertyInfo {
-        name: type_name,
-        type_id: type_b,
-        write_type: type_b,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let member_c = interner.object(vec![PropertyInfo {
-        name: type_name,
-        type_id: type_c,
-        write_type: type_c,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let member_a = interner.object(vec![PropertyInfo::new(type_name, type_a)]);
+    let member_b = interner.object(vec![PropertyInfo::new(type_name, type_b)]);
+    let member_c = interner.object(vec![PropertyInfo::new(type_name, type_c)]);
 
     let union = interner.union(vec![member_a, member_b, member_c]);
 
@@ -508,16 +346,7 @@ fn test_narrow_by_typeof_negation_function() {
         is_constructor: false,
         is_method: false,
     });
-    let obj = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
     let union = interner.union(vec![func, obj]);
 
     let narrowed = ctx.narrow_excluding_function(union);
@@ -529,16 +358,7 @@ fn test_narrow_by_typeof_negation_function_branded_intersection() {
     let interner = TypeInterner::new();
     let ctx = NarrowingContext::new(&interner);
 
-    let brand = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("__brand"),
-        type_id: interner.literal_string("Tagged"),
-        write_type: interner.literal_string("Tagged"),
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let brand = interner.object(vec![PropertyInfo::new(interner.intern_string("__brand"), interner.literal_string("Tagged"))]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -736,16 +556,7 @@ fn test_narrow_by_typeof_unconstrained_type_param() {
 fn test_narrow_by_typeof_branded_string_intersection() {
     let interner = TypeInterner::new();
 
-    let brand = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("__brand"),
-        type_id: interner.literal_string("UserId"),
-        write_type: interner.literal_string("UserId"),
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let brand = interner.object(vec![PropertyInfo::new(interner.intern_string("__brand"), interner.literal_string("UserId"))]);
     let branded = interner.intersection(vec![TypeId::STRING, brand]);
     let union = interner.union(vec![branded, TypeId::NUMBER]);
 
@@ -757,16 +568,7 @@ fn test_narrow_by_typeof_branded_string_intersection() {
 fn test_narrow_by_typeof_branded_function_intersection() {
     let interner = TypeInterner::new();
 
-    let brand = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("__brand"),
-        type_id: interner.literal_string("Tagged"),
-        write_type: interner.literal_string("Tagged"),
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let brand = interner.object(vec![PropertyInfo::new(interner.intern_string("__brand"), interner.literal_string("Tagged"))]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -792,16 +594,7 @@ fn test_narrow_by_typeof_branded_function_intersection() {
 fn test_narrow_by_typeof_object_excludes_branded_function_intersection() {
     let interner = TypeInterner::new();
 
-    let brand = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("__brand"),
-        type_id: interner.literal_string("Tagged"),
-        write_type: interner.literal_string("Tagged"),
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let brand = interner.object(vec![PropertyInfo::new(interner.intern_string("__brand"), interner.literal_string("Tagged"))]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -817,16 +610,7 @@ fn test_narrow_by_typeof_object_excludes_branded_function_intersection() {
         is_method: false,
     });
     let branded = interner.intersection(vec![func, brand]);
-    let obj = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
     let union = interner.union(vec![branded, obj]);
 
     let narrowed = narrow_by_typeof(&interner, union, "object");
@@ -837,16 +621,7 @@ fn test_narrow_by_typeof_object_excludes_branded_function_intersection() {
 fn test_narrow_by_typeof_object_with_object_literal() {
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
     let union = interner.union(vec![obj, TypeId::NUMBER]);
 
     let narrowed = narrow_by_typeof(&interner, union, "object");
@@ -857,16 +632,7 @@ fn test_narrow_by_typeof_object_with_object_literal() {
 fn test_narrow_by_typeof_object_excludes_function() {
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1075,16 +841,7 @@ fn test_type_predicate_this_target() {
 
     // Create an object type for the predicate
     let foo_name = interner.intern_string("foo");
-    let foo_type = interner.object(vec![PropertyInfo {
-        name: foo_name,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let foo_type = interner.object(vec![PropertyInfo::new(foo_name, TypeId::STRING)]);
 
     // this is Foo
     let predicate = TypePredicate {
@@ -1128,12 +885,7 @@ fn test_function_shape_with_type_predicate() {
     // function isString(x: any): x is string
     let shape = FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(x_name),
-            type_id: TypeId::ANY,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(x_name, TypeId::ANY)],
         this_type: None,
         return_type: TypeId::BOOLEAN,
         type_predicate: Some(TypePredicate {
@@ -1161,12 +913,7 @@ fn test_call_signature_with_type_predicate() {
     // Overload: (x: any): x is number
     let sig = CallSignature {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(x_name),
-            type_id: TypeId::ANY,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(x_name, TypeId::ANY)],
         this_type: None,
         return_type: TypeId::BOOLEAN,
         type_predicate: Some(TypePredicate {
@@ -1233,27 +980,9 @@ fn test_narrow_to_interface_type() {
     let meow_name = interner.intern_string("meow");
     let bark_name = interner.intern_string("bark");
 
-    let cat_type = interner.object(vec![PropertyInfo {
-        name: meow_name,
-        type_id: TypeId::VOID,
-        write_type: TypeId::VOID,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let cat_type = interner.object(vec![PropertyInfo::method(meow_name, TypeId::VOID)]);
 
-    let dog_type = interner.object(vec![PropertyInfo {
-        name: bark_name,
-        type_id: TypeId::VOID,
-        write_type: TypeId::VOID,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let dog_type = interner.object(vec![PropertyInfo::method(bark_name, TypeId::VOID)]);
 
     let union = interner.union(vec![cat_type, dog_type]);
 
@@ -1381,26 +1110,8 @@ fn test_type_guard_discriminant() {
     let kind_a = interner.literal_string("a");
     let kind_b = interner.literal_string("b");
 
-    let member1 = interner.object(vec![PropertyInfo {
-        name: kind_name,
-        type_id: kind_a,
-        write_type: kind_a,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let member2 = interner.object(vec![PropertyInfo {
-        name: kind_name,
-        type_id: kind_b,
-        write_type: kind_b,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let member1 = interner.object(vec![PropertyInfo::new(kind_name, kind_a)]);
+    let member2 = interner.object(vec![PropertyInfo::new(kind_name, kind_b)]);
 
     let union = interner.union(vec![member1, member2]);
 
@@ -1425,26 +1136,8 @@ fn test_type_guard_discriminant_negated() {
     let kind_a = interner.literal_string("a");
     let kind_b = interner.literal_string("b");
 
-    let member1 = interner.object(vec![PropertyInfo {
-        name: kind_name,
-        type_id: kind_a,
-        write_type: kind_a,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let member2 = interner.object(vec![PropertyInfo {
-        name: kind_name,
-        type_id: kind_b,
-        write_type: kind_b,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let member1 = interner.object(vec![PropertyInfo::new(kind_name, kind_a)]);
+    let member2 = interner.object(vec![PropertyInfo::new(kind_name, kind_b)]);
 
     let union = interner.union(vec![member1, member2]);
 

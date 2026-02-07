@@ -125,51 +125,15 @@ fn test_union_literal_widening_to_optional_properties() {
     let a_literal = interner.literal_string("x");
     let b_literal = interner.literal_string("y");
 
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: a_literal,
-        write_type: a_literal,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), a_literal)]);
 
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: b_literal,
-        write_type: b_literal,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), b_literal)]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
     let target = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING),
+        PropertyInfo::opt(interner.intern_string("b"), TypeId::STRING),
     ]);
 
     // Union should be assignable to target with all optional properties
@@ -188,51 +152,15 @@ fn test_union_literal_widening_with_different_types() {
     let one_literal = interner.literal_number(1.0);
     let true_literal = TypeId::BOOLEAN_TRUE;
 
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: one_literal,
-        write_type: one_literal,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), one_literal)]);
 
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: true_literal,
-        write_type: true_literal,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), true_literal)]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
     let target = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::BOOLEAN,
-            write_type: TypeId::BOOLEAN,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::opt(interner.intern_string("a"), TypeId::NUMBER),
+        PropertyInfo::opt(interner.intern_string("b"), TypeId::BOOLEAN),
     ]);
 
     assert!(
@@ -251,27 +179,9 @@ fn test_union_not_assignable_to_mixed_optional_required() {
     let a_literal = interner.literal_string("x");
     let b_literal = interner.literal_string("y");
 
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: a_literal,
-        write_type: a_literal,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), a_literal)]);
 
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: b_literal,
-        write_type: b_literal,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), b_literal)]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
@@ -286,16 +196,7 @@ fn test_union_not_assignable_to_mixed_optional_required() {
             visibility: Visibility::Public,
             parent_id: None,
         },
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::opt(interner.intern_string("b"), TypeId::STRING),
     ]);
 
     // Should NOT be assignable because obj_b doesn't have required property 'a'
@@ -315,27 +216,9 @@ fn test_union_with_type_mismatch_not_assignable() {
     let a_literal = interner.literal_string("x");
     let b_literal = interner.literal_string("y");
 
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: a_literal,
-        write_type: a_literal,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), a_literal)]);
 
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: b_literal,
-        write_type: b_literal,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), b_literal)]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
@@ -350,16 +233,7 @@ fn test_union_with_type_mismatch_not_assignable() {
             visibility: Visibility::Public,
             parent_id: None,
         },
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::opt(interner.intern_string("b"), TypeId::STRING),
     ]);
 
     assert!(
@@ -380,62 +254,17 @@ fn test_union_to_object_with_all_optional_and_extra_source_props() {
     let one_literal = interner.literal_number(1.0);
 
     let obj_a = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: a_literal,
-            write_type: a_literal,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("c"),
-            type_id: one_literal,
-            write_type: one_literal,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("a"), a_literal),
+        PropertyInfo::new(interner.intern_string("c"), one_literal),
     ]);
 
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: b_literal,
-        write_type: b_literal,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), b_literal)]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
     let target = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING),
+        PropertyInfo::opt(interner.intern_string("b"), TypeId::STRING),
     ]);
 
     assert!(
@@ -454,49 +283,13 @@ fn test_union_to_intersection_distributivity() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
 
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
 
-    let obj_c = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("c"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_c = interner.object(vec![PropertyInfo::new(interner.intern_string("c"), TypeId::STRING)]);
 
-    let obj_d = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("d"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_d = interner.object(vec![PropertyInfo::new(interner.intern_string("d"), TypeId::NUMBER)]);
 
     // Create intersection C & D
     let intersection_cd = interner.intersection2(obj_c, obj_d);
@@ -518,49 +311,13 @@ fn test_union_to_intersection_with_overlap() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
 
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
 
-    let obj_c = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: true,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_c = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING)]);
 
-    let obj_d = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: true,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_d = interner.object(vec![PropertyInfo::opt(interner.intern_string("b"), TypeId::NUMBER)]);
 
     let intersection_cd = interner.intersection2(obj_c, obj_d);
     let union_ab = interner.union2(obj_a, obj_b);
@@ -644,49 +401,13 @@ fn test_discriminated_union_narrowing() {
     let square_literal = interner.literal_string("square");
 
     let circle = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("kind"),
-            type_id: circle_literal,
-            write_type: circle_literal,
-            optional: false,
-            readonly: true,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("radius"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::readonly(interner.intern_string("kind"), circle_literal),
+        PropertyInfo::new(interner.intern_string("radius"), TypeId::NUMBER),
     ]);
 
     let square = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("kind"),
-            type_id: square_literal,
-            write_type: square_literal,
-            optional: false,
-            readonly: true,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("side"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::readonly(interner.intern_string("kind"), square_literal),
+        PropertyInfo::new(interner.intern_string("side"), TypeId::NUMBER),
     ]);
 
     let shape_union = interner.union2(circle, square);
@@ -703,26 +424,8 @@ fn test_discriminated_union_narrowing() {
             visibility: Visibility::Public,
             parent_id: None,
         },
-        PropertyInfo {
-            name: interner.intern_string("radius"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("side"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::opt(interner.intern_string("radius"), TypeId::NUMBER),
+        PropertyInfo::opt(interner.intern_string("side"), TypeId::NUMBER),
     ]);
 
     assert!(
@@ -743,49 +446,13 @@ fn test_union_with_common_discriminant_property() {
     let type_b = interner.literal_string("b");
 
     let variant_a = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("type"),
-            type_id: type_a,
-            write_type: type_a,
-            optional: false,
-            readonly: true,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::readonly(interner.intern_string("type"), type_a),
+        PropertyInfo::new(interner.intern_string("a"), TypeId::STRING),
     ]);
 
     let variant_b = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("type"),
-            type_id: type_b,
-            write_type: type_b,
-            optional: false,
-            readonly: true,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::readonly(interner.intern_string("type"), type_b),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
     ]);
 
     let union_variants = interner.union2(variant_a, variant_b);
@@ -803,26 +470,8 @@ fn test_union_with_common_discriminant_property() {
             visibility: Visibility::Public,
             parent_id: None,
         },
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING),
+        PropertyInfo::opt(interner.intern_string("b"), TypeId::NUMBER),
     ]);
 
     // This should NOT work with the relaxed rule because 'type' is required
@@ -850,27 +499,9 @@ fn test_union_to_empty_object() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
 
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
 
     let union_ab = interner.union2(obj_a, obj_b);
     let empty_object = interner.object(vec![]);
@@ -892,27 +523,9 @@ fn test_union_to_object_with_index_signature() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
 
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
@@ -920,16 +533,7 @@ fn test_union_to_object_with_index_signature() {
     let target_with_index = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        }],
+        properties: vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING)],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,

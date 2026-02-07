@@ -49,12 +49,7 @@ fn fn_with_predicate(
     let param_name_atom = interner.intern_string(param_name);
     FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_name_atom),
-            type_id: param_type,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_name_atom, param_type)],
         this_type: None,
         return_type,
         type_predicate,
@@ -79,12 +74,7 @@ fn test_type_guard_more_specific_than_no_predicate() {
     // Source: (x: string) => x is string
     let source_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(string_param),
-            type_id: TypeId::STRING,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(string_param, TypeId::STRING)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
@@ -99,12 +89,7 @@ fn test_type_guard_more_specific_than_no_predicate() {
     // Target: (x: string) => boolean (no predicate)
     let target_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(string_param),
-            type_id: TypeId::STRING,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(string_param, TypeId::STRING)],
         this_type: None,
         return_type: TypeId::BOOLEAN,
         type_predicate: None,
@@ -132,12 +117,7 @@ fn test_no_predicate_not_compatible_with_type_guard() {
     // Source: (x: string) => boolean (no predicate)
     let source_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(string_param),
-            type_id: TypeId::STRING,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(string_param, TypeId::STRING)],
         this_type: None,
         return_type: TypeId::BOOLEAN,
         type_predicate: None,
@@ -148,12 +128,7 @@ fn test_no_predicate_not_compatible_with_type_guard() {
     // Target: (x: string) => x is string
     let target_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(string_param),
-            type_id: TypeId::STRING,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(string_param, TypeId::STRING)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
@@ -185,12 +160,7 @@ fn test_no_predicate_compatible_with_type_guard_matching_return() {
     // Source: (x: unknown) => string (no predicate)
     let source_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_x),
-            type_id: TypeId::UNKNOWN,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_x, TypeId::UNKNOWN)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
@@ -201,12 +171,7 @@ fn test_no_predicate_compatible_with_type_guard_matching_return() {
     // Target: (x: unknown) => x is string
     let target_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_x),
-            type_id: TypeId::UNKNOWN,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_x, TypeId::UNKNOWN)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
@@ -241,12 +206,7 @@ fn test_type_guard_narrowing_is_compatible() {
     // Source: (x: Animal) => x is Dog (narrower type guard)
     let source_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_x),
-            type_id: animal,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_x, animal)],
         this_type: None,
         return_type: dog,
         type_predicate: Some(TypePredicate {
@@ -261,12 +221,7 @@ fn test_type_guard_narrowing_is_compatible() {
     // Target: (x: Animal) => x is Animal (wider type guard)
     let target_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_x),
-            type_id: animal,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_x, animal)],
         this_type: None,
         return_type: animal,
         type_predicate: Some(TypePredicate {
@@ -300,12 +255,7 @@ fn test_type_guard_different_parameters_incompatible() {
     // Source: (x: string) => x is string
     let source_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_x),
-            type_id: TypeId::STRING,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_x, TypeId::STRING)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
@@ -320,12 +270,7 @@ fn test_type_guard_different_parameters_incompatible() {
     // Target: (y: string) => y is string
     let target_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_y),
-            type_id: TypeId::STRING,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_y, TypeId::STRING)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
@@ -360,12 +305,7 @@ fn test_asserts_more_specific_than_type_guard() {
     // Source: (x: unknown) => asserts x is string
     let source_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_x),
-            type_id: TypeId::UNKNOWN,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_x, TypeId::UNKNOWN)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
@@ -380,12 +320,7 @@ fn test_asserts_more_specific_than_type_guard() {
     // Target: (x: unknown) => x is string
     let target_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_x),
-            type_id: TypeId::UNKNOWN,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_x, TypeId::UNKNOWN)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
@@ -417,12 +352,7 @@ fn test_type_guard_not_compatible_with_asserts() {
     // Source: (x: unknown) => x is string
     let source_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_x),
-            type_id: TypeId::UNKNOWN,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_x, TypeId::UNKNOWN)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
@@ -437,12 +367,7 @@ fn test_type_guard_not_compatible_with_asserts() {
     // Target: (x: unknown) => asserts x is string
     let target_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_x),
-            type_id: TypeId::UNKNOWN,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_x, TypeId::UNKNOWN)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
@@ -474,12 +399,7 @@ fn test_bare_asserts_compatibility() {
     // Source: (x: unknown) => asserts x (bare assertion)
     let source_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_x),
-            type_id: TypeId::UNKNOWN,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_x, TypeId::UNKNOWN)],
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: Some(TypePredicate {
@@ -494,12 +414,7 @@ fn test_bare_asserts_compatibility() {
     // Target: (x: unknown) => asserts x is string (typed assertion)
     let target_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_x),
-            type_id: TypeId::UNKNOWN,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_x, TypeId::UNKNOWN)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
@@ -540,12 +455,7 @@ fn test_type_guard_in_overloads() {
     // Create a function with type guard
     let type_guard_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_value),
-            type_id: TypeId::UNKNOWN,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_value, TypeId::UNKNOWN)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
@@ -560,12 +470,7 @@ fn test_type_guard_in_overloads() {
     // Create a function without type guard
     let regular_fn = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: Some(param_value),
-            type_id: TypeId::UNKNOWN,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::required(param_value, TypeId::UNKNOWN)],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,

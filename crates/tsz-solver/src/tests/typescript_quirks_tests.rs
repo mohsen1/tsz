@@ -22,12 +22,7 @@ use super::*;
 fn fn_type(interner: &TypeInterner, param: TypeId, ret: TypeId) -> TypeId {
     let sig = FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: None,
-            type_id: param,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::unnamed(param)],
         this_type: None,
         return_type: ret,
         type_predicate: None,
@@ -43,18 +38,8 @@ fn fn_type2(interner: &TypeInterner, param1: TypeId, param2: TypeId, ret: TypeId
     let sig = FunctionShape {
         type_params: vec![],
         params: vec![
-            ParamInfo {
-                name: None,
-                type_id: param1,
-                optional: false,
-                rest: false,
-            },
-            ParamInfo {
-                name: None,
-                type_id: param2,
-                optional: false,
-                rest: false,
-            },
+            ParamInfo::unnamed(param1),
+            ParamInfo::unnamed(param2),
         ],
         this_type: None,
         return_type: ret,
@@ -70,12 +55,7 @@ fn fn_type2(interner: &TypeInterner, param1: TypeId, param2: TypeId, ret: TypeId
 fn method_type(interner: &TypeInterner, param: TypeId, ret: TypeId) -> TypeId {
     let sig = FunctionShape {
         type_params: vec![],
-        params: vec![ParamInfo {
-            name: None,
-            type_id: param,
-            optional: false,
-            rest: false,
-        }],
+        params: vec![ParamInfo::unnamed(param)],
         this_type: None,
         return_type: ret,
         type_predicate: None,
@@ -146,16 +126,7 @@ fn cat_type(interner: &TypeInterner) -> TypeId {
             visibility: Visibility::Public,
             parent_id: None,
         },
-        PropertyInfo {
-            name: breed,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(breed, TypeId::STRING),
     ])
 }
 
@@ -508,29 +479,11 @@ fn test_optional_property_includes_undefined() {
     let prop_name = interner.intern_string("x");
 
     // { x?: string }
-    let _type_a = interner.object(vec![PropertyInfo {
-        name: prop_name,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: true,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let _type_a = interner.object(vec![PropertyInfo::opt(prop_name, TypeId::STRING)]);
 
     // { x: string | undefined }
     let undefined_union = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
-    let _type_b = interner.object(vec![PropertyInfo {
-        name: prop_name,
-        type_id: undefined_union,
-        write_type: undefined_union,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let _type_b = interner.object(vec![PropertyInfo::new(prop_name, undefined_union)]);
 
     // With exact_optional_property_types=false, optional properties implicitly
     // include undefined, so type A (optional string) should ideally be assignable to type B

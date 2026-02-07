@@ -341,26 +341,8 @@ fn test_contextual_property() {
 
     // { x: number, y: string }
     let obj = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("y"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("y"), TypeId::STRING),
     ]);
 
     let ctx = ContextualTypeContext::with_expected(&interner, obj);
@@ -379,26 +361,8 @@ fn test_contextual_nested_property() {
     let interner = TypeInterner::new();
 
     // { nested: { value: number } }
-    let inner = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let outer = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("nested"),
-        type_id: inner,
-        write_type: inner,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let inner = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let outer = interner.object(vec![PropertyInfo::new(interner.intern_string("nested"), inner)]);
 
     let ctx = ContextualTypeContext::with_expected(&interner, outer);
 
