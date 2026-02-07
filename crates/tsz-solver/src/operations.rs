@@ -1154,8 +1154,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Restore state to prevent pollution if evaluator is reused
         self.defaulted_placeholders = previous_defaulted;
 
-        // 5. Return current substitution for Checker to use in Round 2
-        infer_ctx.get_current_substitution()
+        // 5. Remap substitution to use original type parameter names.
+        // get_current_substitution() returns keys like "__infer_0", but the Checker
+        // needs keys matching the original type parameter names (e.g., "T", "U")
+        // so that instantiate_type can find and replace TypeParameter nodes.
+        let infer_subst = infer_ctx.get_current_substitution();
+        let mut result_subst = TypeSubstitution::new();
+        for (i, tp) in func.type_params.iter().enumerate() {
+            use std::fmt::Write;
+            placeholder_buf.clear();
+            write!(placeholder_buf, "__infer_{}", type_param_vars[i].0).unwrap();
+            let placeholder_atom = self.interner.intern_string(&placeholder_buf);
+            if let Some(resolved) = infer_subst.get(placeholder_atom) {
+                result_subst.insert(tp.name, resolved);
+            }
+        }
+        result_subst
     }
 
     fn check_argument_types(
