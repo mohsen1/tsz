@@ -419,6 +419,7 @@ impl<'a> ES5ClassTransformer<'a> {
             name: self.class_name.clone(),
             parameters: params,
             body: ctor_body,
+            body_source_range: None,
         })
     }
 

@@ -232,6 +232,8 @@ pub enum IRNode {
         name: String,
         parameters: Vec<IRParam>,
         body: Vec<IRNode>,
+        /// Source range of the body block (for preserving single-line formatting)
+        body_source_range: Option<(u32, u32)>,
     },
 
     // =========================================================================
@@ -601,6 +603,7 @@ impl IRNode {
             name: name.into(),
             parameters: params,
             body,
+            body_source_range: None,
         }
     }
 

@@ -362,11 +362,14 @@ impl<'a> NamespaceES5Transformer<'a> {
         let func_name = get_identifier_text(self.arena, func_data.name)?;
         let is_exported = has_export_modifier(self.arena, &func_data.modifiers);
 
+        let body_source_range = self.arena.get(func_data.body).map(|n| (n.pos, n.end));
+
         // Convert function to IR (stripping type annotations)
         let func_decl = IRNode::FunctionDecl {
             name: func_name.clone(),
             parameters: convert_function_parameters(self.arena, &func_data.parameters),
             body: convert_function_body(self.arena, func_data.body),
+            body_source_range,
         };
 
         if is_exported {
@@ -398,6 +401,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             name: func_name.clone(),
             parameters: convert_function_parameters(self.arena, &func_data.parameters),
             body: convert_function_body(self.arena, func_data.body),
+            body_source_range: None,
         };
 
         Some(IRNode::Sequence(vec![
@@ -828,11 +832,14 @@ impl<'a> NamespaceTransformContext<'a> {
         let func_name = get_identifier_text(self.arena, func_data.name)?;
         let is_exported = has_export_modifier(self.arena, &func_data.modifiers);
 
+        let body_source_range = self.arena.get(func_data.body).map(|n| (n.pos, n.end));
+
         // Convert function to IR (stripping type annotations)
         let func_decl = IRNode::FunctionDecl {
             name: func_name.clone(),
             parameters: convert_function_parameters(self.arena, &func_data.parameters),
             body: convert_function_body(self.arena, func_data.body),
+            body_source_range,
         };
 
         if is_exported {
@@ -868,6 +875,7 @@ impl<'a> NamespaceTransformContext<'a> {
             name: func_name.clone(),
             parameters: convert_function_parameters(self.arena, &func_data.parameters),
             body: convert_function_body(self.arena, func_data.body),
+            body_source_range: None,
         };
 
         Some(IRNode::Sequence(vec![

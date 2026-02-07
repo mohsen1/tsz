@@ -416,7 +416,7 @@ impl<'a> IRPrinter<'a> {
                     self.write("; }");
                     return;
                 }
-                self.emit_function_body_with_defaults(parameters, body);
+                self.emit_function_body_with_defaults(parameters, body, *body_source_range);
             }
             IRNode::LogicalOr { left, right } => {
                 self.emit_node(left);
@@ -603,13 +603,14 @@ impl<'a> IRPrinter<'a> {
                 name,
                 parameters,
                 body,
+                body_source_range,
             } => {
                 self.write("function ");
                 self.write(name);
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
-                self.emit_function_body_with_defaults(parameters, body);
+                self.emit_function_body_with_defaults(parameters, body, *body_source_range);
             }
 
             // ES5 Class Transform Specific
@@ -1284,15 +1285,48 @@ impl<'a> IRPrinter<'a> {
     }
 
     /// Emit function body with default parameter checks prepended (ES5 style)
-    fn emit_function_body_with_defaults(&mut self, params: &[IRParam], body: &[IRNode]) {
+    fn emit_function_body_with_defaults(
+        &mut self,
+        params: &[IRParam],
+        body: &[IRNode],
+        body_source_range: Option<(u32, u32)>,
+    ) {
         // Check if any params have defaults
         let has_defaults = params.iter().any(|p| p.default_value.is_some());
 
         if !has_defaults && body.is_empty() {
-            self.write("{");
-            self.write_line();
-            self.write_indent();
-            self.write("}");
+            // Check if the source body was single-line (e.g., `{ }`)
+            // Note: node.end may extend past the block's closing `}` into parent scope,
+            // so we find the first `}` after the opening `{` to get the actual block bounds.
+            let is_source_single_line = body_source_range
+                .and_then(|(pos, end)| {
+                    self.source_text.map(|text| {
+                        let start = pos as usize;
+                        let end = std::cmp::min(end as usize, text.len());
+                        if start < end {
+                            let slice = &text[start..end];
+                            if let Some(open) = slice.find('{') {
+                                if let Some(close_offset) = slice[open + 1..].find('}') {
+                                    let inner = &slice[open..open + 1 + close_offset + 1];
+                                    return !inner.contains('\n');
+                                }
+                            }
+                            !slice.contains('\n')
+                        } else {
+                            false
+                        }
+                    })
+                })
+                .unwrap_or(false);
+
+            if is_source_single_line {
+                self.write("{ }");
+            } else {
+                self.write("{");
+                self.write_line();
+                self.write_indent();
+                self.write("}");
+            }
             return;
         }
 

@@ -155,6 +155,7 @@ fn test_ir_function_decl() {
             name,
             parameters,
             body,
+            body_source_range: _,
         } => {
             assert_eq!(name, "identity");
             assert_eq!(parameters.len(), 1);
