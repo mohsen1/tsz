@@ -18,6 +18,7 @@ jobs = 14
 # Faster builds for development
 opt-level = 0
 incremental = true
+codegen-units = 256
 
 [env]
 # Set larger stack size for all builds (8MB)
