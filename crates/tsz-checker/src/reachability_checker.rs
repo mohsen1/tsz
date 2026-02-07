@@ -51,11 +51,17 @@ impl<'a> CheckerState<'a> {
         let mut unreachable = false;
         for &stmt_idx in statements {
             if unreachable {
-                // Skip empty statements and function declarations -
-                // they don't trigger TS7027 in TypeScript
+                // Skip statements that don't trigger TS7027 in TypeScript:
+                // - empty statements
+                // - function declarations (hoisted)
+                // - type/interface declarations (no runtime effect)
+                // - var declarations without initializers (hoisted, no runtime effect)
                 let should_skip = if let Some(node) = self.ctx.arena.get(stmt_idx) {
                     node.kind == syntax_kind_ext::EMPTY_STATEMENT
                         || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                        || node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                        || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                        || self.is_var_without_initializer(stmt_idx, node)
                 } else {
                     false
                 };
@@ -366,5 +372,49 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(false),
             _ => false,
         }
+    }
+
+    /// Check if a statement is a `var` declaration without any initializers.
+    /// `var t;` after a throw/return is hoisted and has no runtime effect,
+    /// so TypeScript doesn't report TS7027 for it.
+    fn is_var_without_initializer(
+        &self,
+        _stmt_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        use tsz_parser::parser::flags::node_flags;
+
+        if node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_data) = self.ctx.arena.get_variable(node) else {
+            return false;
+        };
+        // Check if it's `var` (not let/const) by examining declaration list flags
+        // The flags are on the VariableDeclarationList child node
+        for &decl_idx in &var_data.declarations.nodes {
+            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                // Check the declaration node or its parent for let/const flags
+                let flags = decl_node.flags as u32;
+                if (flags & (node_flags::LET | node_flags::CONST)) != 0 {
+                    return false;
+                }
+                // Check if parent (VariableDeclarationList) has let/const flags
+                if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
+                    if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                        if (parent_node.flags as u32 & (node_flags::LET | node_flags::CONST)) != 0 {
+                            return false;
+                        }
+                    }
+                }
+                // Check that declaration has no initializer
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) {
+                    if !var_decl.initializer.is_none() {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 }
