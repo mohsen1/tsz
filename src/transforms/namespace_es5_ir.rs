@@ -1253,18 +1253,15 @@ fn convert_exported_variable_declarations(
                     && let Some(decl) = arena.get_variable_declaration(decl_node)
                     && let Some(name) = get_identifier_text(arena, decl.name)
                 {
-                    let value = if !decl.initializer.is_none() {
-                        AstToIr::new(arena).convert_expression(decl.initializer)
-                    } else {
-                        // No initializer: emit `void 0` to match tsc behavior
-                        IRNode::Raw("void 0".to_string())
-                    };
-
-                    result.push(IRNode::NamespaceExport {
-                        namespace: ns_name.to_string(),
-                        name,
-                        value: Box::new(value),
-                    });
+                    if !decl.initializer.is_none() {
+                        let value = AstToIr::new(arena).convert_expression(decl.initializer);
+                        result.push(IRNode::NamespaceExport {
+                            namespace: ns_name.to_string(),
+                            name,
+                            value: Box::new(value),
+                        });
+                    }
+                    // No initializer: tsc omits the assignment entirely in namespaces
                 }
             }
         }
