@@ -3,8 +3,7 @@
 //! Provides support for `workspace/willRenameFiles` to update import statements
 //! when files are renamed or moved.
 
-use crate::lsp::position::{LineMap, Range};
-use crate::parser::node::NodeArena;
+use crate::lsp::position::Range;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
@@ -19,23 +18,9 @@ pub struct ImportLocation {
     pub current_specifier: String,
 }
 
-/// Provider for finding imports/exports that reference a renamed file.
-pub struct FileRenameProvider<'a> {
-    arena: &'a NodeArena,
-    line_map: &'a LineMap,
-    source_text: &'a str,
-}
+define_lsp_provider!(minimal FileRenameProvider, "Provider for finding imports/exports that reference a renamed file.");
 
 impl<'a> FileRenameProvider<'a> {
-    /// Create a new FileRename provider.
-    pub fn new(arena: &'a NodeArena, line_map: &'a LineMap, source_text: &'a str) -> Self {
-        Self {
-            arena,
-            line_map,
-            source_text,
-        }
-    }
-
     /// Find all import/export specifiers in the given AST that might reference
     /// the renamed file.
     ///

@@ -12,8 +12,7 @@
 //! - `children` corresponds to tsserver's `childItems`
 //! - `container_name` provides the parent container for flat symbol lists
 
-use crate::lsp::position::{LineMap, Position, Range};
-use crate::parser::node::NodeArena;
+use crate::lsp::position::{Position, Range};
 use crate::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
@@ -140,23 +139,9 @@ impl DocumentSymbol {
     }
 }
 
-/// Document symbol provider.
-pub struct DocumentSymbolProvider<'a> {
-    arena: &'a NodeArena,
-    line_map: &'a LineMap,
-    source_text: &'a str,
-}
+define_lsp_provider!(minimal DocumentSymbolProvider, "Document symbol provider.");
 
 impl<'a> DocumentSymbolProvider<'a> {
-    /// Create a new document symbol provider.
-    pub fn new(arena: &'a NodeArena, line_map: &'a LineMap, source_text: &'a str) -> Self {
-        Self {
-            arena,
-            line_map,
-            source_text,
-        }
-    }
-
     /// Get all symbols in the document.
     pub fn get_document_symbols(&self, root: NodeIndex) -> Vec<DocumentSymbol> {
         self.collect_symbols(root, None)

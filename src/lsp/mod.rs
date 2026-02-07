@@ -24,6 +24,8 @@
 //! - AST node lookup by position
 //! - Symbol-based navigation using binder data
 
+#[macro_use]
+pub mod provider_macro;
 pub mod call_hierarchy;
 pub mod code_actions;
 pub mod code_lens;
