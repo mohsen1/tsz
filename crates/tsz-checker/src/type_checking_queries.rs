@@ -2416,6 +2416,15 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.types.intern(TypeKey::TypeParameter(p.clone()))
                                     })
                                     .collect();
+
+                                // Cache type parameters for Application expansion.
+                                // Use file binder's sym_id (after lib merge) so the def_id
+                                // matches what type reference resolution produces.
+                                let file_sym_id =
+                                    self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
+                                let def_id = self.ctx.get_or_create_def_id(file_sym_id);
+                                self.ctx.insert_def_type_params(def_id, params.clone());
+
                                 lib_types.push(ty);
                             } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
                                 // For subsequent definitions with type params, substitute them

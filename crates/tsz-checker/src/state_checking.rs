@@ -1138,11 +1138,31 @@ impl<'a> CheckerState<'a> {
         // Route through QueryDatabase so repeated property lookups hit QueryCache.
         // This is especially important for hot paths like repeated `string[].push`
         // checks in class-heavy files.
-        self.ctx.types.resolve_property_access_with_options(
+        let result = self.ctx.types.resolve_property_access_with_options(
             object_type,
             prop_name,
             self.ctx.compiler_options.no_unchecked_indexed_access,
-        )
+        );
+
+        // If property not found and the type is an Application (e.g. Promise<number>),
+        // the QueryCache's noop TypeResolver can't expand it. Evaluate the Application
+        // to its structural form and retry property access on the expanded type.
+        if matches!(
+            result,
+            tsz_solver::operations_property::PropertyAccessResult::PropertyNotFound { .. }
+        ) && tsz_solver::is_generic_application(self.ctx.types, object_type)
+        {
+            let expanded = self.evaluate_application_type(object_type);
+            if expanded != object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
+                return self.ctx.types.resolve_property_access_with_options(
+                    expanded,
+                    prop_name,
+                    self.ctx.compiler_options.no_unchecked_indexed_access,
+                );
+            }
+        }
+
+        result
     }
 
     /// Check if an assignment target is a readonly property.

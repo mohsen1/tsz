@@ -216,6 +216,12 @@ pub enum SubtypeFailureReason {
         source_type: TypeId,
         target_type: TypeId,
     },
+    /// Multiple required properties are missing in the source type (TS2739).
+    MissingProperties {
+        property_names: Vec<Atom>,
+        source_type: TypeId,
+        target_type: TypeId,
+    },
     /// Property types are incompatible.
     PropertyTypeMismatch {
         property_name: Atom,
@@ -517,6 +523,7 @@ pub mod codes {
     pub use dc::PROPERTY_MISSING_IN_TYPE as PROPERTY_MISSING;
     pub use dc::PROPERTY_NOMINAL_MISMATCH;
     pub use dc::THIS_CONTEXT_MISMATCH;
+    pub use dc::TYPE_MISSING_PROPERTIES as MISSING_PROPERTIES;
     pub use dc::TYPE_NOT_ASSIGNABLE_TO_TYPE as TYPE_NOT_ASSIGNABLE;
     pub use dc::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED as CONSTRAINT_NOT_SATISFIED;
 
@@ -902,6 +909,7 @@ impl SubtypeFailureReason {
     pub fn diagnostic_code(&self) -> u32 {
         match self {
             SubtypeFailureReason::MissingProperty { .. } => codes::PROPERTY_MISSING,
+            SubtypeFailureReason::MissingProperties { .. } => codes::MISSING_PROPERTIES,
             SubtypeFailureReason::PropertyTypeMismatch { .. } => codes::PROPERTY_TYPE_MISMATCH,
             SubtypeFailureReason::OptionalPropertyRequired { .. } => codes::PROPERTY_MISSING,
             SubtypeFailureReason::ReadonlyPropertyMismatch { .. } => codes::READONLY_PROPERTY,
@@ -948,6 +956,15 @@ impl SubtypeFailureReason {
                     (*source_type).into(),
                     (*target_type).into(),
                 ],
+            ),
+
+            SubtypeFailureReason::MissingProperties {
+                property_names: _,
+                source_type,
+                target_type,
+            } => PendingDiagnostic::error(
+                codes::MISSING_PROPERTIES,
+                vec![(*source_type).into(), (*target_type).into()],
             ),
 
             SubtypeFailureReason::PropertyTypeMismatch {

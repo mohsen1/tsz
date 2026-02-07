@@ -2017,13 +2017,20 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
         };
 
-        // Get type parameters for this symbol
+        // Get type parameters for this symbol (try SymbolRef first, then DefId)
         let type_params = match self.db.get_type_params(symbol_ref) {
             Some(params) if !params.is_empty() => params,
-            _ => {
-                // No type params - resolve on the body directly
-                return self.resolve_property_access_inner(body_type, prop_name, Some(prop_atom));
-            }
+            _ => match self.db.get_lazy_type_params(def_id) {
+                Some(params) if !params.is_empty() => params,
+                _ => {
+                    // No type params - resolve on the body directly
+                    return self.resolve_property_access_inner(
+                        body_type,
+                        prop_name,
+                        Some(prop_atom),
+                    );
+                }
+            },
         };
 
         // The body should be an Object type with properties

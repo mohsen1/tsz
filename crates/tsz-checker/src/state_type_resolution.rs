@@ -8,7 +8,7 @@ use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeIndex, NodeList};
+use tsz_parser::parser::{NodeArena, NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::def::DefId;
@@ -252,6 +252,90 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+                // Cache type parameters for the symbol's DefId before lowering.
+                // This enables the Solver to expand Application(Lazy(DefId), Args)
+                // for generic interfaces like Promise<T>, Map<K,V>, Set<T>.
+                if let Some(sym_id) = sym_id {
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    if self.ctx.get_def_type_params(def_id).is_none() {
+                        // Try file arena first
+                        let mut found = false;
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            for &decl_idx in &symbol.declarations {
+                                if let Some(node) = self.ctx.arena.get(decl_idx)
+                                    && let Some(iface) = self.ctx.arena.get_interface(node)
+                                    && let Some(ref tpl) = iface.type_parameters
+                                {
+                                    let (params, updates) =
+                                        self.push_type_parameters(&Some(tpl.clone()));
+                                    self.pop_type_parameters(updates);
+                                    if !params.is_empty() {
+                                        self.ctx.insert_def_type_params(def_id, params);
+                                        found = true;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        // If not found in file arena, search lib arenas
+                        if !found {
+                            let lib_contexts = self.ctx.lib_contexts.clone();
+                            'outer: for lib_ctx in &lib_contexts {
+                                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
+                                    if let Some(symbol) = lib_ctx.binder.get_symbol(lib_sym_id) {
+                                        for &decl_idx in &symbol.declarations {
+                                            let arena = lib_ctx
+                                                .binder
+                                                .declaration_arenas
+                                                .get(&(lib_sym_id, decl_idx))
+                                                .map(|arc| arc.as_ref())
+                                                .unwrap_or(lib_ctx.arena.as_ref());
+                                            if let Some(node) = arena.get(decl_idx)
+                                                && let Some(iface) = arena.get_interface(node)
+                                                && let Some(ref tpl) = iface.type_parameters
+                                            {
+                                                let mut params: Vec<tsz_solver::TypeParamInfo> =
+                                                    Vec::new();
+                                                for &tp_idx in &tpl.nodes {
+                                                    let Some(tp_node) = arena.get(tp_idx) else {
+                                                        continue;
+                                                    };
+                                                    let Some(tp) =
+                                                        arena.get_type_parameter(tp_node)
+                                                    else {
+                                                        continue;
+                                                    };
+                                                    let Some(tp_name_node) = arena.get(tp.name)
+                                                    else {
+                                                        continue;
+                                                    };
+                                                    let Some(ident) =
+                                                        arena.get_identifier(tp_name_node)
+                                                    else {
+                                                        continue;
+                                                    };
+                                                    params.push(tsz_solver::TypeParamInfo {
+                                                        name: self
+                                                            .ctx
+                                                            .types
+                                                            .intern_string(&ident.escaped_text),
+                                                        constraint: None,
+                                                        default: None,
+                                                        is_const: false,
+                                                    });
+                                                }
+                                                if !params.is_empty() {
+                                                    self.ctx.insert_def_type_params(def_id, params);
+                                                }
+                                                break 'outer;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
                     |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
@@ -272,7 +356,8 @@ impl<'a> CheckerState<'a> {
                 .with_type_param_bindings(type_param_bindings);
                 let type_id = lowering.lower_type(idx);
                 // Phase 2: Still post-process to create DefIds for types that don't have them yet
-                return self.ctx.maybe_create_lazy_from_resolved(type_id);
+                let result = self.ctx.maybe_create_lazy_from_resolved(type_id);
+                return result;
             }
 
             if name == "Array" || name == "ReadonlyArray" {
@@ -676,6 +761,32 @@ impl<'a> CheckerState<'a> {
                     // Step 1: Ensure the structural type is computed and cached
                     let structural_type = self.get_type_of_symbol(sym_id);
 
+                    // Step 1.5: Cache type parameters for generic interfaces (Promise<T>, Map<K,V>, etc.)
+                    // This enables the Solver to expand Application(Lazy(DefId), Args) by providing
+                    // the type parameters needed for generic substitution.
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    if self.ctx.get_def_type_params(def_id).is_none() {
+                        // Extract type params from first declaration
+                        let first_decl = symbol
+                            .declarations
+                            .first()
+                            .copied()
+                            .unwrap_or(NodeIndex::NONE);
+                        if !first_decl.is_none() {
+                            if let Some(node) = self.ctx.arena.get(first_decl)
+                                && let Some(iface) = self.ctx.arena.get_interface(node)
+                                && let Some(ref type_params_list) = iface.type_parameters
+                            {
+                                let (params, updates) =
+                                    self.push_type_parameters(&Some(type_params_list.clone()));
+                                self.pop_type_parameters(updates);
+                                if !params.is_empty() {
+                                    self.ctx.insert_def_type_params(def_id, params);
+                                }
+                            }
+                        }
+                    }
+
                     // FIX: For interfaces with index signatures (ObjectWithIndex), return the structural
                     // type directly instead of Lazy wrapper. The Lazy type causes issues with flow
                     // analysis - it returns ANY instead of the proper type. For regular interfaces
@@ -767,32 +878,49 @@ impl<'a> CheckerState<'a> {
             // For interfaces, lower with type parameters and return both
             if symbol.flags & symbol_flags::INTERFACE != 0 {
                 if !symbol.declarations.is_empty() {
-                    // Get type parameters from first declaration
-                    let first_decl = symbol
-                        .declarations
-                        .first()
-                        .copied()
-                        .unwrap_or(NodeIndex::NONE);
-                    let type_params_list = if !first_decl.is_none() {
-                        self.ctx
-                            .arena
-                            .get(first_decl)
-                            .and_then(|node| self.ctx.arena.get_interface(node))
-                            .and_then(|iface| iface.type_parameters.clone())
-                    } else {
-                        None
-                    };
-
-                    // Push type params, lower interface, pop type params
-                    let (params, updates) = self.push_type_parameters(&type_params_list);
-
-                    let symbol_arena = self
+                    // Build per-declaration arena pairs for multi-arena support
+                    // (e.g. Promise has declarations in lib.es5.d.ts, lib.es2018.promise.d.ts, etc.)
+                    let fallback_arena: &NodeArena = self
                         .ctx
                         .binder
                         .symbol_arenas
                         .get(&sym_id)
                         .map(|arena| arena.as_ref())
                         .unwrap_or(self.ctx.arena);
+
+                    let has_declaration_arenas = symbol.declarations.iter().any(|&decl_idx| {
+                        self.ctx
+                            .binder
+                            .declaration_arenas
+                            .contains_key(&(sym_id, decl_idx))
+                    });
+
+                    let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
+                        .declarations
+                        .iter()
+                        .map(|&decl_idx| {
+                            let arena = self
+                                .ctx
+                                .binder
+                                .declaration_arenas
+                                .get(&(sym_id, decl_idx))
+                                .map(|arc| arc.as_ref())
+                                .unwrap_or(fallback_arena);
+                            (decl_idx, arena)
+                        })
+                        .collect();
+
+                    // Get type parameters from first declaration that has them
+                    let type_params_list =
+                        decls_with_arenas.iter().find_map(|(decl_idx, arena)| {
+                            arena
+                                .get(*decl_idx)
+                                .and_then(|node| arena.get_interface(node))
+                                .and_then(|iface| iface.type_parameters.clone())
+                        });
+
+                    // Push type params, lower interface, pop type params
+                    let (params, updates) = self.push_type_parameters(&type_params_list);
 
                     let type_param_bindings = self.get_type_param_bindings();
                     let type_resolver =
@@ -809,15 +937,23 @@ impl<'a> CheckerState<'a> {
                     };
 
                     let lowering = TypeLowering::with_hybrid_resolver(
-                        symbol_arena,
+                        fallback_arena,
                         self.ctx.types,
                         &type_resolver,
                         &def_id_resolver,
                         &value_resolver,
                     )
                     .with_type_param_bindings(type_param_bindings);
-                    let interface_type =
-                        lowering.lower_interface_declarations(&symbol.declarations);
+
+                    // Use merged interface lowering for multi-arena declarations
+                    let has_multi_arenas = has_declaration_arenas;
+                    let interface_type = if has_multi_arenas {
+                        let (ty, _merged_params) =
+                            lowering.lower_merged_interface_declarations(&decls_with_arenas);
+                        ty
+                    } else {
+                        lowering.lower_interface_declarations(&symbol.declarations)
+                    };
                     let merged =
                         self.merge_interface_heritage_types(&symbol.declarations, interface_type);
 
