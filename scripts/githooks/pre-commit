@@ -212,7 +212,7 @@ done
 
 # Also include root crate if root files changed
 if [ "$ROOT_CHANGED" = "true" ]; then
-    CLIPPY_PKGS="$CLIPPY_PKGS -p wasm"
+    CLIPPY_PKGS="$CLIPPY_PKGS -p tsz"
 fi
 
 # Try auto-fix first, then verify
@@ -253,17 +253,17 @@ done
 # Also test root crate if root changed
 if [ "$ROOT_CHANGED" = "true" ]; then
     if [ -z "$NEXTEST_FILTER" ]; then
-        NEXTEST_FILTER="package(wasm)"
+        NEXTEST_FILTER="package(tsz)"
     else
-        NEXTEST_FILTER="$NEXTEST_FILTER | package(wasm)"
+        NEXTEST_FILTER="$NEXTEST_FILTER | package(tsz)"
     fi
 fi
 
-# Only include root wasm crate if root files or solver/checker changed.
+# Only include root tsz crate if root files or solver/checker changed.
 # Previously this was unconditional, forcing slow integration tests on every commit.
 if [ "$ROOT_CHANGED" = "true" ] || [ "$SOLVER_OR_CHECKER_CHANGED" = "true" ]; then
-    if ! echo "$NEXTEST_FILTER" | grep -q "package(wasm)"; then
-        NEXTEST_FILTER="$NEXTEST_FILTER | package(wasm)"
+    if ! echo "$NEXTEST_FILTER" | grep -q "package(tsz)"; then
+        NEXTEST_FILTER="$NEXTEST_FILTER | package(tsz)"
     fi
 fi
 
@@ -281,7 +281,7 @@ else
         TEST_PKGS="$TEST_PKGS -p $crate"
     done
     if [ "$ROOT_CHANGED" = "true" ]; then
-        TEST_PKGS="$TEST_PKGS -p wasm"
+        TEST_PKGS="$TEST_PKGS -p tsz"
     fi
     TEST_OUTPUT=$(cargo test $TEST_PKGS 2>&1) || {
         echo "$TEST_OUTPUT" | tail -20

@@ -367,7 +367,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Test root crate
-        run: cargo nextest run --profile ci -p wasm
+        run: cargo nextest run --profile ci -p tsz
 
   # ─── WASM build ────────────────────────────────────────────────────────────
   wasm-build:

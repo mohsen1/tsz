@@ -11,7 +11,7 @@ authors.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-tsz = { path = "../..", package = "wasm" }
+tsz = { path = "../.." }
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
 tsz-parser = { workspace = true }
