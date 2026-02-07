@@ -154,6 +154,11 @@ pub trait StatementCheckCallbacks {
 
     /// Get the text of a node (used for getting label names).
     fn get_node_text(&self, idx: NodeIndex) -> Option<String>;
+
+    /// Check for declarations in single-statement position (TS1156).
+    /// Called when a statement in a control flow construct (if/while/do/for) body
+    /// is a declaration that requires a block context.
+    fn check_declaration_in_statement_position(&mut self, stmt_idx: NodeIndex);
 }
 
 /// Statement type checker that dispatches to specialized handlers.
@@ -221,9 +226,11 @@ impl StatementChecker {
                     state.check_await_expression(expression);
                     state.get_type_of_node(expression);
                     // Check then branch
+                    state.check_declaration_in_statement_position(then_stmt);
                     state.check_statement(then_stmt);
                     // Check else branch if present
                     if !else_stmt.is_none() {
+                        state.check_declaration_in_statement_position(else_stmt);
                         state.check_statement(else_stmt);
                     }
                 }
@@ -261,6 +268,7 @@ impl StatementChecker {
                 if let Some((condition, statement)) = loop_data {
                     state.get_type_of_node(condition);
                     state.enter_iteration_statement();
+                    state.check_declaration_in_statement_position(statement);
                     state.check_statement(statement);
                     state.leave_iteration_statement();
                 }
@@ -297,6 +305,7 @@ impl StatementChecker {
                         state.get_type_of_node(incrementor);
                     }
                     state.enter_iteration_statement();
+                    state.check_declaration_in_statement_position(statement);
                     state.check_statement(statement);
                     state.leave_iteration_statement();
                 }
@@ -345,6 +354,7 @@ impl StatementChecker {
                         state.get_type_of_node(initializer);
                     }
                     state.enter_iteration_statement();
+                    state.check_declaration_in_statement_position(statement);
                     state.check_statement(statement);
                     state.leave_iteration_statement();
                 }

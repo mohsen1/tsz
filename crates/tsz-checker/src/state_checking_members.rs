@@ -3252,4 +3252,30 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Use the resolved text from the identifier data
         Some(self.ctx.arena.resolve_identifier_text(ident).to_string())
     }
+
+    fn check_declaration_in_statement_position(&mut self, stmt_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        // TS1156: '{0}' declarations can only be declared inside a block.
+        // This fires when an interface or type alias declaration appears as
+        // the body of a control flow statement (if/while/for) without braces.
+        let decl_kind = match node.kind {
+            syntax_kind_ext::INTERFACE_DECLARATION => Some("interface"),
+            _ => None,
+        };
+
+        if let Some(kind_name) = decl_kind {
+            let msg = format!(
+                "'{}' declarations can only be declared inside a block.",
+                kind_name
+            );
+            self.error_at_node(
+                stmt_idx,
+                &msg,
+                crate::types::diagnostics::diagnostic_codes::USING_DECLARATION_ONLY_IN_BLOCK,
+            );
+        }
+    }
 }
