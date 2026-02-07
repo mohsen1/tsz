@@ -824,7 +824,7 @@ impl<'a> NamespaceTransformContext<'a> {
         let is_exported = has_export_modifier(self.arena, &ns_data.modifiers);
 
         // Transform body
-        let body = self.transform_namespace_body(innermost_body, &name_parts);
+        let mut body = self.transform_namespace_body(innermost_body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types).
         // A namespace is instantiated if it has any value declarations
@@ -833,6 +833,11 @@ impl<'a> NamespaceTransformContext<'a> {
         if body.is_empty() && !self.has_value_declarations(innermost_body) {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -844,7 +849,7 @@ impl<'a> NamespaceTransformContext<'a> {
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
             parent_name: None,
-            param_name: None,
+            param_name,
         })
     }
 
@@ -1231,7 +1236,7 @@ impl<'a> NamespaceTransformContext<'a> {
         let is_exported = has_export_modifier(self.arena, &ns_data.modifiers);
 
         // Transform body
-        let body = self.transform_namespace_body(innermost_body, &name_parts);
+        let mut body = self.transform_namespace_body(innermost_body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types).
         // A namespace is instantiated if it has any value declarations
@@ -1240,6 +1245,11 @@ impl<'a> NamespaceTransformContext<'a> {
         if body.is_empty() && !self.has_value_declarations(innermost_body) {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -1251,7 +1261,7 @@ impl<'a> NamespaceTransformContext<'a> {
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
             parent_name: Some(parent_ns.to_string()),
-            param_name: None,
+            param_name,
         })
     }
 
@@ -1277,7 +1287,7 @@ impl<'a> NamespaceTransformContext<'a> {
         let is_exported = true; // Always exported
 
         // Transform body
-        let body = self.transform_namespace_body(innermost_body, &name_parts);
+        let mut body = self.transform_namespace_body(innermost_body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types).
         // A namespace is instantiated if it has any value declarations
@@ -1286,6 +1296,11 @@ impl<'a> NamespaceTransformContext<'a> {
         if body.is_empty() && !self.has_value_declarations(innermost_body) {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -1297,7 +1312,7 @@ impl<'a> NamespaceTransformContext<'a> {
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
             parent_name: Some(parent_ns.to_string()),
-            param_name: None,
+            param_name,
         })
     }
 }
