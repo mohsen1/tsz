@@ -126,6 +126,24 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a type has a numeric index signature, making it "array-like".
+    /// TypeScript allows array destructuring of array-like types without [Symbol.iterator]().
+    pub(crate) fn has_numeric_index_signature(&self, type_id: TypeId) -> bool {
+        use tsz_solver::type_queries::{FullIterableTypeKind, classify_full_iterable_type};
+        match classify_full_iterable_type(self.ctx.types, type_id) {
+            FullIterableTypeKind::Object(shape_id) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                shape.number_index.is_some()
+            }
+            FullIterableTypeKind::Application { base } => self.has_numeric_index_signature(base),
+            FullIterableTypeKind::Readonly(inner) => self.has_numeric_index_signature(inner),
+            FullIterableTypeKind::Union(members) => members
+                .iter()
+                .all(|&m| self.is_iterable_type(m) || self.has_numeric_index_signature(m)),
+            _ => false,
+        }
+    }
+
     /// Check if a type is async iterable (has Symbol.asyncIterator protocol).
     pub fn is_async_iterable_type(&self, type_id: TypeId) -> bool {
         // Intrinsic types that are always iterable or not iterable
@@ -353,6 +371,12 @@ impl<'a> CheckerState<'a> {
 
         // Check if the type is iterable
         if self.is_iterable_type(resolved_type) {
+            return true;
+        }
+
+        // TypeScript also allows array destructuring for "array-like" types
+        // (types with numeric index signatures) even without [Symbol.iterator]()
+        if self.has_numeric_index_signature(resolved_type) {
             return true;
         }
 

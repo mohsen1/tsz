@@ -1398,6 +1398,34 @@ impl<'a> TypeLowering<'a> {
         {
             return Some(self.interner.intern_string(&lit_data.text));
         }
+        // Handle computed property names like [Symbol.iterator]
+        if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(node)
+        {
+            if let Some(symbol_name) = self.get_well_known_symbol_name(computed.expression) {
+                return Some(self.interner.intern_string(&symbol_name));
+            }
+        }
+        None
+    }
+
+    /// Try to resolve a computed property expression to a well-known symbol name.
+    /// Returns names like "[Symbol.iterator]", "[Symbol.asyncIterator]", etc.
+    fn get_well_known_symbol_name(&self, expr_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(expr_idx)?;
+
+        // Handle Symbol.iterator (property access: Symbol.iterator)
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(node)?;
+            let base_node = self.arena.get(access.expression)?;
+            let base_ident = self.arena.get_identifier(base_node)?;
+            if base_ident.escaped_text == "Symbol" {
+                let name_node = self.arena.get(access.name_or_argument)?;
+                let name_ident = self.arena.get_identifier(name_node)?;
+                return Some(format!("[Symbol.{}]", name_ident.escaped_text));
+            }
+        }
+
         None
     }
 

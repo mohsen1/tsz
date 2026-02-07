@@ -259,10 +259,12 @@ if [ "$ROOT_CHANGED" = "true" ]; then
     fi
 fi
 
-# The workspace's integration test binaries live in the root `wasm` package.
-# Ensure we always include it so crate-only edits still execute tests.
-if ! echo "$NEXTEST_FILTER" | grep -q "package(wasm)"; then
-    NEXTEST_FILTER="$NEXTEST_FILTER | package(wasm)"
+# Only include root wasm crate if root files or solver/checker changed.
+# Previously this was unconditional, forcing slow integration tests on every commit.
+if [ "$ROOT_CHANGED" = "true" ] || [ "$SOLVER_OR_CHECKER_CHANGED" = "true" ]; then
+    if ! echo "$NEXTEST_FILTER" | grep -q "package(wasm)"; then
+        NEXTEST_FILTER="$NEXTEST_FILTER | package(wasm)"
+    fi
 fi
 
 if cargo nextest --version >/dev/null 2>&1; then

@@ -846,7 +846,8 @@ impl<'a> CheckerState<'a> {
 
         // First check if the type is iterable (TS2488 - preferred error)
         // This is the primary check for array destructuring
-        if !self.is_iterable_type(source_type) {
+        // Also allow array-like types with numeric index signatures
+        if !self.is_iterable_type(source_type) && !self.has_numeric_index_signature(source_type) {
             let type_str = self.format_type(source_type);
             let message = format_message(
                 diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
@@ -2652,7 +2653,7 @@ impl<'a> CheckerState<'a> {
 
         let name_node = self.ctx.arena.get(access.name_or_argument)?;
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some(format!("Symbol.{}", ident.escaped_text));
+            return Some(format!("[Symbol.{}]", ident.escaped_text));
         }
 
         if matches!(
@@ -2662,7 +2663,7 @@ impl<'a> CheckerState<'a> {
         ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
             && !lit.text.is_empty()
         {
-            return Some(format!("Symbol.{}", lit.text));
+            return Some(format!("[Symbol.{}]", lit.text));
         }
 
         None
