@@ -7,7 +7,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rayon::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
-use wasm::solver::{ObjectFlags, TypeId, TypeInterner};
+use tsz::solver::{ObjectFlags, TypeId, TypeInterner};
 
 /// Benchmark type interning under concurrent load
 fn bench_concurrent_interning(c: &mut Criterion) {
@@ -67,7 +67,7 @@ fn bench_concurrent_objects(c: &mut Criterion) {
                     let interner = Arc::new(TypeInterner::new());
                     pool.scope(|_s| {
                         (0..1000).into_par_iter().for_each(|i| {
-                            use wasm::solver::{PropertyInfo, Visibility};
+                            use tsz::solver::{PropertyInfo, Visibility};
                             let name = interner.intern_string(&format!("prop_{}", i % 100));
                             let _ = interner.object(vec![PropertyInfo {
                                 name,
@@ -185,7 +185,7 @@ fn bench_property_lookup(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(2));
 
     group.bench_function("small_object", |b| {
-        use wasm::solver::{ObjectShape, PropertyInfo, Visibility};
+        use tsz::solver::{ObjectShape, PropertyInfo, Visibility};
         let interner = TypeInterner::new();
 
         // Create a small object (under cache threshold)
@@ -217,7 +217,7 @@ fn bench_property_lookup(c: &mut Criterion) {
     });
 
     group.bench_function("large_object_cached", |b| {
-        use wasm::solver::{ObjectShape, PropertyInfo, Visibility};
+        use tsz::solver::{ObjectShape, PropertyInfo, Visibility};
         let interner = TypeInterner::new();
 
         // Create a large object (above cache threshold)

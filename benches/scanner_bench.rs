@@ -6,8 +6,8 @@
 //! TypeScript source files and identify serialization overhead.
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use wasm::scanner::SyntaxKind;
-use wasm::scanner_impl::ScannerState;
+use tsz::scanner::SyntaxKind;
+use tsz::scanner_impl::ScannerState;
 
 /// Sample TypeScript source for basic benchmarking
 const SMALL_SOURCE: &str = r#"
@@ -253,7 +253,7 @@ fn bench_string_allocation(c: &mut Criterion) {
 
 /// Benchmark: Keyword lookup
 fn bench_keyword_lookup(c: &mut Criterion) {
-    use wasm::scanner::text_to_keyword;
+    use tsz::scanner::text_to_keyword;
 
     let keywords = vec![
         "const",

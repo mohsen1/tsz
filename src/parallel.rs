@@ -15,7 +15,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use wasm::parallel::parse_files_parallel;
+//! use tsz::parallel::parse_files_parallel;
 //!
 //! let files = vec![
 //!     ("src/a.ts".to_string(), "let a = 1;".to_string()),
@@ -32,7 +32,7 @@ use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use crate::cli::config::resolve_default_lib_files;
+use crate::config::resolve_default_lib_files;
 use crate::emitter::ScriptTarget;
 use crate::lib_loader;
 use crate::parser::NodeIndex;
@@ -1520,7 +1520,7 @@ pub fn check_files_parallel(
 }
 
 /// Create a BinderState from a BoundFile for type checking
-pub(crate) fn create_binder_from_bound_file(
+pub fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,
     file_idx: usize,

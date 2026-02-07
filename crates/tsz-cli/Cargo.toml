@@ -1,0 +1,54 @@
+[package]
+name = "tsz-cli"
+description = "CLI binaries for the tsz TypeScript compiler"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "tsz"
+path = "src/bin/tsz.rs"
+
+[[bin]]
+name = "tsz-lsp"
+path = "src/bin/tsz_lsp.rs"
+
+[[bin]]
+name = "tsz-server"
+path = "src/bin/tsz_server/main.rs"
+
+[[bin]]
+name = "audit-unsoundness"
+path = "src/bin/audit_unsoundness.rs"
+
+[dependencies]
+tsz = { path = "../..", package = "wasm" }
+tsz-common = { workspace = true }
+tsz-scanner = { workspace = true }
+tsz-parser = { workspace = true }
+tsz-binder = { workspace = true }
+tsz-solver = { workspace = true }
+tsz-checker = { workspace = true }
+tsz-emitter = { workspace = true }
+tsz-lsp = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+globset = { workspace = true }
+notify = { workspace = true }
+rustc-hash = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+walkdir = { workspace = true }
+rayon = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-tree = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

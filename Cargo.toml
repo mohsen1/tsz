@@ -20,6 +20,8 @@ tsz-solver = { path = "crates/tsz-solver" }
 tsz-checker = { path = "crates/tsz-checker" }
 tsz-emitter = { path = "crates/tsz-emitter" }
 tsz-lsp = { path = "crates/tsz-lsp" }
+tsz-cli = { path = "crates/tsz-cli" }
+tsz-wasm = { path = "crates/tsz-wasm" }
 
 # External dependencies (shared versions)
 anyhow = "1.0"
@@ -157,32 +159,13 @@ trivially_copy_pass_by_ref = "allow"
 name = "wasm"
 version.workspace = true
 edition.workspace = true
-description = "TypeScript compiler and type checker with WASM support"
+description = "Core TypeScript compiler and type checker library"
 repository.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [lib]
-crate-type = ["cdylib", "rlib"]
-
-[[bin]]
-name = "tsz"
-path = "src/bin/tsz.rs"
-required-features = ["cli"]
-
-[[bin]]
-name = "tsz-lsp"
-path = "src/bin/tsz_lsp.rs"
-required-features = ["cli"]
-
-[[bin]]
-name = "tsz-server"
-path = "src/bin/tsz_server/main.rs"
-required-features = ["cli"]
-
-[features]
-default = ["cli"]
-cli = []
+crate-type = ["rlib"]
 
 [dependencies]
 tsz-common = { workspace = true }
@@ -194,19 +177,13 @@ tsz-checker = { workspace = true }
 tsz-emitter = { workspace = true }
 tsz-lsp = { workspace = true }
 anyhow = { workspace = true }
-clap = { workspace = true }
-colored = { workspace = true }
-globset = { workspace = true }
-notify = { workspace = true }
 wasm-bindgen = { workspace = true }
-console_error_panic_hook = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
 rustc-hash = { workspace = true }
 rayon = { workspace = true }
 memchr = { workspace = true }
-walkdir = { workspace = true }
 smallvec = { workspace = true }
 dashmap = { workspace = true }
 fixedbitset = { workspace = true }
@@ -214,8 +191,6 @@ ena = { workspace = true }
 indexmap = { workspace = true }
 bitflags = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-tree = { workspace = true }
 once_cell = { workspace = true }
 
 [dev-dependencies]
@@ -283,9 +258,6 @@ harness = false
 [[bench]]
 name = "phase_timing_bench"
 harness = false
-
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false
 
 [lints]
 workspace = true

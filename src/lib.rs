@@ -3,14 +3,6 @@ use rustc_hash::FxHashMap;
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 
-// Initialize panic hook for WASM to prevent worker crashes
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(start)]
-pub fn wasm_init() {
-    // Set panic hook to log errors to console instead of crashing worker
-    console_error_panic_hook::set_once();
-}
-
 // Global cache for parsed lib files to avoid re-parsing lib.d.ts per test
 // Key: (file_name, content_hash), Value: Arc<LibFile>
 static LIB_FILE_CACHE: Lazy<Mutex<FxHashMap<(String, u64), Arc<lib_loader::LibFile>>>> =
@@ -231,23 +223,14 @@ mod test_harness;
 #[path = "tests/isolated_test_runner.rs"]
 mod isolated_test_runner;
 
-// Tracing configuration (text / tree / JSON output for debugging)
-#[cfg(not(target_arch = "wasm32"))]
-pub mod tracing_config;
+// Compiler configuration types (shared between core and CLI)
+pub mod config;
 
-// Native CLI (non-wasm targets only)
-#[cfg(not(target_arch = "wasm32"))]
-pub mod cli;
+// Re-exports from tsz-cli crate (when available as a dependency)
+// CLI code has been moved to crates/tsz-cli/
 
-// WASM integration module - parallel type checking exports
-pub mod wasm;
-pub use wasm::{WasmParallelChecker, WasmParallelParser, WasmTypeInterner};
-
-// TypeScript API compatibility layer - exposes TS-compatible APIs via WASM
-pub mod wasm_api;
-pub use wasm_api::{
-    TsDiagnostic, TsProgram, TsSignature, TsSourceFile, TsSymbol, TsType, TsTypeChecker,
-};
+// Re-exports from tsz-wasm crate (when available as a dependency)
+// WASM integration code has been moved to crates/tsz-wasm/
 
 // Module Resolution Infrastructure (non-wasm targets only - requires file system access)
 #[cfg(not(target_arch = "wasm32"))]

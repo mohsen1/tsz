@@ -142,8 +142,7 @@ fn bench_phase_timing(c: &mut Criterion) {
         // Phase 1: Parse only
         group.bench_with_input(BenchmarkId::new("1_parse", &label), &source, |b, src| {
             b.iter(|| {
-                let mut parser =
-                    wasm::parser::ParserState::new("bench.ts".to_string(), src.clone());
+                let mut parser = tsz::parser::ParserState::new("bench.ts".to_string(), src.clone());
                 let _root = parser.parse_source_file();
                 criterion::black_box(&parser);
             });
@@ -156,10 +155,10 @@ fn bench_phase_timing(c: &mut Criterion) {
             |b, src| {
                 b.iter(|| {
                     let mut parser =
-                        wasm::parser::ParserState::new("bench.ts".to_string(), src.clone());
+                        tsz::parser::ParserState::new("bench.ts".to_string(), src.clone());
                     let root = parser.parse_source_file();
 
-                    let mut binder = wasm::binder::BinderState::new();
+                    let mut binder = tsz::binder::BinderState::new();
                     binder.bind_source_file(parser.get_arena(), root);
                     criterion::black_box(&binder);
                 });
@@ -173,15 +172,15 @@ fn bench_phase_timing(c: &mut Criterion) {
             |b, src| {
                 b.iter(|| {
                     let mut parser =
-                        wasm::parser::ParserState::new("bench.ts".to_string(), src.clone());
+                        tsz::parser::ParserState::new("bench.ts".to_string(), src.clone());
                     let root = parser.parse_source_file();
 
-                    let mut binder = wasm::binder::BinderState::new();
+                    let mut binder = tsz::binder::BinderState::new();
                     binder.bind_source_file(parser.get_arena(), root);
 
-                    let interner = wasm::solver::TypeInterner::new();
-                    let query_cache = wasm::solver::QueryCache::new(&interner);
-                    let options = wasm::checker::context::CheckerOptions {
+                    let interner = tsz::solver::TypeInterner::new();
+                    let query_cache = tsz::solver::QueryCache::new(&interner);
+                    let options = tsz::checker::context::CheckerOptions {
                         strict: true,
                         no_implicit_any: true,
                         strict_null_checks: true,
@@ -189,7 +188,7 @@ fn bench_phase_timing(c: &mut Criterion) {
                         ..Default::default()
                     };
 
-                    let mut checker = wasm::checker::state::CheckerState::new(
+                    let mut checker = tsz::checker::state::CheckerState::new(
                         parser.get_arena(),
                         &binder,
                         &query_cache,
@@ -219,9 +218,9 @@ fn bench_cache_reuse(c: &mut Criterion) {
     let lines = count_lines(&source);
 
     // Pre-parse and pre-bind (these would be cached in a real LSP)
-    let mut parser = wasm::parser::ParserState::new("bench.ts".to_string(), source.clone());
+    let mut parser = tsz::parser::ParserState::new("bench.ts".to_string(), source.clone());
     let root = parser.parse_source_file();
-    let mut binder = wasm::binder::BinderState::new();
+    let mut binder = tsz::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let label = format!("100decls_{}lines", lines);
@@ -232,9 +231,9 @@ fn bench_cache_reuse(c: &mut Criterion) {
         &source,
         |b, _src| {
             b.iter(|| {
-                let interner = wasm::solver::TypeInterner::new();
-                let query_cache = wasm::solver::QueryCache::new(&interner);
-                let options = wasm::checker::context::CheckerOptions {
+                let interner = tsz::solver::TypeInterner::new();
+                let query_cache = tsz::solver::QueryCache::new(&interner);
+                let options = tsz::checker::context::CheckerOptions {
                     strict: true,
                     no_implicit_any: true,
                     strict_null_checks: true,
@@ -242,7 +241,7 @@ fn bench_cache_reuse(c: &mut Criterion) {
                     ..Default::default()
                 };
 
-                let mut checker = wasm::checker::state::CheckerState::new(
+                let mut checker = tsz::checker::state::CheckerState::new(
                     parser.get_arena(),
                     &binder,
                     &query_cache,

@@ -1121,6 +1121,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "tsz-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "colored",
+ "globset",
+ "notify",
+ "rayon",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tree",
+ "tsz-binder",
+ "tsz-checker",
+ "tsz-common",
+ "tsz-emitter",
+ "tsz-lsp",
+ "tsz-parser",
+ "tsz-scanner",
+ "tsz-solver",
+ "walkdir",
+ "wasm",
+]
+
+[[package]]
 name = "tsz-common"
 version = "0.1.0"
 dependencies = [
@@ -1209,6 +1238,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tsz-wasm"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "rustc-hash",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "tsz-binder",
+ "tsz-checker",
+ "tsz-common",
+ "tsz-emitter",
+ "tsz-lsp",
+ "tsz-parser",
+ "tsz-scanner",
+ "tsz-solver",
+ "wasm",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1257,17 +1307,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
- "clap",
- "colored",
- "console_error_panic_hook",
  "criterion",
  "dashmap",
  "ena",
  "fixedbitset",
- "globset",
  "indexmap",
  "memchr",
- "notify",
  "once_cell",
  "rayon",
  "rustc-hash",
@@ -1277,8 +1322,6 @@ dependencies = [
  "smallvec",
  "tempfile",
  "tracing",
- "tracing-subscriber",
- "tracing-tree",
  "tsz-binder",
  "tsz-checker",
  "tsz-common",
@@ -1287,7 +1330,6 @@ dependencies = [
  "tsz-parser",
  "tsz-scanner",
  "tsz-solver",
- "walkdir",
  "wasm-bindgen",
 ]
 
