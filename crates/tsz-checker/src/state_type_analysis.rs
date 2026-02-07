@@ -906,7 +906,7 @@ impl<'a> CheckerState<'a> {
                 //
                 // The instance type is still available via `class_instance_type_from_symbol`
                 // for type position contexts where it's needed.
-                if class_env_entry.is_some() {
+                if let Some((instance_type, _instance_params)) = &class_env_entry {
                     // This is a CLASS symbol - cache the constructor type (result)
                     // NOT the instance type. The instance type is used for class
                     // type position (e.g., `a: Animal`), not value position.
@@ -914,11 +914,16 @@ impl<'a> CheckerState<'a> {
                         env.insert(SymbolRef(sym_id.0), result);
                         if let Some(def_id) = def_id {
                             env.insert_def(def_id, result);
+                            // Also register the instance type so resolve_lazy returns it
+                            // in type position (e.g., `{new(): Foo}` where Foo is a class)
+                            env.insert_class_instance_type(def_id, *instance_type);
                         }
                     } else {
                         env.insert_with_params(SymbolRef(sym_id.0), result, type_params.clone());
                         if let Some(def_id) = def_id {
                             env.insert_def_with_params(def_id, result, type_params);
+                            // Also register the instance type for class
+                            env.insert_class_instance_type(def_id, *instance_type);
                         }
                     }
                 } else if type_params.is_empty() {

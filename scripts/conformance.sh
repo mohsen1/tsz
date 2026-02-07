@@ -11,8 +11,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_DIR="$REPO_ROOT/TypeScript/tests/cases"
 CACHE_FILE="$REPO_ROOT/tsc-cache-full.json"
 TSZ_BIN="$REPO_ROOT/.target/release/tsz"
-CACHE_GEN_BIN="$REPO_ROOT/.target/release/generate-tsc-cache"
-RUNNER_BIN="$REPO_ROOT/.target/release/tsz-conformance"
+CACHE_GEN_BIN="$REPO_ROOT/.target-conformance/release/generate-tsc-cache"
+RUNNER_BIN="$REPO_ROOT/.target-conformance/release/tsz-conformance"
 WORKERS=16
 
 # Colors
