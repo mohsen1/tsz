@@ -132,6 +132,9 @@ pub struct CompilerOptions {
     /// Enable error reporting in type-checked JavaScript files
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub check_js: Option<bool>,
+    /// Parse in strict mode and emit "use strict" for each source file
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub always_strict: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -415,6 +418,7 @@ pub fn resolve_compiler_options(
             resolved.checker.strict_property_initialization = true;
             resolved.checker.no_implicit_this = true;
             resolved.checker.use_unknown_in_catch_variables = true;
+            resolved.checker.always_strict = true;
         }
     }
 
@@ -428,6 +432,10 @@ pub fn resolve_compiler_options(
 
     if let Some(isolated_modules) = options.isolated_modules {
         resolved.checker.isolated_modules = isolated_modules;
+    }
+
+    if let Some(always_strict) = options.always_strict {
+        resolved.checker.always_strict = always_strict;
     }
 
     if let Some(ref custom_conditions) = options.custom_conditions {
@@ -575,6 +583,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             .or(base.experimental_decorators),
         allow_js: child.allow_js.or(base.allow_js),
         check_js: child.check_js.or(base.check_js),
+        always_strict: child.always_strict.or(base.always_strict),
     }
 }
 

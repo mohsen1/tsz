@@ -65,6 +65,9 @@ pub struct CheckerOptions {
     pub no_unused_locals: bool,
     /// When true, report errors for unused function parameters (TS6133).
     pub no_unused_parameters: bool,
+    /// When true, parse in strict mode and emit "use strict" for each source file.
+    /// Enables TS1100 for invalid use of 'arguments' in strict mode.
+    pub always_strict: bool,
 }
 
 impl CheckerOptions {
@@ -80,6 +83,7 @@ impl CheckerOptions {
             self.strict_bind_call_apply = true;
             self.strict_property_initialization = true;
             self.use_unknown_in_catch_variables = true;
+            self.always_strict = true;
             // exactOptionalPropertyTypes and other opts are not implied by --strict
         }
         self
