@@ -398,17 +398,22 @@ impl<'a> Printer<'a> {
     /// if there's a newline between them. Uses `rfind` to handle nested braces correctly.
     fn is_single_line(&self, node: &Node) -> bool {
         if let Some(text) = self.source_text {
-            let start = node.pos as usize;
+            // Use skip_trivia_forward to skip leading trivia (whitespace, comments)
+            // since node.pos includes trivia which may contain newlines from parent
+            // context. We want to check from the actual token start.
+            let actual_start = self.skip_trivia_forward(node.pos, node.end) as usize;
             let end = std::cmp::min(node.end as usize, text.len());
-            if start < end {
-                let slice = &text[start..end];
-                // Find the first `{` and last `}` in the node's range
+            if actual_start < end {
+                let slice = &text[actual_start..end];
+                // Find the first `{` and the matching `}` in the node's range.
+                // We use the first `}` after `{` rather than rfind to avoid
+                // picking up closing braces from parent blocks (the parser's
+                // node.end may extend past the block's actual closing brace).
                 if let Some(open) = slice.find('{') {
-                    if let Some(close) = slice.rfind('}') {
-                        if close > open {
-                            let inner = &slice[open..close + 1];
-                            return !inner.contains('\n');
-                        }
+                    if let Some(close_offset) = slice[open + 1..].find('}') {
+                        let close = open + 1 + close_offset;
+                        let inner = &slice[open..close + 1];
+                        return !inner.contains('\n');
                     }
                 }
                 // Fallback: check entire span for newlines
