@@ -255,6 +255,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // void expression
             k if k == syntax_kind_ext::VOID_EXPRESSION => TypeId::UNDEFINED,
 
+            // Non-null assertion (e.g., `expr!`) - strip null/undefined from inner type
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                if let Some(data) = self.checker.ctx.arena.get_unary_expr_ex(node) {
+                    let inner_type = self.checker.get_type_of_node(data.expression);
+                    tsz_solver::remove_nullish(
+                        self.checker.ctx.types.as_type_database(),
+                        inner_type,
+                    )
+                } else {
+                    TypeId::ERROR
+                }
+            }
+
             // await expression - unwrap Promise<T> to get T, with contextual typing (Phase 6 - tsz-3)
             k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
                 self.checker.get_type_of_await_expression(idx)

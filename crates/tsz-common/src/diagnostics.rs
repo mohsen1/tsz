@@ -86,6 +86,8 @@ pub fn format_message(template: &str, args: &[&str]) -> String {
 pub mod diagnostic_messages {
     // Basic type errors
     pub const TYPE_NOT_ASSIGNABLE: &str = "Type '{0}' is not assignable to type '{1}'.";
+    pub const NO_COMMON_PROPERTIES: &str =
+        "Type '{0}' has no properties in common with type '{1}'.";
     pub const CANNOT_FIND_NAME: &str = "Cannot find name '{0}'.";
     pub const CANNOT_FIND_NAMESPACE: &str = "Cannot find namespace '{0}'.";
     pub const DUPLICATE_IDENTIFIER: &str = "Duplicate identifier '{0}'.";
@@ -419,6 +421,7 @@ pub mod diagnostic_codes {
     pub const GENERIC_TYPE_REQUIRES_TYPE_ARGUMENTS: u32 = 2314;
     pub const TYPE_IS_NOT_GENERIC: u32 = 2315;
     pub const TYPE_NOT_ASSIGNABLE_TO_TYPE: u32 = 2322;
+    pub const NO_COMMON_PROPERTIES: u32 = 2559;
     pub const PROPERTY_MISSING_IN_TYPE: u32 = 2741;
     pub const TYPES_OF_PROPERTY_INCOMPATIBLE: u32 = 2326;
     pub const PROPERTY_DOES_NOT_EXIST_ON_TYPE: u32 = 2339;

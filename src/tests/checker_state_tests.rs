@@ -672,7 +672,6 @@ const log2: Logger = (id: number, extra: string) => {};
 }
 
 #[test]
-#[ignore]
 fn test_weak_type_detection_in_checker() {
     use crate::parser::ParserState;
 
@@ -24383,7 +24382,6 @@ aFn(), b;
 }
 
 #[test]
-#[ignore]
 fn test_ts2695_comma_operator_edge_cases() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
