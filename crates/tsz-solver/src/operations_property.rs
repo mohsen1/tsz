@@ -2362,10 +2362,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
 pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_name: &str) -> bool {
     match interner.lookup(type_id) {
         Some(TypeKey::Lazy(_)) => {
-            // Resolve lazy types (interfaces, classes, type aliases) before checking readonly
-            // Note: This function uses NoopResolver, which is correct for the readonly check
-            // The readonly metadata is stored in the type itself, not dependent on resolution
+            // Resolve lazy types (interfaces, classes, type aliases) before checking readonly.
+            // If evaluation returns the same type (e.g. namespace types that don't resolve
+            // through the evaluator), return false to prevent infinite recursion.
             let resolved = evaluate_type(interner, type_id);
+            if resolved == type_id {
+                return false;
+            }
             property_is_readonly(interner, resolved, prop_name)
         }
         Some(TypeKey::ReadonlyType(inner)) => {

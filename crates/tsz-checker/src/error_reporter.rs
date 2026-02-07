@@ -230,20 +230,46 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
-                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                let source_str = self.format_type(*source_type);
-                let target_str = self.format_type(*target_type);
-                let message = format_message(
-                    diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
-                    &[&prop_name, &source_str, &target_str],
-                );
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::PROPERTY_MISSING_IN_TYPE,
-                )
+                // At depth 0, emit TS2322 as the primary error (matching tsc behavior).
+                // TS2741 detail goes into related_information.
+                if depth == 0 {
+                    let source_str = self.format_type(source);
+                    let target_str = self.format_type(target);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                        &[&source_str, &target_str],
+                    );
+                    let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                    let src_str = self.format_type(*source_type);
+                    let tgt_str = self.format_type(*target_type);
+                    let detail = format_message(
+                        diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
+                        &[&prop_name, &src_str, &tgt_str],
+                    );
+                    Diagnostic::error(
+                        file_name.clone(),
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                    )
+                    .with_related(file_name, start, length, detail)
+                } else {
+                    let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                    let source_str = self.format_type(*source_type);
+                    let target_str = self.format_type(*target_type);
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
+                        &[&prop_name, &source_str, &target_str],
+                    );
+                    Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::PROPERTY_MISSING_IN_TYPE,
+                    )
+                }
             }
 
             SubtypeFailureReason::PropertyTypeMismatch {
@@ -340,20 +366,43 @@ impl<'a> CheckerState<'a> {
             }
 
             SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
-                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                let source_str = self.format_type(source);
-                let target_str = self.format_type(target);
-                let message = format_message(
-                    diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
-                    &[&prop_name, &source_str, &target_str],
-                );
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::PROPERTY_MISSING_IN_TYPE,
-                )
+                // At depth 0, emit TS2322 as the primary error (matching tsc behavior).
+                if depth == 0 {
+                    let source_str = self.format_type(source);
+                    let target_str = self.format_type(target);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                        &[&source_str, &target_str],
+                    );
+                    let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                    let detail = format_message(
+                        diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
+                        &[&prop_name, &source_str, &target_str],
+                    );
+                    Diagnostic::error(
+                        file_name.clone(),
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                    )
+                    .with_related(file_name, start, length, detail)
+                } else {
+                    let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                    let source_str = self.format_type(source);
+                    let target_str = self.format_type(target);
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
+                        &[&prop_name, &source_str, &target_str],
+                    );
+                    Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::PROPERTY_MISSING_IN_TYPE,
+                    )
+                }
             }
 
             SubtypeFailureReason::ReadonlyPropertyMismatch { property_name } => {

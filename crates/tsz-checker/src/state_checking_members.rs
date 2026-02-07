@@ -2434,6 +2434,34 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 TypeId::UNKNOWN
             };
 
+            // Extract this type from explicit `this` parameter EARLY
+            // so that infer_return_type_from_body has the correct `this` context
+            // (prevents false TS2683 during return type inference)
+            let mut pushed_this_type = false;
+            if let Some(&first_param) = func.parameters.nodes.first() {
+                if let Some(param_node) = self.ctx.arena.get(first_param)
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                {
+                    let is_this = if let Some(name_node) = self.ctx.arena.get(param.name) {
+                        if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                            self.ctx
+                                .arena
+                                .get_identifier(name_node)
+                                .is_some_and(|id| id.escaped_text == "this")
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if is_this && !param.type_annotation.is_none() {
+                        let this_type = self.get_type_from_type_node(param.type_annotation);
+                        self.ctx.this_type_stack.push(this_type);
+                        pushed_this_type = true;
+                    }
+                }
+            }
+
             // Cache parameter types from annotations (so for-of binding uses correct types)
             // and then infer for any remaining unknown parameters using contextual information.
             self.cache_parameter_types(&func.parameters.nodes, None);
@@ -2516,32 +2544,6 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             ),
                             diagnostic_codes::ASYNC_RETURN_TYPE_MUST_BE_PROMISE,
                         );
-                    }
-                }
-            }
-
-            // Extract this type from explicit `this` parameter
-            let mut pushed_this_type = false;
-            if let Some(&first_param) = func.parameters.nodes.first() {
-                if let Some(param_node) = self.ctx.arena.get(first_param)
-                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                {
-                    let is_this = if let Some(name_node) = self.ctx.arena.get(param.name) {
-                        if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-                            self.ctx
-                                .arena
-                                .get_identifier(name_node)
-                                .is_some_and(|id| id.escaped_text == "this")
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
-                    if is_this && !param.type_annotation.is_none() {
-                        let this_type = self.get_type_from_type_node(param.type_annotation);
-                        self.ctx.this_type_stack.push(this_type);
-                        pushed_this_type = true;
                     }
                 }
             }

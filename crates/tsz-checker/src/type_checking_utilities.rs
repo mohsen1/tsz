@@ -903,6 +903,32 @@ impl<'a> CheckerState<'a> {
         body_idx: NodeIndex,
         return_context: Option<TypeId>,
     ) -> TypeId {
+        // The inference pass evaluates return expressions WITHOUT narrowing
+        // context, which can produce false errors (e.g. TS2339 for discriminated
+        // union property accesses) and cache wrong types.  Snapshot diagnostic
+        // and node-type state, then restore after inference so that the
+        // subsequent check_statement pass recomputes everything with proper
+        // narrowing context.
+        let diag_count = self.ctx.diagnostics.len();
+        let emitted_before = self.ctx.emitted_diagnostics.clone();
+        let cached_before: std::collections::HashSet<u32> =
+            self.ctx.node_types.keys().copied().collect();
+
+        let result = self.infer_return_type_from_body_inner(body_idx, return_context);
+
+        self.ctx.diagnostics.truncate(diag_count);
+        self.ctx.emitted_diagnostics = emitted_before;
+        self.ctx.node_types.retain(|k, _| cached_before.contains(k));
+
+        result
+    }
+
+    /// Inner implementation of return type inference (no diagnostic/cache cleanup).
+    fn infer_return_type_from_body_inner(
+        &mut self,
+        body_idx: NodeIndex,
+        return_context: Option<TypeId>,
+    ) -> TypeId {
         if body_idx.is_none() {
             return TypeId::VOID; // No body - function returns void
         }

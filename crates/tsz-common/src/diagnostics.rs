@@ -300,6 +300,11 @@ pub mod diagnostic_messages {
     pub const TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR: &str =
         "Type '{0}' must have a '[Symbol.asyncIterator]()' method that returns an async iterator.";
 
+    // Strict mode errors
+    pub const INVALID_USE_OF_ARGUMENTS_IN_STRICT_MODE: &str =
+        "Invalid use of 'arguments' in strict mode.";
+    pub const INVALID_USE_OF_EVAL_IN_STRICT_MODE: &str = "Invalid use of 'eval' in strict mode.";
+
     // Delete operator errors
     pub const DELETE_OPERAND_CANNOT_BE_VARIABLE: &str = "The operand of a delete operator cannot be a variable, function, or parameter in strict mode.";
 
@@ -427,6 +432,10 @@ pub mod diagnostic_codes {
     pub const ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB: u32 = 2585;
     pub const LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS: u32 = 2695;
     pub const ONLY_REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE: u32 = 2749;
+
+    // Strict mode errors
+    pub const INVALID_USE_OF_ARGUMENTS_IN_STRICT_MODE: u32 = 1100;
+    pub const INVALID_USE_OF_EVAL_IN_STRICT_MODE: u32 = 1101;
 
     // Delete expression errors
     pub const DELETE_OPERAND_MUST_BE_OPTIONAL: u32 = 2703; // The operand of a 'delete' operation must be optional.
