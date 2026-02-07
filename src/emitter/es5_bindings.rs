@@ -922,33 +922,54 @@ impl<'a> Printer<'a> {
         //     var v = arr_1[_i];
         //     <body>
         // }
-        // TypeScript uses descriptive names for simple identifiers (e.g., array_1)
-        // and generic _a, _b for complex expressions
-        let counter = self.ctx.destructuring_state.for_of_counter;
-        let index_name = if counter == 0 {
-            "_i".to_string()
+        //
+        // TypeScript uses a single global name generator:
+        // - First for-of gets `_i` as index name (special case)
+        // - All other temp names come from the global counter (_a, _b, _c, ...)
+        // - Named arrays use `<name>_1` (doesn't consume from counter)
+        // - Names are checked against all identifiers in the source file
+
+        // Generate index name: first for-of gets `_i`, subsequent ones use global counter
+        let index_name = if !self.first_for_of_emitted {
+            self.first_for_of_emitted = true;
+            let candidate = "_i".to_string();
+            if self.file_identifiers.contains(&candidate)
+                || self.generated_temp_names.contains(&candidate)
+            {
+                self.make_unique_name()
+            } else {
+                self.generated_temp_names.insert(candidate.clone());
+                candidate
+            }
         } else {
-            format!("_{}", (b'a' + (counter * 2 - 1) as u8) as char)
+            self.make_unique_name()
         };
 
         // Derive array name from expression:
-        // - Simple identifier `arr` -> `arr_1`
-        // - Complex expression -> `_a`, `_b`, etc.
+        // - Simple identifier `arr` -> `arr_1` (doesn't consume counter)
+        // - Complex expression -> `_a`, `_b`, etc. (from global counter)
         let array_name = if let Some(expr_node) = self.arena.get(for_in_of.expression) {
             if expr_node.kind == SyntaxKind::Identifier as u16 {
                 if let Some(ident) = self.arena.get_identifier(expr_node) {
                     let name = self.arena.resolve_identifier_text(ident).to_string();
-                    format!("{}_1", name)
+                    let candidate = format!("{}_1", name);
+                    if self.file_identifiers.contains(&candidate)
+                        || self.generated_temp_names.contains(&candidate)
+                    {
+                        self.make_unique_name()
+                    } else {
+                        self.generated_temp_names.insert(candidate.clone());
+                        candidate
+                    }
                 } else {
-                    format!("_{}", (b'a' + (counter * 2) as u8) as char)
+                    self.make_unique_name()
                 }
             } else {
-                format!("_{}", (b'a' + (counter * 2) as u8) as char)
+                self.make_unique_name()
             }
         } else {
-            format!("_{}", (b'a' + (counter * 2) as u8) as char)
+            self.make_unique_name()
         };
-        self.ctx.destructuring_state.for_of_counter += 1;
 
         self.write("for (var ");
         self.write(&index_name);

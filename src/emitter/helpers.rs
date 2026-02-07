@@ -125,6 +125,34 @@ impl<'a> Printer<'a> {
     }
 
     // =========================================================================
+    // Unique Name Generation (mirrors TypeScript's makeUniqueName)
+    // =========================================================================
+
+    /// Generate a unique temp name that doesn't collide with any identifier in the source file
+    /// or any previously generated temp name. Uses a single global counter like TypeScript.
+    ///
+    /// Generates names: _a, _b, _c, ..., _z, _0, _1, ...
+    /// Skips names that appear in `file_identifiers` or `generated_temp_names`.
+    pub(super) fn make_unique_name(&mut self) -> String {
+        loop {
+            let counter = self.ctx.destructuring_state.temp_var_counter;
+            let name = if counter < 26 {
+                format!("_{}", (b'a' + counter as u8) as char)
+            } else {
+                format!("_{}", counter - 26)
+            };
+            self.ctx.destructuring_state.temp_var_counter += 1;
+
+            if !self.file_identifiers.contains(&name) && !self.generated_temp_names.contains(&name)
+            {
+                self.generated_temp_names.insert(name.clone());
+                return name;
+            }
+            // Name collides, try next
+        }
+    }
+
+    // =========================================================================
     // Emitter Helpers
     // =========================================================================
 

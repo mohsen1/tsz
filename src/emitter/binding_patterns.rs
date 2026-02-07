@@ -65,22 +65,11 @@ impl<'a> Printer<'a> {
     // Binding Pattern Utilities
     // =========================================================================
 
-    /// Get the next temporary variable name
-    /// Pattern: _a, _b, ..., _z, _a_2, _b_2, ..., _z_2, _a_3, ...
-    /// This avoids collisions (the old % 26 approach would repeat _a after _z)
+    /// Get the next temporary variable name.
+    /// Uses the unified `make_unique_name` to ensure collision-free names
+    /// across both destructuring and for-of lowering.
     pub(super) fn get_temp_var_name(&mut self) -> String {
-        let counter = self.ctx.destructuring_state.temp_var_counter;
-        let letter = (b'a' + (counter % 26) as u8) as char;
-        let suffix = (counter / 26) + 1;
-
-        let name = if suffix == 1 {
-            format!("_{}", letter)
-        } else {
-            format!("_{}_{}", letter, suffix)
-        };
-
-        self.ctx.destructuring_state.temp_var_counter += 1;
-        name
+        self.make_unique_name()
     }
 
     /// Check if a node is a binding pattern
