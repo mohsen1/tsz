@@ -471,7 +471,7 @@ impl<'a> BinaryOpEvaluator<'a> {
     }
 
     /// Check if a type is number-like (number, number literal, numeric enum, or any).
-    fn is_number_like(&self, type_id: TypeId) -> bool {
+    pub fn is_number_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::NUMBER || type_id == TypeId::ANY {
             return true;
         }
@@ -480,7 +480,7 @@ impl<'a> BinaryOpEvaluator<'a> {
     }
 
     /// Check if a type is string-like (string, string literal, template literal, or any).
-    fn is_string_like(&self, type_id: TypeId) -> bool {
+    pub fn is_string_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::STRING || type_id == TypeId::ANY {
             return true;
         }
