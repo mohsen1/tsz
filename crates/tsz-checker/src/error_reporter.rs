@@ -41,6 +41,19 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Emit a templated diagnostic error at a node.
+    ///
+    /// Looks up the message template for `code` via `get_message_template`,
+    /// formats it with `args`, and emits the error at `node_idx`.
+    /// Panics in debug mode if the code has no registered template.
+    pub(crate) fn error_at_node_msg(&mut self, node_idx: NodeIndex, code: u32, args: &[&str]) {
+        use tsz_common::diagnostics::get_message_template;
+        let template = get_message_template(code)
+            .unwrap_or_else(|| panic!("no message template for diagnostic code {code}"));
+        let message = format_message(template, args);
+        self.error_at_node(node_idx, &message, code);
+    }
+
     /// Report an error at a specific position.
     pub(crate) fn error_at_position(&mut self, start: u32, length: u32, message: &str, code: u32) {
         self.ctx.diagnostics.push(Diagnostic {

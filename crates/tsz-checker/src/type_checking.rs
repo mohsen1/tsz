@@ -387,7 +387,7 @@ impl<'a> CheckerState<'a> {
     /// - Reports error for each name that appears more than once
     /// - Error TS2308: "Duplicate identifier '{name}'"
     pub(crate) fn check_enum_duplicate_members(&mut self, enum_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::types::diagnostics::diagnostic_codes;
 
         let Some(enum_node) = self.ctx.arena.get(enum_idx) else {
             return;
@@ -417,12 +417,10 @@ impl<'a> CheckerState<'a> {
 
             // Check for duplicate
             if seen_names.contains(&name_text) {
-                let message =
-                    format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name_text]);
-                self.error_at_node(
+                self.error_at_node_msg(
                     member.name,
-                    &message,
                     diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    &[&name_text],
                 );
             } else {
                 seen_names.insert(name_text);
@@ -828,12 +826,10 @@ impl<'a> CheckerState<'a> {
 
         if !is_array_like {
             let type_str = self.format_type(source_type);
-            let message =
-                format_message(diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE, &[&type_str]);
-            self.error_at_node(
+            self.error_at_node_msg(
                 pattern_idx,
-                &message,
                 diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
+                &[&type_str],
             );
         }
     }

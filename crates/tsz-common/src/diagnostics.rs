@@ -81,6 +81,72 @@ pub fn format_message(template: &str, args: &[&str]) -> String {
     result
 }
 
+/// Get the message template for a diagnostic code.
+///
+/// Returns the template string with `{0}`, `{1}`, etc. placeholders.
+/// Use `format_message()` to fill in the placeholders.
+///
+/// Returns `None` for codes without a registered template (e.g., codes that
+/// use a static literal string rather than a parameterized template).
+pub fn get_message_template(code: u32) -> Option<&'static str> {
+    use diagnostic_codes as dc;
+    use diagnostic_messages as dm;
+
+    Some(match code {
+        // Type errors
+        dc::TYPE_NOT_ASSIGNABLE_TO_TYPE => dm::TYPE_NOT_ASSIGNABLE,
+        dc::CANNOT_FIND_NAME => dm::CANNOT_FIND_NAME,
+        dc::CANNOT_FIND_NAMESPACE => dm::CANNOT_FIND_NAMESPACE,
+        dc::DUPLICATE_IDENTIFIER => dm::DUPLICATE_IDENTIFIER,
+        dc::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL => dm::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL,
+        dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE => dm::PROPERTY_DOES_NOT_EXIST,
+        dc::PROPERTY_MISSING_IN_TYPE => dm::PROPERTY_MISSING_BUT_REQUIRED,
+        dc::TYPES_OF_PROPERTY_INCOMPATIBLE => dm::TYPES_OF_PROPERTY_INCOMPATIBLE,
+        dc::NO_COMMON_PROPERTIES => dm::NO_COMMON_PROPERTIES,
+        dc::MEMBER_IS_NOT_ACCESSIBLE => dm::MEMBER_NOT_ACCESSIBLE,
+        dc::PROPERTY_NOMINAL_MISMATCH => dm::PROPERTY_NOMINAL_MISMATCH,
+        dc::THIS_CONTEXT_MISMATCH => dm::THIS_CONTEXT_MISMATCH,
+        dc::CIRCULAR_BASE_REFERENCE => dm::CIRCULAR_BASE_REFERENCE,
+        dc::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENTS => dm::GENERIC_TYPE_REQUIRES_ARGS,
+        dc::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED => dm::TYPE_NOT_SATISFY_CONSTRAINT,
+        dc::TYPE_INSTANTIATION_EXCESSIVELY_DEEP => dm::TYPE_INSTANTIATION_EXCESSIVELY_DEEP,
+        // Function/call errors
+        dc::EXPECTED_ARGUMENTS => dm::EXPECTED_ARGUMENTS,
+        dc::EXPECTED_AT_LEAST_ARGUMENTS => dm::EXPECTED_AT_LEAST_ARGUMENTS,
+        dc::ARGUMENT_NOT_ASSIGNABLE_TO_PARAMETER => dm::ARGUMENT_NOT_ASSIGNABLE,
+        dc::OVERLOAD_SIGNATURE_NOT_COMPATIBLE => dm::OVERLOAD_NOT_COMPATIBLE_WITH_IMPLEMENTATION,
+        // Object literal errors
+        dc::EXCESS_PROPERTY_CHECK => dm::EXCESS_PROPERTY,
+        // Class errors
+        dc::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE => dm::CLASS_INCORRECTLY_IMPLEMENTS,
+        dc::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS => dm::CLASS_INCORRECTLY_EXTENDS,
+        dc::CANNOT_ASSIGN_TO_READONLY_PROPERTY => dm::CANNOT_ASSIGN_READONLY,
+        // Operator errors
+        dc::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES => dm::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
+        dc::TYPES_HAVE_NO_OVERLAP => dm::TYPES_HAVE_NO_OVERLAP,
+        // Destructuring/array errors
+        dc::TYPE_IS_NOT_AN_ARRAY_TYPE => dm::TYPE_IS_NOT_AN_ARRAY_TYPE,
+        // Module errors
+        dc::CANNOT_FIND_MODULE => dm::CANNOT_FIND_MODULE,
+        dc::MODULE_HAS_NO_EXPORTED_MEMBER => dm::MODULE_HAS_NO_EXPORTED_MEMBER,
+        // Implicit any errors
+        dc::IMPLICIT_ANY => dm::VARIABLE_IMPLICIT_ANY,
+        dc::IMPLICIT_ANY_PARAMETER => dm::PARAMETER_IMPLICIT_ANY,
+        dc::IMPLICIT_ANY_MEMBER => dm::MEMBER_IMPLICIT_ANY,
+        dc::IMPLICIT_ANY_RETURN => dm::IMPLICIT_ANY_RETURN,
+        dc::IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION => dm::IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION,
+        // Variable errors
+        dc::VARIABLE_USED_BEFORE_ASSIGNED => dm::VARIABLE_USED_BEFORE_ASSIGNED,
+        // Value errors
+        dc::VALUE_CANNOT_BE_USED_HERE => dm::VALUE_CANNOT_BE_USED_HERE,
+        // Async errors
+        dc::ASYNC_FUNCTION_MUST_RETURN_PROMISE => dm::ASYNC_RETURN_TYPE_MUST_BE_PROMISE,
+        dc::ASYNC_RETURN_TYPE_MUST_BE_PROMISE => dm::ASYNC_RETURN_TYPE_MUST_BE_PROMISE,
+        dc::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5 => dm::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5,
+        _ => return None,
+    })
+}
+
 /// Diagnostic message templates matching TypeScript exactly.
 /// Use format_message() to fill in placeholders.
 pub mod diagnostic_messages {

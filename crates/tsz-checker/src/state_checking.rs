@@ -576,12 +576,12 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if !is_destructuring_pattern && let Some(ref name) = var_name {
-                    use crate::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
-                    let message =
-                        format_message(diagnostic_messages::VARIABLE_IMPLICIT_ANY, &[name, "any"]);
-                    self.error_at_node(var_decl.name, &message, diagnostic_codes::IMPLICIT_ANY);
+                    use crate::types::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        var_decl.name,
+                        diagnostic_codes::IMPLICIT_ANY,
+                        &[name, "any"],
+                    );
                 }
             }
 
