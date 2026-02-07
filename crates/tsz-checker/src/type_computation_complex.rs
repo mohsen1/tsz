@@ -498,16 +498,49 @@ impl<'a> CheckerState<'a> {
                 // New DefId-based case - resolve via DefId
                 if let Some(symbol_id) = self.ctx.def_to_symbol_id(def_id) {
                     let symbol_type = self.get_type_of_symbol(symbol_id);
+                    tracing::debug!(type_id = type_id.0, def_id = ?def_id, sym_id = symbol_id.0, symbol_type_id = symbol_type.0, same = (symbol_type == type_id), "resolve_ref_type: Lazy");
                     if symbol_type == type_id {
+                        // The symbol_types cache was overwritten with the Lazy type
+                        // (e.g., check_variable_declaration caches `declare var X: X`
+                        // as the Lazy annotation type, overwriting the structural type
+                        // that get_type_of_symbol originally computed).
+                        // Fall back to the type environment which preserves the
+                        // structural type computed during initial symbol resolution.
+                        match self.ctx.type_env.try_borrow() {
+                            Ok(env) => {
+                                let env_type = env.get_def(def_id);
+                                tracing::debug!(
+                                    type_id = type_id.0,
+                                    env_type = ?env_type.map(|t| t.0),
+                                    "resolve_ref_type: Lazy - checking type_env"
+                                );
+                                if let Some(env_type) = env_type {
+                                    if env_type != type_id {
+                                        return env_type;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    type_id = type_id.0,
+                                    error = %e,
+                                    "resolve_ref_type: Lazy - type_env borrow failed"
+                                );
+                            }
+                        }
                         type_id
                     } else {
                         symbol_type
                     }
                 } else {
+                    tracing::debug!(type_id = type_id.0, def_id = ?def_id, "resolve_ref_type: Lazy - no symbol for DefId");
                     type_id
                 }
             }
-            LazyTypeKind::NotLazy => type_id,
+            LazyTypeKind::NotLazy => {
+                tracing::trace!(type_id = type_id.0, "resolve_ref_type: NotLazy");
+                type_id
+            }
             _ => type_id, // Handle deprecated variants for compatibility
         }
     }
@@ -1517,6 +1550,7 @@ impl<'a> CheckerState<'a> {
             // false TS2339/TS2351 on `Promise.resolve` / `new Promise(...)`.
             if has_type && has_value && (flags & tsz_binder::symbol_flags::INTERFACE) != 0 {
                 let mut value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
+                tracing::debug!(name = %name, sym_id = sym_id.0, value_type_id = value_type.0, "MERGED_IFACE step1: type_of_value_declaration_for_symbol");
                 if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
                     for &decl_idx in &symbol_declarations {
                         let candidate = self.type_of_value_declaration_for_symbol(sym_id, decl_idx);
@@ -1525,9 +1559,11 @@ impl<'a> CheckerState<'a> {
                             break;
                         }
                     }
+                    tracing::debug!(name = %name, value_type_id = value_type.0, "MERGED_IFACE step2: fallback declarations");
                 }
                 if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
                     value_type = self.type_of_value_symbol_by_name(name);
+                    tracing::debug!(name = %name, value_type_id = value_type.0, "MERGED_IFACE step3: by_name");
                 }
                 // Lib globals often model value-side constructors through a sibling
                 // `*Constructor` interface (Promise -> PromiseConstructor).
@@ -1539,6 +1575,7 @@ impl<'a> CheckerState<'a> {
                     let constructor_type = self.get_type_of_symbol(constructor_sym_id);
                     if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR {
                         value_type = constructor_type;
+                        tracing::debug!(name = %name, value_type_id = value_type.0, "MERGED_IFACE step4a: ctor global");
                     }
                 } else if let Some(constructor_type) =
                     self.resolve_lib_type_by_name(&constructor_name)
@@ -1546,6 +1583,7 @@ impl<'a> CheckerState<'a> {
                     && constructor_type != TypeId::ERROR
                 {
                     value_type = constructor_type;
+                    tracing::debug!(name = %name, value_type_id = value_type.0, "MERGED_IFACE step4b: ctor lib");
                 }
                 // For `declare var X: X` pattern (self-referential type annotation),
                 // the type resolved through type_of_value_declaration may be incomplete
@@ -1555,11 +1593,18 @@ impl<'a> CheckerState<'a> {
                 if !self.ctx.lib_contexts.is_empty()
                     && self.is_self_referential_var_type(sym_id, value_decl, name)
                 {
+                    tracing::debug!(name = %name, "MERGED_IFACE step5: self-referential detected");
                     if let Some(lib_type) = self.resolve_lib_type_by_name(name) {
                         if lib_type != TypeId::UNKNOWN && lib_type != TypeId::ERROR {
                             value_type = lib_type;
+                            tracing::debug!(name = %name, value_type_id = value_type.0, "MERGED_IFACE step5: lib_type override!");
                         }
                     }
+                }
+                {
+                    let mut fmt = self.ctx.create_type_formatter();
+                    let vt_str = fmt.format(value_type);
+                    tracing::debug!(name = %name, value_type_id = value_type.0, value_type_str = %vt_str, "MERGED_IFACE final value_type");
                 }
                 if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
                     return self.check_flow_usage(idx, value_type, sym_id);
@@ -1867,7 +1912,13 @@ impl<'a> CheckerState<'a> {
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
             if !var_decl.type_annotation.is_none() {
                 let annotated = self.get_type_from_type_node(var_decl.type_annotation);
-                return self.resolve_ref_type(annotated);
+                let resolved = self.resolve_ref_type(annotated);
+                tracing::debug!(
+                    annotated_id = annotated.0,
+                    resolved_id = resolved.0,
+                    "type_of_value_declaration: annotated->resolved"
+                );
+                return resolved;
             }
             if !var_decl.initializer.is_none() {
                 return self.get_type_of_node(var_decl.initializer);
