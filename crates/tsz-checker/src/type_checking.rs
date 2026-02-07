@@ -1000,7 +1000,15 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 syntax_kind_ext::AWAIT_EXPRESSION => {
-                    // Already checked above
+                    // TS1308: 'await' expressions are only allowed within async functions
+                    if !self.ctx.in_async_context() {
+                        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
+                            current_idx,
+                            diagnostic_messages::AWAIT_OUTSIDE_ASYNC,
+                            diagnostic_codes::AWAIT_OUTSIDE_ASYNC,
+                        );
+                    }
                     if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node) {
                         if !unary_expr.expression.is_none() {
                             stack.push(unary_expr.expression);
