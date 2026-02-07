@@ -3025,7 +3025,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if shape.is_constructor {
                     self.resolve_function_call(shape.as_ref(), arg_types)
                 } else {
-                    CallResult::NotCallable { type_id }
+                    // In TypeScript, `new f()` on a regular function (not arrow)
+                    // is allowed and returns `any`. This matches the JS semantics
+                    // where any function can be used as a constructor.
+                    CallResult::Success(TypeId::ANY)
                 }
             }
             TypeKey::Callable(c_id) => {

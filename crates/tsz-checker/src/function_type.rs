@@ -284,6 +284,14 @@ impl<'a> CheckerState<'a> {
                     (false, false, NodeIndex::NONE)
                 };
 
+            // Push this_type EARLY so that infer_return_type_from_body has
+            // the correct `this` context (prevents false TS2683 during inference)
+            let mut pushed_this_type_early = false;
+            if let Some(tt) = this_type {
+                self.ctx.this_type_stack.push(tt);
+                pushed_this_type_early = true;
+            }
+
             let mut has_contextual_return = false;
             if !has_type_annotation {
                 let return_context = ctx_helper
@@ -484,11 +492,9 @@ impl<'a> CheckerState<'a> {
             // For functions with explicit this parameter: use that type
             // For arrow functions: use outer this type (already captured in this_type)
             // For regular functions without explicit this: this_type is None, which triggers TS2683 when this is used
-            let mut pushed_this_type = false;
-            if let Some(this_type) = this_type {
-                self.ctx.this_type_stack.push(this_type);
-                pushed_this_type = true;
-            }
+            // this_type was already pushed early (before infer_return_type_from_body)
+            // so we don't need to push it again here
+            let pushed_this_type = pushed_this_type_early;
 
             // For generator functions with explicit return type (Generator<Y, R, N> or AsyncGenerator<Y, R, N>),
             // return statements should be checked against TReturn (R), not the full Generator type.

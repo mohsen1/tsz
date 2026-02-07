@@ -572,7 +572,15 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.import_resolution_stack.push(module_name.clone());
 
-        // Check for specific resolution error from driver FIRST (TS2834, TS2835, TS2792, etc.)
+        // Check ambient modules BEFORE resolution errors.
+        // `declare module "x"` in .d.ts files should suppress TS2307 even when
+        // file-based resolution fails (matching check_import_equals_declaration).
+        if self.is_ambient_module_match(module_name) {
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         // This must be checked before resolved_modules to catch extensionless import errors
         let module_key = module_name.to_string();
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
@@ -617,11 +625,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            self.ctx.import_resolution_stack.pop();
-            return;
-        }
-
-        if self.is_ambient_module_match(module_name) {
             self.ctx.import_resolution_stack.pop();
             return;
         }

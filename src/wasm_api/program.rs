@@ -91,6 +91,7 @@ impl TsCompilerOptions {
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,
+            always_strict: strict,
         }
     }
 }

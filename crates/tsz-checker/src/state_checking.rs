@@ -364,6 +364,27 @@ impl<'a> CheckerState<'a> {
             None
         };
 
+        // TS1100/TS1101: Invalid use of 'arguments'/'eval' in strict mode
+        if self.ctx.compiler_options.always_strict {
+            if let Some(ref name) = var_name {
+                if name == "arguments" {
+                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        var_decl.name,
+                        diagnostic_messages::INVALID_USE_OF_ARGUMENTS_IN_STRICT_MODE,
+                        diagnostic_codes::INVALID_USE_OF_ARGUMENTS_IN_STRICT_MODE,
+                    );
+                } else if name == "eval" {
+                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        var_decl.name,
+                        diagnostic_messages::INVALID_USE_OF_EVAL_IN_STRICT_MODE,
+                        diagnostic_codes::INVALID_USE_OF_EVAL_IN_STRICT_MODE,
+                    );
+                }
+            }
+        }
+
         let is_catch_variable = self.is_catch_clause_variable_declaration(decl_idx);
 
         // TS1039: Initializers are not allowed in ambient contexts
