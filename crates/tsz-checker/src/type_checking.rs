@@ -3243,13 +3243,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             for (name, &sym_id) in scope.table.iter() {
-                symbols_to_check.push((sym_id, name.clone()));
-            }
-        }
-
-        // For module files, also check file_locals (imports live here)
-        if is_module {
-            for (name, &sym_id) in self.ctx.binder.file_locals.iter() {
+                // Skip lib-originating symbols (e.g. from lib.d.ts)
+                if self.ctx.binder.lib_symbol_ids.contains(&sym_id) {
+                    continue;
+                }
                 symbols_to_check.push((sym_id, name.clone()));
             }
         }

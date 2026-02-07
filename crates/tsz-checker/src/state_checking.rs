@@ -91,6 +91,10 @@ impl<'a> CheckerState<'a> {
                 self.resolve_strict_function_types_from_source(&sf.text);
             self.ctx.compiler_options.allow_unreachable_code =
                 self.resolve_allow_unreachable_code_from_source(&sf.text);
+            self.ctx.compiler_options.no_unused_locals =
+                self.resolve_no_unused_locals_from_source(&sf.text);
+            self.ctx.compiler_options.no_unused_parameters =
+                self.resolve_no_unused_parameters_from_source(&sf.text);
 
             // `type_env` is rebuilt per file, so drop per-file symbol-resolution memoization.
             self.ctx.application_symbols_resolved.clear();

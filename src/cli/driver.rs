@@ -1166,6 +1166,7 @@ fn build_program_with_cache(
                     reexports: Default::default(),
                     wildcard_reexports: Default::default(),
                     lib_binders: Vec::new(),
+                    lib_symbol_ids: Default::default(),
                     flow_nodes: Default::default(),
                     node_flow: Default::default(),
                     switch_clause_to_switch: Default::default(),
@@ -2677,6 +2678,8 @@ fn create_binder_from_bound_file(
     binder.declared_modules = program.declared_modules.clone();
     // Restore is_external_module from BoundFile to preserve per-file state
     binder.is_external_module = file.is_external_module;
+    // Track lib-originating symbols so unused checking can skip them
+    binder.lib_symbol_ids = program.lib_symbol_ids.clone();
     binder
 }
 

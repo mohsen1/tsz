@@ -1749,6 +1749,20 @@ impl<'a> CheckerState<'a> {
         self.ctx.compiler_options.allow_unreachable_code
     }
 
+    pub(crate) fn resolve_no_unused_locals_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@nounusedlocals") {
+            return value;
+        }
+        self.ctx.compiler_options.no_unused_locals
+    }
+
+    pub(crate) fn resolve_no_unused_parameters_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@nounusedparameters") {
+            return value;
+        }
+        self.ctx.compiler_options.no_unused_parameters
+    }
+
     // =========================================================================
     // Duplicate Declaration Resolution
     // =========================================================================

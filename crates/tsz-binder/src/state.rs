@@ -1389,7 +1389,7 @@ impl BinderState {
             }
         }
 
-        // Phase 3: Update file_locals with remapped IDs
+        // Phase 3: Update file_locals with remapped IDs and track lib symbol IDs
         for lib_ctx in lib_contexts {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
 
@@ -1399,6 +1399,8 @@ impl BinderState {
                     if !self.file_locals.has(name) {
                         self.file_locals.set(name.clone(), new_id);
                     }
+                    // Track all lib-originating symbols for unused checking exclusion
+                    self.lib_symbol_ids.insert(new_id);
                 }
             }
         }

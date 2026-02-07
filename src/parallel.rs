@@ -200,6 +200,8 @@ pub struct BindResult {
     /// Lib binders for global type resolution (Array, String, etc.)
     /// These are merged from lib.d.ts files and enable cross-file symbol lookup
     pub lib_binders: Vec<Arc<BinderState>>,
+    /// Symbol IDs that originated from lib files (pre-merge local IDs)
+    pub lib_symbol_ids: FxHashSet<SymbolId>,
     /// Flow nodes for control flow analysis
     pub flow_nodes: FlowNodeArena,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
@@ -253,6 +255,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 reexports: binder.reexports,
                 wildcard_reexports: binder.wildcard_reexports,
                 lib_binders: Vec::new(), // No libs in this path
+                lib_symbol_ids: binder.lib_symbol_ids,
                 flow_nodes: binder.flow_nodes,
                 node_flow: binder.node_flow,
                 switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
@@ -291,6 +294,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
         lib_binders: Vec::new(), // No libs in this path
+        lib_symbol_ids: binder.lib_symbol_ids,
         flow_nodes: binder.flow_nodes,
         node_flow: binder.node_flow,
         switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
@@ -516,6 +520,7 @@ pub fn parse_and_bind_parallel_with_libs(
                 reexports: binder.reexports,
                 wildcard_reexports: binder.wildcard_reexports,
                 lib_binders,
+                lib_symbol_ids: binder.lib_symbol_ids,
                 flow_nodes: binder.flow_nodes,
                 node_flow: binder.node_flow,
                 switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
@@ -593,6 +598,8 @@ pub struct MergedProgram {
     /// Lib binders for global type resolution (Array, String, Promise, etc.)
     /// These contain symbols from lib.d.ts files and enable resolution of built-in types
     pub lib_binders: Vec<Arc<BinderState>>,
+    /// Global symbol IDs that originated from lib files (remapped to global arena IDs)
+    pub lib_symbol_ids: FxHashSet<SymbolId>,
     /// Global type interner - shared across all threads for type deduplication
     pub type_interner: TypeInterner,
 }
@@ -696,6 +703,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>> =
         FxHashMap::default();
     let mut wildcard_reexports: FxHashMap<String, Vec<String>> = FxHashMap::default();
+    let mut global_lib_symbol_ids: FxHashSet<SymbolId> = FxHashSet::default();
 
     // Track which symbols have been merged to avoid duplicate processing
     // IMPORTANT: This map is ONLY for symbols in the ROOT scope (ScopeId(0))
@@ -885,6 +893,13 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     new_id
                 };
                 id_remap.insert(old_id, new_id);
+            }
+        }
+
+        // Track remapped lib symbol IDs for unused-checking exclusion
+        for &old_lib_id in &result.lib_symbol_ids {
+            if let Some(&new_id) = id_remap.get(&old_lib_id) {
+                global_lib_symbol_ids.insert(new_id);
             }
         }
 
@@ -1188,6 +1203,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         reexports,
         wildcard_reexports,
         lib_binders,
+        lib_symbol_ids: global_lib_symbol_ids,
         type_interner: TypeInterner::new(),
     }
 }
