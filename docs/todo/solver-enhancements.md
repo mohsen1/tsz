@@ -1,7 +1,7 @@
 # Solver Enhancement Roadmap
 
 **Created**: 2026-02-07
-**Status**: Planning
+**Status**: Complete (items 1-10 implemented, item 11 deferred)
 **Validated by**: Gemini Pro (full codebase context, 8 parallel feasibility analyses)
 
 This document captures all identified opportunities to push more TypeScript complexity into the solver, ordered by effort and impact. Every item was validated against the actual codebase by Gemini Pro with full solver context (~629K tokens).
@@ -12,17 +12,19 @@ This document captures all identified opportunities to push more TypeScript comp
 
 | # | Feature | Complexity | Risk | Solver Change? | Blocked By |
 |---|---------|-----------|------|----------------|------------|
-| 1 | [Const type parameters](#1-const-type-parameters-ts-50) | **Low** | Low | ~5 lines in `infer.rs` | Nothing |
-| 2 | [`satisfies` operator](#2-satisfies-operator-ts-49) | **Low** | Low | None (checker only) | Nothing |
-| 3 | [`NoInfer<T>`](#3-noinfer-ts-54) | **Low** | Low | New `TypeKey` variant | Nothing |
-| 4 | [Assertion functions](#4-assertion-functions) | Low/Med | Low | Solver done; checker work | Nothing |
-| 5 | [CFA closure invalidation](#5-cfa-closure-invalidation) | Low/Med | Low | None (checker fix) | Nothing |
-| 6 | [Homomorphic mapped types](#6-homomorphic-mapped-type-preservationarraytuple) | Medium | Low | `evaluate_rules/mapped.rs` | Nothing |
-| 7 | [Overload resolution](#7-overload-resolution) | Medium | Low | `operations.rs` | Nothing |
-| 8 | [Recursive conditional tail-call](#8-recursive-conditional-type-tail-call-optimization-ts-45) | Medium | Low | `evaluate_rules/conditional.rs` | Nothing |
-| 9 | [Template literal: mapped key remapping](#9-template-literal-mapped-type-key-remapping) | Medium | Medium | `evaluate_rules/mapped.rs` | Nothing |
-| 10 | [Template literal: cross-product soundness](#10-template-literal-cross-product-soundness) | Medium | Low | New unexpanded state | Nothing |
-| 11 | [Template literal: subtype structural equiv](#11-template-literal-subtype-structural-equivalence) | **High** | Medium | `subtype_rules/literals.rs` | Nothing |
+| # | Feature | Complexity | Risk | Status |
+|---|---------|-----------|------|--------|
+| 1 | [Const type parameters](#1-const-type-parameters-ts-50) | **Low** | Low | **Done** |
+| 2 | [`satisfies` operator](#2-satisfies-operator-ts-49) | **Low** | Low | **Done** |
+| 3 | [`NoInfer<T>`](#3-noinfer-ts-54) | **Low** | Low | **Done** |
+| 4 | [Assertion functions](#4-assertion-functions) | Low/Med | Low | **Done** (pre-existing) |
+| 5 | [CFA closure invalidation](#5-cfa-closure-invalidation) | Low/Med | Low | **Done** |
+| 6 | [Homomorphic mapped types](#6-homomorphic-mapped-type-preservationarraytuple) | Medium | Low | **Done** (pre-existing) |
+| 7 | [Overload resolution](#7-overload-resolution) | Medium | Low | **Done** |
+| 8 | [Recursive conditional tail-call](#8-recursive-conditional-type-tail-call-optimization-ts-45) | Medium | Low | **Done** |
+| 9 | [Template literal: mapped key remapping](#9-template-literal-mapped-type-key-remapping) | Medium | Medium | **Done** |
+| 10 | [Template literal: cross-product soundness](#10-template-literal-cross-product-soundness) | Medium | Low | **Done** |
+| 11 | [Template literal: subtype structural equiv](#11-template-literal-subtype-structural-equivalence) | **High** | Medium | Deferred |
 
 ---
 
