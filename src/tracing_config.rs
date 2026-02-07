@@ -25,6 +25,7 @@
 //!
 //! The subscriber is only initialised when `TSZ_LOG` (or `RUST_LOG`) is set,
 //! so there is zero overhead in normal builds.
+//! `TSZ_PERF` also enables a minimal default perf filter (`wasm::perf=info`).
 
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, Registry, fmt};
@@ -79,11 +80,16 @@ pub fn init_tracing() {
     // Only pay for tracing when explicitly requested.
     let has_tsz_log = std::env::var("TSZ_LOG").is_ok();
     let has_rust_log = std::env::var("RUST_LOG").is_ok();
-    if !has_tsz_log && !has_rust_log {
+    let has_perf = std::env::var_os("TSZ_PERF").is_some();
+    if !has_tsz_log && !has_rust_log && !has_perf {
         return;
     }
 
-    let filter = build_filter();
+    let filter = if has_tsz_log || has_rust_log {
+        build_filter()
+    } else {
+        EnvFilter::builder().parse_lossy("wasm::perf=info")
+    };
     let format = LogFormat::from_env();
 
     match format {

@@ -5,6 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
@@ -628,6 +629,19 @@ fn compile_inner(
     explicit_config_path: Option<&Path>,
 ) -> Result<CompilationResult> {
     let _compile_span = tracing::info_span!("compile", cwd = %cwd.display()).entered();
+    let perf_enabled = std::env::var_os("TSZ_PERF").is_some();
+    let compile_start = Instant::now();
+
+    let perf_log_phase = |phase: &'static str, start: Instant| {
+        if perf_enabled {
+            tracing::info!(
+                target: "wasm::perf",
+                phase,
+                ms = start.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+    };
+
     let cwd = canonicalize_or_owned(cwd);
     let tsconfig_path = if let Some(path) = explicit_config_path {
         Some(path.to_path_buf())
@@ -769,6 +783,7 @@ fn compile_inner(
     let mut local_cache_ref = local_cache.as_mut();
     let mut effective_cache = local_cache_ref.as_deref_mut().or(cache.as_deref_mut());
 
+    let read_sources_start = Instant::now();
     let SourceReadResult {
         sources: all_sources,
         dependencies,
@@ -781,6 +796,7 @@ fn compile_inner(
             changed_set.as_ref(),
         )?
     };
+    perf_log_phase("read_sources", read_sources_start);
 
     // Update dependencies in the cache
     if let Some(ref mut c) = effective_cache {
@@ -824,8 +840,11 @@ fn compile_inner(
     // Load and bind each lib exactly once, then reuse for:
     // 1) user-file binding (global symbol availability during bind)
     // 2) checker lib contexts (global symbol/type resolution)
+    let load_libs_start = Instant::now();
     let lib_files: Vec<Arc<LibFile>> = parallel::load_lib_files_for_binding_strict(&lib_path_refs)?;
+    perf_log_phase("load_libs", load_libs_start);
 
+    let build_program_start = Instant::now();
     let (program, dirty_paths) = if let Some(ref mut c) = effective_cache {
         let result = build_program_with_cache(sources, c, &lib_files);
         (result.program, Some(result.dirty_paths))
@@ -844,6 +863,7 @@ fn compile_inner(
         let bind_results = parallel::parse_and_bind_parallel_with_libs(compile_inputs, &lib_files);
         (parallel::merge_bind_results(bind_results), None)
     };
+    perf_log_phase("build_program", build_program_start);
 
     // Update import symbol IDs if we have a cache
     if let Some(ref mut c) = effective_cache {
@@ -851,12 +871,15 @@ fn compile_inner(
     }
 
     // Load lib files only when type checking is needed (lazy loading for faster startup)
+    let build_lib_contexts_start = Instant::now();
     let lib_contexts = if resolved.no_check {
         Vec::new() // Skip lib loading when --noCheck is set
     } else {
         load_lib_files_for_contexts(&lib_files)
     };
+    perf_log_phase("build_lib_contexts", build_lib_contexts_start);
 
+    let collect_diagnostics_start = Instant::now();
     let mut diagnostics = collect_diagnostics(
         &program,
         &resolved,
@@ -864,6 +887,7 @@ fn compile_inner(
         effective_cache,
         &lib_contexts,
     );
+    perf_log_phase("collect_diagnostics", collect_diagnostics_start);
 
     // Get reference to type caches for declaration emit
     // Create a longer-lived empty FxHashMap for the fallback case
@@ -899,6 +923,7 @@ fn compile_inner(
         }
     }
 
+    let emit_outputs_start = Instant::now();
     let emitted_files = if !should_emit {
         Vec::new()
     } else {
@@ -914,6 +939,7 @@ fn compile_inner(
         )?;
         write_outputs(&outputs)?
     };
+    perf_log_phase("emit_outputs", emit_outputs_start);
 
     // Find the most recent .d.ts file for BuildInfo tracking
     let latest_changed_dts_file = if !emitted_files.is_empty() {
@@ -963,6 +989,19 @@ fn compile_inner(
                 tracing::info!("Saved BuildInfo to: {}", build_info_path.display());
             }
         }
+    }
+
+    if perf_enabled {
+        tracing::info!(
+            target: "wasm::perf",
+            phase = "compile_total",
+            ms = compile_start.elapsed().as_secs_f64() * 1000.0,
+            files = file_paths.len(),
+            libs = lib_files.len(),
+            diagnostics = diagnostics.len(),
+            emitted = emitted_files.len(),
+            no_check = resolved.no_check
+        );
     }
 
     Ok(CompilationResult {
