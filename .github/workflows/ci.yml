@@ -339,6 +339,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fetch TypeScript lib sources
+        run: git submodule update --init --depth 1 -- TypeScript
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -400,7 +403,8 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build WASM (nodejs target for conformance)
-        run: wasm-pack build --target nodejs --out-dir pkg
+        run: wasm-pack build --target nodejs --out-dir ../../pkg
+        working-directory: crates/tsz-wasm
 
       - name: Copy TypeScript lib files into pkg
         run: |
