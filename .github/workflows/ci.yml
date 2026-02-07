@@ -340,7 +340,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Fetch TypeScript lib sources
-        run: git submodule update --init --depth 1 -- TypeScript
+        run: |
+          git submodule update --init --depth 1 -- TypeScript
+          test -f TypeScript/src/lib/es5.d.ts || { echo "ERROR: TypeScript lib files missing after submodule init"; exit 1; }
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
