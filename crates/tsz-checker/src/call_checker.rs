@@ -31,11 +31,13 @@ impl<'a> CheckerState<'a> {
     /// - Regular arguments: applies contextual type from parameter
     /// - Spread arguments: expands tuple types to multiple arguments
     /// - Excess property checking for object literal arguments
+    /// - Skipping sensitive arguments in Round 1 of two-pass inference
     ///
     /// # Parameters
     /// - `args`: The argument node indices
     /// - `expected_for_index`: Closure that returns the expected type for a given argument index
     /// - `check_excess_properties`: Whether to check for excess properties on object literals
+    /// - `skip_sensitive_indices`: Optional mask indicating which arguments to skip (for Round 1)
     ///
     /// # Returns
     /// Vector of resolved argument types
@@ -44,11 +46,29 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         mut expected_for_index: F,
         check_excess_properties: bool,
+        skip_sensitive_indices: Option<&[bool]>,
     ) -> Vec<TypeId>
     where
         F: FnMut(usize, usize) -> Option<TypeId>,
     {
+        use tsz_solver::FunctionShape;
         use tsz_solver::type_queries::{get_array_element_type, get_tuple_elements};
+
+        // Pre-create a single placeholder for skipped sensitive arguments.
+        // The solver's is_contextually_sensitive recognizes Function types and skips them
+        // during Round 1 inference. We create one and reuse its TypeId for all skipped args.
+        let sensitive_placeholder = skip_sensitive_indices.map(|_| {
+            let shape = FunctionShape {
+                params: vec![],
+                return_type: TypeId::ANY,
+                this_type: None,
+                type_params: vec![],
+                type_predicate: None,
+                is_constructor: false,
+                is_method: false,
+            };
+            self.ctx.types.function(shape)
+        });
 
         // First pass: count expanded arguments (spreads of tuple/array literals expand to multiple args)
         let mut expanded_count = 0usize;
@@ -80,7 +100,18 @@ impl<'a> CheckerState<'a> {
         let mut arg_types = Vec::with_capacity(expanded_count);
         let mut effective_index = 0usize;
 
-        for &arg_idx in args.iter() {
+        for (i, &arg_idx) in args.iter().enumerate() {
+            // Skip sensitive arguments in Round 1 of two-pass generic inference.
+            // Push a Function-typed placeholder so the solver's is_contextually_sensitive
+            // recognizes it and skips inference for this slot.
+            if let Some(skip_mask) = skip_sensitive_indices {
+                if i < skip_mask.len() && skip_mask[i] {
+                    arg_types.push(sensitive_placeholder.unwrap());
+                    effective_index += 1;
+                    continue;
+                }
+            }
+
             if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
                 // Handle spread elements specially - expand tuple types
                 if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
@@ -292,6 +323,7 @@ impl<'a> CheckerState<'a> {
             args,
             |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
             false,
+            None, // No skipping needed for overload resolution
         );
         let temp_node_types = std::mem::take(&mut self.ctx.node_types);
 
