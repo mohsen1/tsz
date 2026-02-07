@@ -22,7 +22,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [██████████░░░░░░░░░░] 51.3% (6156/12003 tests)
+Progress: [██████████░░░░░░░░░░] 51.7% (6210/12005 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -33,9 +33,9 @@ to ensure correct code generation.
 
 <!-- EMIT_START -->
 
-```
-JavaScript:  [████████░░░░░░░░░░░░] 24.5% (2559/10451 tests)
-Declaration: [██████░░░░░░░░░░░░░░] 22.7% (186/819 tests)
+``` 
+JavaScript:  [█████████░░░░░░░░░░░] 39.5% (4155/10509 tests)
+Declaration: [██████░░░░░░░░░░░░░░] 16.4% (146/888 tests)
 ```
 
 ### Language Service
