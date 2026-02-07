@@ -3413,6 +3413,16 @@ impl BinderState {
             return true;
         }
 
+        // Allow function + class merging (TypeScript allows declare function + declare class)
+        if (existing_flags & symbol_flags::FUNCTION) != 0 && (new_flags & symbol_flags::CLASS) != 0
+        {
+            return true;
+        }
+        if (existing_flags & symbol_flags::CLASS) != 0 && (new_flags & symbol_flags::FUNCTION) != 0
+        {
+            return true;
+        }
+
         // Allow method overloads to merge (method signature + method implementation)
         if (existing_flags & symbol_flags::METHOD) != 0 && (new_flags & symbol_flags::METHOD) != 0 {
             return true;

@@ -87,8 +87,8 @@ pub mod symbol_flags {
     pub const PARAMETER_EXCLUDES: u32 = VALUE;
     pub const PROPERTY_EXCLUDES: u32 = NONE;
     pub const ENUM_MEMBER_EXCLUDES: u32 = VALUE | TYPE;
-    // Function can merge with: namespace/module (VALUE_MODULE)
-    pub const FUNCTION_EXCLUDES: u32 = VALUE & !FUNCTION & !VALUE_MODULE;
+    // Function can merge with: namespace/module (VALUE_MODULE) and class
+    pub const FUNCTION_EXCLUDES: u32 = VALUE & !FUNCTION & !VALUE_MODULE & !CLASS;
     // Class can merge with: interface, function, and namespace/module
     pub const CLASS_EXCLUDES: u32 = (VALUE | TYPE) & !VALUE_MODULE & !INTERFACE & !FUNCTION;
     // Interface can merge with: interface, class
