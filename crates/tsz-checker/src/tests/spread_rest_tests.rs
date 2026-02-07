@@ -455,6 +455,25 @@ var obj = {
 }
 
 #[test]
+fn test_this_in_object_literal_func_expr_no_false_ts2683() {
+    let source = r#"
+// @noImplicitThis: true
+var obj = {
+    x: 5,
+    func: function() {
+        return this.x;
+    }
+};
+"#;
+    let diagnostics = check_source(source);
+    let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
+    assert_eq!(
+        ts2683_count, 0,
+        "Expected no TS2683 for `this` in object literal function expression, got {ts2683_count}"
+    );
+}
+
+#[test]
 fn test_spread_string() {
     let source = r#"
 const str = "hello";
