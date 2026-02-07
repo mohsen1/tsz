@@ -135,6 +135,12 @@ pub struct CompilerOptions {
     /// Parse in strict mode and emit "use strict" for each source file
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub always_strict: Option<bool>,
+    /// Report errors on unused local variables
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub no_unused_locals: Option<bool>,
+    /// Report errors on unused parameters
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub no_unused_parameters: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -438,6 +444,14 @@ pub fn resolve_compiler_options(
         resolved.checker.always_strict = always_strict;
     }
 
+    if let Some(no_unused_locals) = options.no_unused_locals {
+        resolved.checker.no_unused_locals = no_unused_locals;
+    }
+
+    if let Some(no_unused_parameters) = options.no_unused_parameters {
+        resolved.checker.no_unused_parameters = no_unused_parameters;
+    }
+
     if let Some(ref custom_conditions) = options.custom_conditions {
         resolved.custom_conditions = custom_conditions.clone();
     }
@@ -584,6 +598,8 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
         allow_js: child.allow_js.or(base.allow_js),
         check_js: child.check_js.or(base.check_js),
         always_strict: child.always_strict.or(base.always_strict),
+        no_unused_locals: child.no_unused_locals.or(base.no_unused_locals),
+        no_unused_parameters: child.no_unused_parameters.or(base.no_unused_parameters),
     }
 }
 
