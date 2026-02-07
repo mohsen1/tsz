@@ -1942,12 +1942,8 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_string_literal(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
-        if let Some(lit) = self.arena.get_literal(node) {
-            IRNode::StringLiteral(lit.text.clone())
-        } else {
-            IRNode::ASTRef(idx)
-        }
+        // Use ASTRef to preserve original quote style from source text
+        IRNode::ASTRef(idx)
     }
 
     fn convert_call_expression(&self, idx: NodeIndex) -> IRNode {
