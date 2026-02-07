@@ -168,14 +168,12 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
 
     /// Resolve qualified name like 'Namespace.Class'
     fn resolve_qualified_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
-        let node = self.ctx.arena.get(expr_idx)?;
-        let access = self.ctx.arena.get_access_expr(node)?;
+        let access = self.ctx.arena.get_access_expr_at(expr_idx)?;
         let left_sym = self.resolve_heritage_symbol(access.expression)?;
         let name = self
             .ctx
             .arena
-            .get(access.name_or_argument)
-            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+            .get_identifier_at(access.name_or_argument)
             .map(|ident| ident.escaped_text.clone())?;
 
         let left_symbol = self.ctx.binder.get_symbol(left_sym)?;
@@ -185,14 +183,12 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
 
     /// Resolve property access like 'Namespace.Class'
     fn resolve_heritage_symbol_access(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
-        let node = self.ctx.arena.get(expr_idx)?;
-        let access = self.ctx.arena.get_access_expr(node)?;
+        let access = self.ctx.arena.get_access_expr_at(expr_idx)?;
         let left_sym = self.resolve_heritage_symbol(access.expression)?;
         let name = self
             .ctx
             .arena
-            .get(access.name_or_argument)
-            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+            .get_identifier_at(access.name_or_argument)
             .map(|ident| ident.escaped_text.clone())?;
 
         let left_symbol = self.ctx.binder.get_symbol(left_sym)?;

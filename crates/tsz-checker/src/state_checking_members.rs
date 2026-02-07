@@ -3007,8 +3007,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn get_node_text(&self, idx: NodeIndex) -> Option<String> {
         // For identifiers (like label names), get the identifier data and resolve the text
-        let node = self.ctx.arena.get(idx)?;
-        let ident = self.ctx.arena.get_identifier(node)?;
+        let ident = self.ctx.arena.get_identifier_at(idx)?;
         // Use the resolved text from the identifier data
         Some(self.ctx.arena.resolve_identifier_text(ident).to_string())
     }
