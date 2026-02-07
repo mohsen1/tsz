@@ -873,7 +873,7 @@ impl<'a> TypeLowering<'a> {
             lowered.push(ParamInfo {
                 name: self.lower_parameter_name(param_data.name),
                 type_id: self.lower_type(param_data.type_annotation),
-                optional: param_data.question_token,
+                optional: param_data.question_token || param_data.initializer != NodeIndex::NONE,
                 rest: param_data.dot_dot_dot_token,
             });
         }
