@@ -173,7 +173,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.type_contains_infer_inner(obj, visited)
                     || self.type_contains_infer_inner(idx, visited)
             }
-            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) => {
+            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
                 self.type_contains_infer_inner(inner, visited)
             }
             TypeKey::TemplateLiteral(spans) => {
@@ -630,7 +630,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.bind_infer_defaults_inner(obj, inferred, bindings, checker, visited)
                     && self.bind_infer_defaults_inner(idx, inferred, bindings, checker, visited)
             }
-            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) => {
+            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
                 self.bind_infer_defaults_inner(inner, inferred, bindings, checker, visited)
             }
             TypeKey::TemplateLiteral(spans) => {
@@ -1005,6 +1005,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeKey::ReadonlyType(pattern_inner) => {
                 let source_inner = match self.interner().lookup(source) {
                     Some(TypeKey::ReadonlyType(inner)) => inner,
+                    _ => source,
+                };
+                self.match_infer_pattern(source_inner, pattern_inner, bindings, visited, checker)
+            }
+            TypeKey::NoInfer(pattern_inner) => {
+                // NoInfer<T> matches if source matches T (strip wrapper)
+                let source_inner = match self.interner().lookup(source) {
+                    Some(TypeKey::NoInfer(inner)) => inner,
                     _ => source,
                 };
                 self.match_infer_pattern(source_inner, pattern_inner, bindings, visited, checker)
@@ -2782,6 +2790,14 @@ impl<'a> InferSubstitutor<'a> {
                     type_id
                 } else {
                     self.interner.intern(TypeKey::ReadonlyType(new_inner))
+                }
+            }
+            TypeKey::NoInfer(inner) => {
+                let new_inner = self.substitute(inner);
+                if new_inner == inner {
+                    type_id
+                } else {
+                    self.interner.intern(TypeKey::NoInfer(new_inner))
                 }
             }
             TypeKey::TemplateLiteral(spans) => {

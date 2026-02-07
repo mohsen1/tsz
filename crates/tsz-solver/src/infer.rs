@@ -15,6 +15,7 @@ use crate::instantiate::TypeSubstitution;
 use crate::types::*;
 use crate::utils;
 use crate::visitor::{self, is_literal_type};
+use crate::widening;
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -689,6 +690,9 @@ impl<'a> InferenceContext<'a> {
             | TypeKey::ThisType
             | TypeKey::ModuleNamespace(_)
             | TypeKey::Error => {}
+            TypeKey::NoInfer(inner) => {
+                self.collect_type_params(inner, params, visited);
+            }
         }
     }
 
@@ -887,6 +891,7 @@ impl<'a> InferenceContext<'a> {
             | TypeKey::ThisType
             | TypeKey::ModuleNamespace(_)
             | TypeKey::Error => false,
+            TypeKey::NoInfer(inner) => self.type_contains_param(inner, target, visited),
         }
     }
 
@@ -1014,6 +1019,19 @@ impl<'a> InferenceContext<'a> {
         // Resolve the types to their actual TypeKeys
         let source_key = self.interner.lookup(source);
         let target_key = self.interner.lookup(target);
+
+        // Block inference if target is NoInfer<T> (TypeScript 5.4+)
+        // NoInfer prevents inference from flowing through this type position
+        if let Some(TypeKey::NoInfer(_)) = target_key {
+            return Ok(()); // Stop inference - don't descend into NoInfer
+        }
+
+        // Unwrap NoInfer from source if present (rare but possible)
+        let source_key = if let Some(TypeKey::NoInfer(inner)) = source_key {
+            self.interner.lookup(inner)
+        } else {
+            source_key
+        };
 
         // Case 1: Target is a TypeParameter we're inferring (Lower Bound: source <: T)
         if let Some(TypeKey::TypeParameter(ref param_info)) = target_key {
@@ -1664,9 +1682,13 @@ impl<'a> InferenceContext<'a> {
         if filtered_no_never.is_empty() {
             return TypeId::NEVER;
         }
-        // If this is a const type parameter, skip widening to preserve literal types
+        // If this is a const type parameter, apply const assertion transformation
+        // (preserve literals, convert arrays to readonly tuples, make objects readonly)
         let widened = if is_const {
-            filtered_no_never.iter().map(|c| c.type_id).collect()
+            filtered_no_never
+                .iter()
+                .map(|c| widening::apply_const_assertion(self.interner, c.type_id))
+                .collect()
         } else {
             self.widen_candidate_types(&filtered_no_never)
         };

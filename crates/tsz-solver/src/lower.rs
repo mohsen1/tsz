@@ -1652,6 +1652,7 @@ impl<'a> TypeLowering<'a> {
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_)
             | TypeKey::Error => false,
+            TypeKey::NoInfer(inner) => self.contains_meta_type_inner(inner, visited),
         }
     }
 
@@ -1960,7 +1961,7 @@ impl<'a> TypeLowering<'a> {
                 self.collect_infer_bindings(obj, visited);
                 self.collect_infer_bindings(idx, visited);
             }
-            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) => {
+            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
                 self.collect_infer_bindings(inner, visited);
             }
             TypeKey::TemplateLiteral(spans) => {
@@ -2478,6 +2479,15 @@ impl<'a> TypeLowering<'a> {
                                     kind: crate::types::StringIntrinsicKind::Uncapitalize,
                                     type_arg,
                                 });
+                            }
+                            return TypeId::ERROR;
+                        }
+                        "NoInfer" => {
+                            if let Some(args) = &data.type_arguments
+                                && let Some(&first_arg) = args.nodes.first()
+                            {
+                                let inner = self.lower_type(first_arg);
+                                return self.interner.intern(TypeKey::NoInfer(inner));
                             }
                             return TypeId::ERROR;
                         }

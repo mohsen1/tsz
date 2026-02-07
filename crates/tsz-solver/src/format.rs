@@ -331,6 +331,7 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeKey::KeyOf(operand) => format!("keyof {}", self.format(*operand)),
             TypeKey::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)),
+            TypeKey::NoInfer(inner) => format!("NoInfer<{}>", self.format(*inner)),
             TypeKey::UniqueSymbol(sym) => {
                 let name = if let Some(arena) = self.symbol_arena {
                     if let Some(symbol) = arena.get(SymbolId(sym.0)) {

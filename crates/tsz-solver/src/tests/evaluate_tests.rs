@@ -22581,34 +22581,42 @@ fn test_extract_intersection() {
 #[test]
 fn test_noinfer_identity_behavior() {
     // NoInfer<T> should evaluate to T (identity)
-    // We simulate NoInfer as a type application that returns its argument
+    use crate::evaluate::evaluate_type;
+
     let interner = TypeInterner::new();
 
     // NoInfer<string> = string
-    // NoInfer<number> = number
-    // The type should pass through unchanged
+    let noinfer_string = interner.intern(TypeKey::NoInfer(TypeId::STRING));
+    let evaluated = evaluate_type(&interner, noinfer_string);
+    assert_eq!(evaluated, TypeId::STRING);
 
-    // For evaluation purposes, NoInfer acts as identity
+    // NoInfer<number> = number
+    let noinfer_number = interner.intern(TypeKey::NoInfer(TypeId::NUMBER));
+    let evaluated = evaluate_type(&interner, noinfer_number);
+    assert_eq!(evaluated, TypeId::NUMBER);
+
     // Test with literal type
     let lit_hello = interner.literal_string("hello");
-
-    // NoInfer<"hello"> should evaluate to "hello"
-    // Since NoInfer is identity at evaluation time, the result is the input
-    assert_eq!(lit_hello, lit_hello); // Identity property
+    let noinfer_lit = interner.intern(TypeKey::NoInfer(lit_hello));
+    let evaluated = evaluate_type(&interner, noinfer_lit);
+    assert_eq!(evaluated, lit_hello); // Identity property
 }
 
 #[test]
 fn test_noinfer_with_union_type() {
     // NoInfer<string | number> should still be string | number
+    use crate::evaluate::evaluate_type;
+
     let interner = TypeInterner::new();
 
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let noinfer_union = interner.intern(TypeKey::NoInfer(union));
 
     // NoInfer preserves the type structure
-    // The union should remain a union after "passing through" NoInfer
-    match interner.lookup(union) {
+    let evaluated = evaluate_type(&interner, noinfer_union);
+    match interner.lookup(evaluated) {
         Some(TypeKey::Union(_)) => {} // Correct - still a union
-        _ => panic!("Expected Union type to be preserved"),
+        other => panic!("Expected Union type, got {:?}", other),
     }
 }
 
@@ -22616,11 +22624,14 @@ fn test_noinfer_with_union_type() {
 fn test_noinfer_in_function_param_position() {
     // function foo<T>(a: T, b: NoInfer<T>): T
     // When called as foo("hello", value), inference comes only from 'a'
-    let interner = TypeInterner::new();
+    use crate::infer::InferenceContext;
+    use crate::types::InferencePriority;
 
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
-    let a_name = interner.intern_string("a");
-    let b_name = interner.intern_string("b");
+
+    let var_t = ctx.fresh_type_param(t_name, false);
 
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -22629,91 +22640,77 @@ fn test_noinfer_in_function_param_position() {
         is_const: false,
     }));
 
-    // Parameter a: T (inference site)
-    let param_a = ParamInfo::required(a_name, t_param);
+    let hello_lit = interner.literal_string("hello");
+    let number_type = TypeId::NUMBER;
 
-    // Parameter b: NoInfer<T> (blocked inference site)
-    // NoInfer<T> evaluates to T but doesn't contribute to inference
-    // For the type representation, it's still T
-    let param_b = ParamInfo {
-        name: Some(b_name),
-        type_id: t_param, // Same type, but marked as non-inferring in practice
-        optional: false,
-        rest: false,
-    };
+    // Parameter a: T - contributes to inference
+    ctx.infer_from_types(hello_lit, t_param, InferencePriority::NakedTypeVariable)
+        .unwrap();
 
-    let func = interner.function(FunctionShape {
-        type_params: vec![TypeParamInfo {
-            name: t_name,
-            constraint: None,
-            default: None,
-            is_const: false,
-        }],
-        params: vec![param_a, param_b],
-        this_type: None,
-        return_type: t_param,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
+    // Parameter b: NoInfer<T> - should NOT contribute to inference
+    let noinfer_t = interner.intern(TypeKey::NoInfer(t_param));
+    // This should return Ok(()) immediately without adding candidates
+    ctx.infer_from_types(number_type, noinfer_t, InferencePriority::NakedTypeVariable)
+        .unwrap();
 
-    // Verify function structure
-    match interner.lookup(func) {
-        Some(TypeKey::Function(shape_id)) => {
-            let shape = interner.function_shape(shape_id);
-            assert_eq!(shape.params.len(), 2);
-            assert_eq!(shape.type_params.len(), 1);
-        }
-        _ => panic!("Expected Function type"),
-    }
+    // Resolve T - should only have "hello" as candidate, not number
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+    assert_eq!(result, hello_lit); // Only from parameter 'a'
 }
 
 #[test]
 fn test_noinfer_inference_priority() {
     // When multiple inference sites exist, NoInfer blocks certain ones
-    // This affects which arguments contribute to type inference
-    let interner = TypeInterner::new();
+    // function foo<T>(a: T, b: NoInfer<T>): T
+    // foo("hello", 123) - T should be inferred as "hello" only, not "hello" | number
+    use crate::infer::InferenceContext;
+    use crate::types::InferencePriority;
 
-    // Simulate: infer T from "hello" argument
-    // NoInfer<T> position with 123 should not contribute
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+
+    let var_t = ctx.fresh_type_param(t_name, false);
+
+    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
     let lit_hello = interner.literal_string("hello");
     let lit_123 = interner.literal_number(123.0);
 
-    // Without NoInfer, both would contribute to inference
-    // With NoInfer on second param, only first contributes
+    // Parameter a: T - contributes to inference
+    ctx.infer_from_types(lit_hello, t_param, InferencePriority::NakedTypeVariable)
+        .unwrap();
 
-    // The inferred type should be string (from first argument only)
-    // This is a conceptual test - the actual inference logic would
-    // skip NoInfer-wrapped positions
+    // Parameter b: NoInfer<T> - should NOT contribute
+    let noinfer_t = interner.intern(TypeKey::NoInfer(t_param));
+    ctx.infer_from_types(lit_123, noinfer_t, InferencePriority::NakedTypeVariable)
+        .unwrap();
 
-    // Verify types are distinct
-    assert_ne!(lit_hello, lit_123);
-
-    // String literal extends string
-    let cond = ConditionalType {
-        check_type: lit_hello,
-        extends_type: TypeId::STRING,
-        true_type: lit_hello,
-        false_type: TypeId::NEVER,
-        is_distributive: false,
-    };
-    let result = evaluate_conditional(&interner, &cond);
-    assert_eq!(result, lit_hello);
+    // Resolve T - should only have "hello", not a union
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+    assert_eq!(result, lit_hello); // Only from first parameter
+    assert_ne!(result, lit_123); // Not from NoInfer position
 }
 
 #[test]
 fn test_noinfer_with_conditional_type() {
     // NoInfer<T> in conditional: NoInfer<T> extends U ? X : Y
-    // Should behave same as T extends U since NoInfer is identity
+    // Should behave same as T extends U since NoInfer evaluates to T
     let interner = TypeInterner::new();
 
     // NoInfer<string> extends string ? "yes" : "no"
-    // Should be "yes" since NoInfer<string> = string
+    // Should be "yes" since NoInfer<string> evaluates to string
     let yes = interner.literal_string("yes");
     let no = interner.literal_string("no");
 
+    let noinfer_string = interner.intern(TypeKey::NoInfer(TypeId::STRING));
     let cond = ConditionalType {
-        check_type: TypeId::STRING, // NoInfer<string> evaluates to string
+        check_type: noinfer_string,
         extends_type: TypeId::STRING,
         true_type: yes,
         false_type: no,
@@ -22728,35 +22725,34 @@ fn test_noinfer_with_conditional_type() {
 fn test_noinfer_nested() {
     // NoInfer<NoInfer<T>> = NoInfer<T> = T
     // Multiple NoInfer wrappers should still result in identity
+    use crate::evaluate::evaluate_type;
+
     let interner = TypeInterner::new();
 
     let lit_42 = interner.literal_number(42.0);
+    let noinfer_42 = interner.intern(TypeKey::NoInfer(lit_42));
+    let noinfer_noinfer_42 = interner.intern(TypeKey::NoInfer(noinfer_42));
 
-    // NoInfer<NoInfer<42>> should still be 42
-    // Since each NoInfer is identity, nesting doesn't change the result
-    assert_eq!(lit_42, lit_42);
+    // NoInfer<NoInfer<42>> should evaluate to 42
+    let evaluated = evaluate_type(&interner, noinfer_noinfer_42);
+    assert_eq!(evaluated, lit_42);
 }
 
 #[test]
 fn test_noinfer_with_object_property() {
-    // { value: NoInfer<T> } - property type should still be T
+    // { value: NoInfer<string> } - NoInfer is preserved in property type
+    // until evaluation context strips it (e.g. during instantiation or subtype check)
     let interner = TypeInterner::new();
 
     let value_name = interner.intern_string("value");
-    let t_name = interner.intern_string("T");
+    let t_param = TypeId::STRING;
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-
-    // Object with property value: NoInfer<T> (which is T)
+    // Object with property value: NoInfer<string>
+    let noinfer_t = interner.intern(TypeKey::NoInfer(t_param));
     let obj = interner.object(vec![PropertyInfo {
         name: value_name,
-        type_id: t_param, // NoInfer<T> = T
-        write_type: t_param,
+        type_id: noinfer_t,
+        write_type: noinfer_t,
         optional: false,
         readonly: false,
         is_method: false,
@@ -22764,13 +22760,20 @@ fn test_noinfer_with_object_property() {
         parent_id: None,
     }]);
 
+    // Object preserves NoInfer in property types (structurally unchanged)
     match interner.lookup(obj) {
         Some(TypeKey::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
-            assert_eq!(shape.properties[0].type_id, t_param);
+            // Property type is NoInfer<string>
+            assert_eq!(shape.properties[0].type_id, noinfer_t);
+
+            // But evaluating the NoInfer wrapper itself should yield string
+            use crate::evaluate::evaluate_type;
+            let evaluated_prop = evaluate_type(&interner, shape.properties[0].type_id);
+            assert_eq!(evaluated_prop, t_param);
         }
-        _ => panic!("Expected Object type"),
+        other => panic!("Expected Object type, got {:?}", other),
     }
 }
 
@@ -29271,6 +29274,271 @@ fn test_satisfies_record_type() {
 
     // Object with named properties satisfies Record<string, number>
     assert!(checker.is_subtype_of(source, record));
+}
+
+#[test]
+fn test_satisfies_with_generic_function() {
+    use crate::SubtypeChecker;
+
+    // const fn = <T>(x: T) => x satisfies <T>(x: T) => T
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let x_name = interner.intern_string("x");
+
+    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let source_func = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo::required(x_name, t_param)],
+        this_type: None,
+        return_type: t_param,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let target_func = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo::required(x_name, t_param)],
+        this_type: None,
+        return_type: t_param,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Function types should satisfy each other (structural match)
+    assert!(checker.is_subtype_of(source_func, target_func));
+}
+
+#[test]
+fn test_satisfies_preserves_narrower_type() {
+    use crate::SubtypeChecker;
+    use crate::types::LiteralValue;
+
+    // const x = "hello" satisfies string
+    // Type of x should remain "hello", not widen to string
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let hello_lit = interner.literal_string("hello");
+
+    // satisfies check passes
+    assert!(checker.is_subtype_of(hello_lit, TypeId::STRING));
+
+    // But the type itself remains the literal
+    match interner.lookup(hello_lit) {
+        Some(TypeKey::Literal(LiteralValue::String(_))) => {} // Expected
+        other => panic!("Expected Literal(String), got {:?}", other),
+    }
+}
+
+#[test]
+fn test_satisfies_with_union_literals() {
+    use crate::SubtypeChecker;
+
+    // const x = "a" | "b" satisfies string
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let a_lit = interner.literal_string("a");
+    let b_lit = interner.literal_string("b");
+    let union = interner.union(vec![a_lit, b_lit]);
+
+    // Union of string literals satisfies string
+    assert!(checker.is_subtype_of(union, TypeId::STRING));
+}
+
+#[test]
+fn test_satisfies_with_intersection() {
+    use crate::SubtypeChecker;
+
+    // const x = { a: 1 } & { b: 2 } satisfies { a: number, b: number }
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let one = interner.literal_number(1.0);
+    let two = interner.literal_number(2.0);
+
+    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), one)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), two)]);
+    let intersection = interner.intersection(vec![obj_a, obj_b]);
+
+    let target = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+    ]);
+
+    // Intersection satisfies target (has both properties)
+    assert!(checker.is_subtype_of(intersection, target));
+}
+
+#[test]
+fn test_noinfer_blocks_inference_in_target() {
+    // function foo<T>(x: NoInfer<T>): T
+    // When NoInfer<T> is target, inference should be blocked
+    use crate::infer::InferenceContext;
+    use crate::types::InferencePriority;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let hello_lit = interner.literal_string("hello");
+    let noinfer_t = interner.intern(TypeKey::NoInfer(t_param));
+
+    // Source is "hello", target is NoInfer<T>
+    // Should block inference (return Ok(()) without adding candidates)
+    ctx.infer_from_types(hello_lit, noinfer_t, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    // T should remain unresolved (no candidates added)
+    assert!(ctx.probe(var_t).is_none());
+}
+
+#[test]
+fn test_noinfer_in_union_distribution() {
+    // NoInfer<string | number> should not distribute in conditionals
+    use crate::evaluate::evaluate_type;
+
+    let interner = TypeInterner::new();
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let noinfer_union = interner.intern(TypeKey::NoInfer(union));
+
+    // Evaluate should strip NoInfer but preserve union structure
+    let evaluated = evaluate_type(&interner, noinfer_union);
+    match interner.lookup(evaluated) {
+        Some(TypeKey::Union(_)) => {} // Union preserved
+        other => panic!("Expected Union, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_noinfer_with_array_elements() {
+    // NoInfer<T[]> - should evaluate to T[] but block inference from array elements
+    use crate::evaluate::evaluate_type;
+
+    let interner = TypeInterner::new();
+
+    let string_array = interner.array(TypeId::STRING);
+    let noinfer_array = interner.intern(TypeKey::NoInfer(string_array));
+
+    let evaluated = evaluate_type(&interner, noinfer_array);
+    match interner.lookup(evaluated) {
+        Some(TypeKey::Array(elem)) => {
+            assert_eq!(elem, TypeId::STRING);
+        }
+        other => panic!("Expected Array, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_noinfer_visitor_traversal() {
+    // NoInfer should be traversed by visitors
+    use crate::visitor::TypeVisitor;
+
+    struct TestVisitor {
+        visited_noinfer: bool,
+    }
+
+    impl TypeVisitor for TestVisitor {
+        type Output = ();
+
+        fn visit_no_infer(&mut self, _inner: TypeId) -> Self::Output {
+            self.visited_noinfer = true;
+        }
+
+        fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {}
+        fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {}
+        fn default_output() -> Self::Output {}
+    }
+
+    let interner = TypeInterner::new();
+    let noinfer_string = interner.intern(TypeKey::NoInfer(TypeId::STRING));
+
+    let mut visitor = TestVisitor {
+        visited_noinfer: false,
+    };
+    visitor.visit_type(&interner, noinfer_string);
+
+    assert!(visitor.visited_noinfer, "NoInfer should be visited");
+}
+
+#[test]
+fn test_noinfer_contains_type_param() {
+    // NoInfer<T> should contain T for type parameter collection
+    // This is tested indirectly through visitor traversal
+    use crate::visitor::TypeVisitor;
+    use tsz_common::interner::Atom;
+
+    struct CollectParams<'a> {
+        params: Vec<Atom>,
+        interner: &'a TypeInterner,
+    }
+
+    impl<'a> TypeVisitor for CollectParams<'a> {
+        type Output = ();
+
+        fn visit_type_parameter(&mut self, info: &TypeParamInfo) -> Self::Output {
+            self.params.push(info.name);
+        }
+
+        fn visit_no_infer(&mut self, inner: TypeId) -> Self::Output {
+            // Should recurse into inner type
+            self.visit_type(self.interner, inner)
+        }
+
+        fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {}
+        fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {}
+        fn default_output() -> Self::Output {}
+    }
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let noinfer_t = interner.intern(TypeKey::NoInfer(t_param));
+
+    let mut collector = CollectParams {
+        params: Vec::new(),
+        interner: &interner,
+    };
+    collector.visit_type(&interner, noinfer_t);
+
+    // Should detect that NoInfer<T> contains T
+    assert!(collector.params.contains(&t_name));
 }
 
 // ============================================================================
