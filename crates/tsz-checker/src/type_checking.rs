@@ -804,6 +804,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Resolve lazy types (type aliases) before checking iterability
+        let source_type = self.resolve_lazy_type(source_type);
+
         // First check if the type is iterable (TS2488 - preferred error)
         // This is the primary check for array destructuring
         if !self.is_iterable_type(source_type) {
