@@ -188,6 +188,12 @@ impl BinderState {
             self.enter_scope(ContainerKind::Function, idx);
             self.declare_arguments_symbol();
 
+            // Named function expressions bind their name in their own scope
+            // (accessible only inside the function body, not in the parent scope)
+            if let Some(name) = self.get_identifier_name(arena, func.name) {
+                self.declare_symbol(name, symbol_flags::FUNCTION, idx, false);
+            }
+
             // Capture enclosing flow for closures (preserves narrowing for const/let variables)
             self.with_fresh_flow_inner(
                 |binder| {
