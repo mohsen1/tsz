@@ -1211,6 +1211,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "tsz"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags",
+ "dashmap",
+ "ena",
+ "fixedbitset",
+ "indexmap",
+ "memchr",
+ "once_cell",
+ "rayon",
+ "rustc-hash",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "smallvec",
+ "tracing",
+ "tsz-binder",
+ "tsz-checker",
+ "tsz-common",
+ "tsz-emitter",
+ "tsz-lsp",
+ "tsz-parser",
+ "tsz-scanner",
+ "tsz-solver",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "tsz-binder"
 version = "0.1.0"
 dependencies = [
@@ -1274,8 +1304,8 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "tsz",
  "walkdir",
- "wasm",
 ]
 
 [[package]]
@@ -1401,36 +1431,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9517f9239f02c069db75e65f174b3da828fe5f5b945c4dd26bd25d89c03ebcf5"
 dependencies = [
  "wit-bindgen",
-]
-
-[[package]]
-name = "wasm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitflags",
- "dashmap",
- "ena",
- "fixedbitset",
- "indexmap",
- "memchr",
- "once_cell",
- "rayon",
- "rustc-hash",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "smallvec",
- "tracing",
- "tsz-binder",
- "tsz-checker",
- "tsz-common",
- "tsz-emitter",
- "tsz-lsp",
- "tsz-parser",
- "tsz-scanner",
- "tsz-solver",
- "wasm-bindgen",
 ]
 
 [[package]]
