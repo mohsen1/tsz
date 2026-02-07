@@ -80,23 +80,10 @@ impl<'a> Printer<'a> {
         let flags = node.flags as u32;
         let is_const = flags & crate::parser::node_flags::CONST != 0;
         let is_let = flags & crate::parser::node_flags::LET != 0;
-        let mut force_void_0 = false;
         let keyword = if is_const {
-            let has_missing_initializer = decl_list.declarations.nodes.iter().any(|decl_idx| {
-                let Some(decl_node) = self.arena.get(*decl_idx) else {
-                    return false;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    return false;
-                };
-                decl.initializer.is_none()
-            });
-            if has_missing_initializer {
-                force_void_0 = true;
-                "var"
-            } else {
-                "const"
-            }
+            // For ES6+ targets, preserve const as-is even without initializer
+            // (tsc preserves user's code even if it's a syntax error)
+            "const"
         } else if is_let {
             "let"
         } else {
@@ -108,12 +95,7 @@ impl<'a> Printer<'a> {
             self.write(" ");
         }
 
-        let prev = self.emit_missing_initializer_as_void_0;
-        if force_void_0 {
-            self.emit_missing_initializer_as_void_0 = true;
-        }
         self.emit_comma_separated(&decl_list.declarations.nodes);
-        self.emit_missing_initializer_as_void_0 = prev;
     }
 
     pub(super) fn emit_variable_declaration(&mut self, node: &Node) {
