@@ -82,7 +82,7 @@ ensure_binaries() {
 
     if [ "$need_conformance" = true ]; then
         echo -e "${YELLOW}Building conformance runner...${NC}"
-        cd "$REPO_ROOT/conformance-rust"
+        cd "$REPO_ROOT/crates/conformance"
         cargo build --release
         cd "$REPO_ROOT"
         echo ""

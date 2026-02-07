@@ -192,7 +192,7 @@ Performance: $TESTS_PER_SEC tests/sec (${CONF_TIME}s for full suite)
 \`\`\`
 
 **Implementation:** High-performance Rust runner with parallel execution
-**Documentation:** [conformance-rust/README.md](conformance-rust/README.md) | [docs/CONFORMANCE_DEEP_DIVE.md](docs/CONFORMANCE_DEEP_DIVE.md)"
+**Documentation:** [crates/conformance/README.md](crates/conformance/README.md) | [docs/CONFORMANCE_DEEP_DIVE.md](docs/CONFORMANCE_DEEP_DIVE.md)"
 
             update_section "<!-- CONFORMANCE_START -->" "<!-- CONFORMANCE_END -->" "$CONF_CONTENT"
         fi

@@ -31,7 +31,7 @@ tsz/
 │   ├── tsz-emitter/        (JS code generation, printer, transforms)
 │   └── tsz-lsp/            (language server protocol features)
 ├── src/                    (root 'wasm' crate: CLI, WASM bindings, bins)
-├── conformance-rust/       (existing conformance runner)
+├── crates/conformance/       (existing conformance runner)
 └── benches/                (benchmarks)
 ```
 
