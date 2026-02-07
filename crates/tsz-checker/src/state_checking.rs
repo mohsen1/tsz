@@ -1842,6 +1842,9 @@ impl<'a> CheckerState<'a> {
         // This allows heritage clauses and member checks to reference the class's type parameters
         let (_type_params, type_param_updates) = self.push_type_parameters(&class.type_parameters);
 
+        // Check for unused type parameters (TS6133)
+        self.check_unused_type_params(&class.type_parameters, stmt_idx);
+
         // Check heritage clauses for unresolved names (TS2304)
         // Must be checked AFTER type parameters are pushed so heritage can reference type params
         self.check_heritage_clauses_for_unresolved_names(&class.heritage_clauses, true);

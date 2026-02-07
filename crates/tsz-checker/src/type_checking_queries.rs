@@ -1158,6 +1158,112 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check for unused type parameters in a declaration and emit TS6133.
+    ///
+    /// This scans all identifiers within the declaration body for type parameter
+    /// name references. Any type parameter that is not referenced gets a TS6133
+    /// diagnostic. Called only from the checking path (not type resolution).
+    pub(crate) fn check_unused_type_params(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+        body_root: NodeIndex,
+    ) {
+        use tsz_scanner::SyntaxKind;
+
+        if !self.ctx.no_unused_locals() {
+            return;
+        }
+
+        let Some(list) = type_parameters else {
+            return;
+        };
+
+        // Collect type parameter names and their declaration name NodeIndices
+        let mut params: Vec<(String, NodeIndex)> = Vec::new();
+        for &param_idx in &list.nodes {
+            let Some(node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(data) = self.ctx.arena.get_type_parameter(node) else {
+                continue;
+            };
+            let name = self
+                .ctx
+                .arena
+                .get(data.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .map(|id_data| id_data.escaped_text.clone())
+                .unwrap_or_default();
+            if !name.is_empty() && !name.starts_with('_') {
+                params.push((name, data.name));
+            }
+        }
+
+        if params.is_empty() {
+            return;
+        }
+
+        let Some(root_node) = self.ctx.arena.get(body_root) else {
+            return;
+        };
+        let pos_start = root_node.pos;
+        let pos_end = root_node.end;
+
+        let decl_indices: Vec<NodeIndex> = params.iter().map(|(_, idx)| *idx).collect();
+        let mut used = vec![false; params.len()];
+
+        // Scan all nodes in the arena for identifiers within the declaration range
+        let arena_len = self.ctx.arena.len();
+        for i in 0..arena_len {
+            let idx = NodeIndex(i as u32);
+            // Skip the type parameter declaration identifiers themselves
+            if decl_indices.contains(&idx) {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.pos < pos_start || node.end > pos_end {
+                continue;
+            }
+            if node.kind == SyntaxKind::Identifier as u16 {
+                if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                    let name_str = ident.escaped_text.as_str();
+                    for (j, (param_name, _)) in params.iter().enumerate() {
+                        if !used[j] && param_name == name_str {
+                            used[j] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Emit TS6133 for unused type parameters
+        let file_name = self.ctx.file_name.clone();
+        for (j, (name, decl_idx)) in params.iter().enumerate() {
+            if used[j] {
+                continue;
+            }
+            if let Some(name_node) = self.ctx.arena.get(*decl_idx) {
+                let start = name_node.pos;
+                let length = name_node.end.saturating_sub(name_node.pos);
+                self.ctx
+                    .push_diagnostic(crate::types::diagnostics::Diagnostic {
+                        file: file_name.clone(),
+                        start,
+                        length,
+                        message_text: format!(
+                            "'{}' is declared but its value is never read.",
+                            name
+                        ),
+                        category: crate::types::diagnostics::DiagnosticCategory::Error,
+                        code: 6133,
+                        related_information: Vec::new(),
+                    });
+            }
+        }
+    }
+
     /// Collect all `infer` type parameter names from a type node.
     /// This is used to add inferred type parameters to the scope when checking conditional types.
     pub(crate) fn collect_infer_type_parameters(&self, type_idx: NodeIndex) -> Vec<String> {
