@@ -69,7 +69,7 @@ ensure_binaries() {
 
     echo -e "${YELLOW}Building conformance runner...${NC}"
     cd "$REPO_ROOT/crates/conformance"
-    cargo build --release
+    CARGO_TARGET_DIR="$REPO_ROOT/.target-conformance" cargo build --release
     cd "$REPO_ROOT"
     echo ""
 }

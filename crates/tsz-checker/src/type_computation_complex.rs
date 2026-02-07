@@ -135,7 +135,7 @@ impl<'a> CheckerState<'a> {
     /// - Argument type checking
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::types::diagnostics::diagnostic_codes;
-        use tsz_binder::symbol_flags;
+        
 
         use tsz_solver::{CallEvaluator, CallResult, CompatChecker};
 
@@ -143,94 +143,20 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing new expression data - propagate error
         };
 
-        // Check if trying to instantiate an abstract class or type-only symbol
-        // The expression is typically an identifier referencing the class
-        if let Some(ident) = self.ctx.arena.get_identifier_at(new_expr.expression) {
-            let class_name = &ident.escaped_text;
-
-            // Try multiple ways to find the symbol:
-            // 1. Check if the identifier node has a direct symbol binding
-            // 2. Look up in file_locals
-            // 3. Search all symbols by name (handles local scopes like classes inside functions)
-
-            let symbol_opt = self
-                .ctx
-                .binder
-                .get_node_symbol(new_expr.expression)
-                .or_else(|| self.ctx.binder.file_locals.get(class_name))
-                .or_else(|| self.ctx.binder.get_symbols().find_by_name(class_name));
-
-            if let Some(sym_id) = symbol_opt
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            {
-                // Check if it's type-only (interface, type alias without value, or type-only import)
-                let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
-                let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
-                let is_type_alias = (symbol.flags & symbol_flags::TYPE_ALIAS) != 0;
-
-                // Emit TS2693 for type-only symbols used as values
-                // This includes:
-                // 1. Symbols with TYPE flag but no VALUE flag (interfaces without namespace merge, type-only imports)
-                // 2. Type aliases (never have VALUE, even if they reference a class)
-                //
-                // IMPORTANT: Don't emit for interfaces that have VALUE (merged with namespace)
-                if is_type_alias || (has_type && !has_value) {
-                    self.error_type_only_value_at(class_name, new_expr.expression);
-                    return TypeId::ERROR;
-                }
-
-                // Check if it has the ABSTRACT flag
-                if symbol.flags & symbol_flags::ABSTRACT != 0 {
-                    self.error_at_node(
-                        idx,
-                        "Cannot create an instance of an abstract class.",
-                        diagnostic_codes::CANNOT_CREATE_INSTANCE_OF_ABSTRACT_CLASS,
-                    );
-                    return TypeId::ERROR;
-                }
-            }
+        // Validate the constructor target: reject type-only symbols and abstract classes
+        if let Some(early) = self.check_new_expression_target(idx, new_expr.expression) {
+            return early;
         }
 
         // Get the type of the constructor expression
         let constructor_type = self.get_type_of_node(new_expr.expression);
 
-        // Handle self-referencing class in static initializer:
-        // When a class's static property initializer does `new C()` where C is the class
-        // being defined, get_type_of_symbol returns a Lazy placeholder (circular reference).
-        // The Lazy type has no construct signatures, so we'd falsely emit TS2351.
-        // Fix: If the constructor type is Lazy and the expression resolves to a class symbol,
-        // return the cached instance type directly since the class IS constructable.
-        if tsz_solver::visitor::lazy_def_id(self.ctx.types, constructor_type).is_some() {
-            if let Some(sym_id) = self
-                .ctx
-                .binder
-                .resolve_identifier(self.ctx.arena, new_expr.expression)
-                .or_else(|| self.ctx.binder.get_node_symbol(new_expr.expression))
-            {
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    if symbol.flags & symbol_flags::CLASS != 0 {
-                        // Try to find the cached instance type
-                        if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
-                            return instance_type;
-                        }
-                        // Also check the class_instance_type_cache by looking up the declaration
-                        let decl_idx = if !symbol.value_declaration.is_none() {
-                            symbol.value_declaration
-                        } else {
-                            symbol
-                                .declarations
-                                .first()
-                                .copied()
-                                .unwrap_or(NodeIndex::NONE)
-                        };
-                        if let Some(&instance_type) =
-                            self.ctx.class_instance_type_cache.get(&decl_idx)
-                        {
-                            return instance_type;
-                        }
-                    }
-                }
-            }
+        // Self-referencing class in static initializer: `new C()` inside C's static init
+        // produces a Lazy placeholder. Return the cached instance type if available.
+        if let Some(instance_type) =
+            self.resolve_self_referencing_constructor(constructor_type, new_expr.expression)
+        {
+            return instance_type;
         }
 
         // Validate explicit type arguments against constraints (TS2344)
@@ -328,6 +254,7 @@ impl<'a> CheckerState<'a> {
             args,
             |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
             check_excess_properties,
+            None, // No skipping needed for constructor calls
         );
 
         self.ensure_application_symbols_resolved(constructor_type);
@@ -391,6 +318,84 @@ impl<'a> CheckerState<'a> {
                 TypeId::ERROR
             }
         }
+    }
+
+    /// Validate the target of a `new` expression: reject type-only symbols and
+    /// abstract classes. Returns `Some(TypeId)` if the expression should bail early.
+    fn check_new_expression_target(
+        &mut self,
+        new_idx: NodeIndex,
+        expr_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        use crate::types::diagnostics::diagnostic_codes;
+        use tsz_binder::symbol_flags;
+
+        let ident = self.ctx.arena.get_identifier_at(expr_idx)?;
+        let class_name = &ident.escaped_text;
+
+        let sym_id = self
+            .ctx
+            .binder
+            .get_node_symbol(expr_idx)
+            .or_else(|| self.ctx.binder.file_locals.get(class_name))
+            .or_else(|| self.ctx.binder.get_symbols().find_by_name(class_name))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+        let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+        let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
+        let is_type_alias = (symbol.flags & symbol_flags::TYPE_ALIAS) != 0;
+
+        if is_type_alias || (has_type && !has_value) {
+            self.error_type_only_value_at(class_name, expr_idx);
+            return Some(TypeId::ERROR);
+        }
+        if symbol.flags & symbol_flags::ABSTRACT != 0 {
+            self.error_at_node(
+                new_idx,
+                "Cannot create an instance of an abstract class.",
+                diagnostic_codes::CANNOT_CREATE_INSTANCE_OF_ABSTRACT_CLASS,
+            );
+            return Some(TypeId::ERROR);
+        }
+        None
+    }
+
+    /// Resolve a self-referencing class constructor in a static initializer.
+    /// When `new C()` appears inside C's own static property initializer, the
+    /// constructor type is a Lazy placeholder. Returns the cached instance type
+    /// if the symbol is a class with a cached instance type.
+    fn resolve_self_referencing_constructor(
+        &self,
+        constructor_type: TypeId,
+        expr_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        use tsz_binder::symbol_flags;
+
+        if tsz_solver::visitor::lazy_def_id(self.ctx.types, constructor_type).is_none() {
+            return None;
+        }
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)
+            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::CLASS == 0 {
+            return None;
+        }
+        if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
+            return Some(instance_type);
+        }
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .first()
+                .copied()
+                .unwrap_or(NodeIndex::NONE)
+        };
+        self.ctx.class_instance_type_cache.get(&decl_idx).copied()
     }
 
     /// Check if a type contains any abstract class constructors.
@@ -959,6 +964,7 @@ impl<'a> CheckerState<'a> {
                 args,
                 |_i, _arg_count| None, // No parameter type info for ANY callee
                 check_excess_properties,
+                None, // No skipping needed
             );
             return TypeId::ANY;
         }
@@ -970,6 +976,7 @@ impl<'a> CheckerState<'a> {
                 args,
                 |_i, _arg_count| None, // No parameter type info for ERROR callee
                 check_excess_properties,
+                None, // No skipping needed
             );
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
@@ -1097,6 +1104,8 @@ impl<'a> CheckerState<'a> {
                 if needs_two_pass {
                     // === Round 1: Collect non-contextual argument types ===
                     // This allows type parameters to be inferred from concrete arguments.
+                    // CRITICAL: Skip checking sensitive arguments entirely to prevent TS7006
+                    // from being emitted before inference completes.
                     let round1_arg_types = self.collect_call_argument_types_with_context(
                         args,
                         |i, arg_count| {
@@ -1108,6 +1117,7 @@ impl<'a> CheckerState<'a> {
                             }
                         },
                         check_excess_properties,
+                        Some(&sensitive_args), // Skip sensitive args in Round 1
                     );
 
                     // === Perform Round 1 Inference ===
@@ -1139,6 +1149,7 @@ impl<'a> CheckerState<'a> {
                             Some(instantiate_type(self.ctx.types, param_type, &substitution))
                         },
                         check_excess_properties,
+                        None, // Don't skip anything in Round 2 - check all args with inferred context
                     )
                 } else {
                     // No context-sensitive arguments: skip Round 1/2 and use single-pass collection.
@@ -1146,6 +1157,7 @@ impl<'a> CheckerState<'a> {
                         args,
                         |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
                         check_excess_properties,
+                        None, // No skipping needed for single-pass
                     )
                 }
             } else {
@@ -1154,6 +1166,7 @@ impl<'a> CheckerState<'a> {
                     args,
                     |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
                     check_excess_properties,
+                    None, // No skipping needed for single-pass
                 )
             }
         } else {
@@ -1163,6 +1176,7 @@ impl<'a> CheckerState<'a> {
                 args,
                 |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
                 check_excess_properties,
+                None, // No skipping needed for single-pass
             )
         };
 
@@ -1197,6 +1211,7 @@ impl<'a> CheckerState<'a> {
                 args,
                 |_i, _arg_count| None,
                 check_excess_properties,
+                None, // No skipping needed
             );
             return if nullish_cause.is_some() {
                 self.ctx.types.union(vec![TypeId::ANY, TypeId::UNDEFINED])
