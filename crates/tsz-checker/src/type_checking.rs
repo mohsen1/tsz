@@ -3296,6 +3296,13 @@ impl<'a> CheckerState<'a> {
                 if !is_private {
                     continue; // Public/protected members may be used externally
                 }
+                // Setter-only private members are "used" by write accesses.
+                // TSC never flags them as unused since writes count as usage.
+                let is_setter_only = (flags & symbol_flags::SET_ACCESSOR) != 0
+                    && (flags & symbol_flags::GET_ACCESSOR) == 0;
+                if is_setter_only {
+                    continue;
+                }
                 // Fall through to check private members
             }
 
@@ -3330,6 +3337,14 @@ impl<'a> CheckerState<'a> {
 
             // Skip using/await using declarations — they always have dispose side effects
             if self.is_using_declaration(decl_idx) {
+                continue;
+            }
+
+            // Skip named function expression names — TSC never flags these as unused.
+            // `var x = function somefn() {}` binds `somefn` in its own scope.
+            if decl_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                && (flags & symbol_flags::FUNCTION) != 0
+            {
                 continue;
             }
 
