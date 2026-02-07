@@ -101,6 +101,83 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Validate type arguments against their constraints for type references (e.g., `A<X, Y>`).
+    /// Reports TS2344 when a type argument doesn't satisfy its constraint.
+    ///
+    /// This handles cases like `class A<T, U extends T>` where `A<{a: string}, {b: string}>`
+    /// should error because `{b: string}` doesn't extend `{a: string}`.
+    pub(crate) fn validate_type_reference_type_arguments(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        type_args_list: &tsz_parser::parser::NodeList,
+    ) {
+        use tsz_solver::AssignabilityChecker;
+
+        let type_params = self.get_type_params_for_symbol(sym_id);
+        if type_params.is_empty() {
+            return;
+        }
+
+        // Collect the provided type arguments
+        let type_args: Vec<TypeId> = type_args_list
+            .nodes
+            .iter()
+            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+            .collect();
+
+        for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
+            if let Some(constraint) = param.constraint {
+                // Skip validation for type parameter and infer type arguments
+                // (e.g., `Reducer<any, infer A>` - can't validate infer types)
+                if matches!(
+                    self.ctx.types.lookup(type_arg),
+                    Some(tsz_solver::TypeKey::TypeParameter(_) | tsz_solver::TypeKey::Infer(_))
+                ) {
+                    continue;
+                }
+
+                // Resolve the constraint in case it's a Lazy type
+                let constraint = self.resolve_lazy_type(constraint);
+
+                // Instantiate the constraint with already-validated type arguments
+                let instantiated_constraint = if i > 0 {
+                    let mut subst = tsz_solver::TypeSubstitution::new();
+                    for (j, p) in type_params.iter().take(i).enumerate() {
+                        if let Some(&arg) = type_args.get(j) {
+                            subst.insert(p.name, arg);
+                        }
+                    }
+                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
+                } else {
+                    constraint
+                };
+
+                // Resolve refs and lazy types before checking
+                self.ensure_refs_resolved(type_arg);
+                self.ensure_refs_resolved(instantiated_constraint);
+
+                let is_satisfied = {
+                    let env = self.ctx.type_env.borrow();
+                    let mut checker =
+                        tsz_solver::CompatChecker::with_resolver(self.ctx.types, &*env);
+                    self.ctx.configure_compat_checker(&mut checker);
+                    checker.is_assignable_to(type_arg, instantiated_constraint)
+                };
+
+                if !is_satisfied {
+                    // Report TS2344 at the specific type argument node
+                    if let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                        self.error_type_constraint_not_satisfied(
+                            type_arg,
+                            instantiated_constraint,
+                            arg_idx,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Validate explicit type arguments against their constraints for new expressions.
     /// Reports TS2344 when a type argument doesn't satisfy its constraint.
     pub(crate) fn validate_new_expression_type_arguments(

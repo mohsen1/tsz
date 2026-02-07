@@ -64,6 +64,11 @@ impl<'a> CheckerState<'a> {
                     for &arg_idx in &args.nodes {
                         let _ = self.get_type_from_type_node(arg_idx);
                     }
+                    // Validate type arguments against constraints (TS2344)
+                    // Skip validation inside type parameter declarations (constraints/defaults)
+                    if !self.is_inside_type_parameter_declaration(idx) {
+                        self.validate_type_reference_type_arguments(sym_id, args);
+                    }
                 }
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
@@ -238,6 +243,13 @@ impl<'a> CheckerState<'a> {
                         // Recursively get type from the arg - this will add any referenced
                         // symbols to type_env
                         let _ = self.get_type_from_type_node(arg_idx);
+                    }
+                    // Validate type arguments against constraints (TS2344)
+                    // Skip validation inside type parameter declarations (constraints/defaults)
+                    if !is_builtin_array && !self.is_inside_type_parameter_declaration(idx) {
+                        if let Some(sym_id) = sym_id {
+                            self.validate_type_reference_type_arguments(sym_id, args);
+                        }
                     }
                 }
                 let type_param_bindings = self.get_type_param_bindings();
@@ -1816,5 +1828,40 @@ impl<'a> CheckerState<'a> {
             }
             BaseInstanceMergeKind::Other => {}
         }
+    }
+
+    /// Check if a node is inside a type parameter declaration (constraint or default).
+    /// Used to skip TS2344 validation for type args in type parameter constraints/defaults.
+    pub(crate) fn is_inside_type_parameter_declaration(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = idx;
+        for _ in 0..10 {
+            let parent = self
+                .ctx
+                .arena
+                .get_extended(current)
+                .map_or(NodeIndex::NONE, |e| e.parent);
+            if parent.is_none() {
+                return false;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent) {
+                if parent_node.kind == syntax_kind_ext::TYPE_PARAMETER {
+                    return true;
+                }
+                // Stop at declaration-level nodes
+                if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                {
+                    return false;
+                }
+            }
+            current = parent;
+        }
+        false
     }
 }
