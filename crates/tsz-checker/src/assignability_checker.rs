@@ -269,24 +269,9 @@ impl<'a> CheckerState<'a> {
         let is_cacheable =
             !self.contains_infer_types_cached(source) && !self.contains_infer_types_cached(target);
 
+        let flags = self.ctx.pack_relation_flags();
+
         if is_cacheable {
-            // Pack boolean flags into a u16 bitmask for the cache key
-            // Same flags as is_subtype_of for consistency
-            let mut flags: u16 = 0;
-            if self.ctx.strict_null_checks() {
-                flags |= 1 << 0;
-            }
-            if self.ctx.strict_function_types() {
-                flags |= 1 << 1;
-            }
-            if self.ctx.exact_optional_property_types() {
-                flags |= 1 << 2;
-            }
-            if self.ctx.no_unchecked_indexed_access() {
-                flags |= 1 << 3;
-            }
-            // Note: For assignability checks, we use AnyPropagationMode::All (0)
-            // since the checker doesn't track depth like SubtypeChecker does
             let cache_key =
                 RelationCacheKey::assignability(original_source, original_target, flags, 0);
 
@@ -303,22 +288,7 @@ impl<'a> CheckerState<'a> {
 
         let result = checker.is_assignable_with_overrides(source, target, &overrides);
 
-        // Cache the result for non-inference types
-        // Use ORIGINAL types for cache key (not evaluated types)
         if is_cacheable {
-            let mut flags: u16 = 0;
-            if self.ctx.strict_null_checks() {
-                flags |= 1 << 0;
-            }
-            if self.ctx.strict_function_types() {
-                flags |= 1 << 1;
-            }
-            if self.ctx.exact_optional_property_types() {
-                flags |= 1 << 2;
-            }
-            if self.ctx.no_unchecked_indexed_access() {
-                flags |= 1 << 3;
-            }
             let cache_key =
                 RelationCacheKey::assignability(original_source, original_target, flags, 0);
 
@@ -386,20 +356,9 @@ impl<'a> CheckerState<'a> {
         let is_cacheable =
             !self.contains_infer_types_cached(source) && !self.contains_infer_types_cached(target);
 
-        // Pack boolean flags into a u16 bitmask for the cache key
-        // Note: For bivariant checks, we do NOT set strict_function_types flag
-        // This creates a distinct cache key from regular assignability checks
-        let mut flags: u16 = 0;
-        if self.ctx.strict_null_checks() {
-            flags |= 1 << 0;
-        }
-        // strict_function_types flag is NOT set for bivariant checks
-        if self.ctx.exact_optional_property_types() {
-            flags |= 1 << 2;
-        }
-        if self.ctx.no_unchecked_indexed_access() {
-            flags |= 1 << 3;
-        }
+        // For bivariant checks, we strip the strict_function_types flag
+        // so the cache key is distinct from regular assignability checks.
+        let flags = self.ctx.pack_relation_flags() & !RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
 
         if is_cacheable {
             // Note: For assignability checks, we use AnyPropagationMode::All (0)

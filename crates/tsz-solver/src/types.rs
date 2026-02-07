@@ -238,6 +238,17 @@ impl RelationCacheKey {
     pub const ASSIGNABLE: u8 = 1;
     pub const IDENTICAL: u8 = 2;
 
+    // Named flag constants for the `flags` bitmask.
+    // Each bit represents a compiler option that affects type relation results.
+    pub const FLAG_STRICT_NULL_CHECKS: u16 = 1 << 0;
+    pub const FLAG_STRICT_FUNCTION_TYPES: u16 = 1 << 1;
+    pub const FLAG_EXACT_OPTIONAL_PROPERTY_TYPES: u16 = 1 << 2;
+    pub const FLAG_NO_UNCHECKED_INDEXED_ACCESS: u16 = 1 << 3;
+    pub const FLAG_DISABLE_METHOD_BIVARIANCE: u16 = 1 << 4;
+    pub const FLAG_ALLOW_VOID_RETURN: u16 = 1 << 5;
+    pub const FLAG_ALLOW_BIVARIANT_REST: u16 = 1 << 6;
+    pub const FLAG_ALLOW_BIVARIANT_PARAM_COUNT: u16 = 1 << 7;
+
     /// Create a new cache key for subtype checking.
     pub fn subtype(source: TypeId, target: TypeId, flags: u16, any_mode: u8) -> Self {
         Self {

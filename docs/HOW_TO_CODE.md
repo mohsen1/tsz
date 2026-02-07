@@ -195,7 +195,25 @@ Solver tests should use shared setup helpers, not copy-paste `TypeInterner::new(
 
 ### Diagnostics
 
-Don't construct `Diagnostic::error(format!(...), code)` by hand in 50 places. Use the diagnostic builder and centralized message constants. Match TypeScript's `diagnosticMessages.json` structure.
+Never construct `Diagnostic { code, category, message_text, file, start, length, .. }` structs inline. Use `error_at_node()` or the diagnostic builder. Centralized message constants live in `types::diagnostics`.
+
+```rust
+// WRONG — 10 lines of manual struct construction
+if let Some(loc) = self.get_source_location(node_idx) {
+    self.ctx.diagnostics.push(Diagnostic {
+        code: diagnostic_codes::SOME_ERROR,
+        category: DiagnosticCategory::Error,
+        message_text: diagnostic_messages::SOME_ERROR.to_string(),
+        file: self.ctx.file_name.clone(),
+        start: loc.start,
+        length: loc.length(),
+        related_information: Vec::new(),
+    });
+}
+
+// RIGHT — 1 line
+self.error_at_node(node_idx, diagnostic_messages::SOME_ERROR, diagnostic_codes::SOME_ERROR);
+```
 
 ### Builder methods
 
@@ -216,7 +234,130 @@ macro_rules! builder_setters {
 
 Use a macro when you have 3+ trivial `impl From<X> for MyEnum` blocks.
 
+### Nearly-identical visitors
+
+When multiple `TypeVisitor` implementors differ only in which field they extract or which argument index they read, parameterize instead of copying. For example, use `ApplicationArgExtractor::new(db, index)` instead of three separate `GeneratorYieldExtractor` / `GeneratorReturnExtractor` / `GeneratorNextExtractor` structs.
+
+Likewise, if two visitors share identical helper logic (e.g. extracting a parameter type from a `&[ParamInfo]`), extract that logic into a free function rather than duplicating it.
+
 Full list of abstraction opportunities: `docs/todo/abstraction-opportunities.md`
+
+---
+
+## Best Practices
+
+Hard-won patterns from real bugs and refactoring sessions. Follow these to keep the codebase clean.
+
+### Use named constants for bitmask flags
+
+Never write `flags |= 1 << 3`. Use the named constants on `RelationCacheKey`:
+
+```rust
+// WRONG — what does bit 3 mean?
+let mut flags: u16 = 0;
+if self.strict_null_checks { flags |= 1 << 0; }
+if self.strict_function_types { flags |= 1 << 1; }
+
+// RIGHT — self-documenting
+let mut flags: u16 = 0;
+if self.strict_null_checks { flags |= RelationCacheKey::FLAG_STRICT_NULL_CHECKS; }
+if self.strict_function_types { flags |= RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES; }
+```
+
+The checker has `CheckerContext::pack_relation_flags()` as the single source of truth for packing compiler options into a cache key bitmask. Use it instead of hand-packing flags.
+
+### Extract shared logic when two functions differ only in direction
+
+If two functions are identical except for an argument order or comparison direction, extract the shared body and pass a discriminant:
+
+```rust
+// WRONG — 80 lines of nearly identical code in simplify_union_members and simplify_intersection_members
+
+// RIGHT — one shared function with a direction parameter
+enum SubtypeDirection { SourceSubsumedByOther, OtherSubsumedBySource }
+fn remove_redundant_members(&mut self, members: &mut Vec<TypeId>, direction: SubtypeDirection) { ... }
+```
+
+### Don't `.clone()` when `ref` already borrows
+
+`if let Some(ref x) = self.foo.clone()` clones for no reason — `ref` already borrows the inner value. Drop the `.clone()`:
+
+```rust
+// WRONG — clones the Option<T> then immediately borrows the inner value
+if let Some(ref info) = self.ctx.enclosing_class.clone() { ... }
+
+// RIGHT — borrows directly, zero cost
+if let Some(ref info) = self.ctx.enclosing_class { ... }
+```
+
+**Exception**: If code below the `if let` calls `&mut self` methods, the borrow through `self.ctx` conflicts. In that case the `.clone()` is necessary — add a comment explaining why:
+
+```rust
+// Clone needed: error_cannot_find_name_static_member_at() borrows &mut self
+if let Some(ref info) = self.ctx.enclosing_class.clone() {
+    self.error_cannot_find_name_static_member_at(name, &info.name, idx);
+}
+```
+
+### Keep match arms thin
+
+If a `match` arm is more than ~5 lines, extract it into a helper function. A 50-arm match where each arm is a single function call is readable; a 50-arm match where each arm is 15 lines is not.
+
+```rust
+// WRONG — 400-line match with inline logic
+match node.kind {
+    NUMERIC_LITERAL => {
+        let literal_type = self.literal_type_from_initializer(idx);
+        if let Some(literal_type) = literal_type {
+            if self.ctx.in_const_assertion || self.contextual_literal_type(literal_type).is_some() {
+                literal_type
+            } else { TypeId::NUMBER }
+        } else { TypeId::NUMBER }
+    }
+    // ... 49 more arms like this
+
+// RIGHT — thin dispatch, logic in helpers
+match node.kind {
+    NUMERIC_LITERAL => self.resolve_literal(self.literal_type_from_initializer(idx), TypeId::NUMBER),
+    // ... clean one-liners
+}
+```
+
+### Prefer `let-else` and early returns over deep nesting
+
+Flatten deeply nested `if let` / `match` chains with `let-else` (Rust 1.65+) and early returns:
+
+```rust
+// WRONG — 5 levels of nesting
+if let Some(x) = foo() {
+    if let Some(y) = bar(x) {
+        if condition {
+            // actual logic buried here
+        }
+    }
+}
+
+// RIGHT — flat, readable
+let Some(x) = foo() else { return TypeId::ERROR; };
+let Some(y) = bar(x) else { return TypeId::ERROR; };
+if !condition { return TypeId::ERROR; }
+// actual logic at top level
+```
+
+### Name magic thresholds
+
+Any numeric literal used as a limit or threshold must be a named constant with a comment:
+
+```rust
+// WRONG
+if members.len() > 25 { return; }
+
+// RIGHT
+const MAX_SIMPLIFICATION_SIZE: usize = 25;
+if members.len() > MAX_SIMPLIFICATION_SIZE { return; }
+```
+
+For solver/checker recursion limits, use `RecursionProfile` (see Recursion Safety above). For capacity constants shared across crates, add them to `crates/tsz-common/src/limits.rs`.
 
 ---
 
