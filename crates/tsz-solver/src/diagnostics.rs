@@ -520,6 +520,8 @@ pub mod codes {
     pub use dc::TYPE_NOT_ASSIGNABLE_TO_TYPE as TYPE_NOT_ASSIGNABLE;
     pub use dc::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED as CONSTRAINT_NOT_SATISFIED;
 
+    pub use dc::TYPES_OF_PROPERTY_INCOMPATIBLE as PROPERTY_TYPE_MISMATCH;
+
     /// Same code as TYPE_NOT_ASSIGNABLE (TS2322) — used for nested property elaboration.
     pub const NESTED_TYPE_MISMATCH: u32 = dc::TYPE_NOT_ASSIGNABLE_TO_TYPE;
 
@@ -576,6 +578,7 @@ pub fn get_message_template(code: u32) -> &'static str {
         codes::OBJECT_POSSIBLY_NULL => dm::OBJECT_POSSIBLY_NULL,
         codes::OBJECT_IS_UNKNOWN => dm::OBJECT_IS_OF_TYPE_UNKNOWN,
         codes::EXCESS_PROPERTY => dm::EXCESS_PROPERTY,
+        codes::PROPERTY_TYPE_MISMATCH => dm::TYPES_OF_PROPERTY_INCOMPATIBLE,
         codes::IMPLICIT_ANY => dm::VARIABLE_IMPLICIT_ANY,
         codes::IMPLICIT_ANY_PARAMETER => dm::PARAMETER_IMPLICIT_ANY,
         codes::IMPLICIT_ANY_MEMBER => dm::MEMBER_IMPLICIT_ANY,
@@ -891,6 +894,43 @@ pub struct PendingDiagnosticBuilder;
 // =============================================================================
 
 impl SubtypeFailureReason {
+    /// Return the primary diagnostic code for this failure reason.
+    ///
+    /// This is the single source of truth for mapping SubtypeFailureReason variants
+    /// to diagnostic codes. Both the solver's `to_diagnostic` and the checker's
+    /// `render_failure_reason` should use this to stay in sync.
+    pub fn diagnostic_code(&self) -> u32 {
+        match self {
+            SubtypeFailureReason::MissingProperty { .. } => codes::PROPERTY_MISSING,
+            SubtypeFailureReason::PropertyTypeMismatch { .. } => codes::PROPERTY_TYPE_MISMATCH,
+            SubtypeFailureReason::OptionalPropertyRequired { .. } => codes::PROPERTY_MISSING,
+            SubtypeFailureReason::ReadonlyPropertyMismatch { .. } => codes::READONLY_PROPERTY,
+            SubtypeFailureReason::PropertyVisibilityMismatch { .. } => {
+                codes::PROPERTY_VISIBILITY_MISMATCH
+            }
+            SubtypeFailureReason::PropertyNominalMismatch { .. } => {
+                codes::PROPERTY_NOMINAL_MISMATCH
+            }
+            SubtypeFailureReason::ReturnTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::ParameterTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::TooManyParameters { .. } => codes::ARG_COUNT_MISMATCH,
+            SubtypeFailureReason::TupleElementMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::TupleElementTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::ArrayElementMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::IndexSignatureMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::NoUnionMemberMatches { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::NoIntersectionMemberMatches { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
+            SubtypeFailureReason::TypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::IntrinsicTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::LiteralTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::ErrorType { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::RecursionLimitExceeded => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::ParameterCountMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            SubtypeFailureReason::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
+        }
+    }
+
     /// Convert this failure reason to a PendingDiagnostic.
     ///
     /// This is the "explain slow" path - called only when we need to report
@@ -922,14 +962,10 @@ impl SubtypeFailureReason {
                     vec![source.into(), target.into()],
                 );
 
-                // Add elaboration: Types of property 'x' are incompatible
+                // Add elaboration: Types of property 'x' are incompatible (TS2326)
                 let elaboration = PendingDiagnostic::error(
-                    codes::NESTED_TYPE_MISMATCH,
-                    vec![
-                        (*property_name).into(),
-                        (*source_property_type).into(),
-                        (*target_property_type).into(),
-                    ],
+                    codes::PROPERTY_TYPE_MISMATCH,
+                    vec![(*property_name).into()],
                 );
                 diag = diag.with_related(elaboration);
 

@@ -262,13 +262,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
                         &[&prop_name, &source_str, &target_str],
                     );
-                    Diagnostic::error(
-                        file_name,
-                        start,
-                        length,
-                        message,
-                        diagnostic_codes::PROPERTY_MISSING_IN_TYPE,
-                    )
+                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
                 }
             }
 
@@ -340,7 +334,7 @@ impl<'a> CheckerState<'a> {
                     start,
                     length,
                     message,
-                    diagnostic_codes::TYPES_OF_PROPERTY_INCOMPATIBLE,
+                    reason.diagnostic_code(),
                 );
 
                 if let Some(nested) = nested_reason
@@ -395,13 +389,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
                         &[&prop_name, &source_str, &target_str],
                     );
-                    Diagnostic::error(
-                        file_name,
-                        start,
-                        length,
-                        message,
-                        diagnostic_codes::PROPERTY_MISSING_IN_TYPE,
-                    )
+                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
                 }
             }
 
@@ -409,13 +397,7 @@ impl<'a> CheckerState<'a> {
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 let message =
                     format_message(diagnostic_messages::CANNOT_ASSIGN_READONLY, &[&prop_name]);
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::CANNOT_ASSIGN_TO_READONLY_PROPERTY,
-                )
+                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
 
             SubtypeFailureReason::ExcessProperty {
@@ -428,13 +410,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::EXCESS_PROPERTY,
                     &[&prop_name, &target_str],
                 );
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::EXCESS_PROPERTY_CHECK,
-                )
+                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
 
             SubtypeFailureReason::ReturnTypeMismatch {
@@ -453,7 +429,7 @@ impl<'a> CheckerState<'a> {
                     start,
                     length,
                     message,
-                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                    reason.diagnostic_code(),
                 );
 
                 if let Some(nested) = nested_reason
@@ -486,13 +462,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::EXPECTED_ARGUMENTS,
                     &[&target_count.to_string(), &source_count.to_string()],
                 );
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::EXPECTED_ARGUMENTS,
-                )
+                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
 
             SubtypeFailureReason::TupleElementMismatch {
@@ -503,13 +473,7 @@ impl<'a> CheckerState<'a> {
                     "Tuple type has {} elements but target requires {}.",
                     source_count, target_count
                 );
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
-                )
+                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
 
             SubtypeFailureReason::TupleElementTypeMismatch {
@@ -523,13 +487,7 @@ impl<'a> CheckerState<'a> {
                     "Type of element at index {} is incompatible: '{}' is not assignable to '{}'.",
                     index, source_str, target_str
                 );
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
-                )
+                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
 
             SubtypeFailureReason::ArrayElementMismatch {
@@ -542,13 +500,7 @@ impl<'a> CheckerState<'a> {
                     "Array element type '{}' is not assignable to '{}'.",
                     source_str, target_str
                 );
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
-                )
+                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
 
             SubtypeFailureReason::IndexSignatureMismatch {
@@ -562,13 +514,7 @@ impl<'a> CheckerState<'a> {
                     "{} index signature is incompatible: '{}' is not assignable to '{}'.",
                     index_kind, source_str, target_str
                 );
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
-                )
+                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
 
             SubtypeFailureReason::NoUnionMemberMatches {
@@ -610,6 +556,11 @@ impl<'a> CheckerState<'a> {
             }
 
             _ => {
+                // All remaining variants produce a generic "Type X is not assignable to type Y"
+                // with TS2322 code. This covers: PropertyVisibilityMismatch,
+                // PropertyNominalMismatch, ParameterTypeMismatch, NoIntersectionMemberMatches,
+                // TypeMismatch, IntrinsicTypeMismatch, LiteralTypeMismatch, ErrorType,
+                // RecursionLimitExceeded, ParameterCountMismatch.
                 let source_str = self.format_type(source);
                 let target_str = self.format_type(target);
                 let message = format_message(
