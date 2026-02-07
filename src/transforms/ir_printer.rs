@@ -1109,6 +1109,7 @@ impl<'a> IRPrinter<'a> {
                 is_exported,
                 attach_to_exports,
                 should_declare_var,
+                parent_name,
             } => {
                 self.emit_namespace_iife(
                     name_parts,
@@ -1117,6 +1118,7 @@ impl<'a> IRPrinter<'a> {
                     *is_exported,
                     *attach_to_exports,
                     *should_declare_var,
+                    parent_name.as_deref(),
                 );
             }
             IRNode::NamespaceExport {
@@ -1181,6 +1183,7 @@ impl<'a> IRPrinter<'a> {
         is_exported: bool,
         attach_to_exports: bool,
         should_declare_var: bool,
+        parent_name: Option<&str>,
     ) {
         let current_name = &name_parts[index];
         let is_last = index == name_parts.len() - 1;
@@ -1216,7 +1219,7 @@ impl<'a> IRPrinter<'a> {
             self.write(next_name);
             self.write(";");
             self.write_line();
-            // Recurse for nested namespace
+            // Recurse for nested namespace (inner levels use name_parts[index-1] as parent)
             self.emit_namespace_iife(
                 name_parts,
                 index + 1,
@@ -1224,6 +1227,7 @@ impl<'a> IRPrinter<'a> {
                 is_exported,
                 attach_to_exports,
                 true,
+                None,
             );
         }
 
@@ -1231,36 +1235,49 @@ impl<'a> IRPrinter<'a> {
         self.write_indent();
         self.write("})(");
 
-        // Argument
+        // Argument: emit the IIFE argument binding
         if index == 0 {
-            self.write(current_name);
-            if is_exported && attach_to_exports {
+            if let Some(parent) = parent_name {
+                // Nested namespace with parent: Name = Parent.Name || (Parent.Name = {})
+                self.write(current_name);
+                self.write(" = ");
+                self.write(parent);
+                self.write(".");
+                self.write(current_name);
+                self.write(" || (");
+                self.write(parent);
+                self.write(".");
+                self.write(current_name);
+                self.write(" = {})");
+            } else if is_exported && attach_to_exports {
+                self.write(current_name);
                 self.write(" = exports.");
                 self.write(current_name);
                 self.write(" || (exports.");
                 self.write(current_name);
                 self.write(" = {})");
             } else {
+                self.write(current_name);
                 self.write(" || (");
                 self.write(current_name);
                 self.write(" = {})");
             }
         } else {
-            let parent_name = &name_parts[index - 1];
+            // Qualified name parts (A.B.C): Name = Parent.Name || (Parent.Name = {})
+            let parent = &name_parts[index - 1];
             self.write(current_name);
             self.write(" = ");
-            self.write(parent_name);
+            self.write(parent);
             self.write(".");
             self.write(current_name);
             self.write(" || (");
-            self.write(parent_name);
+            self.write(parent);
             self.write(".");
             self.write(current_name);
             self.write(" = {})");
         }
 
         self.write(");");
-        self.write_line();
     }
 
     fn emit_block(&mut self, stmts: &[IRNode]) {
