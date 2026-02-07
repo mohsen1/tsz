@@ -407,40 +407,96 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
 // === Node Type Guards ===
 // These functions check if a node is of a specific kind
 
-/// Check if node is an identifier
-#[wasm_bindgen(js_name = isIdentifier)]
-pub fn is_identifier(kind: u16) -> bool {
-    kind == IDENTIFIER
+/// Macro to generate single-kind wasm_bindgen predicate functions.
+macro_rules! define_kind_predicates {
+    ($($(#[doc = $doc:expr])* $js_name:literal, $rust_name:ident => $kind:expr);* $(;)?) => {
+        $(
+            $(#[doc = $doc])*
+            #[wasm_bindgen(js_name = $js_name)]
+            pub fn $rust_name(kind: u16) -> bool {
+                kind == $kind
+            }
+        )*
+    };
 }
 
-/// Check if node is a string literal
-#[wasm_bindgen(js_name = isStringLiteral)]
-pub fn is_string_literal(kind: u16) -> bool {
-    kind == STRING_LITERAL
+define_kind_predicates! {
+    /// Check if node is an identifier
+    "isIdentifier", is_identifier => IDENTIFIER;
+    /// Check if node is a string literal
+    "isStringLiteral", is_string_literal => STRING_LITERAL;
+    /// Check if node is a numeric literal
+    "isNumericLiteral", is_numeric_literal => NUMERIC_LITERAL;
+    /// Check if node is a function declaration
+    "isFunctionDeclaration", is_function_declaration => syntax_kind_ext::FUNCTION_DECLARATION;
+    /// Check if node is a function expression
+    "isFunctionExpression", is_function_expression => syntax_kind_ext::FUNCTION_EXPRESSION;
+    /// Check if node is an arrow function
+    "isArrowFunction", is_arrow_function => syntax_kind_ext::ARROW_FUNCTION;
+    /// Check if node is a class declaration
+    "isClassDeclaration", is_class_declaration => syntax_kind_ext::CLASS_DECLARATION;
+    /// Check if node is a class expression
+    "isClassExpression", is_class_expression => syntax_kind_ext::CLASS_EXPRESSION;
+    /// Check if node is an interface declaration
+    "isInterfaceDeclaration", is_interface_declaration => syntax_kind_ext::INTERFACE_DECLARATION;
+    /// Check if node is a type alias declaration
+    "isTypeAliasDeclaration", is_type_alias_declaration => syntax_kind_ext::TYPE_ALIAS_DECLARATION;
+    /// Check if node is an enum declaration
+    "isEnumDeclaration", is_enum_declaration => syntax_kind_ext::ENUM_DECLARATION;
+    /// Check if node is a module/namespace declaration
+    "isModuleDeclaration", is_module_declaration => syntax_kind_ext::MODULE_DECLARATION;
+    /// Check if node is a variable statement
+    "isVariableStatement", is_variable_statement => syntax_kind_ext::VARIABLE_STATEMENT;
+    /// Check if node is a variable declaration
+    "isVariableDeclaration", is_variable_declaration => syntax_kind_ext::VARIABLE_DECLARATION;
+    /// Check if node is a parameter
+    "isParameter", is_parameter => syntax_kind_ext::PARAMETER;
+    /// Check if node is a property declaration
+    "isPropertyDeclaration", is_property_declaration => syntax_kind_ext::PROPERTY_DECLARATION;
+    /// Check if node is a method declaration
+    "isMethodDeclaration", is_method_declaration => syntax_kind_ext::METHOD_DECLARATION;
+    /// Check if node is a constructor
+    "isConstructorDeclaration", is_constructor_declaration => syntax_kind_ext::CONSTRUCTOR;
+    /// Check if node is a call expression
+    "isCallExpression", is_call_expression => syntax_kind_ext::CALL_EXPRESSION;
+    /// Check if node is a new expression
+    "isNewExpression", is_new_expression => syntax_kind_ext::NEW_EXPRESSION;
+    /// Check if node is a property access expression
+    "isPropertyAccessExpression", is_property_access_expression => syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
+    /// Check if node is an element access expression
+    "isElementAccessExpression", is_element_access_expression => syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+    /// Check if node is a binary expression
+    "isBinaryExpression", is_binary_expression => syntax_kind_ext::BINARY_EXPRESSION;
+    /// Check if node is a block
+    "isBlock", is_block => syntax_kind_ext::BLOCK;
+    /// Check if node is an if statement
+    "isIfStatement", is_if_statement => syntax_kind_ext::IF_STATEMENT;
+    /// Check if node is a for statement
+    "isForStatement", is_for_statement => syntax_kind_ext::FOR_STATEMENT;
+    /// Check if node is a while statement
+    "isWhileStatement", is_while_statement => syntax_kind_ext::WHILE_STATEMENT;
+    /// Check if node is a return statement
+    "isReturnStatement", is_return_statement => syntax_kind_ext::RETURN_STATEMENT;
+    /// Check if node is an expression statement
+    "isExpressionStatement", is_expression_statement => syntax_kind_ext::EXPRESSION_STATEMENT;
+    /// Check if node is an import declaration
+    "isImportDeclaration", is_import_declaration => syntax_kind_ext::IMPORT_DECLARATION;
+    /// Check if node is an export declaration
+    "isExportDeclaration", is_export_declaration => syntax_kind_ext::EXPORT_DECLARATION;
+    /// Check if node is a type reference
+    "isTypeReferenceNode", is_type_reference_node => syntax_kind_ext::TYPE_REFERENCE;
+    /// Check if node is an array type
+    "isArrayTypeNode", is_array_type_node => syntax_kind_ext::ARRAY_TYPE;
+    /// Check if node is a union type
+    "isUnionTypeNode", is_union_type_node => syntax_kind_ext::UNION_TYPE;
+    /// Check if node is an intersection type
+    "isIntersectionTypeNode", is_intersection_type_node => syntax_kind_ext::INTERSECTION_TYPE;
 }
 
-/// Check if node is a numeric literal
-#[wasm_bindgen(js_name = isNumericLiteral)]
-pub fn is_numeric_literal(kind: u16) -> bool {
-    kind == NUMERIC_LITERAL
-}
-
-/// Check if node is a function declaration
-#[wasm_bindgen(js_name = isFunctionDeclaration)]
-pub fn is_function_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::FUNCTION_DECLARATION
-}
-
-/// Check if node is a function expression
-#[wasm_bindgen(js_name = isFunctionExpression)]
-pub fn is_function_expression(kind: u16) -> bool {
-    kind == syntax_kind_ext::FUNCTION_EXPRESSION
-}
-
-/// Check if node is an arrow function
-#[wasm_bindgen(js_name = isArrowFunction)]
-pub fn is_arrow_function(kind: u16) -> bool {
-    kind == syntax_kind_ext::ARROW_FUNCTION
+/// Check if node is any class-like
+#[wasm_bindgen(js_name = isClassLike)]
+pub fn is_class_like(kind: u16) -> bool {
+    kind == syntax_kind_ext::CLASS_DECLARATION || kind == syntax_kind_ext::CLASS_EXPRESSION
 }
 
 /// Check if node is any function-like
@@ -453,186 +509,6 @@ pub fn is_function_like(kind: u16) -> bool {
         || kind == syntax_kind_ext::CONSTRUCTOR
         || kind == syntax_kind_ext::GET_ACCESSOR
         || kind == syntax_kind_ext::SET_ACCESSOR
-}
-
-/// Check if node is a class declaration
-#[wasm_bindgen(js_name = isClassDeclaration)]
-pub fn is_class_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::CLASS_DECLARATION
-}
-
-/// Check if node is a class expression
-#[wasm_bindgen(js_name = isClassExpression)]
-pub fn is_class_expression(kind: u16) -> bool {
-    kind == syntax_kind_ext::CLASS_EXPRESSION
-}
-
-/// Check if node is any class-like
-#[wasm_bindgen(js_name = isClassLike)]
-pub fn is_class_like(kind: u16) -> bool {
-    kind == syntax_kind_ext::CLASS_DECLARATION || kind == syntax_kind_ext::CLASS_EXPRESSION
-}
-
-/// Check if node is an interface declaration
-#[wasm_bindgen(js_name = isInterfaceDeclaration)]
-pub fn is_interface_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::INTERFACE_DECLARATION
-}
-
-/// Check if node is a type alias declaration
-#[wasm_bindgen(js_name = isTypeAliasDeclaration)]
-pub fn is_type_alias_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-}
-
-/// Check if node is an enum declaration
-#[wasm_bindgen(js_name = isEnumDeclaration)]
-pub fn is_enum_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::ENUM_DECLARATION
-}
-
-/// Check if node is a module/namespace declaration
-#[wasm_bindgen(js_name = isModuleDeclaration)]
-pub fn is_module_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::MODULE_DECLARATION
-}
-
-/// Check if node is a variable statement
-#[wasm_bindgen(js_name = isVariableStatement)]
-pub fn is_variable_statement(kind: u16) -> bool {
-    kind == syntax_kind_ext::VARIABLE_STATEMENT
-}
-
-/// Check if node is a variable declaration
-#[wasm_bindgen(js_name = isVariableDeclaration)]
-pub fn is_variable_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::VARIABLE_DECLARATION
-}
-
-/// Check if node is a parameter
-#[wasm_bindgen(js_name = isParameter)]
-pub fn is_parameter(kind: u16) -> bool {
-    kind == syntax_kind_ext::PARAMETER
-}
-
-/// Check if node is a property declaration
-#[wasm_bindgen(js_name = isPropertyDeclaration)]
-pub fn is_property_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::PROPERTY_DECLARATION
-}
-
-/// Check if node is a method declaration
-#[wasm_bindgen(js_name = isMethodDeclaration)]
-pub fn is_method_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::METHOD_DECLARATION
-}
-
-/// Check if node is a constructor
-#[wasm_bindgen(js_name = isConstructorDeclaration)]
-pub fn is_constructor_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::CONSTRUCTOR
-}
-
-/// Check if node is a call expression
-#[wasm_bindgen(js_name = isCallExpression)]
-pub fn is_call_expression(kind: u16) -> bool {
-    kind == syntax_kind_ext::CALL_EXPRESSION
-}
-
-/// Check if node is a new expression
-#[wasm_bindgen(js_name = isNewExpression)]
-pub fn is_new_expression(kind: u16) -> bool {
-    kind == syntax_kind_ext::NEW_EXPRESSION
-}
-
-/// Check if node is a property access expression
-#[wasm_bindgen(js_name = isPropertyAccessExpression)]
-pub fn is_property_access_expression(kind: u16) -> bool {
-    kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-}
-
-/// Check if node is an element access expression
-#[wasm_bindgen(js_name = isElementAccessExpression)]
-pub fn is_element_access_expression(kind: u16) -> bool {
-    kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-}
-
-/// Check if node is a binary expression
-#[wasm_bindgen(js_name = isBinaryExpression)]
-pub fn is_binary_expression(kind: u16) -> bool {
-    kind == syntax_kind_ext::BINARY_EXPRESSION
-}
-
-/// Check if node is a block
-#[wasm_bindgen(js_name = isBlock)]
-pub fn is_block(kind: u16) -> bool {
-    kind == syntax_kind_ext::BLOCK
-}
-
-/// Check if node is an if statement
-#[wasm_bindgen(js_name = isIfStatement)]
-pub fn is_if_statement(kind: u16) -> bool {
-    kind == syntax_kind_ext::IF_STATEMENT
-}
-
-/// Check if node is a for statement
-#[wasm_bindgen(js_name = isForStatement)]
-pub fn is_for_statement(kind: u16) -> bool {
-    kind == syntax_kind_ext::FOR_STATEMENT
-}
-
-/// Check if node is a while statement
-#[wasm_bindgen(js_name = isWhileStatement)]
-pub fn is_while_statement(kind: u16) -> bool {
-    kind == syntax_kind_ext::WHILE_STATEMENT
-}
-
-/// Check if node is a return statement
-#[wasm_bindgen(js_name = isReturnStatement)]
-pub fn is_return_statement(kind: u16) -> bool {
-    kind == syntax_kind_ext::RETURN_STATEMENT
-}
-
-/// Check if node is an expression statement
-#[wasm_bindgen(js_name = isExpressionStatement)]
-pub fn is_expression_statement(kind: u16) -> bool {
-    kind == syntax_kind_ext::EXPRESSION_STATEMENT
-}
-
-/// Check if node is an import declaration
-#[wasm_bindgen(js_name = isImportDeclaration)]
-pub fn is_import_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::IMPORT_DECLARATION
-}
-
-/// Check if node is an export declaration
-#[wasm_bindgen(js_name = isExportDeclaration)]
-pub fn is_export_declaration(kind: u16) -> bool {
-    kind == syntax_kind_ext::EXPORT_DECLARATION
-}
-
-/// Check if node is a type reference
-#[wasm_bindgen(js_name = isTypeReferenceNode)]
-pub fn is_type_reference_node(kind: u16) -> bool {
-    kind == syntax_kind_ext::TYPE_REFERENCE
-}
-
-/// Check if node is an array type
-#[wasm_bindgen(js_name = isArrayTypeNode)]
-pub fn is_array_type_node(kind: u16) -> bool {
-    kind == syntax_kind_ext::ARRAY_TYPE
-}
-
-/// Check if node is a union type
-#[wasm_bindgen(js_name = isUnionTypeNode)]
-pub fn is_union_type_node(kind: u16) -> bool {
-    kind == syntax_kind_ext::UNION_TYPE
-}
-
-/// Check if node is an intersection type
-#[wasm_bindgen(js_name = isIntersectionTypeNode)]
-pub fn is_intersection_type_node(kind: u16) -> bool {
-    kind == syntax_kind_ext::INTERSECTION_TYPE
 }
 
 /// Check if node is a statement
