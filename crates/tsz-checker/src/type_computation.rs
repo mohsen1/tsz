@@ -1639,11 +1639,25 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(name) = self.get_property_name(accessor.name) {
-                    // For getter, infer return type; for setter, it's void
+                    // For getter, infer return type; for setter, use the parameter type
                     let accessor_type = if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
                         self.get_type_of_function(elem_idx)
                     } else {
-                        TypeId::VOID
+                        // Setter: use the first parameter's type annotation
+                        accessor
+                            .parameters
+                            .nodes
+                            .first()
+                            .and_then(|&param_idx| {
+                                let param_node = self.ctx.arena.get(param_idx)?;
+                                let param = self.ctx.arena.get_parameter(param_node)?;
+                                if param.type_annotation.is_none() {
+                                    None
+                                } else {
+                                    Some(self.get_type_from_type_node(param.type_annotation))
+                                }
+                            })
+                            .unwrap_or(TypeId::ANY)
                     };
 
                     // TS2378: A 'get' accessor must return a value.
