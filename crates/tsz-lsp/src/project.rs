@@ -17,6 +17,7 @@ use crate::completions::{CompletionItem, Completions};
 use crate::definition::GoToDefinition;
 use crate::dependency_graph::DependencyGraph;
 use crate::diagnostics::{LspDiagnostic, convert_diagnostic};
+use crate::export_signature::ExportSignature;
 use crate::hover::{HoverInfo, HoverProvider};
 use crate::rename::{TextEdit, WorkspaceEdit};
 use crate::resolver::{ScopeCache, ScopeCacheStats};
@@ -90,6 +91,9 @@ pub struct ProjectFile {
     pub(crate) strict: bool,
     /// Flag indicating if caches were invalidated and diagnostics need re-computation
     pub(crate) diagnostics_dirty: bool,
+    /// Position-independent hash of the file's public API (exports, re-exports, augmentations).
+    /// Used to avoid invalidating dependent files when only function bodies or comments change.
+    pub(crate) export_signature: ExportSignature,
 }
 
 impl ProjectFile {
@@ -108,6 +112,7 @@ impl ProjectFile {
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(parser.get_source_text());
+        let export_signature = ExportSignature::compute(&binder, &file_name);
 
         Self {
             file_name,
@@ -120,6 +125,7 @@ impl ProjectFile {
             scope_cache: ScopeCache::default(),
             strict,
             diagnostics_dirty: false,
+            export_signature,
         }
     }
 
@@ -174,6 +180,7 @@ impl ProjectFile {
         self.line_map = LineMap::build(self.parser.get_source_text());
         self.type_cache = None;
         self.scope_cache.clear();
+        self.export_signature = ExportSignature::compute(&self.binder, &self.file_name);
     }
 
     /// Invalidate all caches for this file.
@@ -360,6 +367,7 @@ impl ProjectFile {
         }
         self.type_cache = None;
         self.scope_cache.clear();
+        self.export_signature = ExportSignature::compute(&self.binder, &self.file_name);
 
         true
     }
@@ -1059,6 +1067,10 @@ impl Project {
     }
 
     /// Update an existing file by applying incremental text edits.
+    ///
+    /// Uses export signature comparison to avoid unnecessary cache invalidation:
+    /// if the file's public API (exports, re-exports, augmentations) didn't change,
+    /// dependent files keep their cached diagnostics.
     pub fn update_file(&mut self, file_name: &str, edits: &[TextEdit]) -> Option<()> {
         if edits.is_empty() {
             return Some(());
@@ -1076,6 +1088,9 @@ impl Project {
             return Some(());
         }
 
+        // Capture old export signature before updating
+        let old_signature = self.files.get(file_name)?.export_signature;
+
         let file = self.files.get_mut(file_name)?;
         file.update_source_with_edits(updated_source, edits);
 
@@ -1084,11 +1099,16 @@ impl Project {
         self.symbol_index
             .update_file(file_name, &file.binder, arena);
 
-        // Transitive cache invalidation: Clear caches for all files that depend on this file
-        let affected_files = self.dependency_graph.get_affected_files(file_name);
-        for affected_file in affected_files {
-            if let Some(dep_file) = self.files.get_mut(&affected_file) {
-                dep_file.invalidate_caches();
+        // Smart cache invalidation: only invalidate dependents if the public API changed.
+        // Body-only edits, comment changes, and private symbol changes won't trigger
+        // dependent re-checking — this is the key optimization.
+        let new_signature = file.export_signature;
+        if old_signature != new_signature {
+            let affected_files = self.dependency_graph.get_affected_files(file_name);
+            for affected_file in affected_files {
+                if let Some(dep_file) = self.files.get_mut(&affected_file) {
+                    dep_file.invalidate_caches();
+                }
             }
         }
 
