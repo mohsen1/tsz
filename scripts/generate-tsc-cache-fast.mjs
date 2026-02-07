@@ -59,7 +59,10 @@ function parseDirectives(content) {
         currentFilename = value;
         currentLines = [];
       } else {
-        options[key] = value;
+        // Strip trailing comma — multi-target directives like
+        // `// @target: esnext, es2022, es2015` produce `esnext,`
+        // because the regex captures only the first non-whitespace token.
+        options[key] = value.replace(/,$/, '');
       }
     } else {
       currentLines.push(line);

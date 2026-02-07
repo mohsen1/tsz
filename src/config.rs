@@ -699,7 +699,10 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
 }
 
 fn parse_script_target(value: &str) -> Result<ScriptTarget> {
-    let normalized = normalize_option(value);
+    // Strip trailing comma — multi-target test directives like `esnext, es2022`
+    // can pass `esnext,` through the tsconfig pipeline.
+    let cleaned = value.trim_end_matches(',');
+    let normalized = normalize_option(cleaned);
     let target = match normalized.as_str() {
         "es3" => ScriptTarget::ES3,
         "es5" => ScriptTarget::ES5,
@@ -710,7 +713,7 @@ fn parse_script_target(value: &str) -> Result<ScriptTarget> {
         "es2019" => ScriptTarget::ES2019,
         "es2020" => ScriptTarget::ES2020,
         "es2021" => ScriptTarget::ES2021,
-        "es2022" => ScriptTarget::ES2022,
+        "es2022" | "es2023" | "es2024" => ScriptTarget::ES2022,
         "esnext" => ScriptTarget::ESNext,
         _ => bail!("unsupported compilerOptions.target '{}'", value),
     };
