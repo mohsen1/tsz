@@ -278,3 +278,40 @@ function f(this: A): number {
         this_errors
     );
 }
+
+#[test]
+fn test_using_declaration_not_reported_unused() {
+    // `using` declarations always have dispose side effects,
+    // so TSC never flags them as unused.
+    let source = r#"using x = undefined as any;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut options = CheckerOptions::default();
+    options.no_unused_locals = true;
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+    let using_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 6133 && d.message_text.contains("'x'"))
+        .collect();
+    assert!(
+        using_errors.is_empty(),
+        "using declaration should not be flagged as unused, got: {:?}",
+        using_errors
+    );
+}

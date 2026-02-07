@@ -3315,6 +3315,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Skip using/await using declarations — they always have dispose side effects
+            if self.is_using_declaration(decl_idx) {
+                continue;
+            }
+
             // Determine what kind of symbol this is and whether we should check it
             if check_locals {
                 // Check local variables, functions, classes, interfaces, type aliases, imports
@@ -3409,6 +3414,31 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         node.kind == syntax_kind_ext::PARAMETER
+    }
+
+    /// Check if a declaration is a `using` or `await using` variable.
+    /// These always have dispose side effects, so TSC never flags them as unused.
+    fn is_using_declaration(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::flags::node_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+        let parent_idx = self
+            .ctx
+            .arena
+            .get_extended(idx)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+        if parent_idx.is_none() {
+            return false;
+        }
+        if let Some(parent) = self.ctx.arena.get(parent_idx) {
+            if parent.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                let flags = parent.flags as u32;
+                if (flags & node_flags::USING) != 0 {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Check if a declaration is a catch clause variable.
