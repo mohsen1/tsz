@@ -225,8 +225,20 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         for &member_idx in &class.members.nodes {
+            let before_len = self.writer.len();
             self.emit(member_idx);
-            self.write_line();
+            // Only add newline if something was actually emitted
+            if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+                // Emit trailing comments on the same line as the member.
+                // node.end includes trailing trivia (comments), so we scan backward
+                // to find the actual end of the last token, then scan forward for comments.
+                if let Some(member_node) = self.arena.get(member_idx) {
+                    let token_end =
+                        self.find_token_end_before_trivia(member_node.pos, member_node.end);
+                    self.emit_trailing_comments(token_end);
+                }
+                self.write_line();
+            }
         }
 
         self.decrease_indent();

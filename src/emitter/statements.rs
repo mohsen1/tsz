@@ -26,8 +26,8 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.write("}");
             }
-            // Emit trailing comments after the block's closing brace
-            self.emit_trailing_comments(node.end);
+            // Trailing comments are handled by the calling context
+            // (class member loop, statement loop, etc.)
             return;
         }
 
@@ -41,7 +41,7 @@ impl<'a> Printer<'a> {
             self.write("{ ");
             self.emit(block.statements.nodes[0]);
             self.write(" }");
-            self.emit_trailing_comments(node.end);
+            // Trailing comments are handled by the calling context
             return;
         }
 
@@ -84,7 +84,8 @@ impl<'a> Printer<'a> {
                 // Emit trailing comments on the same line as the statement
                 // (e.g., `foo(); // comment` should keep `// comment` on the same line)
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                    self.emit_trailing_comments(stmt_node.end);
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    self.emit_trailing_comments(token_end);
                 }
                 self.write_line();
             }
@@ -92,8 +93,8 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
-        // Emit trailing comments after the block's closing brace
-        self.emit_trailing_comments(node.end);
+        // Trailing comments after the block's closing brace are handled by
+        // the calling context (class member loop, statement loop, etc.)
     }
 
     pub(super) fn emit_variable_statement(&mut self, node: &Node) {

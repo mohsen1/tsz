@@ -2048,7 +2048,8 @@ impl<'a> Printer<'a> {
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
                 // Emit trailing comments on the same line as the statement
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                    self.emit_trailing_comments(stmt_node.end);
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    self.emit_trailing_comments(token_end);
                 }
                 self.write_line();
             }

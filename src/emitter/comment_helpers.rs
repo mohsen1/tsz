@@ -22,6 +22,17 @@ impl<'a> Printer<'a> {
         let pos = std::cmp::min(end_pos as usize, text.len());
         let comments = get_trailing_comment_ranges(text, pos);
         for comment in comments {
+            // Skip if this comment was already emitted.
+            // Since all_comments is sorted by position and comment_emit_idx advances
+            // monotonically, a comment whose end position is at or before the current
+            // all_comments[comment_emit_idx - 1].end has already been emitted.
+            if self.comment_emit_idx > 0 {
+                let last_emitted = &self.all_comments[self.comment_emit_idx - 1];
+                if comment.end as u32 <= last_emitted.end {
+                    continue;
+                }
+            }
+
             // Add space before trailing comment
             self.write_space();
             // Emit the comment text using safe slicing
@@ -42,6 +53,99 @@ impl<'a> Printer<'a> {
                 self.comment_emit_idx += 1;
             }
         }
+    }
+
+    /// Find the position right after the node's actual code content ends.
+    /// This gives us the position where trailing comments begin. Our parser's
+    /// node.end extends past trailing trivia into the next token's position,
+    /// so we need to find the actual end of the node's code.
+    ///
+    /// Uses forward scanning with brace depth tracking to find the correct
+    /// closing `}` at depth 0, avoiding confusion with parent scope braces.
+    pub(super) fn find_token_end_before_trivia(&self, pos: u32, end: u32) -> u32 {
+        let Some(text) = self.source_text else {
+            return end;
+        };
+        let bytes = text.as_bytes();
+        let end_pos = std::cmp::min(end as usize, bytes.len());
+        let start_pos = pos as usize;
+
+        if start_pos >= end_pos {
+            return end;
+        }
+
+        // Forward scan: track the last `}` or `;` at brace depth 0.
+        // This correctly identifies the node's own closing token without
+        // accidentally matching a parent scope's closing brace.
+        let mut depth: i32 = 0;
+        let mut last_token_end: Option<usize> = None;
+        let mut i = start_pos;
+
+        while i < end_pos {
+            let ch = bytes[i];
+            match ch {
+                b'{' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b'}' => {
+                    depth -= 1;
+                    if depth < 0 {
+                        // We've gone past our scope into a parent - stop
+                        break;
+                    }
+                    if depth == 0 {
+                        // This is the closing brace at the top level of this node
+                        last_token_end = Some(i + 1);
+                    }
+                    i += 1;
+                }
+                b';' => {
+                    if depth == 0 {
+                        last_token_end = Some(i + 1);
+                    }
+                    i += 1;
+                }
+                b'\'' | b'"' | b'`' => {
+                    // Skip string literals to avoid false matches
+                    let quote = ch;
+                    i += 1;
+                    while i < end_pos {
+                        if bytes[i] == b'\\' {
+                            i += 2; // skip escaped char
+                        } else if bytes[i] == quote {
+                            i += 1;
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                b'/' if i + 1 < end_pos && bytes[i + 1] == b'/' => {
+                    // Skip single-line comments
+                    i += 2;
+                    while i < end_pos && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                }
+                b'/' if i + 1 < end_pos && bytes[i + 1] == b'*' => {
+                    // Skip multi-line comments
+                    i += 2;
+                    while i + 1 < end_pos {
+                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                            i += 2;
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+
+        last_token_end.map_or(end, |e| e as u32)
     }
 
     /// Emit leading comments before a node's start position.
