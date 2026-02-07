@@ -31,13 +31,13 @@
 //! - Await expressions (need Promise unwrapping)
 
 use super::context::CheckerContext;
-use std::cell::Cell;
+
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-use tsz_common::limits::MAX_EXPR_CHECK_DEPTH;
+use tsz_solver::recursion::{DepthCounter, RecursionProfile};
 
 /// Expression type checker that operates on the shared context.
 ///
@@ -45,8 +45,8 @@ use tsz_common::limits::MAX_EXPR_CHECK_DEPTH;
 /// All type inference for expressions goes through this checker.
 pub struct ExpressionChecker<'a, 'ctx> {
     ctx: &'a mut CheckerContext<'ctx>,
-    /// Recursion depth counter for stack overflow protection
-    depth: Cell<u32>,
+    /// Recursion depth counter for stack overflow protection.
+    depth: DepthCounter,
 }
 
 impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
@@ -54,7 +54,7 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     pub fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
         Self {
             ctx,
-            depth: Cell::new(0),
+            depth: DepthCounter::with_profile(RecursionProfile::ExpressionCheck),
         }
     }
 
@@ -80,11 +80,9 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     /// depending on the context, so caching by NodeIndex alone is unsound.
     pub fn check_with_context(&mut self, idx: NodeIndex, context_type: Option<TypeId>) -> TypeId {
         // Stack overflow protection
-        let current_depth = self.depth.get();
-        if current_depth >= MAX_EXPR_CHECK_DEPTH {
+        if !self.depth.enter() {
             return TypeId::ERROR;
         }
-        self.depth.set(current_depth + 1);
 
         let result = if let Some(ctx_type) = context_type {
             // Bypass cache when contextual type is provided
@@ -93,7 +91,7 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
         } else {
             // Check cache first for non-contextual checks
             if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-                self.depth.set(current_depth);
+                self.depth.leave();
                 return cached;
             }
 
@@ -103,7 +101,7 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
             result
         };
 
-        self.depth.set(current_depth);
+        self.depth.leave();
         result
     }
 

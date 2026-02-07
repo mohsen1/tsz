@@ -7,13 +7,10 @@
 //! resolve types, then use the solver to explain any failures.
 
 use super::context::CheckerContext;
-use std::cell::Cell;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
+use tsz_solver::recursion::{DepthCounter, RecursionProfile};
 use tsz_solver::types::Visibility;
-
-/// Maximum recursion depth for type node checking to prevent stack overflow
-const MAX_TYPE_NODE_CHECK_DEPTH: u32 = 500;
 
 /// Type node checker that operates on the shared context.
 ///
@@ -21,8 +18,8 @@ const MAX_TYPE_NODE_CHECK_DEPTH: u32 = 500;
 /// All type resolution for type nodes goes through this checker.
 pub struct TypeNodeChecker<'a, 'ctx> {
     pub ctx: &'a mut CheckerContext<'ctx>,
-    /// Recursion depth counter for stack overflow protection
-    depth: Cell<u32>,
+    /// Recursion depth counter for stack overflow protection.
+    depth: DepthCounter,
 }
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
@@ -30,7 +27,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     pub fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
         Self {
             ctx,
-            depth: Cell::new(0),
+            depth: DepthCounter::with_profile(RecursionProfile::TypeNodeCheck),
         }
     }
 
@@ -40,17 +37,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// It handles caching and dispatches to specific type node handlers.
     pub fn check(&mut self, idx: NodeIndex) -> TypeId {
         // Stack overflow protection
-        let current_depth = self.depth.get();
-        if current_depth >= MAX_TYPE_NODE_CHECK_DEPTH {
+        if !self.depth.enter() {
             return TypeId::ERROR;
         }
-        self.depth.set(current_depth + 1);
 
         // Check cache first
         if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
             if cached == TypeId::ERROR {
                 // Always use cached ERROR to prevent duplicate emissions
-                self.depth.set(current_depth);
+                self.depth.leave();
                 return cached;
             }
 
@@ -58,7 +53,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // If we're not in a generic context (type params are empty), the cache is valid
             if self.ctx.type_parameter_scope.is_empty() {
                 // No type parameters in scope - cache is valid
-                self.depth.set(current_depth);
+                self.depth.leave();
                 return cached;
             }
             // If we have type parameters in scope, we need to be more careful
@@ -70,7 +65,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let result = self.compute_type(idx);
         self.ctx.node_types.insert(idx.0, result);
 
-        self.depth.set(current_depth);
+        self.depth.leave();
         result
     }
 

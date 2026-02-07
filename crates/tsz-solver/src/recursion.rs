@@ -113,6 +113,38 @@ pub enum RecursionProfile {
     /// depth = 50, iterations = 100,000
     ConstAssertion,
 
+    // ----- Checker profiles -----
+    /// Expression type checking depth.
+    ///
+    /// Used by `ExpressionChecker`.
+    /// Generous limit for deeply nested expressions.
+    ///
+    /// depth = 500
+    ExpressionCheck,
+
+    /// Type node resolution depth.
+    ///
+    /// Used by `TypeNodeChecker`.
+    /// Generous limit for deeply nested type annotations.
+    ///
+    /// depth = 500
+    TypeNodeCheck,
+
+    /// Function call resolution depth.
+    ///
+    /// Used by `get_type_of_call_expression`.
+    /// Relatively low to catch infinite recursion in overload resolution.
+    ///
+    /// depth = 20
+    CallResolution,
+
+    /// General checker recursion depth.
+    ///
+    /// Used by `enter_recursion`/`leave_recursion` on checker functions.
+    ///
+    /// depth = 50
+    CheckerRecursion,
+
     /// Custom limits for one-off or test scenarios.
     Custom { max_depth: u32, max_iterations: u32 },
 }
@@ -129,6 +161,10 @@ impl RecursionProfile {
             Self::ShapeExtraction => 50,
             Self::ShallowTraversal => 20,
             Self::ConstAssertion => 50,
+            Self::ExpressionCheck => 500,
+            Self::TypeNodeCheck => 500,
+            Self::CallResolution => 20,
+            Self::CheckerRecursion => 50,
             Self::Custom { max_depth, .. } => max_depth,
         }
     }
@@ -144,6 +180,10 @@ impl RecursionProfile {
             Self::ShapeExtraction => 100_000,
             Self::ShallowTraversal => 100_000,
             Self::ConstAssertion => 100_000,
+            Self::ExpressionCheck => 100_000,
+            Self::TypeNodeCheck => 100_000,
+            Self::CallResolution => 100_000,
+            Self::CheckerRecursion => 100_000,
             Self::Custom { max_iterations, .. } => max_iterations,
         }
     }
@@ -445,6 +485,163 @@ impl<K: Hash + Eq + Copy> Drop for RecursionGuard<K> {
                 "RecursionGuard dropped with {} active entries still in the visiting set. \
                  This indicates leaked enter() calls without matching leave() calls.",
                 self.visiting.len(),
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DepthCounter — depth-only guard (no cycle detection)
+// ---------------------------------------------------------------------------
+
+/// A lightweight depth counter for stack overflow protection.
+///
+/// Unlike [`RecursionGuard`], `DepthCounter` does not track which keys are
+/// being visited — it only limits nesting depth. Use this when:
+/// - The same node/key may be legitimately revisited (e.g., expression
+///   re-checking with different contextual types)
+/// - You only need stack overflow protection, not cycle detection
+///
+/// # Safety
+///
+/// Shares the same debug-mode safety features as `RecursionGuard`:
+/// - **Debug leak detection**: Dropping with depth > 0 panics.
+/// - **Debug underflow detection**: Calling `leave()` at depth 0 panics.
+///
+/// # Usage
+///
+/// ```ignore
+/// let mut counter = DepthCounter::with_profile(RecursionProfile::ExpressionCheck);
+///
+/// if !counter.enter() {
+///     return TypeId::ERROR; // depth exceeded
+/// }
+/// let result = do_work();
+/// counter.leave();
+/// result
+/// ```
+pub struct DepthCounter {
+    depth: u32,
+    max_depth: u32,
+    exceeded: bool,
+    /// The depth at construction time. Used to distinguish inherited depth
+    /// from depth added by this counter's own `enter()` calls.
+    /// Debug leak detection only fires if `depth > base_depth`.
+    base_depth: u32,
+}
+
+impl DepthCounter {
+    /// Create a counter with an explicit max depth.
+    ///
+    /// Prefer [`with_profile`](Self::with_profile) for standard use cases.
+    pub fn new(max_depth: u32) -> Self {
+        Self {
+            depth: 0,
+            max_depth,
+            exceeded: false,
+            base_depth: 0,
+        }
+    }
+
+    /// Create a counter from a named [`RecursionProfile`].
+    ///
+    /// Only the profile's `max_depth` is used (iterations are not relevant
+    /// for a depth-only counter).
+    pub fn with_profile(profile: RecursionProfile) -> Self {
+        Self::new(profile.max_depth())
+    }
+
+    /// Create a counter with an initial depth already set.
+    ///
+    /// Used when inheriting depth from a parent context to maintain
+    /// the overall depth limit across context boundaries. The inherited
+    /// depth is treated as the "base" — debug leak detection only fires
+    /// if depth exceeds this base at drop time.
+    pub fn with_initial_depth(max_depth: u32, initial_depth: u32) -> Self {
+        Self {
+            depth: initial_depth,
+            max_depth,
+            exceeded: false,
+            base_depth: initial_depth,
+        }
+    }
+
+    /// Try to enter a deeper level.
+    ///
+    /// Returns `true` if the depth limit has not been reached and entry
+    /// is allowed. The caller **must** call [`leave`](Self::leave) when done.
+    ///
+    /// Returns `false` if the depth limit has been reached. The `exceeded`
+    /// flag is set and the depth is **not** incremented — do **not** call
+    /// `leave()` in this case.
+    #[inline]
+    pub fn enter(&mut self) -> bool {
+        if self.depth >= self.max_depth {
+            self.exceeded = true;
+            return false;
+        }
+        self.depth += 1;
+        true
+    }
+
+    /// Leave the current depth level.
+    ///
+    /// **Must** be called exactly once after every successful [`enter`](Self::enter).
+    ///
+    /// # Debug panics
+    ///
+    /// In debug builds, panics if depth is already 0 (leave without enter).
+    #[inline]
+    pub fn leave(&mut self) {
+        debug_assert!(
+            self.depth > 0,
+            "DepthCounter::leave() called at depth 0. \
+             This indicates a leave without a matching enter()."
+        );
+        self.depth = self.depth.saturating_sub(1);
+    }
+
+    /// Current depth.
+    #[inline]
+    pub fn depth(&self) -> u32 {
+        self.depth
+    }
+
+    /// The configured maximum depth.
+    #[inline]
+    pub fn max_depth(&self) -> u32 {
+        self.max_depth
+    }
+
+    /// Returns `true` if the depth limit was previously exceeded.
+    ///
+    /// Sticky — stays `true` until [`reset`](Self::reset).
+    #[inline]
+    pub fn is_exceeded(&self) -> bool {
+        self.exceeded
+    }
+
+    /// Manually mark as exceeded.
+    #[inline]
+    pub fn mark_exceeded(&mut self) {
+        self.exceeded = true;
+    }
+
+    /// Reset to initial state, preserving the max depth and base depth.
+    pub fn reset(&mut self) {
+        self.depth = self.base_depth;
+        self.exceeded = false;
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Drop for DepthCounter {
+    fn drop(&mut self) {
+        if !std::thread::panicking() && self.depth > self.base_depth {
+            panic!(
+                "DepthCounter dropped with depth {} > base_depth {}. \
+                 This indicates leaked enter() calls without matching leave() calls.",
+                self.depth, self.base_depth,
             );
         }
     }
@@ -1131,6 +1328,10 @@ mod tests {
             RecursionProfile::ShapeExtraction,
             RecursionProfile::ShallowTraversal,
             RecursionProfile::ConstAssertion,
+            RecursionProfile::ExpressionCheck,
+            RecursionProfile::TypeNodeCheck,
+            RecursionProfile::CallResolution,
+            RecursionProfile::CheckerRecursion,
         ];
         for profile in profiles {
             assert!(profile.max_depth() > 0, "{profile:?} has zero max_depth");
@@ -1143,10 +1344,201 @@ mod tests {
                 "{profile:?} has max_iterations < max_depth"
             );
 
-            // Verify the guard can be constructed
+            // Verify both guard types can be constructed
             let guard = RecursionGuard::<u32>::with_profile(profile);
             assert_eq!(guard.max_depth(), profile.max_depth());
             assert_eq!(guard.max_iterations(), profile.max_iterations());
+
+            let counter = DepthCounter::with_profile(profile);
+            assert_eq!(counter.max_depth(), profile.max_depth());
         }
+    }
+
+    // ===================================================================
+    // DepthCounter tests
+    // ===================================================================
+
+    #[test]
+    fn dc_basic_enter_leave() {
+        let mut dc = DepthCounter::new(10);
+        assert_eq!(dc.depth(), 0);
+        assert!(dc.enter());
+        assert_eq!(dc.depth(), 1);
+        dc.leave();
+        assert_eq!(dc.depth(), 0);
+    }
+
+    #[test]
+    fn dc_with_profile() {
+        let dc = DepthCounter::with_profile(RecursionProfile::ExpressionCheck);
+        assert_eq!(dc.max_depth(), 500);
+        assert_eq!(dc.depth(), 0);
+        assert!(!dc.is_exceeded());
+    }
+
+    #[test]
+    fn dc_depth_exceeded_at_max() {
+        let mut dc = DepthCounter::new(2);
+        assert!(dc.enter());
+        assert!(dc.enter());
+        // depth = 2, max = 2, should fail
+        assert!(!dc.enter());
+        assert!(dc.is_exceeded());
+        dc.leave();
+        dc.leave();
+    }
+
+    #[test]
+    fn dc_exceeded_persists_after_leaving() {
+        let mut dc = DepthCounter::new(1);
+        assert!(dc.enter());
+        assert!(!dc.enter()); // exceeded
+        assert!(dc.is_exceeded());
+        dc.leave();
+        // Sticky flag
+        assert!(dc.is_exceeded());
+        assert_eq!(dc.depth(), 0);
+    }
+
+    #[test]
+    fn dc_zero_max_depth() {
+        let mut dc = DepthCounter::new(0);
+        assert!(!dc.enter());
+        assert!(dc.is_exceeded());
+    }
+
+    #[test]
+    fn dc_one_max_depth() {
+        let mut dc = DepthCounter::new(1);
+        assert!(dc.enter());
+        assert!(!dc.enter());
+        dc.leave();
+    }
+
+    #[test]
+    fn dc_nested_enter_leave() {
+        let mut dc = DepthCounter::new(10);
+        assert!(dc.enter());
+        assert!(dc.enter());
+        assert!(dc.enter());
+        assert_eq!(dc.depth(), 3);
+        dc.leave();
+        dc.leave();
+        dc.leave();
+        assert_eq!(dc.depth(), 0);
+    }
+
+    #[test]
+    fn dc_mark_exceeded() {
+        let mut dc = DepthCounter::new(10);
+        assert!(!dc.is_exceeded());
+        dc.mark_exceeded();
+        assert!(dc.is_exceeded());
+    }
+
+    #[test]
+    fn dc_reset() {
+        let mut dc = DepthCounter::new(10);
+        assert!(dc.enter());
+        assert!(dc.enter());
+        dc.mark_exceeded();
+
+        dc.reset();
+
+        assert_eq!(dc.depth(), 0);
+        assert!(!dc.is_exceeded());
+        // Can enter again
+        assert!(dc.enter());
+        dc.leave();
+    }
+
+    #[test]
+    fn dc_reset_preserves_max_depth() {
+        let mut dc = DepthCounter::new(42);
+        dc.reset();
+        assert_eq!(dc.max_depth(), 42);
+    }
+
+    #[test]
+    fn dc_many_enter_leave_cycles() {
+        let mut dc = DepthCounter::new(5);
+        for _ in 0..1000 {
+            assert!(dc.enter());
+            dc.leave();
+        }
+        assert_eq!(dc.depth(), 0);
+    }
+
+    #[test]
+    fn dc_exact_boundary() {
+        let mut dc = DepthCounter::new(3);
+        assert!(dc.enter()); // 1
+        assert!(dc.enter()); // 2
+        assert!(dc.enter()); // 3
+        assert!(!dc.enter()); // exceeded
+        dc.leave();
+        dc.leave();
+        dc.leave();
+    }
+
+    #[test]
+    fn dc_recovery_after_exceeded() {
+        let mut dc = DepthCounter::new(2);
+        assert!(dc.enter());
+        assert!(dc.enter());
+        assert!(!dc.enter()); // exceeded
+        dc.leave();
+        // Depth dropped, can enter again
+        assert!(dc.enter());
+        dc.leave();
+        dc.leave();
+    }
+
+    #[test]
+    fn dc_with_initial_depth() {
+        let mut dc = DepthCounter::with_initial_depth(10, 5);
+        assert_eq!(dc.depth(), 5);
+        assert_eq!(dc.max_depth(), 10);
+
+        // Can enter 5 more times (10 - 5 = 5 remaining)
+        for _ in 0..5 {
+            assert!(dc.enter());
+        }
+        assert_eq!(dc.depth(), 10);
+        assert!(!dc.enter()); // exceeded
+
+        // Leave back to base
+        for _ in 0..5 {
+            dc.leave();
+        }
+        assert_eq!(dc.depth(), 5);
+        // Drop is safe: depth == base_depth
+    }
+
+    #[test]
+    fn dc_with_initial_depth_reset() {
+        let mut dc = DepthCounter::with_initial_depth(10, 3);
+        assert!(dc.enter());
+        assert_eq!(dc.depth(), 4);
+        dc.reset();
+        assert_eq!(dc.depth(), 3); // resets to base, not 0
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "depth 0")]
+    fn dc_debug_leave_at_zero_panics() {
+        let mut dc = DepthCounter::new(10);
+        dc.leave(); // no matching enter
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "depth 0")]
+    fn dc_debug_double_leave_panics() {
+        let mut dc = DepthCounter::new(10);
+        assert!(dc.enter());
+        dc.leave();
+        dc.leave(); // second leave at depth 0
     }
 }
