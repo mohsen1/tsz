@@ -303,6 +303,11 @@ impl<'a> CheckerState<'a> {
         if let Some(ref name) = import_name {
             // Get the symbol for this import
             let import_sym_id = self.ctx.binder.node_symbols.get(&stmt_idx.0).copied();
+            // Find the enclosing scope of the import statement
+            let import_scope = self
+                .ctx
+                .binder
+                .find_enclosing_scope(self.ctx.arena, stmt_idx);
 
             // Find all symbols with this name (there may be multiple due to shadowing)
             let all_symbols = self.ctx.binder.symbols.find_all_by_name(name);
@@ -321,6 +326,20 @@ impl<'a> CheckerState<'a> {
                     // Skip if this is also an import/alias
                     if is_alias {
                         continue;
+                    }
+
+                    // Only check for conflicts within the same scope.
+                    // A symbol in a different namespace/module should not conflict.
+                    if let Some(import_scope_id) = import_scope {
+                        let decl_in_same_scope = sym.declarations.iter().any(|&decl_idx| {
+                            self.ctx
+                                .binder
+                                .find_enclosing_scope(self.ctx.arena, decl_idx)
+                                == Some(import_scope_id)
+                        });
+                        if !decl_in_same_scope {
+                            continue;
+                        }
                     }
 
                     // Check if this symbol has any declaration in the CURRENT file
