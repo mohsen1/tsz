@@ -2582,3 +2582,174 @@ fn test_auto_import_via_reexport() {
         "Should have additionalTextEdits to insert import"
     );
 }
+
+// =============================================================================
+// Export Signature / Smart Cache Invalidation Tests
+// =============================================================================
+
+#[test]
+fn test_body_edit_does_not_invalidate_dependents() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "a.ts".to_string(),
+        "export function foo() { return 1; }".to_string(),
+    );
+    project.set_file(
+        "b.ts".to_string(),
+        "import { foo } from \"./a\";\nfoo();\n".to_string(),
+    );
+
+    // Manually wire the dependency (extract_imports uses raw specifiers like "./a")
+    project.dependency_graph.add_dependency("b.ts", "a.ts");
+
+    // Force b.ts diagnostics to be "clean" by getting them once
+    let _ = project.get_diagnostics("b.ts");
+    assert!(
+        !project.files.get("b.ts").unwrap().diagnostics_dirty,
+        "b.ts should be clean after getting diagnostics"
+    );
+
+    // Edit a.ts function body only (no export change)
+    let a_file = project.files.get("a.ts").unwrap();
+    let a_line_map = a_file.line_map().clone();
+    let a_source = a_file.source_text().to_string();
+    let edit_range = range_for_substring(&a_source, &a_line_map, "return 1");
+    project.update_file(
+        "a.ts",
+        &[TextEdit {
+            range: edit_range,
+            new_text: "return 2".to_string(),
+        }],
+    );
+
+    // b.ts should NOT be marked dirty — the export signature didn't change
+    assert!(
+        !project.files.get("b.ts").unwrap().diagnostics_dirty,
+        "b.ts should NOT be invalidated by a body-only edit in a.ts"
+    );
+}
+
+#[test]
+fn test_export_addition_invalidates_dependents() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "a.ts".to_string(),
+        "export function foo() { return 1; }".to_string(),
+    );
+    project.set_file(
+        "b.ts".to_string(),
+        "import { foo } from \"./a\";\nfoo();\n".to_string(),
+    );
+
+    // Manually wire the dependency (extract_imports uses raw specifiers like "./a")
+    project.dependency_graph.add_dependency("b.ts", "a.ts");
+
+    // Clean b.ts diagnostics
+    let _ = project.get_diagnostics("b.ts");
+    assert!(
+        !project.files.get("b.ts").unwrap().diagnostics_dirty,
+        "b.ts should be clean after getting diagnostics"
+    );
+
+    // Add a new export to a.ts — this changes the export signature
+    let a_file = project.files.get("a.ts").unwrap();
+    let a_line_map = a_file.line_map().clone();
+    let a_source = a_file.source_text().to_string();
+    let end_range = Range::new(
+        a_line_map.offset_to_position(a_source.len() as u32, &a_source),
+        a_line_map.offset_to_position(a_source.len() as u32, &a_source),
+    );
+    project.update_file(
+        "a.ts",
+        &[TextEdit {
+            range: end_range,
+            new_text: "\nexport function bar() {}".to_string(),
+        }],
+    );
+
+    // b.ts SHOULD be marked dirty — the export signature changed
+    assert!(
+        project.files.get("b.ts").unwrap().diagnostics_dirty,
+        "b.ts SHOULD be invalidated when a.ts adds a new export"
+    );
+}
+
+#[test]
+fn test_comment_edit_does_not_invalidate_dependents() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "a.ts".to_string(),
+        "// version 1\nexport const x = 1;\n".to_string(),
+    );
+    project.set_file(
+        "b.ts".to_string(),
+        "import { x } from \"./a\";\nconsole.log(x);\n".to_string(),
+    );
+
+    // Manually wire the dependency (extract_imports uses raw specifiers like "./a")
+    project.dependency_graph.add_dependency("b.ts", "a.ts");
+
+    // Clean b.ts
+    let _ = project.get_diagnostics("b.ts");
+
+    // Edit only the comment in a.ts
+    let a_file = project.files.get("a.ts").unwrap();
+    let a_line_map = a_file.line_map().clone();
+    let a_source = a_file.source_text().to_string();
+    let edit_range = range_for_substring(&a_source, &a_line_map, "version 1");
+    project.update_file(
+        "a.ts",
+        &[TextEdit {
+            range: edit_range,
+            new_text: "version 2".to_string(),
+        }],
+    );
+
+    // b.ts should NOT be dirty
+    assert!(
+        !project.files.get("b.ts").unwrap().diagnostics_dirty,
+        "b.ts should NOT be invalidated by a comment-only edit in a.ts"
+    );
+}
+
+#[test]
+fn test_private_addition_does_not_invalidate_dependents() {
+    let mut project = Project::new();
+
+    project.set_file("a.ts".to_string(), "export function foo() {}\n".to_string());
+    project.set_file(
+        "b.ts".to_string(),
+        "import { foo } from \"./a\";\nfoo();\n".to_string(),
+    );
+
+    // Manually wire the dependency (extract_imports uses raw specifiers like "./a")
+    project.dependency_graph.add_dependency("b.ts", "a.ts");
+
+    // Clean b.ts
+    let _ = project.get_diagnostics("b.ts");
+
+    // Add a private (non-exported) symbol to a.ts
+    let a_file = project.files.get("a.ts").unwrap();
+    let a_line_map = a_file.line_map().clone();
+    let a_source = a_file.source_text().to_string();
+    let end_range = Range::new(
+        a_line_map.offset_to_position(a_source.len() as u32, &a_source),
+        a_line_map.offset_to_position(a_source.len() as u32, &a_source),
+    );
+    project.update_file(
+        "a.ts",
+        &[TextEdit {
+            range: end_range,
+            new_text: "const helper = 42;\n".to_string(),
+        }],
+    );
+
+    // b.ts should NOT be dirty — private additions don't change exports
+    assert!(
+        !project.files.get("b.ts").unwrap().diagnostics_dirty,
+        "b.ts should NOT be invalidated when a.ts adds a private symbol"
+    );
+}

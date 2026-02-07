@@ -201,7 +201,10 @@ fn generate_deep_control_flow(depth: usize) -> String {
 /// Uses the real TypeScript test file if available, otherwise generates synthetic code.
 fn get_large_control_flow_code() -> String {
     // Try to read the real file from TypeScript submodule at runtime
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/TypeScript/tests/cases/compiler/largeControlFlowGraph.ts");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/TypeScript/tests/cases/compiler/largeControlFlowGraph.ts"
+    );
     std::fs::read_to_string(path).unwrap_or_else(|_| {
         // Generate synthetic deep control flow as fallback
         generate_deep_control_flow(50)
@@ -395,7 +398,7 @@ fn bench_scaling(c: &mut Criterion) {
 /// a synthetic deep control flow graph instead.
 fn bench_large_control_flow_graph(c: &mut Criterion) {
     let code = get_large_control_flow_code();
-    
+
     let mut group = c.benchmark_group("cfa_large_control_flow_graph");
     group.sample_size(10);
     group.warm_up_time(Duration::from_secs(1));
@@ -404,10 +407,7 @@ fn bench_large_control_flow_graph(c: &mut Criterion) {
     group.bench_function("parse_bind", |b| {
         let code = code.clone();
         b.iter(|| {
-            let mut parser = ParserState::new(
-                "largeControlFlowGraph.ts".to_string(),
-                code.clone(),
-            );
+            let mut parser = ParserState::new("largeControlFlowGraph.ts".to_string(), code.clone());
             let root = parser.parse_source_file();
             let mut binder = BinderState::new();
             binder.bind_source_file(parser.get_arena(), root);
@@ -416,10 +416,7 @@ fn bench_large_control_flow_graph(c: &mut Criterion) {
     });
 
     // Parse and bind once, then benchmark checker cost in isolation.
-    let mut parser = ParserState::new(
-        "largeControlFlowGraph.ts".to_string(),
-        code.clone(),
-    );
+    let mut parser = ParserState::new("largeControlFlowGraph.ts".to_string(), code.clone());
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -442,10 +439,7 @@ fn bench_large_control_flow_graph(c: &mut Criterion) {
     group.bench_function("full_pipeline", |b| {
         let code = code.clone();
         b.iter(|| {
-            let mut parser = ParserState::new(
-                "largeControlFlowGraph.ts".to_string(),
-                code.clone(),
-            );
+            let mut parser = ParserState::new("largeControlFlowGraph.ts".to_string(), code.clone());
             let root = parser.parse_source_file();
             let mut binder = BinderState::new();
             binder.bind_source_file(parser.get_arena(), root);

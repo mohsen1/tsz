@@ -35,6 +35,7 @@ pub mod dependency_graph;
 pub mod diagnostics;
 pub mod document_links;
 pub mod document_symbols;
+pub mod export_signature;
 pub mod file_rename;
 pub mod folding;
 pub mod formatting;
