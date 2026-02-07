@@ -252,6 +252,11 @@ impl<'a> CheckerState<'a> {
         // This is critical for classes where we need the Callable with construct signatures
         let constructor_type = self.resolve_ref_type(constructor_type);
 
+        // Resolve type parameter constraints: if the constructor type is a type parameter
+        // (e.g., T extends Constructable), resolve the constraint's lazy types so the solver
+        // can find construct signatures through the constraint chain.
+        let constructor_type = self.resolve_type_param_for_construct(constructor_type);
+
         // Some constructor interfaces are lowered with a synthetic `"new"` property
         // instead of explicit construct signatures.
         let synthetic_new_constructor = self.constructor_type_from_new_property(constructor_type);
@@ -462,6 +467,38 @@ impl<'a> CheckerState<'a> {
             LazyTypeKind::NotLazy => type_id,
             _ => type_id, // Handle deprecated variants for compatibility
         }
+    }
+
+    /// Resolve type parameter constraints for construct expressions.
+    ///
+    /// When the constructor type is a TypeParameter (e.g., `T extends Constructable`),
+    /// the solver's `resolve_new` tries to look through the constraint. But if the
+    /// constraint is a Lazy type (interface), the solver can't resolve it because it
+    /// lacks the type environment. This method pre-resolves the constraint so the
+    /// solver can find construct signatures.
+    fn resolve_type_param_for_construct(&mut self, type_id: TypeId) -> TypeId {
+        use tsz_solver::TypeKey;
+
+        let Some(TypeKey::TypeParameter(info)) = self.ctx.types.lookup(type_id) else {
+            return type_id;
+        };
+
+        let Some(constraint) = info.constraint else {
+            return type_id;
+        };
+
+        // Resolve the constraint if it's a Lazy type (interface/type alias)
+        let resolved_constraint = self.resolve_lazy_type(constraint);
+        if resolved_constraint == constraint {
+            return type_id;
+        }
+
+        // Create a new TypeParameter with the resolved constraint
+        let new_info = tsz_solver::TypeParamInfo {
+            constraint: Some(resolved_constraint),
+            ..info.clone()
+        };
+        self.ctx.types.intern(TypeKey::TypeParameter(new_info))
     }
 
     /// Get type from a union type node (A | B).
