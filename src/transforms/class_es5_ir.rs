@@ -1081,6 +1081,11 @@ impl<'a> ES5ClassTransformer<'a> {
         let accessor_node = self.arena.get(accessor_idx)?;
         let accessor_data = self.arena.get_accessor(accessor_node)?;
 
+        let body_source_range = self
+            .arena
+            .get(accessor_data.body)
+            .map(|n| (n.pos as u32, n.end as u32));
+
         Some(IRNode::FunctionExpr {
             name: None,
             parameters: vec![],
@@ -1090,7 +1095,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.convert_block_body(accessor_data.body)
             },
             is_expression_body: false,
-            body_source_range: None,
+            body_source_range,
         })
     }
 
@@ -1101,6 +1106,11 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let params = self.extract_parameters(&accessor_data.parameters);
 
+        let body_source_range = self
+            .arena
+            .get(accessor_data.body)
+            .map(|n| (n.pos as u32, n.end as u32));
+
         Some(IRNode::FunctionExpr {
             name: None,
             parameters: params,
@@ -1110,7 +1120,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.convert_block_body(accessor_data.body)
             },
             is_expression_body: false,
-            body_source_range: None,
+            body_source_range,
         })
     }
 

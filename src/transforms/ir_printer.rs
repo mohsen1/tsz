@@ -380,7 +380,27 @@ impl<'a> IRPrinter<'a> {
                             let start = pos as usize;
                             let end = std::cmp::min(end as usize, text.len());
                             if start < end {
-                                !text[start..end].contains('\n')
+                                let slice = &text[start..end];
+                                // Find the opening `{` and its matching `}` using depth counting.
+                                // We skip leading trivia (which may have newlines from indentation)
+                                // and only check between the braces.
+                                if let Some(open) = slice.find('{') {
+                                    let mut depth = 1;
+                                    for (i, ch) in slice[open + 1..].char_indices() {
+                                        match ch {
+                                            '{' => depth += 1,
+                                            '}' => {
+                                                depth -= 1;
+                                                if depth == 0 {
+                                                    let inner = &slice[open..open + 1 + i + 1];
+                                                    return !inner.contains('\n');
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                !slice.contains('\n')
                             } else {
                                 false
                             }
@@ -388,23 +408,12 @@ impl<'a> IRPrinter<'a> {
                     })
                     .unwrap_or(false);
 
-                // Check if this is an anonymous function with a simple return
-                // Used for callbacks like array.every(function(val) { return val.isSunk; })
-                let is_simple_anonymous_return = name.is_none()
-                    && body.len() == 1
-                    && matches!(&body[0], IRNode::ReturnStatement(Some(_)));
-
                 // Determine if we should emit single-line:
                 // - For arrow-to-function conversions: always single-line
                 // - For functions that were single-line in source: single-line
-                // - Generated code without source info: use simple anonymous return heuristic
-                // tsc never collapses multi-line function bodies to single line.
-                let should_emit_single_line = if body_source_range.is_some() {
-                    *is_expression_body || is_source_single_line
-                } else {
-                    // No source range - use heuristic for generated code
-                    *is_expression_body || is_simple_anonymous_return
-                };
+                // tsc never collapses multi-line function bodies to single line,
+                // so we should NOT use heuristics to guess single-line for generated code.
+                let should_emit_single_line = *is_expression_body || is_source_single_line;
 
                 if !has_defaults
                     && should_emit_single_line

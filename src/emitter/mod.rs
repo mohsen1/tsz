@@ -398,29 +398,36 @@ impl<'a> Printer<'a> {
     /// if there's a newline between them. Uses `rfind` to handle nested braces correctly.
     fn is_single_line(&self, node: &Node) -> bool {
         if let Some(text) = self.source_text {
-            // Use skip_trivia_forward to skip leading trivia (whitespace, comments)
-            // since node.pos includes trivia which may contain newlines from parent
-            // context. We want to check from the actual token start.
             let actual_start = self.skip_trivia_forward(node.pos, node.end) as usize;
             let end = std::cmp::min(node.end as usize, text.len());
             if actual_start < end {
                 let slice = &text[actual_start..end];
-                // Find the first `{` and the matching `}` in the node's range.
-                // We use the first `}` after `{` rather than rfind to avoid
-                // picking up closing braces from parent blocks (the parser's
-                // node.end may extend past the block's actual closing brace).
+                // Find the first `{` and its matching `}` using depth counting
+                // to handle nested braces (e.g., `{ return new Line({ x: 0 }, p); }`)
                 if let Some(open) = slice.find('{') {
-                    if let Some(close_offset) = slice[open + 1..].find('}') {
-                        let close = open + 1 + close_offset;
+                    let mut depth = 1;
+                    let mut close = None;
+                    for (i, ch) in slice[open + 1..].char_indices() {
+                        match ch {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    close = Some(open + 1 + i);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(close) = close {
                         let inner = &slice[open..close + 1];
                         return !inner.contains('\n');
                     }
                 }
-                // Fallback: check entire span for newlines
                 return !slice.contains('\n');
             }
         }
-        // Default to multi-line if we can't determine
         false
     }
 
@@ -1888,8 +1895,7 @@ impl<'a> Printer<'a> {
         let is_file_module = self.file_is_module(&source.statements);
         let should_emit_use_strict = !source_has_use_strict
             && (is_commonjs_or_amd
-                || (self.ctx.options.always_strict
-                    && !(is_es_module_output && is_file_module)));
+                || (self.ctx.options.always_strict && !(is_es_module_output && is_file_module)));
 
         if should_emit_use_strict {
             self.write("\"use strict\";");
