@@ -411,6 +411,11 @@ pub enum IRNode {
         should_declare_var: bool,
         /// Parent namespace name for qualified binding: `NS = Parent.NS || (Parent.NS = {})`
         parent_name: Option<String>,
+        /// Renamed IIFE parameter name when a member collides with the namespace name.
+        /// E.g., namespace A { export class A {} } => `(function (A_1) { ... A_1.A = A; })`
+        /// Only the function parameter and namespace exports use this name;
+        /// the var declaration and argument still use the original name.
+        param_name: Option<String>,
     },
 
     /// Namespace export: `NS.foo = ...;`

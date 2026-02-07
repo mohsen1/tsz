@@ -160,12 +160,17 @@ impl<'a> NamespaceES5Transformer<'a> {
         let is_exported = force_exported || has_export_modifier(self.arena, &ns_data.modifiers);
 
         // Transform the innermost body - use the last name part for member exports
-        let body = self.transform_namespace_body(innermost_body, &name_parts);
+        let mut body = self.transform_namespace_body(innermost_body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types)
         if body.is_empty() {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         // Root name is the first part
         let name = name_parts.first().cloned().unwrap_or_default();
@@ -178,6 +183,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var,
             parent_name: None,
+            param_name,
         })
     }
 
@@ -549,12 +555,17 @@ impl<'a> NamespaceES5Transformer<'a> {
         let is_exported = has_export_modifier(self.arena, &ns_data.modifiers);
 
         // Transform body
-        let body = self.transform_namespace_body(ns_data.body, &name_parts);
+        let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types)
         if body.is_empty() {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -566,6 +577,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var: true,
             parent_name: Some(parent_ns.to_string()),
+            param_name,
         })
     }
 
@@ -591,12 +603,17 @@ impl<'a> NamespaceES5Transformer<'a> {
         let is_exported = true;
 
         // Transform body
-        let body = self.transform_namespace_body(ns_data.body, &name_parts);
+        let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types)
         if body.is_empty() {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -608,6 +625,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var: true,
             parent_name: Some(parent_ns.to_string()),
+            param_name,
         })
     }
 }
@@ -669,6 +687,7 @@ impl<'a> NamespaceTransformContext<'a> {
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
             parent_name: None,
+            param_name: None,
         })
     }
 
@@ -1067,6 +1086,7 @@ impl<'a> NamespaceTransformContext<'a> {
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
             parent_name: Some(parent_ns.to_string()),
+            param_name: None,
         })
     }
 
@@ -1109,6 +1129,7 @@ impl<'a> NamespaceTransformContext<'a> {
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
             parent_name: Some(parent_ns.to_string()),
+            param_name: None,
         })
     }
 }
@@ -1279,6 +1300,106 @@ fn convert_variable_declarations(arena: &NodeArena, declarations: &NodeList) -> 
     }
 
     result
+}
+
+// =============================================================================
+// Namespace IIFE parameter collision detection and renaming
+// =============================================================================
+
+/// Collect all member names declared in the namespace body IR.
+/// These are names that would clash with the IIFE parameter if they match the namespace name.
+fn collect_body_member_names(body: &[IRNode]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for node in body {
+        collect_member_names_from_node(node, &mut names);
+    }
+    names
+}
+
+/// Recursively collect declared names from IR nodes
+fn collect_member_names_from_node(node: &IRNode, names: &mut std::collections::HashSet<String>) {
+    match node {
+        IRNode::ES5ClassIIFE { name, .. } => {
+            names.insert(name.clone());
+        }
+        IRNode::FunctionDecl { name, .. } => {
+            names.insert(name.clone());
+        }
+        IRNode::VarDecl { name, .. } => {
+            names.insert(name.clone());
+        }
+        IRNode::EnumIIFE { name, .. } => {
+            names.insert(name.clone());
+        }
+        IRNode::Sequence(items) => {
+            for item in items {
+                collect_member_names_from_node(item, names);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Generate a unique parameter name by appending `_1`, `_2`, etc.
+/// Ensures the generated name doesn't collide with any existing member name.
+fn generate_unique_param_name(
+    ns_name: &str,
+    member_names: &std::collections::HashSet<String>,
+) -> String {
+    let mut suffix = 1;
+    loop {
+        let candidate = format!("{}_{}", ns_name, suffix);
+        if !member_names.contains(&candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+/// Rename namespace references in body IR nodes.
+/// Updates `NamespaceExport.namespace` and nested `NamespaceIIFE.parent_name`
+/// from `old_name` to `new_name`.
+fn rename_namespace_refs_in_body(body: &mut [IRNode], old_name: &str, new_name: &str) {
+    for node in body.iter_mut() {
+        rename_namespace_refs_in_node(node, old_name, new_name);
+    }
+}
+
+/// Recursively rename namespace references in a single IR node
+fn rename_namespace_refs_in_node(node: &mut IRNode, old_name: &str, new_name: &str) {
+    match node {
+        IRNode::NamespaceExport { namespace, .. } => {
+            if namespace == old_name {
+                *namespace = new_name.to_string();
+            }
+        }
+        IRNode::NamespaceIIFE { parent_name, .. } => {
+            if let Some(parent) = parent_name {
+                if parent == old_name {
+                    *parent = new_name.to_string();
+                }
+            }
+        }
+        IRNode::Sequence(items) => {
+            for item in items.iter_mut() {
+                rename_namespace_refs_in_node(item, old_name, new_name);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Detect collision between namespace name and body member names,
+/// and if found, rename the body's namespace references and return the new parameter name.
+fn detect_and_apply_param_rename(body: &mut Vec<IRNode>, ns_name: &str) -> Option<String> {
+    let member_names = collect_body_member_names(body);
+    if member_names.contains(ns_name) {
+        let renamed = generate_unique_param_name(ns_name, &member_names);
+        rename_namespace_refs_in_body(body, ns_name, &renamed);
+        Some(renamed)
+    } else {
+        None
+    }
 }
 
 // =============================================================================

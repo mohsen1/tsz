@@ -1110,6 +1110,7 @@ impl<'a> IRPrinter<'a> {
                 attach_to_exports,
                 should_declare_var,
                 parent_name,
+                param_name,
             } => {
                 self.emit_namespace_iife(
                     name_parts,
@@ -1119,6 +1120,7 @@ impl<'a> IRPrinter<'a> {
                     *attach_to_exports,
                     *should_declare_var,
                     parent_name.as_deref(),
+                    param_name.as_deref(),
                 );
             }
             IRNode::NamespaceExport {
@@ -1184,9 +1186,17 @@ impl<'a> IRPrinter<'a> {
         attach_to_exports: bool,
         should_declare_var: bool,
         parent_name: Option<&str>,
+        param_name: Option<&str>,
     ) {
         let current_name = &name_parts[index];
         let is_last = index == name_parts.len() - 1;
+        // Use renamed parameter name only at the innermost (last) level for collision avoidance.
+        // Outer levels of qualified names (A.B.C) always use their original name.
+        let iife_param = if is_last {
+            param_name.unwrap_or(current_name.as_str())
+        } else {
+            current_name.as_str()
+        };
 
         // Emit var declaration only for the outermost namespace and if flag is true
         if index == 0 && should_declare_var {
@@ -1199,7 +1209,7 @@ impl<'a> IRPrinter<'a> {
         // Open IIFE: (function (name) {
         self.write_indent();
         self.write("(function (");
-        self.write(current_name);
+        self.write(iife_param);
         self.write(") {");
         self.write_line();
         self.increase_indent();
@@ -1228,6 +1238,7 @@ impl<'a> IRPrinter<'a> {
                 attach_to_exports,
                 true,
                 None,
+                param_name,
             );
             self.write_line();
         }

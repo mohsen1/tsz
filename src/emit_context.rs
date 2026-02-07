@@ -199,6 +199,10 @@ pub struct EmitContext {
 
     /// Auto-detect module mode: if true, detect imports/exports and apply CommonJS
     pub auto_detect_module: bool,
+
+    /// Original module kind before wrapper body override (AMD/UMD → CommonJS).
+    /// Used by export assignment to emit `return X` instead of `module.exports = X` in AMD.
+    pub original_module_kind: Option<ModuleKind>,
 }
 
 impl EmitContext {
@@ -221,6 +225,7 @@ impl EmitContext {
             block_scope_state: BlockScopeState::default(),
             private_field_state: PrivateFieldState::default(),
             auto_detect_module: false,
+            original_module_kind: None,
         }
     }
 
