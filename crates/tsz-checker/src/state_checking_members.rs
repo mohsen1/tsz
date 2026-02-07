@@ -2026,10 +2026,10 @@ impl<'a> CheckerState<'a> {
         );
 
         // 3. Get the implementation's type using manual lowering
-        let impl_type = lowering.lower_signature_from_declaration(impl_node_idx, None);
+        let mut impl_type = lowering.lower_signature_from_declaration(impl_node_idx, None);
         if impl_type == tsz_solver::TypeId::ERROR {
             // Fall back to get_type_of_node for cases where manual lowering fails
-            let impl_type = self.get_type_of_node(impl_node_idx);
+            impl_type = self.get_type_of_node(impl_node_idx);
             if impl_type == tsz_solver::TypeId::ERROR {
                 return;
             }
@@ -2075,16 +2075,17 @@ impl<'a> CheckerState<'a> {
             }
 
             // 6. Get the overload's type using manual lowering
-            let overload_type = lowering.lower_signature_from_declaration(decl_idx, None);
+            let mut overload_type = lowering.lower_signature_from_declaration(decl_idx, None);
             if overload_type == tsz_solver::TypeId::ERROR {
                 // Fall back to get_type_of_node for cases where manual lowering fails
-                let overload_type = self.get_type_of_node(decl_idx);
+                overload_type = self.get_type_of_node(decl_idx);
                 if overload_type == tsz_solver::TypeId::ERROR {
                     continue;
                 }
             }
 
             // 7. Check assignability: Impl <: Overload
+            // The implementation must be compatible with each overload signature.
             if !self.is_assignable_to(impl_type, overload_type) {
                 self.error_at_node(
                     decl_idx,
