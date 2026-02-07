@@ -250,3 +250,107 @@ function foo() {
         diagnostics
     );
 }
+
+/// Test that var hoisting works through nested blocks (e.g., for-of with block body).
+#[test]
+fn test_var_hoisting_through_for_of_block() {
+    let source = r#"
+function foo(arr: any[]) {
+    for (let x of arr) {
+        var v = x;
+    }
+    return v; // Should NOT emit TS2304 - var is hoisted through block
+}
+"#;
+    let diagnostics = check_with_lib(source);
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert!(
+        ts2304_errors.is_empty(),
+        "Should NOT have TS2304 for hoisted var 'v' through for-of block, got: {:?}",
+        ts2304_errors
+    );
+}
+
+/// Test that var hoisting works through for-in with block body.
+#[test]
+fn test_var_hoisting_through_for_in_block() {
+    let source = r#"
+function foo(obj: any) {
+    for (let k in obj) {
+        var v = k;
+    }
+    return v; // Should NOT emit TS2304
+}
+"#;
+    let diagnostics = check_with_lib(source);
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert!(
+        ts2304_errors.is_empty(),
+        "Should NOT have TS2304 for hoisted var 'v' through for-in block, got: {:?}",
+        ts2304_errors
+    );
+}
+
+/// Test that var hoisting works through nested if/block inside for loop.
+#[test]
+fn test_var_hoisting_through_nested_blocks() {
+    let source = r#"
+function foo() {
+    for (var i = 0; i < 10; i++) {
+        if (true) {
+            var x = i;
+        }
+    }
+    return x; // Should NOT emit TS2304
+}
+"#;
+    let diagnostics = check_with_lib(source);
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert!(
+        ts2304_errors.is_empty(),
+        "Should NOT have TS2304 for var hoisted through nested blocks, got: {:?}",
+        ts2304_errors
+    );
+}
+
+/// Test that var in bare block inside function is hoisted.
+#[test]
+fn test_var_hoisting_through_bare_block() {
+    let source = r#"
+function foo() {
+    {
+        var x = 1;
+    }
+    return x; // Should NOT emit TS2304
+}
+"#;
+    let diagnostics = check_with_lib(source);
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert!(
+        ts2304_errors.is_empty(),
+        "Should NOT have TS2304 for var in bare block, got: {:?}",
+        ts2304_errors
+    );
+}
+
+/// Test that var hoisting works from try/catch blocks.
+#[test]
+fn test_var_hoisting_from_try_catch() {
+    let source = r#"
+function foo() {
+    try {
+        var x = 1;
+    } catch (e) {
+        var y = 2;
+    }
+    return x + y; // Should NOT emit TS2304
+}
+"#;
+    let diagnostics = check_with_lib(source);
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert!(
+        ts2304_errors.is_empty(),
+        "Should NOT have TS2304 for vars in try/catch, got: {:?}",
+        ts2304_errors
+    );
+}
