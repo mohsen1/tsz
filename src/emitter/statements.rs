@@ -31,20 +31,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Single-line blocks:
-        // 1. If source was single-line and block has one statement, keep it single-line
-        // 2. OR if block has a single simple return statement (TypeScript behavior)
+        // Single-line blocks: preserve single-line formatting from source.
+        // tsc only emits single-line blocks when the original source was single-line.
+        // It never collapses multi-line blocks to single lines.
         let is_single_statement = block.statements.nodes.len() == 1;
-
-        // Check if it's a simple return statement
-        let is_simple_return =
-            is_single_statement && self.is_simple_return_statement(block.statements.nodes[0]);
-
-        // Emit single-line if:
-        // 1. Source was single-line OR
-        // 2. It's a simple return statement (TypeScript behavior for callbacks)
-        let should_emit_single_line =
-            is_single_statement && (self.is_single_line(node) || is_simple_return);
+        let should_emit_single_line = is_single_statement && self.is_single_line(node);
 
         if should_emit_single_line {
             self.write("{ ");
