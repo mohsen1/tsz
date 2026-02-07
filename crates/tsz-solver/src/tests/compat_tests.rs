@@ -61,12 +61,30 @@ fn make_object_interface(interner: &TypeInterner) -> TypeId {
     };
 
     let constructor = PropertyInfo::new(interner.intern_string("constructor"), TypeId::ANY);
-    let to_string = PropertyInfo::method(interner.intern_string("toString"), interner.function(method(TypeId::STRING)));
-    let to_locale = PropertyInfo::method(interner.intern_string("toLocaleString"), interner.function(method(TypeId::STRING)));
-    let value_of = PropertyInfo::method(interner.intern_string("valueOf"), interner.function(method(TypeId::ANY)));
-    let has_own = PropertyInfo::method(interner.intern_string("hasOwnProperty"), interner.function(method_with_any(TypeId::BOOLEAN)));
-    let is_proto = PropertyInfo::method(interner.intern_string("isPrototypeOf"), interner.function(method_with_any(TypeId::BOOLEAN)));
-    let prop_enum = PropertyInfo::method(interner.intern_string("propertyIsEnumerable"), interner.function(method_with_any(TypeId::BOOLEAN)));
+    let to_string = PropertyInfo::method(
+        interner.intern_string("toString"),
+        interner.function(method(TypeId::STRING)),
+    );
+    let to_locale = PropertyInfo::method(
+        interner.intern_string("toLocaleString"),
+        interner.function(method(TypeId::STRING)),
+    );
+    let value_of = PropertyInfo::method(
+        interner.intern_string("valueOf"),
+        interner.function(method(TypeId::ANY)),
+    );
+    let has_own = PropertyInfo::method(
+        interner.intern_string("hasOwnProperty"),
+        interner.function(method_with_any(TypeId::BOOLEAN)),
+    );
+    let is_proto = PropertyInfo::method(
+        interner.intern_string("isPrototypeOf"),
+        interner.function(method_with_any(TypeId::BOOLEAN)),
+    );
+    let prop_enum = PropertyInfo::method(
+        interner.intern_string("propertyIsEnumerable"),
+        interner.function(method_with_any(TypeId::BOOLEAN)),
+    );
 
     interner.object(vec![
         constructor,
@@ -637,7 +655,10 @@ fn test_constructor_void_return_assignability() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
 
     let returns_instance = interner.function(FunctionShape {
         params: Vec::new(),
@@ -668,7 +689,10 @@ fn test_construct_signature_void_return_assignability() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
 
     let returns_instance = interner.callable(CallableShape {
         symbol: None,
@@ -2725,8 +2749,14 @@ fn test_keyof_intersection_assignable() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
     let keyof_a = interner.intern(TypeKey::KeyOf(obj_a));
@@ -3277,7 +3307,10 @@ fn test_void_return_exception_constructors() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let instance_type = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let instance_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     // new () => void
     let void_ctor = interner.object(vec![PropertyInfo {
@@ -3340,7 +3373,10 @@ fn test_method_bivariance_allows_derived_methods() {
     let method_name = interner.intern_string("compare");
 
     // class Base { compare(other: Base): void }
-    let base = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::STRING)]);
+    let base = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
     let base_method = interner.object(vec![PropertyInfo {
         visibility: Visibility::Public,
@@ -3405,7 +3441,10 @@ fn test_method_bivariance_persists_with_strict_function_types() {
     let method_name = interner.intern_string("method");
 
     // Base type with method
-    let base = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let base = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let base_with_method = interner.object(vec![PropertyInfo {
         visibility: Visibility::Public,
@@ -3712,7 +3751,10 @@ fn test_function_intrinsic_rejects_non_callable() {
     );
 
     // Objects are NOT callable (unless they have call signatures)
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
     assert!(
         !checker.is_assignable(obj, TypeId::FUNCTION),
         "Plain object should NOT be assignable to Function intrinsic"
@@ -3909,7 +3951,10 @@ fn test_weak_type_detection_with_all_strict_options() {
     ]);
 
     // Source with no common properties should be rejected
-    let source = interner.object(vec![PropertyInfo::new(interner.intern_string("z"), TypeId::BOOLEAN)]);
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("z"),
+        TypeId::BOOLEAN,
+    )]);
 
     assert!(
         !checker.is_assignable(source, weak_type),
@@ -3933,7 +3978,10 @@ fn test_weak_union_detection_improved() {
     let weak_union = interner.union(vec![weak1, weak2]);
 
     // Source with no common properties should be rejected
-    let source = interner.object(vec![PropertyInfo::new(interner.intern_string("z"), TypeId::BOOLEAN)]);
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("z"),
+        TypeId::BOOLEAN,
+    )]);
 
     assert!(
         !checker.is_assignable(source, weak_union),

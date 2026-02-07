@@ -277,7 +277,10 @@ fn test_concurrent_callable_creation() {
                 symbol: None,
                 call_signatures: vec![],
                 construct_signatures: vec![],
-                properties: vec![PropertyInfo::readonly(interner.intern_string("length"), TypeId::NUMBER)],
+                properties: vec![PropertyInfo::readonly(
+                    interner.intern_string("length"),
+                    TypeId::NUMBER,
+                )],
                 number_index: None,
                 string_index: None,
             };

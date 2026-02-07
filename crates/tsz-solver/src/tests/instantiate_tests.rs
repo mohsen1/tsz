@@ -134,7 +134,10 @@ fn test_instantiate_object() {
         default: None,
         is_const: false,
     }));
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), type_param_t)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        type_param_t,
+    )]);
 
     // Substitute T = number -> { value: number }
     let mut subst = TypeSubstitution::new();
@@ -142,7 +145,10 @@ fn test_instantiate_object() {
     let result = instantiate_type(&interner, obj, &subst);
 
     // Result should be { value: number }
-    let expected = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let expected = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
     assert_eq!(result, expected);
 }
 
@@ -827,7 +833,10 @@ fn test_instantiate_template_literal_in_object() {
     ]);
 
     // Create an object { prop: `key_${T}` }
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("prop"), template)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        template,
+    )]);
 
     // Substitute T = "name"
     let name_lit = interner.literal_string("name");

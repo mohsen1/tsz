@@ -72,9 +72,11 @@ fn test_optional_matters() {
     let interner = TypeInterner::new();
     let env = TypeEnvironment::new();
 
-    let prop_required = crate::types::PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER);
+    let prop_required =
+        crate::types::PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER);
 
-    let prop_optional = crate::types::PropertyInfo::opt(interner.intern_string("a"), TypeId::NUMBER);
+    let prop_optional =
+        crate::types::PropertyInfo::opt(interner.intern_string("a"), TypeId::NUMBER);
 
     let type1 = interner.object(vec![prop_required]);
     let type2 = interner.object(vec![prop_optional]);
@@ -90,7 +92,8 @@ fn test_readonly_matters() {
     let interner = TypeInterner::new();
     let env = TypeEnvironment::new();
 
-    let prop_readonly = crate::types::PropertyInfo::readonly(interner.intern_string("a"), TypeId::NUMBER);
+    let prop_readonly =
+        crate::types::PropertyInfo::readonly(interner.intern_string("a"), TypeId::NUMBER);
 
     let prop_mutable = crate::types::PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER);
 

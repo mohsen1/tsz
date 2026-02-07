@@ -187,7 +187,10 @@ fn test_property_missing_diagnostic() {
     let mut builder = DiagnosticBuilder::new(&interner);
 
     let obj1 = interner.object(vec![]);
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let diag = builder.property_missing("x", obj1, obj2);
     assert_eq!(diag.code, codes::PROPERTY_MISSING);

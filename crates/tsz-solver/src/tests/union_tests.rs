@@ -125,9 +125,15 @@ fn test_union_literal_widening_to_optional_properties() {
     let a_literal = interner.literal_string("x");
     let b_literal = interner.literal_string("y");
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), a_literal)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        a_literal,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), b_literal)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        b_literal,
+    )]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
@@ -152,9 +158,15 @@ fn test_union_literal_widening_with_different_types() {
     let one_literal = interner.literal_number(1.0);
     let true_literal = TypeId::BOOLEAN_TRUE;
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), one_literal)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        one_literal,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), true_literal)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        true_literal,
+    )]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
@@ -179,9 +191,15 @@ fn test_union_not_assignable_to_mixed_optional_required() {
     let a_literal = interner.literal_string("x");
     let b_literal = interner.literal_string("y");
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), a_literal)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        a_literal,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), b_literal)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        b_literal,
+    )]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
@@ -216,9 +234,15 @@ fn test_union_with_type_mismatch_not_assignable() {
     let a_literal = interner.literal_string("x");
     let b_literal = interner.literal_string("y");
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), a_literal)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        a_literal,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), b_literal)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        b_literal,
+    )]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
@@ -258,7 +282,10 @@ fn test_union_to_object_with_all_optional_and_extra_source_props() {
         PropertyInfo::new(interner.intern_string("c"), one_literal),
     ]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), b_literal)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        b_literal,
+    )]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
@@ -283,13 +310,25 @@ fn test_union_to_intersection_distributivity() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj_c = interner.object(vec![PropertyInfo::new(interner.intern_string("c"), TypeId::STRING)]);
+    let obj_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::STRING,
+    )]);
 
-    let obj_d = interner.object(vec![PropertyInfo::new(interner.intern_string("d"), TypeId::NUMBER)]);
+    let obj_d = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("d"),
+        TypeId::NUMBER,
+    )]);
 
     // Create intersection C & D
     let intersection_cd = interner.intersection2(obj_c, obj_d);
@@ -311,13 +350,25 @@ fn test_union_to_intersection_with_overlap() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj_c = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_c = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_d = interner.object(vec![PropertyInfo::opt(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_d = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let intersection_cd = interner.intersection2(obj_c, obj_d);
     let union_ab = interner.union2(obj_a, obj_b);
@@ -499,9 +550,15 @@ fn test_union_to_empty_object() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let union_ab = interner.union2(obj_a, obj_b);
     let empty_object = interner.object(vec![]);
@@ -523,9 +580,15 @@ fn test_union_to_object_with_index_signature() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let union_ab = interner.union2(obj_a, obj_b);
 
@@ -533,7 +596,10 @@ fn test_union_to_object_with_index_signature() {
     let target_with_index = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING)],
+        properties: vec![PropertyInfo::opt(
+            interner.intern_string("a"),
+            TypeId::STRING,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,

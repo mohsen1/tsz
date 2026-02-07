@@ -6513,7 +6513,10 @@ fn test_method_this_type_inference() {
     });
 
     // Create an object type to represent `this`
-    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+    let obj_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
 
     // Called on object, so This should be inferred as that object type
     ctx.add_lower_bound(var_this, obj_type);
@@ -9206,7 +9209,10 @@ fn test_method_return_generic_call() {
     let var_t = ctx.fresh_type_param(t_name, false);
 
     // Return type flows into T
-    let return_type = interner.object(vec![PropertyInfo::new(interner.intern_string("id"), TypeId::NUMBER)]);
+    let return_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("id"),
+        TypeId::NUMBER,
+    )]);
     ctx.add_lower_bound(var_t, return_type);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -9314,7 +9320,10 @@ fn test_static_member_property() {
     let var_t = ctx.fresh_type_param(t_name, false);
 
     // T from static property type
-    let config_type = interner.object(vec![PropertyInfo::new(interner.intern_string("debug"), TypeId::BOOLEAN)]);
+    let config_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("debug"),
+        TypeId::BOOLEAN,
+    )]);
     ctx.add_lower_bound(var_t, config_type);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -9355,7 +9364,10 @@ fn test_static_member_with_constraint() {
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
 
     // Lower bound from argument
-    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
+    let obj_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
     ctx.add_lower_bound(var_t, obj_type);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -11027,7 +11039,10 @@ fn test_self_ref_type_param_promise_of_self() {
     });
 
     // Lower bound: Promise<number>
-    let promise_type = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), then_fn)]);
+    let promise_type = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        then_fn,
+    )]);
     ctx.add_lower_bound(var_t, promise_type);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -11045,7 +11060,10 @@ fn test_self_ref_type_param_node_with_children() {
 
     // Create a node type with children array
     let children_array = interner.array(TypeId::OBJECT);
-    let node_type = interner.object(vec![PropertyInfo::new(interner.intern_string("children"), children_array)]);
+    let node_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("children"),
+        children_array,
+    )]);
     ctx.add_lower_bound(var_t, node_type);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -11115,7 +11133,10 @@ fn test_mutual_dependency_key_value() {
     ctx.add_lower_bound(var_k, name_literal);
 
     // V gets an object with that key
-    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
+    let obj_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
     ctx.add_lower_bound(var_v, obj_type);
 
     let results = ctx.resolve_all_with_constraints().unwrap();
@@ -11136,10 +11157,16 @@ fn test_mutual_dependency_parent_child() {
     let var_c = ctx.fresh_type_param(c_name, false);
 
     // Create parent type with child reference
-    let parent_type = interner.object(vec![PropertyInfo::new(interner.intern_string("child"), TypeId::OBJECT)]);
+    let parent_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("child"),
+        TypeId::OBJECT,
+    )]);
 
     // Create child type with parent reference
-    let child_type = interner.object(vec![PropertyInfo::new(interner.intern_string("parent"), TypeId::OBJECT)]);
+    let child_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("parent"),
+        TypeId::OBJECT,
+    )]);
 
     ctx.add_lower_bound(var_p, parent_type);
     ctx.add_lower_bound(var_c, child_type);
@@ -11242,11 +11269,20 @@ fn test_mutual_dependency_three_way() {
     let var_b = ctx.fresh_type_param(b_name, false);
     let var_c = ctx.fresh_type_param(c_name, false);
 
-    let type_a = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::OBJECT)]);
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::OBJECT,
+    )]);
 
-    let type_b = interner.object(vec![PropertyInfo::new(interner.intern_string("c"), TypeId::OBJECT)]);
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::OBJECT,
+    )]);
 
-    let type_c = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::OBJECT)]);
+    let type_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::OBJECT,
+    )]);
 
     ctx.add_lower_bound(var_a, type_a);
     ctx.add_lower_bound(var_b, type_b);
@@ -11284,7 +11320,10 @@ fn test_recursive_constraint_comparable() {
     });
 
     // Comparable interface with compareTo method
-    let comparable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("compareTo"), compare_fn)]);
+    let comparable_type = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("compareTo"),
+        compare_fn,
+    )]);
 
     ctx.add_lower_bound(var_t, comparable_type);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -11358,7 +11397,10 @@ fn test_recursive_constraint_expression_tree() {
     // Expression with evaluate method
     let expr_type = interner.object(vec![
         PropertyInfo::method(interner.intern_string("evaluate"), evaluate_fn),
-        PropertyInfo::new(interner.intern_string("children"), interner.array(TypeId::OBJECT)),
+        PropertyInfo::new(
+            interner.intern_string("children"),
+            interner.array(TypeId::OBJECT),
+        ),
     ]);
 
     ctx.add_lower_bound(var_t, expr_type);
@@ -11388,7 +11430,10 @@ fn test_recursive_constraint_cloneable() {
     });
 
     // Cloneable with clone method
-    let cloneable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("clone"), clone_fn)]);
+    let cloneable_type = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("clone"),
+        clone_fn,
+    )]);
 
     ctx.add_lower_bound(var_t, cloneable_type);
 
@@ -11417,7 +11462,10 @@ fn test_recursive_constraint_iterable() {
     });
 
     // Iterable with Symbol.iterator method
-    let iterable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("next"), next_fn)]);
+    let iterable_type = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("next"),
+        next_fn,
+    )]);
 
     ctx.add_lower_bound(var_t, iterable_type);
 
@@ -11468,11 +11516,20 @@ fn test_constraint_cycle_interface_extends() {
     let var_c = ctx.fresh_type_param(c_name, false);
 
     // Create distinct interface types
-    let type_a = interner.object(vec![PropertyInfo::new(interner.intern_string("propA"), TypeId::STRING)]);
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("propA"),
+        TypeId::STRING,
+    )]);
 
-    let type_b = interner.object(vec![PropertyInfo::new(interner.intern_string("propB"), TypeId::NUMBER)]);
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("propB"),
+        TypeId::NUMBER,
+    )]);
 
-    let type_c = interner.object(vec![PropertyInfo::new(interner.intern_string("propC"), TypeId::BOOLEAN)]);
+    let type_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("propC"),
+        TypeId::BOOLEAN,
+    )]);
 
     ctx.add_lower_bound(var_a, type_a);
     ctx.add_lower_bound(var_b, type_b);
@@ -11772,7 +11829,10 @@ fn test_param_inference_nested_callback() {
 
     let child_type = interner.object(vec![PropertyInfo::new(name_prop, TypeId::STRING)]);
 
-    let parent_type = interner.object(vec![PropertyInfo::new(children_prop, interner.array(child_type))]);
+    let parent_type = interner.object(vec![PropertyInfo::new(
+        children_prop,
+        interner.array(child_type),
+    )]);
 
     ctx.add_lower_bound(var_t, parent_type);
     ctx.add_lower_bound(var_u, child_type);
@@ -11929,7 +11989,10 @@ fn test_f_bounded_comparable() {
         is_method: false,
     });
 
-    let comparable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("compareTo"), compare_to_fn)]);
+    let comparable_type = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("compareTo"),
+        compare_to_fn,
+    )]);
 
     ctx.add_lower_bound(var_t, comparable_type);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -12030,7 +12093,10 @@ fn test_f_bounded_cloneable() {
         is_method: false,
     });
 
-    let cloneable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("clone"), clone_fn)]);
+    let cloneable_type = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("clone"),
+        clone_fn,
+    )]);
 
     ctx.add_lower_bound(var_t, cloneable_type);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -12098,9 +12164,15 @@ fn test_mutually_recursive_constraints() {
     let var_t = ctx.fresh_type_param(t_name, false);
     let var_u = ctx.fresh_type_param(u_name, false);
 
-    let type_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let type_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     ctx.add_lower_bound(var_t, type_a);
     ctx.add_lower_bound(var_u, type_b);
@@ -12669,7 +12741,10 @@ fn test_circular_constraint_recursive_promise() {
         is_method: false,
     });
 
-    let promise_type = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), then_fn)]);
+    let promise_type = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        then_fn,
+    )]);
 
     ctx.add_lower_bound(var_t, promise_type);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -12879,7 +12954,10 @@ fn test_circular_constraint_state_machine() {
         PropertyInfo::method(interner.intern_string("transition"), transition_fn),
     ]);
 
-    let event_type = interner.object(vec![PropertyInfo::readonly(interner.intern_string("type"), TypeId::STRING)]);
+    let event_type = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("type"),
+        TypeId::STRING,
+    )]);
 
     ctx.add_lower_bound(var_s, state_type);
     ctx.add_lower_bound(var_e, event_type);
@@ -12914,7 +12992,10 @@ fn test_circular_constraint_visitor_pattern() {
         is_method: false,
     });
 
-    let visitable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("accept"), accept_fn)]);
+    let visitable_type = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("accept"),
+        accept_fn,
+    )]);
 
     ctx.add_lower_bound(var_t, visitable_type);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -13010,7 +13091,10 @@ fn test_circular_constraint_repository_pattern() {
         is_method: false,
     });
 
-    let entity_type = interner.object(vec![PropertyInfo::new(interner.intern_string("id"), TypeId::STRING)]);
+    let entity_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("id"),
+        TypeId::STRING,
+    )]);
 
     let repo_type = interner.object(vec![
         PropertyInfo::method(interner.intern_string("find"), find_fn),
@@ -13041,7 +13125,10 @@ fn test_inference_from_method_chain() {
     let var_t = ctx.fresh_type_param(t_name, false);
 
     // T is inferred from the input array element type
-    let obj_with_name = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
+    let obj_with_name = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
 
     ctx.add_lower_bound(var_t, obj_with_name);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -13078,7 +13165,10 @@ fn test_inference_from_spread_in_object() {
 
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     ctx.add_lower_bound(var_t, obj1);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -13209,7 +13299,10 @@ fn test_inference_bidirectional_callback() {
     // T is inferred from array element, U from callback return
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
 
-    let wrapper = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let wrapper = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
     ctx.add_lower_bound(var_u, wrapper);
 
     let results = ctx.resolve_all_with_constraints().unwrap();
@@ -13637,7 +13730,10 @@ fn test_inference_object_spread() {
 
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     ctx.add_lower_bound(var_t, obj_type);
 
@@ -13721,9 +13817,15 @@ fn test_overload_intersection_argument() {
 
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
     ctx.add_lower_bound(var_t, intersection);
@@ -13920,7 +14022,10 @@ fn test_overload_nested_generics() {
         is_constructor: false,
         is_method: false,
     });
-    let promise_like = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), then_method)]);
+    let promise_like = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        then_method,
+    )]);
 
     ctx.add_lower_bound(var_t, promise_like);
 
@@ -13985,7 +14090,10 @@ fn test_conditional_type_inference_basic() {
         is_const: false,
     }));
 
-    let object_t = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), t_type)]);
+    let object_t = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        t_type,
+    )]);
 
     let _cond = interner.conditional(ConditionalType {
         check_type: t_type,

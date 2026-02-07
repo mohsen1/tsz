@@ -175,7 +175,10 @@ fn test_is_empty_object_type() {
     let interner = TypeInterner::new();
 
     let empty_obj = interner.object(vec![]);
-    let non_empty_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let non_empty_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     assert!(is_empty_object_type(&interner, empty_obj));
     assert!(!is_empty_object_type(&interner, non_empty_obj));
@@ -473,14 +476,20 @@ fn test_type_list_extractors_for_union_and_intersection() {
 fn test_object_shape_extractors() {
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
     assert!(object_shape_id(&interner, obj).is_some());
     assert!(object_with_index_shape_id(&interner, obj).is_none());
 
     let obj_with_index = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("y"), TypeId::STRING)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("y"),
+            TypeId::STRING,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,

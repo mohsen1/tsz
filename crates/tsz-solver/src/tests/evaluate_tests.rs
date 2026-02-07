@@ -900,7 +900,10 @@ fn test_conditional_infer_object_property_distributive() {
     }));
 
     // T extends { a: infer R } ? R : never, with T = { a: string } | { a: number } | { b: boolean }.
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -911,9 +914,18 @@ fn test_conditional_infer_object_property_distributive() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
-    let obj_c = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::BOOLEAN)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let obj_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::BOOLEAN,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_a, obj_b, obj_c]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -944,7 +956,10 @@ fn test_conditional_infer_object_property_with_constraint() {
     }));
 
     // T extends { a: infer R extends string } ? R : never, with T = { a: string } | { a: number }.
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -955,8 +970,14 @@ fn test_conditional_infer_object_property_with_constraint() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_a, obj_b]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -988,7 +1009,10 @@ fn test_conditional_infer_object_property_readonly() {
     }));
 
     // T extends { readonly a: infer R } ? R : never, with T = { a: string } | { readonly a: number }.
-    let extends_obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -999,8 +1023,14 @@ fn test_conditional_infer_object_property_readonly() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
-    let obj_number = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -1031,7 +1061,10 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_input(
     }));
 
     // T extends { readonly a: infer R } ? R : never, with T = { readonly a: string } | { a: number } (no distribution).
-    let extends_obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -1042,8 +1075,14 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_input(
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), TypeId::STRING)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_string = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -1074,7 +1113,10 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_branch
     }));
 
     // T extends { readonly a: infer R } ? R : never, with T = { readonly a: string } | number (no distribution).
-    let extends_obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -1085,7 +1127,10 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_branch
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_string = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, TypeId::NUMBER]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -1116,7 +1161,10 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
 
     // T extends Readonly<{ a: infer R }> ? R : never,
     // with T = Readonly<{ a: string }> | { a: number } (no distribution).
-    let extends_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_r)]);
+    let extends_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let extends_obj = interner.intern(TypeKey::ReadonlyType(extends_inner));
     let cond = ConditionalType {
         check_type: t_param,
@@ -1128,9 +1176,15 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_string_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
     let obj_string = interner.intern(TypeKey::ReadonlyType(obj_string_inner));
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -1162,7 +1216,10 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
 
     // T extends Readonly<{ a: infer R }> ? R : never,
     // with T = Readonly<{ a: string }> | number (no distribution).
-    let extends_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_r)]);
+    let extends_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let extends_obj = interner.intern(TypeKey::ReadonlyType(extends_inner));
     let cond = ConditionalType {
         check_type: t_param,
@@ -1174,7 +1231,10 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_string_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
     let obj_string = interner.intern(TypeKey::ReadonlyType(obj_string_inner));
     subst.insert(t_name, interner.union(vec![obj_string, TypeId::NUMBER]));
 
@@ -1214,7 +1274,10 @@ fn test_conditional_infer_object_property_function_return_distributive() {
         is_constructor: false,
         is_method: false,
     });
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), extends_fn)]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        extends_fn,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -1243,8 +1306,14 @@ fn test_conditional_infer_object_property_function_return_distributive() {
         is_constructor: false,
         is_method: false,
     });
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), string_fn)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), number_fn)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        string_fn,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        number_fn,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -3526,8 +3595,14 @@ fn test_conditional_infer_nested_object_property_distributive() {
     }));
 
     // T extends { a: { b: infer R } } ? R : never, with T = { a: { b: string } } | { a: { b: number } }.
-    let extends_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), infer_r)]);
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), extends_inner)]);
+    let extends_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        infer_r,
+    )]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        extends_inner,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -3538,10 +3613,22 @@ fn test_conditional_infer_nested_object_property_distributive() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a_string = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
-    let obj_a_number = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_string)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_number)]);
+    let obj_a_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
+    let obj_a_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_string,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_number,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -3572,8 +3659,14 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_input() 
     }));
 
     // T extends { a: { b: infer R } } ? R : never, with T = { a: { b: string } } | { a: { b: number } } (no distribution).
-    let extends_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), infer_r)]);
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), extends_inner)]);
+    let extends_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        infer_r,
+    )]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        extends_inner,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -3584,10 +3677,22 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_input() 
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a_string = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
-    let obj_a_number = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_string)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_number)]);
+    let obj_a_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
+    let obj_a_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_string,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_number,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -3618,8 +3723,14 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_branch()
     }));
 
     // T extends { a: { b: infer R } } ? R : never, with T = { a: { b: string } } | number (no distribution).
-    let extends_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), infer_r)]);
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), extends_inner)]);
+    let extends_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        infer_r,
+    )]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        extends_inner,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -3630,8 +3741,14 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_branch()
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a_string = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_string)]);
+    let obj_a_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_string,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, TypeId::NUMBER]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -3661,8 +3778,14 @@ fn test_conditional_infer_nested_object_property_with_constraint() {
     }));
 
     // T extends { a: { b: infer R extends string } } ? R : never, with T = { a: { b: string } } | { a: { b: number } }.
-    let extends_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), infer_r)]);
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), extends_inner)]);
+    let extends_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        infer_r,
+    )]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        extends_inner,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -3673,10 +3796,22 @@ fn test_conditional_infer_nested_object_property_with_constraint() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a_string = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
-    let obj_a_number = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_string)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_number)]);
+    let obj_a_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
+    let obj_a_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_string,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_number,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -3708,8 +3843,14 @@ fn test_conditional_infer_nested_object_property_readonly() {
     }));
 
     // T extends { readonly a: { b: infer R } } ? R : never, with T = { readonly a: { b: string } } | { a: { b: number } }.
-    let extends_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), infer_r)]);
-    let extends_obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), extends_inner)]);
+    let extends_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        infer_r,
+    )]);
+    let extends_obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        extends_inner,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -3720,10 +3861,22 @@ fn test_conditional_infer_nested_object_property_readonly() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a_string = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
-    let obj_a_number = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
-    let obj_string = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), obj_a_string)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_number)]);
+    let obj_a_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
+    let obj_a_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let obj_string = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        obj_a_string,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_number,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -3755,9 +3908,15 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper() {
 
     // T extends { a: Readonly<{ b: infer R }> } ? R : never,
     // with T = { a: Readonly<{ b: string }> } | { a: { b: number } }.
-    let extends_inner_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), infer_r)]);
+    let extends_inner_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        infer_r,
+    )]);
     let extends_inner = interner.intern(TypeKey::ReadonlyType(extends_inner_obj));
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), extends_inner)]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        extends_inner,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -3768,11 +3927,23 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a_string_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_a_string_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
     let obj_a_string = interner.intern(TypeKey::ReadonlyType(obj_a_string_inner));
-    let obj_a_number = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_string)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_number)]);
+    let obj_a_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_string,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_number,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -3804,9 +3975,15 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
 
     // T extends { a: Readonly<{ b: infer R }> } ? R : never,
     // with T = { a: Readonly<{ b: string }> } | { a: { b: number } } (no distribution).
-    let extends_inner_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), infer_r)]);
+    let extends_inner_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        infer_r,
+    )]);
     let extends_inner = interner.intern(TypeKey::ReadonlyType(extends_inner_obj));
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), extends_inner)]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        extends_inner,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -3817,11 +3994,23 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a_string_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_a_string_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
     let obj_a_string = interner.intern(TypeKey::ReadonlyType(obj_a_string_inner));
-    let obj_a_number = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_string)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_number)]);
+    let obj_a_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_string,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_number,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -3853,9 +4042,15 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
 
     // T extends { a: Readonly<{ b: infer R }> } ? R : never,
     // with T = { a: Readonly<{ b: string }> } | number (no distribution).
-    let extends_inner_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), infer_r)]);
+    let extends_inner_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        infer_r,
+    )]);
     let extends_inner = interner.intern(TypeKey::ReadonlyType(extends_inner_obj));
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), extends_inner)]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        extends_inner,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -3866,9 +4061,15 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a_string_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_a_string_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
     let obj_a_string = interner.intern(TypeKey::ReadonlyType(obj_a_string_inner));
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_string)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_string,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, TypeId::NUMBER]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -3898,8 +4099,14 @@ fn test_conditional_infer_nested_object_property_non_matching_branch() {
     }));
 
     // T extends { a: { b: infer R } } ? R : never, with T = { a: { b: string } } | { a: { c: number } }.
-    let extends_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), infer_r)]);
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), extends_inner)]);
+    let extends_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        infer_r,
+    )]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        extends_inner,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -3910,10 +4117,22 @@ fn test_conditional_infer_nested_object_property_non_matching_branch() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a_string = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
-    let obj_a_number = interner.object(vec![PropertyInfo::new(interner.intern_string("c"), TypeId::NUMBER)]);
-    let obj_match = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_string)]);
-    let obj_non_match = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a_number)]);
+    let obj_a_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
+    let obj_a_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::NUMBER,
+    )]);
+    let obj_match = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_string,
+    )]);
+    let obj_non_match = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        obj_a_number,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_match, obj_non_match]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -3945,8 +4164,14 @@ fn test_conditional_infer_nested_object_property_union_value() {
     }));
 
     // T extends { a: { b: infer R } } ? R : never, with T = { a: { b: string | number } }.
-    let extends_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), infer_r)]);
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), extends_inner)]);
+    let extends_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        infer_r,
+    )]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        extends_inner,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -3958,7 +4183,10 @@ fn test_conditional_infer_nested_object_property_union_value() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let b_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), b_union)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        b_union,
+    )]);
     let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), obj_a)]);
     subst.insert(t_name, obj);
 
@@ -3989,7 +4217,10 @@ fn test_conditional_infer_object_property_non_object_union_branch() {
     }));
 
     // T extends { a: infer R } ? R : never, with T = { a: string } | number.
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -4000,7 +4231,10 @@ fn test_conditional_infer_object_property_non_object_union_branch() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_match = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_match = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_match, TypeId::NUMBER]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4032,7 +4266,10 @@ fn test_conditional_infer_object_property_non_distributive_non_object_union_bran
     }));
 
     // [T] extends [{ a: infer R }] ? R : never, with T = { a: string } | number (no distribution).
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: interner.tuple(vec![TupleElement {
             type_id: t_param,
@@ -4053,7 +4290,10 @@ fn test_conditional_infer_object_property_non_distributive_non_object_union_bran
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_match = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_match = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_match, TypeId::NUMBER]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4104,8 +4344,14 @@ fn test_conditional_infer_object_index_signature_distributive() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4157,8 +4403,14 @@ fn test_conditional_infer_number_index_signature_distributive() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("0"), TypeId::STRING)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("1"), TypeId::NUMBER)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("0"),
+        TypeId::STRING,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("1"),
+        TypeId::NUMBER,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4210,8 +4462,14 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_input() 
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("0"), TypeId::STRING)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("1"), TypeId::NUMBER)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("0"),
+        TypeId::STRING,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("1"),
+        TypeId::NUMBER,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4263,7 +4521,10 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_branch()
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("0"), TypeId::STRING)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("0"),
+        TypeId::STRING,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, TypeId::NUMBER]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4314,7 +4575,10 @@ fn test_conditional_infer_object_index_signature_non_object_union_branch() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, TypeId::NUMBER]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4365,8 +4629,14 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_input() 
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4418,7 +4688,10 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_branch()
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, TypeId::NUMBER]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4448,7 +4721,10 @@ fn test_conditional_infer_optional_property_missing_object() {
     }));
 
     // T extends { a?: infer R } ? R : never, with T = {}.
-    let extends_obj = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -4489,7 +4765,10 @@ fn test_conditional_infer_optional_property_present_distributive() {
     }));
 
     // T extends { a?: infer R } ? R : never, with T = { a?: string } | { a?: number }.
-    let extends_obj = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -4500,8 +4779,14 @@ fn test_conditional_infer_optional_property_present_distributive() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING)]);
-    let obj_number = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_string = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4532,7 +4817,10 @@ fn test_conditional_infer_optional_property_with_constraint() {
     }));
 
     // T extends { a?: infer R extends string } ? R : never, with T = { a?: string } | { a?: number }.
-    let extends_obj = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -4543,8 +4831,14 @@ fn test_conditional_infer_optional_property_with_constraint() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING)]);
-    let obj_number = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_string = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4574,7 +4868,10 @@ fn test_conditional_infer_optional_property_non_distributive_union_input() {
     }));
 
     // [T] extends [{ a?: infer R }] ? R : never, with T = { a: string } | {} (no distribution).
-    let extends_obj = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: interner.tuple(vec![TupleElement {
             type_id: t_param,
@@ -4595,7 +4892,10 @@ fn test_conditional_infer_optional_property_non_distributive_union_input() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
     let empty_obj = interner.object(Vec::new());
     subst.insert(t_name, interner.union(vec![obj_string, empty_obj]));
 
@@ -4627,7 +4927,10 @@ fn test_conditional_infer_optional_property_non_distributive_union_branch() {
     }));
 
     // [T] extends [{ a?: infer R }] ? R : never, with T = { a: string } | number (no distribution).
-    let extends_obj = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: interner.tuple(vec![TupleElement {
             type_id: t_param,
@@ -4648,7 +4951,10 @@ fn test_conditional_infer_optional_property_non_distributive_union_branch() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, TypeId::NUMBER]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -4678,7 +4984,10 @@ fn test_conditional_infer_object_property_intersection_check() {
     }));
 
     // T extends { a: infer R } ? R : never, with T = { a: string } & { b: number }.
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -4689,8 +4998,14 @@ fn test_conditional_infer_object_property_intersection_check() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
     let intersection = interner.intersection(vec![obj_a, obj_b]);
     subst.insert(t_name, intersection);
 
@@ -7111,7 +7426,10 @@ fn test_conditional_infer_object_property_non_distributive_union_all_match() {
     }));
 
     // [T] extends [{ a: infer R }] ? R : never, with T = { a: string } | { a: number }.
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: interner.tuple(vec![TupleElement {
             type_id: t_param,
@@ -7132,8 +7450,14 @@ fn test_conditional_infer_object_property_non_distributive_union_all_match() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_string = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
-    let obj_number = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_string, obj_number]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -7164,7 +7488,10 @@ fn test_conditional_infer_object_property_non_distributive_union_branch() {
     }));
 
     // [T] extends [{ a: infer R }] ? R : never, with T = { a: string } | number.
-    let extends_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_r)]);
+    let extends_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        infer_r,
+    )]);
     let cond = ConditionalType {
         check_type: interner.tuple(vec![TupleElement {
             type_id: t_param,
@@ -7185,7 +7512,10 @@ fn test_conditional_infer_object_property_non_distributive_union_branch() {
 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
-    let obj_match = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_match = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
     subst.insert(t_name, interner.union(vec![obj_match, TypeId::NUMBER]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -8869,7 +9199,10 @@ fn test_index_access_object_missing_key() {
     let interner = TypeInterner::new();
 
     // { x: number }["z"] -> undefined
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
     let key_z = interner.literal_string("z");
 
     let result = evaluate_index_access(&interner, obj, key_z);
@@ -8900,8 +9233,14 @@ fn test_index_access_object_union_key() {
 fn test_index_access_union_object_literal_key() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("y"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("y"),
+        TypeId::STRING,
+    )]);
     let union_obj = interner.union(vec![obj_a, obj_b]);
     let key_x = interner.literal_string("x");
 
@@ -8913,8 +9252,14 @@ fn test_index_access_union_object_literal_key() {
 fn test_index_access_union_object_union_key() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("y"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("y"),
+        TypeId::STRING,
+    )]);
     let union_obj = interner.union(vec![obj_a, obj_b]);
     let key_x = interner.literal_string("x");
     let key_y = interner.literal_string("y");
@@ -8957,8 +9302,14 @@ fn test_correlated_union_index_access_cross_product() {
 fn test_index_access_union_object_union_key_no_unchecked() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("y"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("y"),
+        TypeId::STRING,
+    )]);
     let union_obj = interner.union(vec![obj_a, obj_b]);
     let key_x = interner.literal_string("x");
     let key_y = interner.literal_string("y");
@@ -8975,8 +9326,14 @@ fn test_index_access_union_object_union_key_no_unchecked() {
 fn test_index_access_union_object_literal_key_no_unchecked() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("y"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("y"),
+        TypeId::STRING,
+    )]);
     let union_obj = interner.union(vec![obj_a, obj_b]);
     let key_x = interner.literal_string("x");
 
@@ -9063,7 +9420,10 @@ fn test_index_access_object_with_string_index_signature_optional_property_no_unc
     let obj = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::opt(interner.intern_string("x"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::opt(
+            interner.intern_string("x"),
+            TypeId::NUMBER,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::BOOLEAN,
@@ -9189,7 +9549,10 @@ fn test_index_access_resolves_ref() {
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let def_id = DefId(1);
     env.insert_def(def_id, obj);
@@ -9206,7 +9569,10 @@ fn test_index_access_resolves_ref() {
 fn test_index_access_type_param_constraint() {
     let interner = TypeInterner::new();
 
-    let constraint = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let constraint = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
@@ -9247,7 +9613,10 @@ fn test_index_access_type_param_no_constraint_deferred() {
 fn test_index_access_optional_property() {
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::opt(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let key_x = interner.literal_string("x");
     let result = evaluate_index_access(&interner, obj, key_x);
@@ -10194,7 +10563,10 @@ fn test_evaluate_type_non_meta() {
     assert_eq!(evaluate_type(&interner, TypeId::STRING), TypeId::STRING);
     assert_eq!(evaluate_type(&interner, TypeId::NUMBER), TypeId::NUMBER);
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
     assert_eq!(evaluate_type(&interner, obj), obj);
 }
 
@@ -10272,8 +10644,14 @@ fn test_keyof_object_with_number_index_signature() {
 fn test_keyof_union_disjoint_objects() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     let union = interner.union(vec![obj_a, obj_b]);
     let result = evaluate_keyof(&interner, union);
@@ -10303,8 +10681,14 @@ fn test_keyof_union_overlap_objects() {
 fn test_keyof_intersection_unions_keys() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
     let result = evaluate_keyof(&interner, intersection);
@@ -10330,7 +10714,10 @@ fn test_keyof_union_string_index_overlap_literal() {
         }),
         number_index: None,
     });
-    let obj_literal = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::BOOLEAN)]);
+    let obj_literal = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::BOOLEAN,
+    )]);
 
     let union = interner.union(vec![obj_index, obj_literal]);
     let result = evaluate_keyof(&interner, union);
@@ -10679,7 +11066,10 @@ fn test_keyof_basic_object_type() {
 fn test_keyof_single_property() {
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("only"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("only"),
+        TypeId::STRING,
+    )]);
 
     let result = evaluate_keyof(&interner, obj);
 
@@ -10695,9 +11085,15 @@ fn test_keyof_single_property() {
 fn test_keyof_intersection_produces_union() {
     let interner = TypeInterner::new();
 
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let intersection = interner.intersection(vec![obj1, obj2]);
     let result = evaluate_keyof(&interner, intersection);
@@ -10768,9 +11164,15 @@ fn test_keyof_union_common_keys_only() {
 fn test_keyof_union_no_common_keys() {
     let interner = TypeInterner::new();
 
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let union = interner.union(vec![obj1, obj2]);
     let result = evaluate_keyof(&interner, union);
@@ -10917,11 +11319,20 @@ fn test_keyof_readonly_and_optional_properties() {
 fn test_keyof_triple_intersection() {
     let interner = TypeInterner::new();
 
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj3 = interner.object(vec![PropertyInfo::new(interner.intern_string("c"), TypeId::BOOLEAN)]);
+    let obj3 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::BOOLEAN,
+    )]);
 
     let intersection = interner.intersection(vec![obj1, obj2, obj3]);
     let result = evaluate_keyof(&interner, intersection);
@@ -10969,9 +11380,15 @@ fn test_keyof_nested_object_only_top_level() {
     // keyof { a: { b: number } } = "a" (not "a" | "b")
     let interner = TypeInterner::new();
 
-    let inner_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let inner_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
-    let outer_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), inner_obj)]);
+    let outer_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        inner_obj,
+    )]);
 
     let result = evaluate_keyof(&interner, outer_obj);
     let expected = interner.literal_string("a");
@@ -11096,11 +11513,20 @@ fn test_keyof_deeply_nested_intersection() {
     // keyof (A & (B & C)) = keyof A | keyof B | keyof C
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj_c = interner.object(vec![PropertyInfo::new(interner.intern_string("c"), TypeId::BOOLEAN)]);
+    let obj_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::BOOLEAN,
+    )]);
 
     let inner_intersection = interner.intersection(vec![obj_b, obj_c]);
     let outer_intersection = interner.intersection(vec![obj_a, inner_intersection]);
@@ -11146,7 +11572,10 @@ fn test_keyof_union_with_index_signature_and_literal() {
     // keyof ({ a: string } | { [k: string]: number }) = "a" & string = "a"
     let interner = TypeInterner::new();
 
-    let obj_literal = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_literal = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let obj_indexed = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -11174,7 +11603,10 @@ fn test_keyof_intersection_with_index_signature() {
     // keyof ({ a: string } & { [k: string]: number }) = "a" | string = string
     let interner = TypeInterner::new();
 
-    let obj_literal = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_literal = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let obj_indexed = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -11206,7 +11638,10 @@ fn test_keyof_single_property_equals_literal() {
     // keyof { only: string } = "only" (not a union)
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("only"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("only"),
+        TypeId::STRING,
+    )]);
 
     let result = evaluate_keyof(&interner, obj);
     let expected = interner.literal_string("only");
@@ -11728,7 +12163,10 @@ fn test_mapped_type_single_key() {
 
     let result = evaluate_mapped(&interner, &mapped);
 
-    let expected = interner.object(vec![PropertyInfo::new(interner.intern_string("foo"), TypeId::STRING)]);
+    let expected = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("foo"),
+        TypeId::STRING,
+    )]);
     assert_eq!(result, expected);
 }
 
@@ -11790,7 +12228,10 @@ fn test_mapped_type_with_readonly_modifier() {
 
     let result = evaluate_mapped(&interner, &mapped);
 
-    let expected = interner.object(vec![PropertyInfo::readonly(interner.intern_string("x"), TypeId::NUMBER)]);
+    let expected = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
     assert_eq!(result, expected);
 }
 
@@ -13367,7 +13808,10 @@ fn test_conditional_infer_extract_state_pattern() {
     }));
 
     // AnyAction = { type: string }
-    let any_action = interner.object(vec![PropertyInfo::new(interner.intern_string("type"), TypeId::STRING)]);
+    let any_action = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("type"),
+        TypeId::STRING,
+    )]);
 
     // Pattern to match: Reducer<infer S, AnyAction> represented as a function
     // (state: S | undefined, action: AnyAction) => S
@@ -13478,8 +13922,14 @@ fn test_conditional_infer_extract_action_pattern() {
     });
 
     // Concrete action type: { type: "inc" } | { type: "dec" }
-    let action_inc = interner.object(vec![PropertyInfo::new(interner.intern_string("type"), interner.literal_string("inc"))]);
-    let action_dec = interner.object(vec![PropertyInfo::new(interner.intern_string("type"), interner.literal_string("dec"))]);
+    let action_inc = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("type"),
+        interner.literal_string("inc"),
+    )]);
+    let action_dec = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("type"),
+        interner.literal_string("dec"),
+    )]);
     let concrete_action = interner.union(vec![action_inc, action_dec]);
 
     // Concrete Reducer: (state: number | undefined, action: CounterAction) => number
@@ -13539,7 +13989,10 @@ fn test_conditional_infer_extract_state_non_matching() {
     }));
 
     // AnyAction = { type: string }
-    let any_action = interner.object(vec![PropertyInfo::new(interner.intern_string("type"), TypeId::STRING)]);
+    let any_action = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("type"),
+        TypeId::STRING,
+    )]);
 
     // Pattern to match: Reducer<infer S, AnyAction>
     let state_param = interner.union(vec![infer_s, TypeId::UNDEFINED]);
@@ -17436,13 +17889,22 @@ fn test_indexed_access_recursive_three_levels() {
     let interner = TypeInterner::new();
 
     // Build innermost object: { inner: string }
-    let inner_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("inner"), TypeId::STRING)]);
+    let inner_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("inner"),
+        TypeId::STRING,
+    )]);
 
     // Build middle object: { middle: { inner: string } }
-    let middle_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("middle"), inner_obj)]);
+    let middle_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("middle"),
+        inner_obj,
+    )]);
 
     // Build outer object: { outer: { middle: { inner: string } } }
-    let outer_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("outer"), middle_obj)]);
+    let outer_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("outer"),
+        middle_obj,
+    )]);
 
     // Access T["outer"]
     let outer_key = interner.literal_string("outer");
@@ -17588,9 +18050,15 @@ fn test_indexed_access_tuple_literal_index() {
 fn test_indexed_access_union_object() {
     let interner = TypeInterner::new();
 
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     let union_obj = interner.union(vec![obj1, obj2]);
 
@@ -19173,8 +19641,14 @@ fn test_distribution_over_intersection_basic() {
     let interner = TypeInterner::new();
 
     // Create intersection types
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let intersection_ab = interner.intersection(vec![obj_a, obj_b]);
 
@@ -20081,12 +20555,18 @@ fn test_tuple_spread_length_check() {
     }));
 
     // Pattern: { length: infer L }
-    let pattern = interner.object(vec![PropertyInfo::new(interner.intern_string("length"), infer_l)]);
+    let pattern = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("length"),
+        infer_l,
+    )]);
 
     // Input tuple: [string, number] has length 2
     // For structural matching, we use an object with length property
     let lit_2 = interner.literal_number(2.0);
-    let input = interner.object(vec![PropertyInfo::new(interner.intern_string("length"), lit_2)]);
+    let input = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("length"),
+        lit_2,
+    )]);
 
     let cond = ConditionalType {
         check_type: input,
@@ -20333,10 +20813,16 @@ fn test_readonly_nested_object_top_level_only() {
     let interner = TypeInterner::new();
 
     // Inner object: { b: string }
-    let inner_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let inner_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     // Outer object: { a: { b: string } }
-    let outer_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), inner_obj)]);
+    let outer_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        inner_obj,
+    )]);
 
     // Readonly: { readonly [K in keyof T]: T[K] }
     let keyof_outer = interner.intern(TypeKey::KeyOf(outer_obj));
@@ -20396,7 +20882,10 @@ fn test_readonly_multiple_properties_nested() {
     let interner = TypeInterner::new();
 
     // Inner: { x: number }
-    let inner = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     // Outer: { a: string, b: { x: number } }
     let outer = interner.object(vec![
@@ -20464,7 +20953,10 @@ fn test_deep_readonly_pattern_structure() {
     // Here we test the structure can be built.
 
     // Simple object: { a: string }
-    let simple_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let simple_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     // Apply Readonly (single level) - simulating DeepReadonly on leaf
     let keyof_obj = interner.intern(TypeKey::KeyOf(simple_obj));
@@ -20514,7 +21006,10 @@ fn test_deep_readonly_manual_nested_application() {
     // Manually apply Readonly to inner, then to outer
 
     // Inner: { b: string }
-    let inner = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     // Apply Readonly to inner
     let keyof_inner = interner.intern(TypeKey::KeyOf(inner));
@@ -20543,7 +21038,10 @@ fn test_deep_readonly_manual_nested_application() {
     let readonly_inner = evaluate_mapped(&interner, &inner_mapped);
 
     // Now create outer with readonly inner: { a: ReadonlyInner }
-    let outer_with_readonly_inner = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), readonly_inner)]);
+    let outer_with_readonly_inner = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        readonly_inner,
+    )]);
 
     // Apply Readonly to outer
     let keyof_outer = interner.intern(TypeKey::KeyOf(outer_with_readonly_inner));
@@ -20602,7 +21100,10 @@ fn test_deep_readonly_with_array_property() {
 
     // Object with array: { items: string[] }
     let string_array = interner.array(TypeId::STRING);
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("items"), string_array)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("items"),
+        string_array,
+    )]);
 
     // Apply Readonly
     let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
@@ -20965,10 +21466,16 @@ fn test_infer_mapped_type_key_and_value() {
     }));
 
     // Pattern with infer in value position
-    let pattern = interner.object(vec![PropertyInfo::new(interner.intern_string("key"), infer_v)]);
+    let pattern = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("key"),
+        infer_v,
+    )]);
 
     // Input: { key: boolean }
-    let input = interner.object(vec![PropertyInfo::new(interner.intern_string("key"), TypeId::BOOLEAN)]);
+    let input = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("key"),
+        TypeId::BOOLEAN,
+    )]);
 
     let cond = ConditionalType {
         check_type: input,
@@ -21129,7 +21636,10 @@ fn test_infer_multiple_same_name_covariant() {
     });
 
     // Pattern object with getter
-    let pattern = interner.object(vec![PropertyInfo::method(interner.intern_string("get"), getter)]);
+    let pattern = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("get"),
+        getter,
+    )]);
 
     // Input getter returning string
     let string_getter = interner.function(FunctionShape {
@@ -21142,7 +21652,10 @@ fn test_infer_multiple_same_name_covariant() {
         is_method: false,
     });
 
-    let input = interner.object(vec![PropertyInfo::method(interner.intern_string("get"), string_getter)]);
+    let input = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("get"),
+        string_getter,
+    )]);
 
     let cond = ConditionalType {
         check_type: input,
@@ -22822,7 +23335,8 @@ fn test_partial_deep_nesting() {
         },
     ]);
 
-    let deep_partial_outer = interner.object(vec![PropertyInfo::opt(point_name, deep_partial_point)]);
+    let deep_partial_outer =
+        interner.object(vec![PropertyInfo::opt(point_name, deep_partial_point)]);
 
     match interner.lookup(deep_partial_outer) {
         Some(TypeKey::Object(shape_id)) => {
@@ -24170,7 +24684,10 @@ fn test_constructor_parameters_callable() {
     // ConstructorParameters from Callable with construct signatures
     let interner = TypeInterner::new();
 
-    let instance_type = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let instance_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
 
     let callable = interner.callable(CallableShape {
         symbol: None,
@@ -24216,7 +24733,10 @@ fn test_instance_type_simple() {
     // InstanceType<new () => Foo> = Foo
     let interner = TypeInterner::new();
 
-    let foo_type = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
+    let foo_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
 
     let ctor = interner.function(FunctionShape {
         type_params: vec![],
@@ -24243,7 +24763,10 @@ fn test_instance_type_callable() {
     // InstanceType from Callable with construct signatures
     let interner = TypeInterner::new();
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
 
     let callable = interner.callable(CallableShape {
         symbol: None,
@@ -24284,7 +24807,10 @@ fn test_instance_type_with_generics() {
         is_const: false,
     }));
 
-    let container = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), t_param)]);
+    let container = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        t_param,
+    )]);
 
     let ctor = interner.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -24327,7 +24853,10 @@ fn test_this_parameter_type() {
     // ThisParameterType<(this: Foo, x: string) => void> = Foo
     let interner = TypeInterner::new();
 
-    let foo_type = interner.object(vec![PropertyInfo::new(interner.intern_string("id"), TypeId::NUMBER)]);
+    let foo_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("id"),
+        TypeId::NUMBER,
+    )]);
 
     let fn_with_this = interner.function(FunctionShape {
         type_params: vec![],
@@ -24635,7 +25164,10 @@ fn test_nested_distributive_with_infer() {
     }));
 
     // Pattern: { a: infer A }
-    let pattern = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_a)]);
+    let pattern = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        infer_a,
+    )]);
 
     // Input: { a: "hello" }
     let hello = interner.literal_string("hello");
@@ -24673,9 +25205,15 @@ fn test_distribution_over_intersection_simple() {
     let lit_no = interner.literal_string("no");
 
     // Create an intersection of two object types
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
 
@@ -24745,11 +25283,20 @@ fn test_distribution_over_intersection_three_types() {
 
     let lit_yes = interner.literal_string("yes");
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj_c = interner.object(vec![PropertyInfo::new(interner.intern_string("c"), TypeId::BOOLEAN)]);
+    let obj_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::BOOLEAN,
+    )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b, obj_c]);
 
@@ -26057,10 +26604,16 @@ fn test_recursive_conditional_type_deep_readonly() {
     let interner = TypeInterner::new();
 
     // Simple object
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     // Object extends object, so true branch
-    let readonly_obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("x"), TypeId::NUMBER)]);
+    let readonly_obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let cond = ConditionalType {
         check_type: obj,
@@ -26229,7 +26782,10 @@ fn test_depth_limited_recursion_max_expansion() {
     // type Infinite = { next: Infinite }
     let infinite_ref = interner.lazy(DefId(1));
 
-    let infinite_body = interner.object(vec![PropertyInfo::new(interner.intern_string("next"), infinite_ref)]);
+    let infinite_body = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("next"),
+        infinite_ref,
+    )]);
 
     let mut env = TypeEnvironment::new();
     env.insert_def(DefId(1), infinite_body);
@@ -26301,10 +26857,16 @@ fn test_infer_optional_property_present() {
     }));
 
     // Pattern: { prop?: infer P }
-    let pattern = interner.object(vec![PropertyInfo::opt(interner.intern_string("prop"), infer_p)]);
+    let pattern = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("prop"),
+        infer_p,
+    )]);
 
     // Input: { prop: string }
-    let input = interner.object(vec![PropertyInfo::new(interner.intern_string("prop"), TypeId::STRING)]);
+    let input = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        TypeId::STRING,
+    )]);
 
     let cond = ConditionalType {
         check_type: input,
@@ -26334,7 +26896,10 @@ fn test_infer_optional_property_missing() {
     }));
 
     // Pattern: { prop?: infer P }
-    let pattern = interner.object(vec![PropertyInfo::opt(interner.intern_string("prop"), infer_p)]);
+    let pattern = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("prop"),
+        infer_p,
+    )]);
 
     // Input: empty object {}
     let input = interner.object(vec![]);
@@ -26367,11 +26932,17 @@ fn test_infer_optional_property_with_undefined() {
     }));
 
     // Pattern: { prop?: infer P }
-    let pattern = interner.object(vec![PropertyInfo::opt(interner.intern_string("prop"), infer_p)]);
+    let pattern = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("prop"),
+        infer_p,
+    )]);
 
     // Input: { prop: string | undefined }
     let string_or_undefined = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
-    let input = interner.object(vec![PropertyInfo::new(interner.intern_string("prop"), string_or_undefined)]);
+    let input = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        string_or_undefined,
+    )]);
 
     let cond = ConditionalType {
         check_type: input,
@@ -26401,10 +26972,16 @@ fn test_infer_with_default_type_used() {
     }));
 
     // Pattern: { prop: infer P = string }
-    let pattern = interner.object(vec![PropertyInfo::new(interner.intern_string("prop"), infer_p)]);
+    let pattern = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        infer_p,
+    )]);
 
     // Input: { prop: number }
-    let input = interner.object(vec![PropertyInfo::new(interner.intern_string("prop"), TypeId::NUMBER)]);
+    let input = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        TypeId::NUMBER,
+    )]);
 
     let cond = ConditionalType {
         check_type: input,
@@ -26433,10 +27010,16 @@ fn test_infer_with_default_type_fallback() {
     }));
 
     // Pattern: { a: infer P = string }
-    let pattern = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_p)]);
+    let pattern = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        infer_p,
+    )]);
 
     // Input: { b: number } - different property name, won't match
-    let input = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let input = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let cond = ConditionalType {
         check_type: input,
@@ -26467,11 +27050,20 @@ fn test_infer_with_default_and_constraint() {
     }));
 
     // Pattern: { prop: infer P extends object = {} }
-    let pattern = interner.object(vec![PropertyInfo::new(interner.intern_string("prop"), infer_p)]);
+    let pattern = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        infer_p,
+    )]);
 
     // Input: { prop: { x: 1 } }
-    let inner_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
-    let input = interner.object(vec![PropertyInfo::new(interner.intern_string("prop"), inner_obj)]);
+    let inner_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let input = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        inner_obj,
+    )]);
 
     let cond = ConditionalType {
         check_type: input,
@@ -26501,15 +27093,24 @@ fn test_infer_discriminated_union_kind() {
     }));
 
     // Pattern: { kind: infer K }
-    let pattern = interner.object(vec![PropertyInfo::new(interner.intern_string("kind"), infer_k)]);
+    let pattern = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("kind"),
+        infer_k,
+    )]);
 
     // Input: { kind: "circle" }
     let circle = interner.literal_string("circle");
-    let circle_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("kind"), circle)]);
+    let circle_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("kind"),
+        circle,
+    )]);
 
     // Input: { kind: "square" }
     let square = interner.literal_string("square");
-    let square_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("kind"), square)]);
+    let square_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("kind"),
+        square,
+    )]);
 
     let union_input = interner.union(vec![circle_obj, square_obj]);
 
@@ -26599,7 +27200,10 @@ fn test_infer_discriminated_union_filter() {
     let square = interner.literal_string("square");
 
     // Pattern: { kind: "circle" }
-    let pattern = interner.object(vec![PropertyInfo::new(interner.intern_string("kind"), circle)]);
+    let pattern = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("kind"),
+        circle,
+    )]);
 
     // Circle object
     let circle_obj = interner.object(vec![
@@ -28464,7 +29068,10 @@ fn test_satisfies_missing_property_fails() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let source = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     let target = interner.object(vec![
         PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
@@ -28484,7 +29091,10 @@ fn test_satisfies_optional_property_satisfied() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let source = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     let target = interner.object(vec![
         PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
@@ -28555,10 +29165,16 @@ fn test_satisfies_vs_annotation_object_properties() {
     let success = interner.literal_string("success");
 
     // Satisfies result: property type is literal
-    let satisfies_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("status"), success)]);
+    let satisfies_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("status"),
+        success,
+    )]);
 
     // Annotation result: property type is widened
-    let annotation_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("status"), TypeId::STRING)]);
+    let annotation_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("status"),
+        TypeId::STRING,
+    )]);
 
     // Both satisfy the constraint
     assert!(checker.is_subtype_of(satisfies_obj, annotation_obj));
@@ -29354,10 +29970,16 @@ fn test_const_object_literal_nested() {
     let forty_two = interner.literal_number(42.0);
 
     // Inner object with readonly property
-    let inner = interner.object(vec![PropertyInfo::readonly(interner.intern_string("inner"), forty_two)]);
+    let inner = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("inner"),
+        forty_two,
+    )]);
 
     // Outer object with readonly property pointing to inner
-    let outer = interner.object(vec![PropertyInfo::readonly(interner.intern_string("outer"), inner)]);
+    let outer = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("outer"),
+        inner,
+    )]);
 
     match interner.lookup(outer) {
         Some(TypeKey::Object(shape_id)) => {
@@ -29390,10 +30012,16 @@ fn test_const_object_literal_vs_mutable() {
     let one = interner.literal_number(1.0);
 
     // as const version (readonly, literal type)
-    let const_obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), one)]);
+    let const_obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        one,
+    )]);
 
     // Same object but with widened type (still readonly for comparison)
-    let widened_readonly = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), TypeId::NUMBER)]);
+    let widened_readonly = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     // Literal type is subtype of base type (when readonly matches)
     // { readonly a: 1 } is subtype of { readonly a: number }
@@ -29644,7 +30272,10 @@ fn test_readonly_inference_object() {
     // Readonly<T> applied to object makes all properties readonly
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     // Wrap in ReadonlyType
     let readonly_obj = interner.intern(TypeKey::ReadonlyType(obj));
@@ -33091,7 +33722,10 @@ fn test_distributive_empty_object_match() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
 
-    let obj_x = interner.object(vec![PropertyInfo::new(x_atom, interner.literal_number(1.0))]);
+    let obj_x = interner.object(vec![PropertyInfo::new(
+        x_atom,
+        interner.literal_number(1.0),
+    )]);
 
     subst.insert(
         t_name,
@@ -33509,7 +34143,10 @@ fn test_distributive_with_object_keyword() {
 
     let cond_type = interner.conditional(cond);
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let mut subst = TypeSubstitution::new();
     subst.insert(
@@ -33923,7 +34560,10 @@ fn test_return_type_async_promise_unwrapping() {
     let interner = TypeInterner::new();
 
     // Create Promise<string> object type
-    let promise_string = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), TypeId::ANY)]);
+    let promise_string = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        TypeId::ANY,
+    )]);
 
     let async_func = interner.function(FunctionShape {
         type_params: vec![],
@@ -34098,7 +34738,10 @@ fn test_return_type_constructor_signature() {
     // For constructor signature, ReturnType returns the constructed type
     let interner = TypeInterner::new();
 
-    let instance_type = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+    let instance_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
 
     let ctor = interner.callable(CallableShape {
         symbol: None,
@@ -34137,7 +34780,10 @@ fn test_parameters_this_parameter() {
     // The 'this' parameter is NOT included in Parameters
     let interner = TypeInterner::new();
 
-    let window_type = interner.object(vec![PropertyInfo::new(interner.intern_string("location"), TypeId::STRING)]);
+    let window_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("location"),
+        TypeId::STRING,
+    )]);
 
     let func_with_this = interner.function(FunctionShape {
         type_params: vec![],
@@ -34716,7 +35362,10 @@ fn test_omit_this_parameter() {
     // = (x: string) => void (without this parameter)
     let interner = TypeInterner::new();
 
-    let window_type = interner.object(vec![PropertyInfo::new(interner.intern_string("location"), TypeId::STRING)]);
+    let window_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("location"),
+        TypeId::STRING,
+    )]);
 
     // Function with this parameter
     let func_with_this = interner.function(FunctionShape {
@@ -34836,7 +35485,10 @@ fn test_constructor_parameters_with_generics() {
         is_const: false,
     }));
 
-    let container = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), t_param)]);
+    let container = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        t_param,
+    )]);
 
     let generic_ctor = interner.callable(CallableShape {
         symbol: None,
@@ -34896,7 +35548,10 @@ fn test_awaited_with_nested_promises() {
         is_constructor: false,
         is_method: false,
     });
-    let inner_promise = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), inner_then)]);
+    let inner_promise = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        inner_then,
+    )]);
 
     let outer_then = interner.function(FunctionShape {
         type_params: vec![],
@@ -34907,7 +35562,10 @@ fn test_awaited_with_nested_promises() {
         is_constructor: false,
         is_method: false,
     });
-    let outer_promise = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), outer_then)]);
+    let outer_promise = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        outer_then,
+    )]);
 
     match interner.lookup(outer_promise) {
         Some(TypeKey::Object(shape_id)) => {
@@ -35181,12 +35839,21 @@ fn test_distributive_with_object_types() {
     // T extends { x: number } ? T["x"] : never
     let interner = TypeInterner::new();
 
-    let obj_with_x = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj_with_x = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj_with_y = interner.object(vec![PropertyInfo::new(interner.intern_string("y"), TypeId::STRING)]);
+    let obj_with_y = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("y"),
+        TypeId::STRING,
+    )]);
 
     let source = interner.union(vec![obj_with_x, obj_with_y]);
-    let pattern = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let pattern = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let cond = ConditionalType {
         check_type: source,
@@ -35920,10 +36587,16 @@ fn test_infer_with_index_access_result() {
     }));
 
     // Pattern: { prop: infer P }
-    let pattern = interner.object(vec![PropertyInfo::new(interner.intern_string("prop"), infer_p)]);
+    let pattern = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        infer_p,
+    )]);
 
     // Input: { prop: number }
-    let input = interner.object(vec![PropertyInfo::new(interner.intern_string("prop"), TypeId::NUMBER)]);
+    let input = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        TypeId::NUMBER,
+    )]);
 
     // Index access: input["prop"]
     let index_access =
@@ -36042,7 +36715,10 @@ fn test_infer_promise_like_unwrap() {
         is_method: false,
     });
 
-    let pattern = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), then_fn)]);
+    let pattern = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        then_fn,
+    )]);
 
     // Input: { then: (onfulfilled: (value: string) => any) => any }
     let input_callback = interner.function(FunctionShape {
@@ -36075,7 +36751,10 @@ fn test_infer_promise_like_unwrap() {
         is_method: false,
     });
 
-    let input = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), input_then)]);
+    let input = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        input_then,
+    )]);
 
     let cond = ConditionalType {
         check_type: input,
@@ -36244,11 +36923,17 @@ fn test_infer_from_branded_intersection() {
     }));
 
     // Pattern: { __brand: infer B }
-    let brand_pattern = interner.object(vec![PropertyInfo::new(interner.intern_string("__brand"), infer_b)]);
+    let brand_pattern = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__brand"),
+        infer_b,
+    )]);
 
     // Input: string & { __brand: "UserId" }
     let brand_lit = interner.literal_string("UserId");
-    let brand_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("__brand"), brand_lit)]);
+    let brand_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__brand"),
+        brand_lit,
+    )]);
     let input = interner.intersection(vec![TypeId::STRING, brand_obj]);
 
     let cond = ConditionalType {
@@ -36294,7 +36979,10 @@ fn test_infer_ignores_readonly() {
     }]);
 
     // Input: { prop: number } (not readonly)
-    let input = interner.object(vec![PropertyInfo::new(interner.intern_string("prop"), TypeId::NUMBER)]);
+    let input = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        TypeId::NUMBER,
+    )]);
 
     let cond = ConditionalType {
         check_type: input,
@@ -36751,7 +37439,10 @@ fn test_keyof_intersection_with_never() {
     // keyof (T & never) should be never (never absorbs in intersection)
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let intersection = interner.intersection(vec![obj, TypeId::NEVER]);
     let result = evaluate_keyof(&interner, intersection);
@@ -36765,7 +37456,10 @@ fn test_keyof_union_with_any() {
     // keyof (T | any) - any absorbs the union
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let union = interner.union(vec![obj, TypeId::ANY]);
     let result = evaluate_keyof(&interner, union);
@@ -36779,7 +37473,10 @@ fn test_keyof_intersection_with_any() {
     // keyof (T & any) - any in intersection
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let intersection = interner.intersection(vec![obj, TypeId::ANY]);
     let result = evaluate_keyof(&interner, intersection);
@@ -36793,7 +37490,10 @@ fn test_keyof_union_with_unknown() {
     // keyof (T | unknown) - unknown absorbs in union
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let union = interner.union(vec![obj, TypeId::UNKNOWN]);
     let result = evaluate_keyof(&interner, union);
@@ -36807,13 +37507,25 @@ fn test_keyof_four_way_intersection() {
     // keyof (A & B & C & D) = keyof A | keyof B | keyof C | keyof D
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj_c = interner.object(vec![PropertyInfo::new(interner.intern_string("c"), TypeId::BOOLEAN)]);
+    let obj_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::BOOLEAN,
+    )]);
 
-    let obj_d = interner.object(vec![PropertyInfo::new(interner.intern_string("d"), TypeId::STRING)]);
+    let obj_d = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("d"),
+        TypeId::STRING,
+    )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b, obj_c, obj_d]);
     let result = evaluate_keyof(&interner, intersection);
@@ -36869,9 +37581,15 @@ fn test_keyof_mixed_intersection_union() {
         PropertyInfo::new(interner.intern_string("common"), TypeId::STRING),
     ]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj_c = interner.object(vec![PropertyInfo::new(interner.intern_string("common"), TypeId::STRING)]);
+    let obj_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("common"),
+        TypeId::STRING,
+    )]);
 
     let a_and_b = interner.intersection(vec![obj_a, obj_b]);
     let union = interner.union(vec![a_and_b, obj_c]);
@@ -36936,7 +37654,10 @@ fn test_keyof_union_index_and_literal() {
         number_index: None,
     });
 
-    let literal_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let literal_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     let union = interner.union(vec![string_indexed, literal_obj]);
     let result = evaluate_keyof(&interner, union);
@@ -36951,7 +37672,10 @@ fn test_keyof_intersection_with_callable() {
     // keyof (T & { (): void }) - object with call signature
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let callable = interner.callable(CallableShape {
         symbol: None,
@@ -36983,7 +37707,10 @@ fn test_keyof_intersection_with_array() {
     // keyof ({ a: T } & string[]) - object intersected with array
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let arr = interner.array(TypeId::STRING);
     let intersection = interner.intersection(vec![obj, arr]);
@@ -37393,10 +38120,7 @@ fn test_callable_multiple_params_infer() {
     }));
 
     let pattern_fn = interner.function(FunctionShape {
-        params: vec![
-            ParamInfo::unnamed(infer_a),
-            ParamInfo::unnamed(infer_b),
-        ],
+        params: vec![ParamInfo::unnamed(infer_a), ParamInfo::unnamed(infer_b)],
         return_type: TypeId::ANY,
         type_predicate: None,
         this_type: None,
@@ -37663,9 +38387,15 @@ fn test_mapped_type_union_key_constraint() {
     // Keys from union of object types
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let union = interner.union(vec![obj_a, obj_b]);
     let keyof_union = interner.intern(TypeKey::KeyOf(union));
@@ -37693,9 +38423,15 @@ fn test_mapped_type_intersection_source() {
     // Keys from intersection: keyof (A & B)
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
     let keyof_intersection = interner.intern(TypeKey::KeyOf(intersection));
@@ -37795,7 +38531,10 @@ fn test_mapped_type_pick_pattern() {
 
     let result = evaluate_mapped(&interner, &mapped);
 
-    let expected = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let expected = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
     assert_eq!(result, expected);
 }
 
@@ -37944,7 +38683,10 @@ fn test_mapped_type_single_literal_key() {
 
     let result = evaluate_mapped(&interner, &mapped);
 
-    let expected = interner.object(vec![PropertyInfo::new(interner.intern_string("only"), TypeId::NUMBER)]);
+    let expected = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("only"),
+        TypeId::NUMBER,
+    )]);
     assert_eq!(result, expected);
 }
 
@@ -38724,7 +39466,10 @@ fn test_indexed_access_simple_property() {
     // { a: string }["a"] = string
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let key_a = interner.literal_string("a");
     let result = evaluate_index_access(&interner, obj, key_a);
@@ -38775,9 +39520,15 @@ fn test_indexed_access_nested_two_levels() {
     // { outer: { inner: string } }["outer"]["inner"] = string
     let interner = TypeInterner::new();
 
-    let inner_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("inner"), TypeId::STRING)]);
+    let inner_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("inner"),
+        TypeId::STRING,
+    )]);
 
-    let outer_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("outer"), inner_obj)]);
+    let outer_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("outer"),
+        inner_obj,
+    )]);
 
     let key_outer = interner.literal_string("outer");
     let key_inner = interner.literal_string("inner");
@@ -38794,7 +39545,10 @@ fn test_indexed_access_deeply_nested() {
     // { a: { b: { c: { d: number } } } }["a"]["b"]["c"]["d"] = number
     let interner = TypeInterner::new();
 
-    let d_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("d"), TypeId::NUMBER)]);
+    let d_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("d"),
+        TypeId::NUMBER,
+    )]);
 
     let c_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("c"), d_obj)]);
 
@@ -38909,7 +39663,10 @@ fn test_indexed_access_with_optional_property() {
     // { a?: string }["a"] = string | undefined
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let key_a = interner.literal_string("a");
     let result = evaluate_index_access(&interner, obj, key_a);
@@ -38923,7 +39680,10 @@ fn test_indexed_access_with_readonly_property() {
     // { readonly a: string }["a"] = string
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let key_a = interner.literal_string("a");
     let result = evaluate_index_access(&interner, obj, key_a);
@@ -38936,9 +39696,15 @@ fn test_indexed_access_union_of_objects() {
     // ({ a: string } | { a: number })["a"] = string | number
     let interner = TypeInterner::new();
 
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     let union_obj = interner.union(vec![obj1, obj2]);
     let key_a = interner.literal_string("a");
@@ -38956,9 +39722,15 @@ fn test_indexed_access_intersection_object() {
     // Note: Implementation may return intersection or merged type
     let interner = TypeInterner::new();
 
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let intersection = interner.intersection(vec![obj1, obj2]);
 
@@ -39027,7 +39799,10 @@ fn test_indexed_access_property_overrides_index_signature() {
     let obj = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("a"), TypeId::BOOLEAN)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("a"),
+            TypeId::BOOLEAN,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -39048,13 +39823,22 @@ fn test_indexed_access_nested_with_union_intermediate() {
     // { data: { value: string } | { value: number } }["data"]["value"] = string | number
     let interner = TypeInterner::new();
 
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
 
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
 
     let union_data = interner.union(vec![obj1, obj2]);
 
-    let outer = interner.object(vec![PropertyInfo::new(interner.intern_string("data"), union_data)]);
+    let outer = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("data"),
+        union_data,
+    )]);
 
     let key_data = interner.literal_string("data");
     let key_value = interner.literal_string("value");
@@ -39075,7 +39859,10 @@ fn test_indexed_access_literal_types() {
     let lit_inactive = interner.literal_string("inactive");
     let status_type = interner.union(vec![lit_active, lit_inactive]);
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("status"), status_type)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("status"),
+        status_type,
+    )]);
 
     let key_status = interner.literal_string("status");
     let result = evaluate_index_access(&interner, obj, key_status);
@@ -39098,7 +39885,10 @@ fn test_indexed_access_function_property() {
         is_method: false,
     });
 
-    let obj = interner.object(vec![PropertyInfo::method(interner.intern_string("fn"), fn_type)]);
+    let obj = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("fn"),
+        fn_type,
+    )]);
 
     let key_fn = interner.literal_string("fn");
     let result = evaluate_index_access(&interner, obj, key_fn);

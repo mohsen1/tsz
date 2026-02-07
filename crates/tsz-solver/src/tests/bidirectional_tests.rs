@@ -152,8 +152,14 @@ mod tests {
         let interner = TypeInterner::new();
 
         // { nested: { value: number } }
-        let inner = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
-        let outer = interner.object(vec![PropertyInfo::new(interner.intern_string("nested"), inner)]);
+        let inner = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            TypeId::NUMBER,
+        )]);
+        let outer = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("nested"),
+            inner,
+        )]);
 
         let ctx = ContextualTypeContext::with_expected(&interner, outer);
         let nested_ctx = ctx.for_property("nested");

@@ -66,7 +66,10 @@ fn test_try_get_keyof_keys_object_with_index_returns_properties() {
     let obj = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("x"),
+            TypeId::NUMBER,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
@@ -95,7 +98,10 @@ fn test_try_get_keyof_keys_resolves_reference() {
     let interner = TypeInterner::new();
 
     let def_id = DefId(10);
-    let resolved = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+    let resolved = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
 
     let mut env = TypeEnvironment::new();
     env.insert_def(def_id, resolved);
@@ -122,7 +128,10 @@ fn test_try_expand_application_instantiates_type_params() {
     let param_type = interner.intern(TypeKey::TypeParameter(param_info.clone()));
 
     let def_id = DefId(20);
-    let box_struct = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), param_type)]);
+    let box_struct = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        param_type,
+    )]);
 
     let mut env = TypeEnvironment::new();
     env.insert_def_with_params(def_id, box_struct, vec![param_info]);

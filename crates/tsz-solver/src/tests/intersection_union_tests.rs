@@ -132,9 +132,15 @@ fn test_intersection_literal_with_primitive_is_literal() {
 fn test_intersection_object_merge_properties() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     // A & B should merge properties
     let result = interner.intersection2(obj_a, obj_b);
@@ -168,9 +174,15 @@ fn test_intersection_object_merge_properties() {
 fn test_intersection_object_same_property_intersect_types() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     // A & B should have property x: string & number = never
     let result = interner.intersection2(obj_a, obj_b);
@@ -198,9 +210,15 @@ fn test_intersection_object_same_property_intersect_types() {
 fn test_intersection_required_wins_over_optional() {
     let interner = TypeInterner::new();
 
-    let obj_optional = interner.object(vec![PropertyInfo::opt(interner.intern_string("x"), TypeId::STRING)]);
+    let obj_optional = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
-    let obj_required = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::STRING)]);
+    let obj_required = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
     // optional & required = required (required wins)
     let result = interner.intersection2(obj_optional, obj_required);
@@ -222,9 +240,15 @@ fn test_intersection_required_wins_over_optional() {
 fn test_intersection_readonly_is_cumulative() {
     let interner = TypeInterner::new();
 
-    let obj_readonly = interner.object(vec![PropertyInfo::readonly(interner.intern_string("x"), TypeId::STRING)]);
+    let obj_readonly = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
-    let obj_mutable = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::STRING)]);
+    let obj_mutable = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
     // readonly & mutable = readonly (readonly is cumulative)
     let result = interner.intersection2(obj_readonly, obj_mutable);
@@ -246,9 +270,15 @@ fn test_intersection_readonly_is_cumulative() {
 fn test_intersection_both_optional_stays_optional() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::opt(interner.intern_string("x"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::opt(interner.intern_string("x"), TypeId::STRING)]);
+    let obj_b = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
     // optional & optional = optional
     let result = interner.intersection2(obj_a, obj_b);
@@ -553,9 +583,15 @@ fn test_intersection_any_is_identity() {
 fn test_intersection_flattens_nested() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let inner = interner.intersection2(obj_a, obj_b);
     let outer = interner.intersection2(inner, obj_a);

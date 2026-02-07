@@ -31,7 +31,10 @@ mod generic_strictness_tests {
         let mut checker = CompatChecker::new(&interner);
 
         // Create a generic type with constraint: T extends { id: number }
-        let identifiable_constraint = interner.object(vec![PropertyInfo::new(interner.intern_string("id"), TypeId::NUMBER)]);
+        let identifiable_constraint = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("id"),
+            TypeId::NUMBER,
+        )]);
 
         let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
             name: interner.intern_string("T"),
@@ -41,7 +44,10 @@ mod generic_strictness_tests {
         }));
 
         // Create an instance WITHOUT the required property
-        let obj_without_id = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
+        let obj_without_id = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("name"),
+            TypeId::STRING,
+        )]);
 
         // This should NOT be assignable - constraint is violated
         assert!(!checker.is_assignable(obj_without_id, t_param));
@@ -92,7 +98,10 @@ mod generic_strictness_tests {
         let mut checker = CompatChecker::new(&interner);
 
         // Create function type: <T extends { id: number }>(obj: T): number
-        let identifiable_constraint = interner.object(vec![PropertyInfo::new(interner.intern_string("id"), TypeId::NUMBER)]);
+        let identifiable_constraint = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("id"),
+            TypeId::NUMBER,
+        )]);
 
         let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
             name: interner.intern_string("T"),
@@ -101,7 +110,10 @@ mod generic_strictness_tests {
             is_const: false,
         }));
 
-        let obj_param = interner.object(vec![PropertyInfo::new(interner.intern_string("id"), TypeId::NUMBER)]);
+        let obj_param = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("id"),
+            TypeId::NUMBER,
+        )]);
 
         // Function type: (obj: T) => number
         let func_type = interner.function(FunctionShape {
@@ -779,7 +791,10 @@ mod function_variance_tests {
         let mut checker = CompatChecker::new(&interner);
 
         // Object type with method
-        let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+        let obj_type = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            TypeId::NUMBER,
+        )]);
 
         // (this: ObjType) => void
         let func_with_this = interner.function(FunctionShape {
@@ -1230,7 +1245,10 @@ mod error_detection_tests {
         ]);
 
         // Type B: { a: string; }
-        let type_b = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+        let type_b = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("a"),
+            TypeId::STRING,
+        )]);
 
         // type_b should NOT be assignable to type_a (missing property 'b')
         assert!(!checker.is_assignable(type_b, type_a));
@@ -1242,10 +1260,16 @@ mod error_detection_tests {
         let mut checker = CompatChecker::new(&interner);
 
         // Type A: { value: number; }
-        let type_a = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+        let type_a = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            TypeId::NUMBER,
+        )]);
 
         // Type B: { value: string; }
-        let type_b = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+        let type_b = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            TypeId::STRING,
+        )]);
 
         // type_b should NOT be assignable to type_a (property type mismatch)
         assert!(!checker.is_assignable(type_b, type_a));
@@ -1257,7 +1281,10 @@ mod error_detection_tests {
         let mut checker = CompatChecker::new(&interner);
 
         // Type A: { a: string; }
-        let type_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+        let type_a = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("a"),
+            TypeId::STRING,
+        )]);
 
         // Type B: { a: string; b: number; }
         let type_b = interner.object(vec![
@@ -1430,7 +1457,10 @@ mod unknown_fallback_tests {
         }));
 
         // Create an object with number type
-        let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+        let obj_type = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            TypeId::NUMBER,
+        )]);
 
         // With Unknown fallback, object should NOT be assignable to unconstrained generic
         // (Unknown doesn't automatically accept all types like Any does)
@@ -1461,7 +1491,10 @@ mod unknown_fallback_tests {
         let mut checker = CompatChecker::new(&interner);
 
         // Type A: { value: number; }
-        let type_a = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+        let type_a = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            TypeId::NUMBER,
+        )]);
 
         // Unknown type (what fallbacks should use)
         let unknown_type = TypeId::UNKNOWN;
@@ -1480,7 +1513,10 @@ mod unknown_fallback_tests {
         let mut checker = CompatChecker::new(&interner);
 
         // Type A: { value: number; }
-        let type_a = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+        let type_a = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            TypeId::NUMBER,
+        )]);
 
         // Any is assignable to anything (permissive)
         assert!(checker.is_assignable(TypeId::ANY, type_a));
@@ -1676,7 +1712,10 @@ mod typescript_quirks_tests {
         });
 
         // () => { name: string }
-        let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
+        let obj_type = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("name"),
+            TypeId::STRING,
+        )]);
 
         let func_returns_object = interner.function(FunctionShape {
             type_params: vec![],
@@ -1709,7 +1748,10 @@ mod typescript_quirks_tests {
         checker.set_strict_function_types(true);
 
         // Create Animal and Cat types (Cat <: Animal)
-        let animal_type = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
+        let animal_type = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("name"),
+            TypeId::STRING,
+        )]);
 
         let cat_type = interner.object(vec![
             PropertyInfo::new(interner.intern_string("name"), TypeId::STRING),
@@ -1778,7 +1820,10 @@ mod typescript_quirks_tests {
         checker.set_strict_function_types(false);
 
         // Create Animal and Cat types (Cat <: Animal)
-        let animal_type = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
+        let animal_type = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("name"),
+            TypeId::STRING,
+        )]);
 
         let cat_type = interner.object(vec![
             PropertyInfo::new(interner.intern_string("name"), TypeId::STRING),

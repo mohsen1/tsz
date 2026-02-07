@@ -72,7 +72,10 @@ fn test_law_reflexivity_objects() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let obj2 = interner.object(vec![
         PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER),
@@ -151,9 +154,15 @@ fn test_law_reflexivity_intersections() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("y"), TypeId::STRING)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("y"),
+        TypeId::STRING,
+    )]);
 
     let intersection = interner.intersection(vec![obj1, obj2]);
 
@@ -237,7 +246,10 @@ fn test_law_transitivity_objects() {
         PropertyInfo::new(interner.intern_string("y"), TypeId::STRING),
     ]);
 
-    let b = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let c = interner.object(vec![]);
 
@@ -316,9 +328,15 @@ fn test_law_antisymmetry_structural_objects() {
     let interner = TypeInterner::new();
 
     // Create two structurally identical objects
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -384,7 +402,10 @@ fn test_law_top_type_any() {
     assert!(checker.is_subtype_of(num_42, TypeId::ANY));
 
     // Objects
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
     assert!(checker.is_subtype_of(obj, TypeId::ANY));
 
     // Arrays
@@ -430,7 +451,10 @@ fn test_law_bottom_type_never() {
     assert!(checker.is_subtype_of(TypeId::NEVER, TypeId::BOOLEAN));
 
     // Objects
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
     assert!(checker.is_subtype_of(TypeId::NEVER, obj));
 
     // Arrays
@@ -473,7 +497,10 @@ fn test_law_never_not_supertype() {
     assert!(!checker.is_subtype_of(TypeId::NUMBER, TypeId::NEVER));
 
     // Objects are NOT subtypes of never
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
     assert!(!checker.is_subtype_of(obj, TypeId::NEVER));
 }
 
@@ -494,7 +521,10 @@ fn test_law_unknown_top_safe() {
     assert!(checker.is_subtype_of(TypeId::BOOLEAN, TypeId::UNKNOWN));
 
     // Objects
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
     assert!(checker.is_subtype_of(obj, TypeId::UNKNOWN));
 
     // never is a subtype of unknown
