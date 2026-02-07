@@ -3050,9 +3050,9 @@ impl ParserState {
             .unwrap_or(self.token_end());
 
         // Parse type arguments: new Array<string>()
+        // Use try_parse to handle ambiguity with comparison operators (e.g., new Date<A)
         let type_arguments = if self.is_token(SyntaxKind::LessThanToken) {
-            // Try to parse as type arguments
-            Some(self.parse_type_arguments())
+            self.try_parse_type_arguments_for_call()
         } else {
             None
         };
