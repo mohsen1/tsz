@@ -1252,8 +1252,9 @@ impl ParserState {
         // Parse default import (identifier followed by "from" or ",")
         // For "import foo from", next token is "from"
         // For "import foo, { bar } from", next token is ","
-        let name = if self.is_token(SyntaxKind::Identifier) {
-            self.parse_identifier()
+        // Keywords can be used as default import names (e.g., `import defer from "mod"`)
+        let name = if self.is_identifier_or_keyword() {
+            self.parse_identifier_name()
         } else {
             NodeIndex::NONE
         };
@@ -1303,7 +1304,8 @@ impl ParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::AsteriskToken);
         self.parse_expected(SyntaxKind::AsKeyword);
-        let name = self.parse_identifier();
+        // Keywords can be used as namespace import names (e.g., `import * as import from "mod"`)
+        let name = self.parse_identifier_name();
         let end_pos = self.token_end();
 
         self.arena.add_named_imports(
@@ -1584,9 +1586,9 @@ impl ParserState {
     pub(crate) fn parse_export_star(&mut self, start_pos: u32, is_type_only: bool) -> NodeIndex {
         self.parse_expected(SyntaxKind::AsteriskToken);
 
-        // Optional "as namespace" for re-export
+        // Optional "as namespace" for re-export (keywords allowed as names)
         let export_clause = if self.parse_optional(SyntaxKind::AsKeyword) {
-            self.parse_identifier()
+            self.parse_identifier_name()
         } else {
             NodeIndex::NONE
         };
