@@ -6,6 +6,70 @@ use wasm_bindgen::prelude::*;
 
 use crate::solver::TypeId;
 
+/// Macro for handle-based type identity checks on TsType.
+/// Each entry generates a `pub fn` that returns `self.handle == TypeId::X.0`.
+macro_rules! define_type_handle_checks {
+    ($($(#[doc = $doc:expr])* $js_name:literal, $rust_name:ident => $type_id:expr);* $(;)?) => {
+        #[wasm_bindgen]
+        impl TsType {
+            $(
+                $(#[doc = $doc])*
+                #[wasm_bindgen(js_name = $js_name)]
+                pub fn $rust_name(&self) -> bool {
+                    self.handle == $type_id.0
+                }
+            )*
+        }
+    };
+}
+
+/// Macro for flag-based checks on TsType.
+/// Each entry generates a `pub fn` that returns `(self.flags & mask) != 0`.
+macro_rules! define_type_flag_checks {
+    ($($(#[doc = $doc:expr])* $js_name:literal, $rust_name:ident => $mask:expr);* $(;)?) => {
+        #[wasm_bindgen]
+        impl TsType {
+            $(
+                $(#[doc = $doc])*
+                #[wasm_bindgen(js_name = $js_name)]
+                pub fn $rust_name(&self) -> bool {
+                    (self.flags & ($mask)) != 0
+                }
+            )*
+        }
+    };
+}
+
+/// Macro for flag-based checks on TsSymbol.
+/// Each entry generates a `pub fn` that returns `(self.flags & mask) != 0`.
+macro_rules! define_symbol_flag_checks {
+    ($($(#[doc = $doc:expr])* $js_name:literal, $rust_name:ident => $mask:expr);* $(;)?) => {
+        #[wasm_bindgen]
+        impl TsSymbol {
+            $(
+                $(#[doc = $doc])*
+                #[wasm_bindgen(js_name = $js_name)]
+                pub fn $rust_name(&self) -> bool {
+                    (self.flags & ($mask)) != 0
+                }
+            )*
+        }
+    };
+}
+
+/// Macro for `create_*_type` factory functions.
+macro_rules! define_type_creators {
+    ($($(#[doc = $doc:expr])* $js_name:literal, $rust_name:ident => $type_id:expr, $flags:expr);* $(;)?) => {
+        $(
+            $(#[doc = $doc])*
+            #[wasm_bindgen(js_name = $js_name)]
+            pub fn $rust_name() -> TsType {
+                TsType::new($type_id.0, $flags)
+            }
+        )*
+    };
+}
+
 /// TypeScript Type - represents a type in the type system
 ///
 /// Types are identified by handles (TypeId) and have:
@@ -40,72 +104,6 @@ impl TsType {
         self.flags
     }
 
-    /// Check if this is `any` type
-    #[wasm_bindgen(js_name = isAny)]
-    pub fn is_any(&self) -> bool {
-        self.handle == TypeId::ANY.0
-    }
-
-    /// Check if this is `unknown` type
-    #[wasm_bindgen(js_name = isUnknown)]
-    pub fn is_unknown(&self) -> bool {
-        self.handle == TypeId::UNKNOWN.0
-    }
-
-    /// Check if this is `string` type
-    #[wasm_bindgen(js_name = isString)]
-    pub fn is_string(&self) -> bool {
-        self.handle == TypeId::STRING.0
-    }
-
-    /// Check if this is `number` type
-    #[wasm_bindgen(js_name = isNumber)]
-    pub fn is_number(&self) -> bool {
-        self.handle == TypeId::NUMBER.0
-    }
-
-    /// Check if this is `boolean` type
-    #[wasm_bindgen(js_name = isBoolean)]
-    pub fn is_boolean(&self) -> bool {
-        self.handle == TypeId::BOOLEAN.0
-    }
-
-    /// Check if this is `void` type
-    #[wasm_bindgen(js_name = isVoid)]
-    pub fn is_void(&self) -> bool {
-        self.handle == TypeId::VOID.0
-    }
-
-    /// Check if this is `undefined` type
-    #[wasm_bindgen(js_name = isUndefined)]
-    pub fn is_undefined(&self) -> bool {
-        self.handle == TypeId::UNDEFINED.0
-    }
-
-    /// Check if this is `null` type
-    #[wasm_bindgen(js_name = isNull)]
-    pub fn is_null(&self) -> bool {
-        self.handle == TypeId::NULL.0
-    }
-
-    /// Check if this is `never` type
-    #[wasm_bindgen(js_name = isNever)]
-    pub fn is_never(&self) -> bool {
-        self.handle == TypeId::NEVER.0
-    }
-
-    /// Check if this is a union type
-    #[wasm_bindgen(js_name = isUnion)]
-    pub fn is_union(&self) -> bool {
-        (self.flags & (1 << 20)) != 0 // TypeFlags.Union
-    }
-
-    /// Check if this is an intersection type
-    #[wasm_bindgen(js_name = isIntersection)]
-    pub fn is_intersection(&self) -> bool {
-        (self.flags & (1 << 21)) != 0 // TypeFlags.Intersection
-    }
-
     /// Check if this is a union or intersection
     #[wasm_bindgen(js_name = isUnionOrIntersection)]
     pub fn is_union_or_intersection(&self) -> bool {
@@ -119,35 +117,47 @@ impl TsType {
         (self.flags & literal_flags) != 0
     }
 
-    /// Check if this is a string literal type
-    #[wasm_bindgen(js_name = isStringLiteral)]
-    pub fn is_string_literal(&self) -> bool {
-        (self.flags & (1 << 7)) != 0 // TypeFlags.StringLiteral
-    }
-
-    /// Check if this is a number literal type
-    #[wasm_bindgen(js_name = isNumberLiteral)]
-    pub fn is_number_literal(&self) -> bool {
-        (self.flags & (1 << 8)) != 0 // TypeFlags.NumberLiteral
-    }
-
-    /// Check if this is a type parameter
-    #[wasm_bindgen(js_name = isTypeParameter)]
-    pub fn is_type_parameter(&self) -> bool {
-        (self.flags & (1 << 18)) != 0 // TypeFlags.TypeParameter
-    }
-
-    /// Check if this is an object type
-    #[wasm_bindgen(js_name = isObject)]
-    pub fn is_object(&self) -> bool {
-        (self.flags & (1 << 19)) != 0 // TypeFlags.Object
-    }
-
     /// Check if this type is a class or interface
     #[wasm_bindgen(js_name = isClassOrInterface)]
     pub fn is_class_or_interface(&self) -> bool {
         self.is_object() // Simplified - would check ObjectFlags
     }
+}
+
+define_type_handle_checks! {
+    /// Check if this is `any` type
+    "isAny", is_any => TypeId::ANY;
+    /// Check if this is `unknown` type
+    "isUnknown", is_unknown => TypeId::UNKNOWN;
+    /// Check if this is `string` type
+    "isString", is_string => TypeId::STRING;
+    /// Check if this is `number` type
+    "isNumber", is_number => TypeId::NUMBER;
+    /// Check if this is `boolean` type
+    "isBoolean", is_boolean => TypeId::BOOLEAN;
+    /// Check if this is `void` type
+    "isVoid", is_void => TypeId::VOID;
+    /// Check if this is `undefined` type
+    "isUndefined", is_undefined => TypeId::UNDEFINED;
+    /// Check if this is `null` type
+    "isNull", is_null => TypeId::NULL;
+    /// Check if this is `never` type
+    "isNever", is_never => TypeId::NEVER;
+}
+
+define_type_flag_checks! {
+    /// Check if this is a union type
+    "isUnion", is_union => 1 << 20;           // TypeFlags.Union
+    /// Check if this is an intersection type
+    "isIntersection", is_intersection => 1 << 21; // TypeFlags.Intersection
+    /// Check if this is a string literal type
+    "isStringLiteral", is_string_literal => 1 << 7;  // TypeFlags.StringLiteral
+    /// Check if this is a number literal type
+    "isNumberLiteral", is_number_literal => 1 << 8;  // TypeFlags.NumberLiteral
+    /// Check if this is a type parameter
+    "isTypeParameter", is_type_parameter => 1 << 18; // TypeFlags.TypeParameter
+    /// Check if this is an object type
+    "isObject", is_object => 1 << 19;         // TypeFlags.Object
 }
 
 /// TypeScript Symbol - represents a named entity
@@ -202,72 +212,31 @@ impl TsSymbol {
     pub fn escaped_name(&self) -> String {
         self.name.clone()
     }
+}
 
+define_symbol_flag_checks! {
     /// Check if this is a variable symbol
-    #[wasm_bindgen(js_name = isVariable)]
-    pub fn is_variable(&self) -> bool {
-        (self.flags & 0b11) != 0 // FunctionScopedVariable | BlockScopedVariable
-    }
-
+    "isVariable", is_variable => 0b11;                  // FunctionScopedVariable | BlockScopedVariable
     /// Check if this is a property symbol
-    #[wasm_bindgen(js_name = isProperty)]
-    pub fn is_property(&self) -> bool {
-        (self.flags & (1 << 2)) != 0 // SymbolFlags.Property
-    }
-
+    "isProperty", is_property => 1 << 2;                // SymbolFlags.Property
     /// Check if this is a function symbol
-    #[wasm_bindgen(js_name = isFunction)]
-    pub fn is_function(&self) -> bool {
-        (self.flags & (1 << 4)) != 0 // SymbolFlags.Function
-    }
-
+    "isFunction", is_function => 1 << 4;                // SymbolFlags.Function
     /// Check if this is a class symbol
-    #[wasm_bindgen(js_name = isClass)]
-    pub fn is_class(&self) -> bool {
-        (self.flags & (1 << 5)) != 0 // SymbolFlags.Class
-    }
-
+    "isClass", is_class => 1 << 5;                      // SymbolFlags.Class
     /// Check if this is an interface symbol
-    #[wasm_bindgen(js_name = isInterface)]
-    pub fn is_interface(&self) -> bool {
-        (self.flags & (1 << 6)) != 0 // SymbolFlags.Interface
-    }
-
+    "isInterface", is_interface => 1 << 6;              // SymbolFlags.Interface
     /// Check if this is an enum symbol
-    #[wasm_bindgen(js_name = isEnum)]
-    pub fn is_enum(&self) -> bool {
-        (self.flags & ((1 << 7) | (1 << 8))) != 0 // ConstEnum | RegularEnum
-    }
-
+    "isEnum", is_enum => (1 << 7) | (1 << 8);          // ConstEnum | RegularEnum
     /// Check if this is a method symbol
-    #[wasm_bindgen(js_name = isMethod)]
-    pub fn is_method(&self) -> bool {
-        (self.flags & (1 << 13)) != 0 // SymbolFlags.Method
-    }
-
+    "isMethod", is_method => 1 << 13;                   // SymbolFlags.Method
     /// Check if this is a type parameter symbol
-    #[wasm_bindgen(js_name = isTypeParameter)]
-    pub fn is_type_parameter(&self) -> bool {
-        (self.flags & (1 << 18)) != 0 // SymbolFlags.TypeParameter
-    }
-
+    "isTypeParameter", is_type_parameter => 1 << 18;   // SymbolFlags.TypeParameter
     /// Check if this is a type alias symbol
-    #[wasm_bindgen(js_name = isTypeAlias)]
-    pub fn is_type_alias(&self) -> bool {
-        (self.flags & (1 << 19)) != 0 // SymbolFlags.TypeAlias
-    }
-
+    "isTypeAlias", is_type_alias => 1 << 19;            // SymbolFlags.TypeAlias
     /// Check if this is an alias (import) symbol
-    #[wasm_bindgen(js_name = isAlias)]
-    pub fn is_alias(&self) -> bool {
-        (self.flags & (1 << 21)) != 0 // SymbolFlags.Alias
-    }
-
+    "isAlias", is_alias => 1 << 21;                     // SymbolFlags.Alias
     /// Check if this symbol is optional
-    #[wasm_bindgen(js_name = isOptional)]
-    pub fn is_optional(&self) -> bool {
-        (self.flags & (1 << 24)) != 0 // SymbolFlags.Optional
-    }
+    "isOptional", is_optional => 1 << 24;               // SymbolFlags.Optional
 }
 
 /// TypeScript Signature - represents a call/construct signature
@@ -320,56 +289,23 @@ impl TsSignature {
     }
 }
 
-/// Create the `any` type
-#[wasm_bindgen(js_name = createAnyType)]
-pub fn create_any_type() -> TsType {
-    TsType::new(TypeId::ANY.0, 1) // TypeFlags.Any
-}
-
-/// Create the `unknown` type
-#[wasm_bindgen(js_name = createUnknownType)]
-pub fn create_unknown_type() -> TsType {
-    TsType::new(TypeId::UNKNOWN.0, 2) // TypeFlags.Unknown
-}
-
-/// Create the `string` type
-#[wasm_bindgen(js_name = createStringType)]
-pub fn create_string_type() -> TsType {
-    TsType::new(TypeId::STRING.0, 4) // TypeFlags.String
-}
-
-/// Create the `number` type
-#[wasm_bindgen(js_name = createNumberType)]
-pub fn create_number_type() -> TsType {
-    TsType::new(TypeId::NUMBER.0, 8) // TypeFlags.Number
-}
-
-/// Create the `boolean` type
-#[wasm_bindgen(js_name = createBooleanType)]
-pub fn create_boolean_type() -> TsType {
-    TsType::new(TypeId::BOOLEAN.0, 16) // TypeFlags.Boolean
-}
-
-/// Create the `void` type
-#[wasm_bindgen(js_name = createVoidType)]
-pub fn create_void_type() -> TsType {
-    TsType::new(TypeId::VOID.0, 16384) // TypeFlags.Void
-}
-
-/// Create the `undefined` type
-#[wasm_bindgen(js_name = createUndefinedType)]
-pub fn create_undefined_type() -> TsType {
-    TsType::new(TypeId::UNDEFINED.0, 32768) // TypeFlags.Undefined
-}
-
-/// Create the `null` type
-#[wasm_bindgen(js_name = createNullType)]
-pub fn create_null_type() -> TsType {
-    TsType::new(TypeId::NULL.0, 65536) // TypeFlags.Null
-}
-
-/// Create the `never` type
-#[wasm_bindgen(js_name = createNeverType)]
-pub fn create_never_type() -> TsType {
-    TsType::new(TypeId::NEVER.0, 131072) // TypeFlags.Never
+define_type_creators! {
+    /// Create the `any` type
+    "createAnyType", create_any_type => TypeId::ANY, 1;             // TypeFlags.Any
+    /// Create the `unknown` type
+    "createUnknownType", create_unknown_type => TypeId::UNKNOWN, 2; // TypeFlags.Unknown
+    /// Create the `string` type
+    "createStringType", create_string_type => TypeId::STRING, 4;    // TypeFlags.String
+    /// Create the `number` type
+    "createNumberType", create_number_type => TypeId::NUMBER, 8;    // TypeFlags.Number
+    /// Create the `boolean` type
+    "createBooleanType", create_boolean_type => TypeId::BOOLEAN, 16; // TypeFlags.Boolean
+    /// Create the `void` type
+    "createVoidType", create_void_type => TypeId::VOID, 16384;     // TypeFlags.Void
+    /// Create the `undefined` type
+    "createUndefinedType", create_undefined_type => TypeId::UNDEFINED, 32768; // TypeFlags.Undefined
+    /// Create the `null` type
+    "createNullType", create_null_type => TypeId::NULL, 65536;     // TypeFlags.Null
+    /// Create the `never` type
+    "createNeverType", create_never_type => TypeId::NEVER, 131072; // TypeFlags.Never
 }

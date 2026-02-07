@@ -202,74 +202,6 @@ impl TsTypeChecker {
         0
     }
 
-    // === Intrinsic type getters ===
-
-    /// Get the `any` type
-    #[wasm_bindgen(js_name = getAnyType)]
-    pub fn get_any_type(&self) -> u32 {
-        TypeId::ANY.0
-    }
-
-    /// Get the `unknown` type
-    #[wasm_bindgen(js_name = getUnknownType)]
-    pub fn get_unknown_type(&self) -> u32 {
-        TypeId::UNKNOWN.0
-    }
-
-    /// Get the `string` type
-    #[wasm_bindgen(js_name = getStringType)]
-    pub fn get_string_type(&self) -> u32 {
-        TypeId::STRING.0
-    }
-
-    /// Get the `number` type
-    #[wasm_bindgen(js_name = getNumberType)]
-    pub fn get_number_type(&self) -> u32 {
-        TypeId::NUMBER.0
-    }
-
-    /// Get the `boolean` type
-    #[wasm_bindgen(js_name = getBooleanType)]
-    pub fn get_boolean_type(&self) -> u32 {
-        TypeId::BOOLEAN.0
-    }
-
-    /// Get the `void` type
-    #[wasm_bindgen(js_name = getVoidType)]
-    pub fn get_void_type(&self) -> u32 {
-        TypeId::VOID.0
-    }
-
-    /// Get the `undefined` type
-    #[wasm_bindgen(js_name = getUndefinedType)]
-    pub fn get_undefined_type(&self) -> u32 {
-        TypeId::UNDEFINED.0
-    }
-
-    /// Get the `null` type
-    #[wasm_bindgen(js_name = getNullType)]
-    pub fn get_null_type(&self) -> u32 {
-        TypeId::NULL.0
-    }
-
-    /// Get the `never` type
-    #[wasm_bindgen(js_name = getNeverType)]
-    pub fn get_never_type(&self) -> u32 {
-        TypeId::NEVER.0
-    }
-
-    /// Get the `true` literal type
-    #[wasm_bindgen(js_name = getTrueType)]
-    pub fn get_true_type(&self) -> u32 {
-        TypeId::BOOLEAN_TRUE.0
-    }
-
-    /// Get the `false` literal type
-    #[wasm_bindgen(js_name = getFalseType)]
-    pub fn get_false_type(&self) -> u32 {
-        TypeId::BOOLEAN_FALSE.0
-    }
-
     // === Type predicates ===
 
     /// Check if type is a union type
@@ -308,6 +240,48 @@ impl TsTypeChecker {
         let id = TypeId(type_handle);
         id == TypeId::NULL || id == TypeId::UNDEFINED
     }
+}
+
+/// Macro for intrinsic type ID getters on TsTypeChecker.
+/// Each entry generates a `pub fn` that returns `TypeId::X.0`.
+macro_rules! define_checker_type_getters {
+    ($($(#[doc = $doc:expr])* $js_name:literal, $rust_name:ident => $type_id:expr);* $(;)?) => {
+        #[wasm_bindgen]
+        impl TsTypeChecker {
+            $(
+                $(#[doc = $doc])*
+                #[wasm_bindgen(js_name = $js_name)]
+                pub fn $rust_name(&self) -> u32 {
+                    $type_id.0
+                }
+            )*
+        }
+    };
+}
+
+define_checker_type_getters! {
+    /// Get the `any` type
+    "getAnyType", get_any_type => TypeId::ANY;
+    /// Get the `unknown` type
+    "getUnknownType", get_unknown_type => TypeId::UNKNOWN;
+    /// Get the `string` type
+    "getStringType", get_string_type => TypeId::STRING;
+    /// Get the `number` type
+    "getNumberType", get_number_type => TypeId::NUMBER;
+    /// Get the `boolean` type
+    "getBooleanType", get_boolean_type => TypeId::BOOLEAN;
+    /// Get the `void` type
+    "getVoidType", get_void_type => TypeId::VOID;
+    /// Get the `undefined` type
+    "getUndefinedType", get_undefined_type => TypeId::UNDEFINED;
+    /// Get the `null` type
+    "getNullType", get_null_type => TypeId::NULL;
+    /// Get the `never` type
+    "getNeverType", get_never_type => TypeId::NEVER;
+    /// Get the `true` literal type
+    "getTrueType", get_true_type => TypeId::BOOLEAN_TRUE;
+    /// Get the `false` literal type
+    "getFalseType", get_false_type => TypeId::BOOLEAN_FALSE;
 }
 
 impl TsTypeChecker {

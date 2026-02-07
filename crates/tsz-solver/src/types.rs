@@ -770,6 +770,47 @@ pub struct PropertyInfo {
     pub parent_id: Option<SymbolId>,
 }
 
+impl PropertyInfo {
+    /// Create a property with default settings (non-optional, non-readonly, public).
+    /// Sets `write_type` equal to `type_id`.
+    pub fn new(name: Atom, type_id: TypeId) -> Self {
+        Self {
+            name,
+            type_id,
+            write_type: type_id,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+        }
+    }
+
+    /// Create a method property with default settings.
+    pub fn method(name: Atom, type_id: TypeId) -> Self {
+        Self {
+            is_method: true,
+            ..Self::new(name, type_id)
+        }
+    }
+
+    /// Create an optional property with default settings.
+    pub fn opt(name: Atom, type_id: TypeId) -> Self {
+        Self {
+            optional: true,
+            ..Self::new(name, type_id)
+        }
+    }
+
+    /// Create a readonly property with default settings.
+    pub fn readonly(name: Atom, type_id: TypeId) -> Self {
+        Self {
+            readonly: true,
+            ..Self::new(name, type_id)
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PropertyLookup {
     Found(usize),
@@ -899,6 +940,22 @@ pub struct FunctionShape {
     pub is_method: bool,
 }
 
+impl FunctionShape {
+    /// Create a simple function shape with params and return type.
+    /// No type params, no this, no predicate, not a constructor or method.
+    pub fn new(params: Vec<ParamInfo>, return_type: TypeId) -> Self {
+        Self {
+            type_params: Vec::new(),
+            params,
+            this_type: None,
+            return_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        }
+    }
+}
+
 /// Call signature for overloaded functions
 /// Represents a single call signature in an overloaded type
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -911,6 +968,20 @@ pub struct CallSignature {
     /// Whether this call signature is from a method (uses bivariant parameter checking).
     /// Methods in TypeScript are intentionally bivariant for compatibility reasons.
     pub is_method: bool,
+}
+
+impl CallSignature {
+    /// Create a simple call signature with params and return type.
+    pub fn new(params: Vec<ParamInfo>, return_type: TypeId) -> Self {
+        Self {
+            type_params: Vec::new(),
+            params,
+            this_type: None,
+            return_type,
+            type_predicate: None,
+            is_method: false,
+        }
+    }
 }
 
 /// Callable type with multiple overloaded call signatures
@@ -988,6 +1059,44 @@ pub struct ParamInfo {
     pub type_id: TypeId,
     pub optional: bool,
     pub rest: bool,
+}
+
+impl ParamInfo {
+    /// Create a required parameter.
+    pub fn required(name: Atom, type_id: TypeId) -> Self {
+        Self {
+            name: Some(name),
+            type_id,
+            optional: false,
+            rest: false,
+        }
+    }
+
+    /// Create an optional parameter.
+    pub fn optional(name: Atom, type_id: TypeId) -> Self {
+        Self {
+            optional: true,
+            ..Self::required(name, type_id)
+        }
+    }
+
+    /// Create a rest parameter.
+    pub fn rest(name: Atom, type_id: TypeId) -> Self {
+        Self {
+            rest: true,
+            ..Self::required(name, type_id)
+        }
+    }
+
+    /// Create an unnamed required parameter.
+    pub fn unnamed(type_id: TypeId) -> Self {
+        Self {
+            name: None,
+            type_id,
+            optional: false,
+            rest: false,
+        }
+    }
 }
 
 /// Type parameter information
