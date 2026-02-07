@@ -2026,7 +2026,12 @@ impl<'a> CheckerState<'a> {
         );
 
         // 3. Get the implementation's type using manual lowering
-        let mut impl_type = lowering.lower_signature_from_declaration(impl_node_idx, None);
+        // When the implementation has no return type annotation, lower_return_type returns ERROR.
+        // Use ANY as the return type override to avoid false TS2394 errors, since `any` is
+        // assignable to any return type (matching TypeScript's behavior for untyped implementations).
+        let impl_return_override = self.get_impl_return_type_override(impl_node_idx);
+        let mut impl_type =
+            lowering.lower_signature_from_declaration(impl_node_idx, impl_return_override);
         if impl_type == tsz_solver::TypeId::ERROR {
             // Fall back to get_type_of_node for cases where manual lowering fails
             impl_type = self.get_type_of_node(impl_node_idx);
@@ -2093,6 +2098,39 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::OVERLOAD_SIGNATURE_NOT_COMPATIBLE,
                 );
             }
+        }
+    }
+
+    /// Returns `Some(TypeId::ANY)` if the implementation node has no explicit return type annotation.
+    /// This is used for overload compatibility checking: when the implementation omits a return type,
+    /// the lowering would produce ERROR, but TypeScript treats it as `any` for compatibility purposes.
+    fn get_impl_return_type_override(&self, node_idx: NodeIndex) -> Option<tsz_solver::TypeId> {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return None;
+        };
+        let has_annotation = match node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .ctx
+                .arena
+                .get_function(node)
+                .map(|f| !f.type_annotation.is_none())
+                .unwrap_or(false),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .map(|m| !m.type_annotation.is_none())
+                .unwrap_or(false),
+            k if k == syntax_kind_ext::CONSTRUCTOR => {
+                // Constructors never have return type annotations
+                return None;
+            }
+            _ => return None,
+        };
+        if has_annotation {
+            None
+        } else {
+            Some(tsz_solver::TypeId::ANY)
         }
     }
 
