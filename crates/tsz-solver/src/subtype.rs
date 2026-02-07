@@ -1359,22 +1359,15 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// When set, Phase 2/3 will route evaluate_type and is_subtype_of through Salsa.
     pub(crate) query_db: Option<&'a dyn QueryDatabase>,
     pub(crate) resolver: &'a R,
-    /// Active subtype pairs being checked (for cycle detection at TypeId level)
-    pub(crate) in_progress: FxHashSet<(TypeId, TypeId)>,
+    /// Unified recursion guard for TypeId-pair cycle detection, depth, and iteration limits.
+    pub(crate) guard: crate::recursion::RecursionGuard<(TypeId, TypeId)>,
     /// Active SymbolRef pairs being checked (for DefId-level cycle detection)
     /// This catches cycles in Ref types before they're resolved, preventing
     /// infinite expansion of recursive type aliases and interfaces.
     pub(crate) seen_refs: FxHashSet<(SymbolRef, SymbolRef)>,
-    /// Active DefId pairs being checked (for DefId-level cycle detection)
+    /// Unified recursion guard for DefId-pair cycle detection.
     /// Phase 3.1: Catches cycles in Lazy(DefId) types before they're resolved.
-    /// This mirrors seen_refs but for the new DefId-based type identity system.
-    pub(crate) seen_defs: FxHashSet<(DefId, DefId)>,
-    /// Current recursion depth (for stack overflow prevention)
-    pub(crate) depth: u32,
-    /// Total number of check_subtype calls (iteration limit)
-    pub(crate) total_checks: u32,
-    /// Whether the recursion depth limit was exceeded (for TS2589 diagnostic)
-    pub depth_exceeded: bool,
+    pub(crate) def_guard: crate::recursion::RecursionGuard<(DefId, DefId)>,
     /// Whether to use strict function types (contravariant parameters).
     /// Default: true (sound, correct behavior)
     pub strict_function_types: bool,
@@ -1436,12 +1429,15 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             interner,
             query_db: None,
             resolver: &NOOP,
-            in_progress: FxHashSet::default(),
+            guard: crate::recursion::RecursionGuard::new(
+                MAX_SUBTYPE_DEPTH,
+                MAX_TOTAL_SUBTYPE_CHECKS,
+            ),
             seen_refs: FxHashSet::default(),
-            seen_defs: FxHashSet::default(),
-            depth: 0,
-            total_checks: 0,
-            depth_exceeded: false,
+            def_guard: crate::recursion::RecursionGuard::new(
+                MAX_SUBTYPE_DEPTH,
+                MAX_TOTAL_SUBTYPE_CHECKS,
+            ),
             strict_function_types: true, // Default to strict (sound) behavior
             allow_void_return: false,
             allow_bivariant_rest: false,
@@ -1468,12 +1464,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             interner,
             query_db: None,
             resolver,
-            in_progress: FxHashSet::default(),
+            guard: crate::recursion::RecursionGuard::new(
+                MAX_SUBTYPE_DEPTH,
+                MAX_TOTAL_SUBTYPE_CHECKS,
+            ),
             seen_refs: FxHashSet::default(),
-            seen_defs: FxHashSet::default(),
-            depth: 0,
-            total_checks: 0,
-            depth_exceeded: false,
+            def_guard: crate::recursion::RecursionGuard::new(
+                MAX_SUBTYPE_DEPTH,
+                MAX_TOTAL_SUBTYPE_CHECKS,
+            ),
             strict_function_types: true,
             allow_void_return: false,
             allow_bivariant_rest: false,
@@ -1550,13 +1549,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Uses `.clear()` instead of re-allocating, so hash set memory is reused.
     #[inline]
     pub fn reset(&mut self) {
-        self.in_progress.clear();
+        self.guard.reset();
         self.seen_refs.clear();
-        self.seen_defs.clear();
+        self.def_guard.reset();
         self.eval_cache.clear();
-        self.depth = 0;
-        self.total_checks = 0;
-        self.depth_exceeded = false;
+    }
+
+    /// Whether the recursion depth was exceeded during subtype checking.
+    pub fn depth_exceeded(&self) -> bool {
+        self.guard.depth_exceeded
     }
 
     /// Apply compiler flags from a packed u16 bitmask.
@@ -2103,7 +2104,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // This ensures that top-level checks don't incorrectly hit cached results from nested checks.
         let any_mode = match self.any_propagation {
             AnyPropagationMode::All => 0,
-            AnyPropagationMode::TopLevelOnly if self.depth == 0 => 1,
+            AnyPropagationMode::TopLevelOnly if self.guard.depth() == 0 => 1,
             AnyPropagationMode::TopLevelOnly => 2, // Disabled at depth > 0
         };
 
@@ -2151,7 +2152,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Fast paths (no cycle tracking needed)
         // =========================================================================
 
-        let allow_any = self.any_propagation.allows_any_at_depth(self.depth);
+        let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
         let mut source = source;
         let mut target = target;
         if !allow_any {
@@ -2236,84 +2237,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // =========================================================================
-        // Iteration limit check (timeout prevention)
-        // =========================================================================
-
-        self.total_checks += 1;
-        if self.total_checks > MAX_TOTAL_SUBTYPE_CHECKS {
-            // Too many checks - likely in an infinite expansion scenario
-            // Return DepthExceeded to treat as false (soundness fix)
-            self.depth_exceeded = true;
-            return SubtypeResult::DepthExceeded;
-        }
-
-        // =========================================================================
-        // Depth Check (stack overflow prevention)
-        // =========================================================================
-
-        if self.depth > self.max_depth {
-            // Recursion too deep - return DepthExceeded (treat as false for soundness)
-            // This prevents incorrectly accepting unsound expansive recursive types
-            // Valid finite cyclic types won't hit this limit
-            self.depth_exceeded = true;
-            return SubtypeResult::DepthExceeded;
-        }
-
-        // =========================================================================
-        // Cycle detection FIRST (coinduction) - BEFORE evaluation!
+        // Cycle detection (coinduction) via RecursionGuard - BEFORE evaluation!
         //
-        // Critical: This must happen BEFORE evaluate_type() to catch cycles
-        // in expansive types that produce fresh TypeIds on each evaluation.
-        // See docs/architecture/SOLVER_REFACTORING_PROPOSAL.md Section 2.1
+        // RecursionGuard handles iteration limits, depth limits, cycle detection,
+        // and visiting set size limits in one call.
         // =========================================================================
 
         let pair = (source, target);
-        if self.in_progress.contains(&pair) {
-            // We're in a cycle - return provisional true
-            // This implements coinductive semantics for recursive types
+
+        // Check reversed pair for bivariant cross-recursion detection.
+        if self.guard.is_visiting(&(target, source)) {
             return SubtypeResult::CycleDetected;
         }
 
-        // Also check the reversed pair to detect cycles in bivariant parameter checking.
-        // When checking bivariant parameters, we check both (A, B) and (B, A), which can
-        // create cross-recursion that the normal cycle detection doesn't catch.
-        let reversed_pair = (target, source);
-        if self.in_progress.contains(&reversed_pair) {
-            // We're in a cross-recursion cycle from bivariant checking
-            return SubtypeResult::CycleDetected;
-        }
-
-        // Memory safety: limit the number of in-progress pairs to prevent unbounded growth
-        if self.in_progress.len() >= MAX_IN_PROGRESS_PAIRS {
-            // Too many pairs being tracked - likely pathological case
-            // Return DepthExceeded (treat as false for soundness)
-            self.depth_exceeded = true;
-            return SubtypeResult::DepthExceeded;
+        use crate::recursion::RecursionResult;
+        match self.guard.enter(pair) {
+            RecursionResult::Cycle => return SubtypeResult::CycleDetected,
+            RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
+                return SubtypeResult::DepthExceeded;
+            }
+            RecursionResult::Entered => {}
         }
 
         // =======================================================================
-        // DEFD-LEVEL CYCLE DETECTION (before evaluation!)
-        // =======================================================================
-        // This catches cycles in recursive type aliases BEFORE they expand,
-        // preventing infinite recursion. For example:
-        // - `type T = Box<T>` produces new TypeId on each evaluation
-        // - Current in_progress check (TypeId-level) fails: T[] ≠ T
-        // - DefId-level check catches: (DefId_T, DefId_T) is same pair
-        //
-        // CRITICAL: We only apply this check to non-generic types.
-        // If the type is an Application (has type args like Box<string>),
-        // we CANNOT use pure DefId equality because Box<string> ≠ Box<number>
-        // even though both have DefId(Box).
-        //
-        // This implements coinductive semantics: assume subtypes, verify consistency.
+        // DefId-level cycle detection (before evaluation!)
+        // Catches cycles in recursive type aliases BEFORE they expand.
+        // CRITICAL: Only for non-generic types (not Application types).
         // =======================================================================
 
-        // Helper to check if it's safe to use DefId cycle detection
-        // Only safe if the type is NOT an Application (no generic arguments)
-        let is_safe_for_defid_check = |type_id: TypeId| -> bool {
-            // Check if it's an Application. If so, UNSAFE to check purely by DefId.
-            application_id(self.interner, type_id).is_none()
-        };
+        let is_safe_for_defid_check =
+            |type_id: TypeId| -> bool { application_id(self.interner, type_id).is_none() };
 
         let def_pair = if is_safe_for_defid_check(source) && is_safe_for_defid_check(target) {
             if let (Some(s_def), Some(t_def)) = (
@@ -2330,43 +2283,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             None
         };
 
-        // Check for DefId-level cycles BEFORE evaluation
-        let inserted_seen_defs = if let Some((s_def, t_def)) = def_pair {
-            // Check forward pair
-            if self.seen_defs.contains(&(s_def, t_def)) {
-                // We're in a cycle at the DefId level - return CycleDetected
-                // This implements coinductive semantics for recursive types
-                return SubtypeResult::CycleDetected;
-            }
-
+        let def_entered = if let Some((s_def, t_def)) = def_pair {
             // Check reversed pair for bivariant cross-recursion
-            if self.seen_defs.contains(&(t_def, s_def)) {
+            if self.def_guard.is_visiting(&(t_def, s_def)) {
+                self.guard.leave(pair);
                 return SubtypeResult::CycleDetected;
             }
-
-            // Mark this DefId pair as being checked BEFORE evaluation
-            self.seen_defs.insert((s_def, t_def));
-            true
+            match self.def_guard.enter((s_def, t_def)) {
+                RecursionResult::Cycle => {
+                    self.guard.leave(pair);
+                    return SubtypeResult::CycleDetected;
+                }
+                RecursionResult::Entered => Some((s_def, t_def)),
+                _ => None,
+            }
         } else {
-            false
+            None
         };
-
-        // Mark as in-progress BEFORE evaluation to catch expansive type cycles
-        self.in_progress.insert(pair);
-        self.depth += 1;
 
         // =========================================================================
         // Meta-type evaluation (after cycle detection is set up)
         // =========================================================================
-        // Evaluate meta-types (KeyOf, Conditional, etc.)
-        // Note: This happens AFTER cycle detection is set up, so expansive types
-        // that produce fresh TypeIds will be caught by the cycle detection above.
-        //
-        // When bypass_evaluation is true (TypeEvaluator simplification mode),
-        // skip evaluation to prevent infinite recursion. TypeEvaluator has already
-        // evaluated all members before calling the simplifier.
         let result = if self.bypass_evaluation {
-            // Skip evaluation - go straight to structural check
             if target == TypeId::NEVER {
                 SubtypeResult::False
             } else {
@@ -2376,44 +2314,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let source_eval = self.evaluate_type(source);
             let target_eval = self.evaluate_type(target);
 
-            // If evaluation changed anything, recurse with the simplified types
-            // The cycle detection is already set up for the original pair
             if source_eval != source || target_eval != target {
                 self.check_subtype(source_eval, target_eval)
             } else {
-                // =========================================================================
-                // Post-evaluation fast paths
-                // =========================================================================
-
-                // Nothing (except never) is assignable to never
                 if target == TypeId::NEVER {
                     SubtypeResult::False
                 } else {
-                    // Do the actual structural check
                     self.check_subtype_inner(source, target)
                 }
             }
         };
 
-        // Remove from in-progress and decrement depth
-        self.depth -= 1;
-        self.in_progress.remove(&pair);
-
-        // Remove from seen_defs if we inserted (DefId-level cycle cleanup)
-        if inserted_seen_defs {
-            if let Some((s_def, t_def)) = def_pair {
-                self.seen_defs.remove(&(s_def, t_def));
-            }
+        // Cleanup: leave both guards
+        if let Some(dp) = def_entered {
+            self.def_guard.leave(dp);
         }
+        self.guard.leave(pair);
 
-        // Cache definitive results in the shared QueryCache for cross-checker memoization.
-        // Only cache True/False, not non-definitive results (cycle detection artifacts).
+        // Cache definitive results for cross-checker memoization.
         if let Some(db) = self.query_db {
             let key = self.make_cache_key(source, target);
             match result {
                 SubtypeResult::True => db.insert_subtype_cache(key, true),
                 SubtypeResult::False => db.insert_subtype_cache(key, false),
-                SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {} // Don't cache non-definitive results
+                SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {}
             }
         }
 

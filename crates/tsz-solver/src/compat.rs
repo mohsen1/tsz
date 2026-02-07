@@ -20,7 +20,7 @@ use crate::TypeInterner;
 struct ShapeExtractor<'a, R: TypeResolver> {
     db: &'a dyn TypeDatabase,
     resolver: &'a R,
-    visiting: rustc_hash::FxHashSet<TypeId>,
+    guard: crate::recursion::RecursionGuard<TypeId>,
 }
 
 impl<'a, R: TypeResolver> ShapeExtractor<'a, R> {
@@ -28,17 +28,18 @@ impl<'a, R: TypeResolver> ShapeExtractor<'a, R> {
         Self {
             db,
             resolver,
-            visiting: rustc_hash::FxHashSet::default(),
+            guard: crate::recursion::RecursionGuard::new(50, 100_000),
         }
     }
 
     /// Extract shape from a type, returning None if not an object type.
     fn extract(&mut self, type_id: TypeId) -> Option<u32> {
-        if !self.visiting.insert(type_id) {
-            return None; // Cycle detected
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return None, // Cycle or limits exceeded
         }
         let result = self.visit_type(self.db, type_id);
-        self.visiting.remove(&type_id);
+        self.guard.leave(type_id);
         result
     }
 }

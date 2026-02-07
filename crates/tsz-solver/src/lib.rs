@@ -43,6 +43,7 @@ mod object_literal;
 pub mod objects;
 pub mod operations;
 pub mod operations_property;
+pub mod recursion;
 // salsa_db is feature-gated until salsa API is updated
 #[cfg(feature = "experimental_salsa")]
 pub mod salsa_db;

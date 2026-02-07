@@ -714,7 +714,7 @@ impl<'a> CheckerState<'a> {
                 .with_inheritance_graph(&self.ctx.inheritance_graph)
                 .with_class_check(&is_class_fn);
             let result = checker.is_subtype_of(source, target);
-            let depth_exceeded = checker.depth_exceeded;
+            let depth_exceeded = checker.depth_exceeded();
             (result, depth_exceeded)
         };
 
@@ -784,7 +784,7 @@ impl<'a> CheckerState<'a> {
             .with_inheritance_graph(&self.ctx.inheritance_graph)
             .with_class_check(&is_class_fn);
         let result = checker.is_subtype_of(source, target);
-        let depth_exceeded = checker.depth_exceeded;
+        let depth_exceeded = checker.depth_exceeded();
 
         if depth_exceeded {
             self.error_at_current_node(

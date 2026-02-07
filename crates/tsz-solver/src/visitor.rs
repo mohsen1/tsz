@@ -1352,9 +1352,7 @@ fn is_unit_type_impl(types: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> b
 pub struct RecursiveTypeCollector<'a> {
     types: &'a dyn TypeDatabase,
     collected: FxHashSet<TypeId>,
-    visiting: FxHashSet<TypeId>,
-    max_depth: usize,
-    current_depth: usize,
+    guard: crate::recursion::RecursionGuard<TypeId>,
 }
 
 impl<'a> RecursiveTypeCollector<'a> {
@@ -1362,9 +1360,7 @@ impl<'a> RecursiveTypeCollector<'a> {
         Self {
             types,
             collected: FxHashSet::default(),
-            visiting: FxHashSet::default(),
-            max_depth: 20,
-            current_depth: 0,
+            guard: crate::recursion::RecursionGuard::new(20, 100_000),
         }
     }
 
@@ -1372,9 +1368,7 @@ impl<'a> RecursiveTypeCollector<'a> {
         Self {
             types,
             collected: FxHashSet::default(),
-            visiting: FxHashSet::default(),
-            max_depth,
-            current_depth: 0,
+            guard: crate::recursion::RecursionGuard::new(max_depth as u32, 100_000),
         }
     }
 
@@ -1385,31 +1379,24 @@ impl<'a> RecursiveTypeCollector<'a> {
     }
 
     fn visit(&mut self, type_id: TypeId) {
-        // Depth check
-        if self.current_depth >= self.max_depth {
-            return;
-        }
-
-        // Cycle check
-        if self.visiting.contains(&type_id) {
-            return;
-        }
-
         // Already collected
         if self.collected.contains(&type_id) {
             return;
         }
 
+        // Unified enter: checks depth, cycle, iterations
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return,
+        }
+
         self.collected.insert(type_id);
-        self.visiting.insert(type_id);
-        self.current_depth += 1;
 
         if let Some(key) = self.types.lookup(type_id) {
             self.visit_key(&key);
         }
 
-        self.current_depth -= 1;
-        self.visiting.remove(&type_id);
+        self.guard.leave(type_id);
     }
 
     fn visit_key(&mut self, key: &TypeKey) {
@@ -1646,9 +1633,7 @@ where
         types,
         predicate,
         memo: FxHashMap::default(),
-        visiting: FxHashSet::default(),
-        max_depth: 20,
-        current_depth: 0,
+        guard: crate::recursion::RecursionGuard::new(20, 100_000),
     };
     checker.check(type_id)
 }
@@ -1660,9 +1645,7 @@ where
     types: &'a dyn TypeDatabase,
     predicate: F,
     memo: FxHashMap<TypeId, bool>,
-    visiting: FxHashSet<TypeId>,
-    max_depth: usize,
-    current_depth: usize,
+    guard: crate::recursion::RecursionGuard<TypeId>,
 }
 
 impl<'a, F> ContainsTypeChecker<'a, F>
@@ -1673,30 +1656,26 @@ where
         if let Some(&cached) = self.memo.get(&type_id) {
             return cached;
         }
-        if self.current_depth >= self.max_depth {
-            return false;
-        }
-        if !self.visiting.insert(type_id) {
-            return false;
+
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
         }
 
         let Some(key) = self.types.lookup(type_id) else {
-            self.visiting.remove(&type_id);
+            self.guard.leave(type_id);
             return false;
         };
 
         if (self.predicate)(&key) {
-            self.visiting.remove(&type_id);
+            self.guard.leave(type_id);
             self.memo.insert(type_id, true);
             return true;
         }
 
-        self.current_depth += 1;
-
         let result = self.check_key(&key);
 
-        self.current_depth -= 1;
-        self.visiting.remove(&type_id);
+        self.guard.leave(type_id);
         self.memo.insert(type_id, result);
 
         result
@@ -1968,8 +1947,8 @@ impl<'a> EmptyObjectChecker<'a> {
 pub struct ConstAssertionVisitor<'a> {
     /// The type database/interner.
     pub db: &'a dyn TypeDatabase,
-    /// Types currently being visited to prevent infinite recursion.
-    pub visiting: FxHashSet<TypeId>,
+    /// Unified recursion guard for cycle detection.
+    pub guard: crate::recursion::RecursionGuard<TypeId>,
 }
 
 impl<'a> ConstAssertionVisitor<'a> {
@@ -1977,15 +1956,16 @@ impl<'a> ConstAssertionVisitor<'a> {
     pub fn new(db: &'a dyn TypeDatabase) -> Self {
         Self {
             db,
-            visiting: FxHashSet::default(),
+            guard: crate::recursion::RecursionGuard::new(50, 100_000),
         }
     }
 
     /// Apply const assertion to a type, returning the transformed type ID.
     pub fn apply_const_assertion(&mut self, type_id: TypeId) -> TypeId {
         // Prevent infinite recursion
-        if !self.visiting.insert(type_id) {
-            return type_id;
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return type_id,
         }
 
         let result = match self.db.lookup(type_id) {
@@ -2127,7 +2107,7 @@ impl<'a> ConstAssertionVisitor<'a> {
             _ => type_id,
         };
 
-        self.visiting.remove(&type_id);
+        self.guard.leave(type_id);
         result
     }
 }

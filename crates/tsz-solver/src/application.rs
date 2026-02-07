@@ -14,7 +14,6 @@ use crate::subtype::TypeResolver;
 use crate::type_queries;
 use crate::types::*;
 use crate::{TypeDatabase, TypeSubstitution, instantiate_type};
-use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 
 /// Maximum depth for recursive application evaluation.
@@ -51,10 +50,8 @@ pub enum ApplicationResult {
 pub struct ApplicationEvaluator<'a, R: TypeResolver> {
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
-    /// Recursion depth counter
-    depth: RefCell<u32>,
-    /// Set of types currently being evaluated (cycle detection)
-    visiting: RefCell<FxHashSet<TypeId>>,
+    /// Unified recursion guard for cycle detection and depth limiting.
+    guard: RefCell<crate::recursion::RecursionGuard<TypeId>>,
     /// Cache for evaluated applications
     cache: RefCell<rustc_hash::FxHashMap<TypeId, TypeId>>,
 }
@@ -65,8 +62,10 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
         Self {
             interner,
             resolver,
-            depth: RefCell::new(0),
-            visiting: RefCell::new(FxHashSet::default()),
+            guard: RefCell::new(crate::recursion::RecursionGuard::new(
+                MAX_APPLICATION_DEPTH,
+                100_000,
+            )),
             cache: RefCell::new(rustc_hash::FxHashMap::default()),
         }
     }
@@ -101,22 +100,21 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
             return ApplicationResult::Resolved(cached);
         }
 
-        // Cycle detection
-        if !self.visiting.borrow_mut().insert(type_id) {
-            return ApplicationResult::Resolved(type_id);
+        // Unified enter: checks iterations, depth, cycle detection
+        match self.guard.borrow_mut().enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            crate::recursion::RecursionResult::Cycle => {
+                return ApplicationResult::Resolved(type_id);
+            }
+            crate::recursion::RecursionResult::DepthExceeded
+            | crate::recursion::RecursionResult::IterationExceeded => {
+                return ApplicationResult::DepthExceeded(type_id);
+            }
         }
 
-        // Depth check
-        if *self.depth.borrow() >= MAX_APPLICATION_DEPTH {
-            self.visiting.borrow_mut().remove(&type_id);
-            return ApplicationResult::DepthExceeded(type_id);
-        }
-
-        *self.depth.borrow_mut() += 1;
         let result = self.evaluate_inner(type_id);
-        *self.depth.borrow_mut() -= 1;
 
-        self.visiting.borrow_mut().remove(&type_id);
+        self.guard.borrow_mut().leave(type_id);
 
         if let ApplicationResult::Resolved(result_type) = result {
             self.cache.borrow_mut().insert(type_id, result_type);

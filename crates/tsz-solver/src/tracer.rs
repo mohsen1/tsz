@@ -28,7 +28,6 @@ use crate::TypeDatabase;
 use crate::diagnostics::{SubtypeFailureReason, SubtypeTracer};
 use crate::subtype::{MAX_SUBTYPE_DEPTH, TypeResolver};
 use crate::types::*;
-use rustc_hash::FxHashSet;
 use tsz_common::limits;
 
 #[cfg(test)]
@@ -40,9 +39,6 @@ use crate::subtype::NoopResolver;
 
 /// Maximum total subtype checks allowed per tracer-based check.
 const MAX_TOTAL_TRACER_CHECKS: u32 = limits::MAX_TOTAL_TRACER_CHECKS;
-
-/// Maximum number of in-progress pairs to track.
-const MAX_IN_PROGRESS_PAIRS: usize = limits::MAX_IN_PROGRESS_PAIRS as usize;
 
 /// Tracer-based subtype checker.
 ///
@@ -57,14 +53,8 @@ pub struct TracerSubtypeChecker<'a, R: TypeResolver> {
     /// Reference to the type resolver (for resolving Ref types).
     #[allow(dead_code)]
     pub(crate) resolver: &'a R,
-    /// Active subtype pairs being checked (for cycle detection).
-    pub(crate) in_progress: FxHashSet<(TypeId, TypeId)>,
-    /// Current recursion depth.
-    pub(crate) depth: u32,
-    /// Total number of checks performed.
-    pub(crate) total_checks: u32,
-    /// Whether recursion depth was exceeded.
-    pub(crate) depth_exceeded: bool,
+    /// Unified recursion guard for cycle detection, depth, and iteration limits.
+    pub(crate) guard: crate::recursion::RecursionGuard<(TypeId, TypeId)>,
     /// Whether to use strict function types (contravariant parameters).
     pub(crate) strict_function_types: bool,
     /// Whether to allow any return type when target return is void.
@@ -79,10 +69,10 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
         Self {
             interner,
             resolver,
-            in_progress: FxHashSet::default(),
-            depth: 0,
-            total_checks: 0,
-            depth_exceeded: false,
+            guard: crate::recursion::RecursionGuard::new(
+                MAX_SUBTYPE_DEPTH,
+                MAX_TOTAL_TRACER_CHECKS,
+            ),
             strict_function_types: true,
             allow_void_return: false,
             strict_null_checks: true,
@@ -177,41 +167,25 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
             return true;
         }
 
-        // Iteration limit
-        self.total_checks += 1;
-        if self.total_checks > MAX_TOTAL_TRACER_CHECKS {
-            self.depth_exceeded = true;
-            return tracer.on_mismatch(|| SubtypeFailureReason::RecursionLimitExceeded);
-        }
-
-        // Depth check
-        if self.depth > MAX_SUBTYPE_DEPTH {
-            self.depth_exceeded = true;
-            return tracer.on_mismatch(|| SubtypeFailureReason::RecursionLimitExceeded);
-        }
-
-        // Cycle detection
+        // Unified enter: checks iterations, depth, cycle detection, and visiting set size
         let pair = (source, target);
-        if self.in_progress.contains(&pair) {
-            // Coinductive: assume true in cycles
-            return true;
+        match self.guard.enter(pair) {
+            crate::recursion::RecursionResult::Entered => {}
+            crate::recursion::RecursionResult::Cycle => {
+                // Coinductive: assume true in cycles
+                return true;
+            }
+            crate::recursion::RecursionResult::DepthExceeded
+            | crate::recursion::RecursionResult::IterationExceeded => {
+                return tracer.on_mismatch(|| SubtypeFailureReason::RecursionLimitExceeded);
+            }
         }
-
-        if self.in_progress.len() >= MAX_IN_PROGRESS_PAIRS {
-            self.depth_exceeded = true;
-            return tracer.on_mismatch(|| SubtypeFailureReason::RecursionLimitExceeded);
-        }
-
-        // Enter recursion
-        self.in_progress.insert(pair);
-        self.depth += 1;
 
         // Perform the check
         let result = self.check_subtype_inner_with_tracer(source, target, tracer);
 
         // Exit recursion
-        self.depth -= 1;
-        self.in_progress.remove(&pair);
+        self.guard.leave(pair);
 
         result
     }

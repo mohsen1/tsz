@@ -60,15 +60,11 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     resolver: &'a R,
     no_unchecked_indexed_access: bool,
     cache: FxHashMap<TypeId, TypeId>,
-    visiting: FxHashSet<TypeId>,
-    /// DefId-level cycle detection for expansive recursion
+    /// Unified recursion guard for TypeId cycle detection, depth, and iteration limits.
+    guard: crate::recursion::RecursionGuard<TypeId>,
+    /// Unified recursion guard for DefId-level cycle detection.
     /// Prevents infinite expansion of recursive type aliases like `type T<X> = T<Box<X>>`
-    visiting_defs: FxHashSet<DefId>,
-    depth: u32,
-    /// Total number of evaluate calls (iteration limit)
-    total_evaluations: u32,
-    /// Whether the recursion depth limit was exceeded
-    depth_exceeded: bool,
+    def_guard: crate::recursion::RecursionGuard<DefId>,
 }
 
 /// Array methods that return any (used for apparent type computation).
@@ -123,11 +119,11 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             resolver: &NOOP,
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
-            visiting: FxHashSet::default(),
-            visiting_defs: FxHashSet::default(),
-            depth: 0,
-            total_evaluations: 0,
-            depth_exceeded: false,
+            guard: crate::recursion::RecursionGuard::new(MAX_EVALUATE_DEPTH, MAX_TOTAL_EVALUATIONS),
+            def_guard: crate::recursion::RecursionGuard::new(
+                MAX_EVALUATE_DEPTH,
+                MAX_TOTAL_EVALUATIONS,
+            ),
         }
     }
 }
@@ -141,11 +137,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             resolver,
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
-            visiting: FxHashSet::default(),
-            visiting_defs: FxHashSet::default(),
-            depth: 0,
-            total_evaluations: 0,
-            depth_exceeded: false,
+            guard: crate::recursion::RecursionGuard::new(MAX_EVALUATE_DEPTH, MAX_TOTAL_EVALUATIONS),
+            def_guard: crate::recursion::RecursionGuard::new(
+                MAX_EVALUATE_DEPTH,
+                MAX_TOTAL_EVALUATIONS,
+            ),
         }
     }
 
@@ -166,11 +162,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub fn reset(&mut self) {
         self.cache.clear();
-        self.visiting.clear();
-        self.visiting_defs.clear();
-        self.depth = 0;
-        self.total_evaluations = 0;
-        self.depth_exceeded = false;
+        self.guard.reset();
+        self.def_guard.reset();
     }
 
     // =========================================================================
@@ -205,13 +198,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Check if depth limit was exceeded.
     #[inline]
     pub(crate) fn is_depth_exceeded(&self) -> bool {
-        self.depth_exceeded
+        self.guard.depth_exceeded
     }
 
     /// Set the depth exceeded flag.
     #[inline]
     pub(crate) fn set_depth_exceeded(&mut self, value: bool) {
-        self.depth_exceeded = value;
+        self.guard.depth_exceeded = value;
     }
 
     /// Evaluate a type, resolving any meta-types if possible.
@@ -252,13 +245,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// - `checker/state.rs:2900-2918` - Type alias resolution with type params
     /// - `lower.rs:856-868` - `lower_type_alias_declaration` with params
     pub fn evaluate(&mut self, type_id: TypeId) -> TypeId {
+        use crate::recursion::RecursionResult;
+
         // Fast path for intrinsics
         if type_id.is_intrinsic() {
             return type_id;
         }
 
         // Check if depth was already exceeded in a previous call
-        if self.depth_exceeded {
+        if self.guard.depth_exceeded {
             return TypeId::ERROR;
         }
 
@@ -266,60 +261,45 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return cached;
         }
 
-        // Total evaluations limit to prevent infinite loops
-        self.total_evaluations += 1;
-        if self.total_evaluations > MAX_TOTAL_EVALUATIONS {
-            // Too many evaluations - return unevaluated to break out
-            self.cache.insert(type_id, type_id);
-            return type_id;
-        }
-
-        // Depth guard to prevent OOM from infinitely expanding types
-        // Examples: interface AA<T extends AA<T>>, type SelfReference<T = SelfReference>
-        self.depth += 1;
-        if self.depth > MAX_EVALUATE_DEPTH {
-            self.depth -= 1;
-            // Mark depth as exceeded and return ERROR to stop expansion
-            self.depth_exceeded = true;
-            self.cache.insert(type_id, TypeId::ERROR);
-            return TypeId::ERROR;
+        // Unified enter: checks iterations, depth, cycle detection, and visiting set size
+        match self.guard.enter(type_id) {
+            RecursionResult::Entered => {}
+            RecursionResult::Cycle => {
+                // Recursion guard for self-referential mapped/application types.
+                // Per TypeScript behavior, recursive mapped types evaluate to empty objects.
+                let key = self.interner.lookup(type_id);
+                if matches!(key, Some(TypeKey::Mapped(_))) {
+                    let empty = self.interner.object(vec![]);
+                    self.cache.insert(type_id, empty);
+                    return empty;
+                }
+                return type_id;
+            }
+            RecursionResult::DepthExceeded => {
+                self.cache.insert(type_id, TypeId::ERROR);
+                return TypeId::ERROR;
+            }
+            RecursionResult::IterationExceeded => {
+                self.cache.insert(type_id, type_id);
+                return type_id;
+            }
         }
 
         let key = match self.interner.lookup(type_id) {
             Some(k) => k,
             None => {
-                self.depth -= 1;
+                self.guard.leave(type_id);
                 return type_id;
             }
         };
 
-        // Memory safety: limit the visiting set size
-        if self.visiting.len() >= MAX_VISITING_SET_SIZE {
-            self.depth -= 1;
-            self.cache.insert(type_id, type_id);
-            return type_id;
-        }
-        if !self.visiting.insert(type_id) {
-            // Recursion guard for self-referential mapped/application types.
-            // Per TypeScript behavior, recursive mapped types evaluate to empty objects.
-            if matches!(key, TypeKey::Mapped(_)) {
-                self.depth -= 1;
-                let empty = self.interner.object(vec![]);
-                self.cache.insert(type_id, empty);
-                return empty;
-            }
-            self.depth -= 1;
-            return type_id;
-        }
-
         // Visitor pattern: dispatch to appropriate visit_* method
         let result = self.visit_type_key(type_id, &key);
 
-        // Symmetric cleanup: remove from visiting set and cache result
-        self.visiting.remove(&type_id);
+        // Symmetric cleanup: leave guard and cache result
+        self.guard.leave(type_id);
         self.cache.insert(type_id, result);
 
-        self.depth -= 1;
         result
     }
 
@@ -361,19 +341,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // to prevent infinite expansion. This matches TypeScript behavior for
             // "Type instantiation is excessively deep and possibly infinite".
             // =======================================================================
-            if self.visiting_defs.contains(&def_id) {
+            if self.def_guard.is_visiting(&def_id) {
                 // CRITICAL: Do NOT return the application.
                 // Return ERROR to stop the solver from trying to expand it forever.
                 // This prevents infinite loops where:
                 // 1. evaluate returns App (unevaluated)
                 // 2. check_subtype sees no change, calls check_subtype_inner
                 // 3. check_subtype_inner tries to evaluate again -> infinite loop
-                self.depth_exceeded = true;
+                self.guard.depth_exceeded = true;
                 return TypeId::ERROR;
             }
 
             // Mark this DefId as being visited
-            self.visiting_defs.insert(def_id);
+            use crate::recursion::RecursionResult;
+            match self.def_guard.enter(def_id) {
+                RecursionResult::Entered => {}
+                RecursionResult::Cycle
+                | RecursionResult::DepthExceeded
+                | RecursionResult::IterationExceeded => {
+                    self.guard.depth_exceeded = true;
+                    return TypeId::ERROR;
+                }
+            }
 
             // Try to get the type parameters for this DefId
             let type_params = self.resolver.get_lazy_type_params(def_id);
@@ -414,8 +403,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.interner.application(app.base, app.args.clone())
             };
 
-            // Remove from visiting_defs after evaluation
-            self.visiting_defs.remove(&def_id);
+            // Remove from def_guard after evaluation
+            self.def_guard.leave(def_id);
 
             result
         } else {
