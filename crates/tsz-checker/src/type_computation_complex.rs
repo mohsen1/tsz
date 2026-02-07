@@ -236,15 +236,11 @@ impl<'a> CheckerState<'a> {
         }
         // TS18050: Cannot construct 'never' type (impossible union after narrowing)
         if constructor_type == TypeId::NEVER {
-            use crate::types::diagnostics::{
-                diagnostic_codes, diagnostic_messages, format_message,
-            };
-            let message =
-                format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &["never"]);
-            self.error_at_node(
+            use crate::types::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
                 new_expr.expression,
-                &message,
                 diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                &["never"],
             );
             return TypeId::NEVER;
         }
@@ -910,15 +906,11 @@ impl<'a> CheckerState<'a> {
         }
         // TS18050: Cannot call 'never' type (impossible union after narrowing)
         if callee_type == TypeId::NEVER {
-            use crate::types::diagnostics::{
-                diagnostic_codes, diagnostic_messages, format_message,
-            };
-            let message =
-                format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &["never"]);
-            self.error_at_node(
+            use crate::types::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
                 call.expression,
-                &message,
                 diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                &["never"],
             );
             return TypeId::NEVER;
         }

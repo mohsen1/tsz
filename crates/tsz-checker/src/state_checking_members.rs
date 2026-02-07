@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
     /// NOTE: Method signatures (overloads) are NOT considered duplicates - interfaces allow
     /// multiple method signatures with the same name for function overloading.
     pub(crate) fn check_duplicate_interface_members(&mut self, members: &[NodeIndex]) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::types::diagnostics::diagnostic_codes;
         use rustc_hash::FxHashMap;
 
         // Track property names and their indices (methods are allowed to have overloads)
@@ -109,14 +109,12 @@ impl<'a> CheckerState<'a> {
                 // Report TS2300 for subsequent occurrences only (matching tsc behavior)
                 // Skip the first declaration as it's valid
                 for &idx in indices.iter().skip(1) {
-                    let message =
-                        format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
                     // Get the name node for precise error location
                     let error_node = self.get_interface_member_name_node(idx).unwrap_or(idx);
-                    self.error_at_node(
+                    self.error_at_node_msg(
                         error_node,
-                        &message,
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        &[&name],
                     );
                 }
             }
@@ -179,7 +177,7 @@ impl<'a> CheckerState<'a> {
     /// Report TS2300 "Duplicate identifier" error for a class member (property or method).
     /// Helper function to avoid code duplication in check_duplicate_class_members.
     fn report_duplicate_class_member_ts2300(&mut self, member_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::types::diagnostics::diagnostic_codes;
 
         let member_node = self.ctx.arena.get(member_idx);
         let (name, error_node) = match member_node.map(|n| n.kind) {
@@ -205,8 +203,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(name) = name {
-            let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
-            self.error_at_node(error_node, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+            self.error_at_node_msg(error_node, diagnostic_codes::DUPLICATE_IDENTIFIER, &[&name]);
         }
     }
 
@@ -220,7 +217,7 @@ impl<'a> CheckerState<'a> {
     ///   foo(x: string): void;    // overload signature  
     ///   foo(x: any) { }          // implementation - this is valid!
     pub(crate) fn check_duplicate_class_members(&mut self, members: &[NodeIndex]) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::types::diagnostics::diagnostic_codes;
         use rustc_hash::FxHashMap;
 
         // Track member names with their info
@@ -395,12 +392,10 @@ impl<'a> CheckerState<'a> {
                         } else {
                             accessor.name
                         };
-                        let message =
-                            format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
-                        self.error_at_node(
+                        self.error_at_node_msg(
                             error_node,
-                            &message,
                             diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            &[&name],
                         );
                     }
                 }
@@ -912,12 +907,12 @@ impl<'a> CheckerState<'a> {
                     && sig.type_annotation.is_none()
                     && let Some(name) = self.property_name_for_error(sig.name)
                 {
-                    use crate::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
-                    let message =
-                        format_message(diagnostic_messages::IMPLICIT_ANY_RETURN, &[&name, "any"]);
-                    self.error_at_node(sig.name, &message, diagnostic_codes::IMPLICIT_ANY_RETURN);
+                    use crate::types::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        sig.name,
+                        diagnostic_codes::IMPLICIT_ANY_RETURN,
+                        &[&name, "any"],
+                    );
                 }
             }
         }
@@ -933,14 +928,12 @@ impl<'a> CheckerState<'a> {
                     && sig.type_annotation.is_none()
                     && let Some(member_name) = self.get_property_name(sig.name)
                 {
-                    use crate::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
-                    let message = format_message(
-                        diagnostic_messages::MEMBER_IMPLICIT_ANY,
+                    use crate::types::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        sig.name,
+                        diagnostic_codes::IMPLICIT_ANY_MEMBER,
                         &[&member_name, "any"],
                     );
-                    self.error_at_node(sig.name, &message, diagnostic_codes::IMPLICIT_ANY_MEMBER);
                 }
             }
         }
@@ -1058,7 +1051,7 @@ impl<'a> CheckerState<'a> {
         param: &tsz_parser::parser::node::ParameterData,
         has_contextual_type: bool,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::types::diagnostics::diagnostic_codes;
 
         if !self.ctx.no_implicit_any() || has_contextual_type {
             return;
@@ -1112,14 +1105,10 @@ impl<'a> CheckerState<'a> {
         } else {
             "any"
         };
-        let message = format_message(
-            diagnostic_messages::PARAMETER_IMPLICIT_ANY,
-            &[&param_name, implicit_type],
-        );
-        self.error_at_node(
+        self.error_at_node_msg(
             param.name,
-            &message,
             diagnostic_codes::IMPLICIT_ANY_PARAMETER,
+            &[&param_name, implicit_type],
         );
     }
 
@@ -1132,7 +1121,7 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         is_rest_parameter: bool,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::types::diagnostics::diagnostic_codes;
 
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return;
@@ -1165,14 +1154,10 @@ impl<'a> CheckerState<'a> {
                                 };
 
                                 let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
-                                let message = format_message(
-                                    diagnostic_messages::PARAMETER_IMPLICIT_ANY,
-                                    &[&binding_name, implicit_type],
-                                );
-                                self.error_at_node(
+                                self.error_at_node_msg(
                                     binding_elem.name,
-                                    &message,
                                     diagnostic_codes::IMPLICIT_ANY_PARAMETER,
+                                    &[&binding_name, implicit_type],
                                 );
                             }
 
@@ -1214,14 +1199,10 @@ impl<'a> CheckerState<'a> {
                             let binding_name = self.parameter_name_for_error(binding_elem.name);
 
                             let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
-                            let message = format_message(
-                                diagnostic_messages::PARAMETER_IMPLICIT_ANY,
-                                &[&binding_name, implicit_type],
-                            );
-                            self.error_at_node(
+                            self.error_at_node_msg(
                                 binding_elem.name,
-                                &message,
                                 diagnostic_codes::IMPLICIT_ANY_PARAMETER,
+                                &[&binding_name, implicit_type],
                             );
                         }
 
@@ -1671,14 +1652,12 @@ impl<'a> CheckerState<'a> {
             && prop.initializer.is_none()
             && let Some(member_name) = self.get_property_name(prop.name)
         {
-            use crate::types::diagnostics::{
-                diagnostic_codes, diagnostic_messages, format_message,
-            };
-            let message = format_message(
-                diagnostic_messages::MEMBER_IMPLICIT_ANY,
+            use crate::types::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                prop.name,
+                diagnostic_codes::IMPLICIT_ANY_MEMBER,
                 &[&member_name, "any"],
             );
-            self.error_at_node(prop.name, &message, diagnostic_codes::IMPLICIT_ANY_MEMBER);
         }
 
         // Cache the inferred type for the property node so DeclarationEmitter can use it
@@ -2232,7 +2211,7 @@ impl<'a> CheckerState<'a> {
         has_contextual_return: bool,
         fallback_node: NodeIndex,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::types::diagnostics::diagnostic_codes;
 
         if !self.ctx.no_implicit_any() || has_type_annotation || has_contextual_return {
             return;
@@ -2243,24 +2222,16 @@ impl<'a> CheckerState<'a> {
 
         let return_text = self.implicit_any_return_display(return_type);
         if let Some(name) = name {
-            let message = format_message(
-                diagnostic_messages::IMPLICIT_ANY_RETURN,
+            self.error_at_node_msg(
+                name_node.unwrap_or(fallback_node),
+                diagnostic_codes::IMPLICIT_ANY_RETURN,
                 &[&name, &return_text],
             );
-            self.error_at_node(
-                name_node.unwrap_or(fallback_node),
-                &message,
-                diagnostic_codes::IMPLICIT_ANY_RETURN,
-            );
         } else {
-            let message = format_message(
-                diagnostic_messages::IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION,
-                &[&return_text],
-            );
-            self.error_at_node(
+            self.error_at_node_msg(
                 fallback_node,
-                &message,
                 diagnostic_codes::IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION,
+                &[&return_text],
             );
         }
     }
@@ -2884,9 +2855,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
                 if should_emit_ts2705 {
                     use crate::context::ScriptTarget;
-                    use crate::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
+                    use crate::types::diagnostics::diagnostic_codes;
 
                     // For ES5/ES3 targets, emit TS1055 instead of TS2705
                     let is_es5_or_lower = matches!(
@@ -2894,26 +2863,19 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         ScriptTarget::ES3 | ScriptTarget::ES5
                     );
 
+                    let type_name = self.format_type(return_type);
                     if is_es5_or_lower {
-                        let type_name = self.format_type(return_type);
-                        self.error_at_node(
+                        self.error_at_node_msg(
                             func.type_annotation,
-                            &format_message(
-                                diagnostic_messages::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5,
-                                &[&type_name],
-                            ),
                             diagnostic_codes::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5,
+                            &[&type_name],
                         );
                     } else {
                         // TS1064: For ES6+ targets, the return type must be Promise<T>
-                        let type_name = self.format_type(return_type);
-                        self.error_at_node(
+                        self.error_at_node_msg(
                             func.type_annotation,
-                            &format_message(
-                                diagnostic_messages::ASYNC_RETURN_TYPE_MUST_BE_PROMISE,
-                                &[&type_name],
-                            ),
                             diagnostic_codes::ASYNC_RETURN_TYPE_MUST_BE_PROMISE,
+                            &[&type_name],
                         );
                     }
                 }
@@ -3017,22 +2979,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let is_ambient =
                 self.has_declare_modifier(&func.modifiers) || self.ctx.file_name.ends_with(".d.ts");
             if is_ambient && let Some(func_name) = self.get_function_name_from_node(func_idx) {
-                use crate::types::diagnostics::{
-                    diagnostic_codes, diagnostic_messages, format_message,
-                };
-                let message = format_message(
-                    diagnostic_messages::IMPLICIT_ANY_RETURN,
-                    &[&func_name, "any"],
-                );
+                use crate::types::diagnostics::diagnostic_codes;
                 let name_node = if !func.name.is_none() {
                     Some(func.name)
                 } else {
                     None
                 };
-                self.error_at_node(
+                self.error_at_node_msg(
                     name_node.unwrap_or(func_idx),
-                    &message,
                     diagnostic_codes::IMPLICIT_ANY_RETURN,
+                    &[&func_name, "any"],
                 );
             }
         }

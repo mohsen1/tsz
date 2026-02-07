@@ -456,7 +456,7 @@ impl<'a> CheckerState<'a> {
     /// Check a namespace import (import x = Namespace or import x = Namespace.Member).
     /// Emits TS2503 "Cannot find namespace" if the namespace cannot be resolved.
     fn check_namespace_import(&mut self, module_ref: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::types::diagnostics::diagnostic_codes;
 
         let Some(ref_node) = self.ctx.arena.get(module_ref) else {
             return;
@@ -473,12 +473,10 @@ impl<'a> CheckerState<'a> {
                 }
                 // Try to resolve the identifier as a namespace/module
                 if self.resolve_identifier_symbol(module_ref).is_none() {
-                    let message =
-                        format_message(diagnostic_messages::CANNOT_FIND_NAMESPACE, &[name]);
-                    self.error_at_node(
+                    self.error_at_node_msg(
                         module_ref,
-                        &message,
                         diagnostic_codes::CANNOT_FIND_NAMESPACE,
+                        &[name],
                     );
                 }
             }
@@ -494,12 +492,10 @@ impl<'a> CheckerState<'a> {
                     // Try to resolve the left identifier
                     let left_resolved = self.resolve_leftmost_qualified_name(qn.left);
                     if left_resolved.is_none() {
-                        let message =
-                            format_message(diagnostic_messages::CANNOT_FIND_NAMESPACE, &[&name]);
-                        self.error_at_node(
+                        self.error_at_node_msg(
                             qn.left,
-                            &message,
                             diagnostic_codes::CANNOT_FIND_NAMESPACE,
+                            &[&name],
                         );
                     }
                     // TODO: If left is resolved, check if right member exists (TS2694)

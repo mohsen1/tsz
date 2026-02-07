@@ -40,7 +40,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         call: &tsz_parser::parser::node::CallExprData,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::types::diagnostics::diagnostic_codes;
 
         if !self.ctx.report_unresolved_imports {
             return;
@@ -122,8 +122,11 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .modules_with_ts2307_emitted
                 .insert(module_key.clone());
-            let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
-            self.error_at_node(arg_idx, &message, diagnostic_codes::CANNOT_FIND_MODULE);
+            self.error_at_node_msg(
+                arg_idx,
+                diagnostic_codes::CANNOT_FIND_MODULE,
+                &[module_name],
+            );
         }
     }
 
@@ -145,7 +148,7 @@ impl<'a> CheckerState<'a> {
     /// - Validates re-exported members exist in source module
     /// - Checks for circular re-export chains
     pub(crate) fn check_export_module_specifier(&mut self, stmt_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::types::diagnostics::diagnostic_codes;
 
         if !self.ctx.report_unresolved_imports {
             return;
@@ -253,11 +256,10 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .modules_with_ts2307_emitted
                 .insert(module_key.clone());
-            let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
-            self.error_at_node(
+            self.error_at_node_msg(
                 export_decl.module_specifier,
-                &message,
                 diagnostic_codes::CANNOT_FIND_MODULE,
+                &[module_name],
             );
         }
 
