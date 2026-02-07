@@ -2,7 +2,9 @@
 
 **Goal**: Match `tsc` behavior exactly. Every error, inference, and edge case must be identical to TypeScript's compiler.
 
-Important document: docs/architecture/NORTH_STAR.md
+Important documents:
+- `docs/architecture/NORTH_STAR.md` — target architecture
+- `docs/HOW_TO_CODE.md` — coding conventions and patterns to follow
 
 ---
 
