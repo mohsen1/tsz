@@ -167,7 +167,8 @@ Already instrumented (search for `#[tracing::instrument]` or `trace!`):
 
 ---
 
-## Tesing 
+## Testing
+- **ALWAYS use `cargo nextest run` instead of `cargo test`** — nextest is faster and gives better output
 - Write unit tests for any new functionality
 - It is a good idea to write a failing test first before implementing a feature
 
