@@ -7,7 +7,7 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 repository = "https://github.com/mohsenazimi/tsz"
-license = "MIT"
+license = "Apache"
 authors = ["Mohsen Azimi <mohsen@users.noreply.github.com>"]
 
 [workspace.dependencies]
@@ -156,7 +156,7 @@ needless_pass_by_value = "allow"
 trivially_copy_pass_by_ref = "allow"
 
 [package]
-name = "wasm"
+name = "tsz"
 version.workspace = true
 edition.workspace = true
 description = "Core TypeScript compiler and type checker library"
