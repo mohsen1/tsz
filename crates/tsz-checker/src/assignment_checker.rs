@@ -118,12 +118,16 @@ impl<'a> CheckerState<'a> {
 
         // Set destructuring flag when LHS is an object/array pattern to suppress
         // TS1117 (duplicate property) checks in destructuring targets.
-        let is_destructuring = if let Some(left_node) = self.ctx.arena.get(left_idx) {
-            left_node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                || left_node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-        } else {
-            false
-        };
+        let (is_destructuring, is_array_destructuring) =
+            if let Some(left_node) = self.ctx.arena.get(left_idx) {
+                let is_obj = left_node.kind
+                    == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION;
+                let is_arr =
+                    left_node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
+                (is_obj || is_arr, is_arr)
+            } else {
+                (false, false)
+            };
         let prev_destructuring = self.ctx.in_destructuring_target;
         if is_destructuring {
             self.ctx.in_destructuring_target = true;
@@ -161,7 +165,8 @@ impl<'a> CheckerState<'a> {
                     target_level,
                     right_idx,
                 );
-            } else if !self.is_assignable_to(right_type, left_type)
+            } else if !is_array_destructuring
+                && !self.is_assignable_to(right_type, left_type)
                 && !self.should_skip_weak_union_error(right_type, left_type, right_idx)
             {
                 self.error_type_not_assignable_with_reason_at(right_type, left_type, right_idx);
