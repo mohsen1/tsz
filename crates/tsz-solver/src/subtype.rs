@@ -2459,6 +2459,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::True;
                 }
             }
+
+            // Type parameter constraint check: if source is a type parameter with a constraint,
+            // check if its constraint is assignable to the entire target union.
+            // e.g., Bottom extends T | U should be assignable to T | U
+            if let Some(s_info) = type_param_info(self.interner, source) {
+                if let Some(constraint) = s_info.constraint {
+                    if self.check_subtype(constraint, target).is_true() {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
+
             // Trace: Source is not a subtype of any union member
             if let Some(tracer) = &mut self.tracer {
                 if !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {
