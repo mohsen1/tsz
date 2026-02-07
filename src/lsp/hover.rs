@@ -7,15 +7,12 @@
 //! - `kind_modifiers`: Comma-separated modifier list (e.g. `export,declare`)
 //! - `documentation`: Extracted JSDoc content
 
-use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::lsp::jsdoc::{jsdoc_for_node, parse_jsdoc};
-use crate::lsp::position::{LineMap, Position, Range};
+use crate::lsp::position::{Position, Range};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_or_before_offset;
 use crate::parser::NodeIndex;
-use crate::parser::node::NodeArena;
-use crate::solver::TypeInterner;
 
 /// A single JSDoc tag (e.g. `@param`, `@returns`, `@deprecated`).
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -45,59 +42,9 @@ pub struct HoverInfo {
     pub tags: Vec<JsDocTag>,
 }
 
-/// Hover provider.
-pub struct HoverProvider<'a> {
-    arena: &'a NodeArena,
-    binder: &'a BinderState,
-    line_map: &'a LineMap,
-    interner: &'a TypeInterner,
-    source_text: &'a str,
-    file_name: String,
-    strict: bool,
-}
+define_lsp_provider!(full HoverProvider, "Hover provider.");
 
 impl<'a> HoverProvider<'a> {
-    /// Create a new Hover provider.
-    pub fn new(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        line_map: &'a LineMap,
-        interner: &'a TypeInterner,
-        source_text: &'a str,
-        file_name: String,
-    ) -> Self {
-        Self {
-            arena,
-            binder,
-            line_map,
-            interner,
-            source_text,
-            file_name,
-            strict: false,
-        }
-    }
-
-    /// Create a new Hover provider with explicit strict mode setting.
-    pub fn with_strict(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        line_map: &'a LineMap,
-        interner: &'a TypeInterner,
-        source_text: &'a str,
-        file_name: String,
-        strict: bool,
-    ) -> Self {
-        Self {
-            arena,
-            binder,
-            line_map,
-            interner,
-            source_text,
-            file_name,
-            strict,
-        }
-    }
-
     /// Get hover information at the given position.
     ///
     /// # Arguments
