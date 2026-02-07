@@ -405,6 +405,10 @@ pub struct TypeEnvironment {
     /// Maps enum member DefIds to their parent enum DefId.
     /// Used for member-to-parent assignability (e.g., E.A -> E).
     enum_parents: FxHashMap<u32, DefId>,
+    /// Maps class DefIds to their instance types.
+    /// When a class Lazy(DefId) is resolved in type position, the instance type
+    /// (not the constructor type) should be returned.
+    class_instance_types: FxHashMap<u32, TypeId>,
 }
 
 impl TypeEnvironment {
@@ -422,6 +426,7 @@ impl TypeEnvironment {
             numeric_enums: FxHashSet::default(),
             def_kinds: FxHashMap::default(),
             enum_parents: FxHashMap::default(),
+            class_instance_types: FxHashMap::default(),
         }
     }
 
@@ -504,6 +509,13 @@ impl TypeEnvironment {
     /// Register a DefId's resolved type.
     pub fn insert_def(&mut self, def_id: DefId, type_id: TypeId) {
         self.def_types.insert(def_id.0, type_id);
+    }
+
+    /// Register a class DefId's instance type.
+    /// When resolve_lazy is called for this DefId, the instance type will be
+    /// returned instead of the constructor type from def_types.
+    pub fn insert_class_instance_type(&mut self, def_id: DefId, instance_type: TypeId) {
+        self.class_instance_types.insert(def_id.0, instance_type);
     }
 
     /// Register a DefId's resolved type with type parameters.
@@ -605,6 +617,10 @@ impl TypeResolver for TypeEnvironment {
     }
 
     fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        // For classes, return the instance type (type position) instead of the constructor type
+        if let Some(&instance_type) = self.class_instance_types.get(&def_id.0) {
+            return Some(instance_type);
+        }
         self.get_def(def_id)
     }
 
