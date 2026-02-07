@@ -403,14 +403,22 @@ impl<'a> FlowAnalyzer<'a> {
             // OPTIMIZATION: Check global cache first to avoid redundant traversals
             // BUG FIX: Skip cache for SWITCH_CLAUSE nodes to ensure proper flow graph traversal
             // Switch clauses must be processed to schedule antecedents and apply narrowing
-            let is_switch_clause = if let Some(flow) = self.binder.flow_nodes.get(current_flow) {
-                flow.has_any_flags(flow_flags::SWITCH_CLAUSE)
-            } else {
-                false
-            };
+            let (is_switch_clause, is_loop_label_node) =
+                if let Some(flow) = self.binder.flow_nodes.get(current_flow) {
+                    (
+                        flow.has_any_flags(flow_flags::SWITCH_CLAUSE),
+                        flow.has_any_flags(flow_flags::LOOP_LABEL),
+                    )
+                } else {
+                    (false, false)
+                };
 
-            // Only use cache if: 1) not a switch clause, 2) initial type is concrete
-            if !is_switch_clause && !initial_has_type_params {
+            // Use cache if: 1) not a switch clause, AND
+            // 2) either initial type is concrete OR this is a loop label.
+            // Loop labels MUST always check cache because analyze_loop_fixed_point
+            // injects entries as a recursion guard — skipping the check causes
+            // stack overflow when types contain type parameters.
+            if !is_switch_clause && (!initial_has_type_params || is_loop_label_node) {
                 if let Some(sym_id) = symbol_id {
                     if let Some(cache) = self.flow_cache {
                         let key = (current_flow, sym_id, initial_type);

@@ -1497,6 +1497,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     .resolver
                     .resolve_lazy(lazy_def_id, self.interner)
                 {
+                    // Guard against self-referential lazy types
+                    if resolved_type == type_id {
+                        return None;
+                    }
                     // Recursively check the resolved type
                     return self.get_enum_def_id(resolved_type);
                 } else {
