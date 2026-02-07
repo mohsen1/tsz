@@ -1071,6 +1071,14 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol_arena) = opt_symbol_arena
             && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
         {
+            // Guard against deep cross-arena recursion to prevent stack overflow.
+            // Each delegation creates a full checker stack frame chain, so even
+            // moderate depth can overflow the stack.
+            if !self.ctx.enter_recursion() {
+                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+                return Some((TypeId::ERROR, Vec::new()));
+            }
+
             // Remove the in-progress ERROR marker before delegating to child checker.
             // The parent pre-caches ERROR as a cycle-detection marker and we don't
             // want the child checker to observe that placeholder.
@@ -1114,6 +1122,7 @@ impl<'a> CheckerState<'a> {
                     .or_insert(cached_ty);
             }
 
+            self.ctx.leave_recursion();
             return Some((result, Vec::new()));
         }
 

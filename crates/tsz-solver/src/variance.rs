@@ -36,7 +36,7 @@ use crate::db::QueryDatabase;
 use crate::def::DefId;
 use crate::types::*;
 use crate::visitor::{lazy_def_id, ref_symbol};
-use rustc_hash::FxHashSet;
+
 use std::sync::Arc;
 use tsz_common::interner::Atom;
 
@@ -94,9 +94,8 @@ struct VarianceVisitor<'a> {
     target_param: Atom,
     /// The accumulated variance result so far.
     result: Variance,
-    /// Cycle detection: tracks (TypeId, Polarity) pairs.
-    /// Polarity: true = Positive (Covariant), false = Negative (Contravariant)
-    visiting: FxHashSet<(TypeId, bool)>,
+    /// Unified recursion guard for (TypeId, Polarity) cycle detection.
+    guard: crate::recursion::RecursionGuard<(TypeId, bool)>,
     /// Stack of polarities to track current position in the type graph.
     /// true = Positive (Covariant), false = Negative (Contravariant)
     polarity_stack: Vec<bool>,
@@ -109,7 +108,7 @@ impl<'a> VarianceVisitor<'a> {
             db,
             target_param,
             result: Variance::empty(),
-            visiting: FxHashSet::default(),
+            guard: crate::recursion::RecursionGuard::new(50, 100_000),
             polarity_stack: vec![true], // Start with positive (covariant) polarity
         }
     }
@@ -131,9 +130,11 @@ impl<'a> VarianceVisitor<'a> {
 
     /// Core recursive step with polarity tracking.
     fn visit_with_polarity(&mut self, type_id: TypeId, polarity: bool) {
-        // Cycle detection: if we've seen this (type_id, polarity) pair, skip
-        if !self.visiting.insert((type_id, polarity)) {
-            return;
+        // Unified enter: cycle detection + depth/iteration limits
+        let key = (type_id, polarity);
+        match self.guard.enter(key) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return, // Cycle or limits exceeded
         }
 
         // Push new polarity onto stack
@@ -146,7 +147,7 @@ impl<'a> VarianceVisitor<'a> {
         // Pop polarity from stack
         self.polarity_stack.pop();
 
-        self.visiting.remove(&(type_id, polarity));
+        self.guard.leave(key);
     }
 
     /// Get the current polarity from the stack.

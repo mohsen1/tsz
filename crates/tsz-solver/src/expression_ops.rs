@@ -188,10 +188,9 @@ pub fn compute_best_common_type<R: TypeResolver>(
         for &candidate in &widened {
             let is_supertype = widened.iter().all(|&ty| {
                 // CRITICAL: Reset the recursion guard counters for each top-level check.
-                // Otherwise, total_checks accumulates across the loop and eventually
-                // causes spurious DepthExceeded failures (treated as false).
-                checker.total_checks = 0;
-                checker.depth = 0;
+                // Otherwise, iterations accumulate across the loop and eventually
+                // cause spurious DepthExceeded failures (treated as false).
+                checker.guard.reset();
                 checker.is_subtype_of(ty, candidate)
             });
             if is_supertype {
@@ -202,8 +201,7 @@ pub fn compute_best_common_type<R: TypeResolver>(
         let mut checker = SubtypeChecker::new(interner);
         for &candidate in &widened {
             let is_supertype = widened.iter().all(|&ty| {
-                checker.total_checks = 0;
-                checker.depth = 0;
+                checker.guard.reset();
                 checker.is_subtype_of(ty, candidate)
             });
             if is_supertype {

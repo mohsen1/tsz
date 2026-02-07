@@ -14,7 +14,6 @@ use crate::visitor::TypeVisitor;
 use crate::{
     ApparentMemberKind, TypeDatabase, apparent_object_member_kind, apparent_primitive_member_kind,
 };
-use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 use tsz_common::interner::Atom;
 
@@ -60,8 +59,8 @@ pub enum PropertyAccessResult {
 pub struct PropertyAccessEvaluator<'a> {
     db: &'a dyn QueryDatabase,
     no_unchecked_indexed_access: bool,
-    visiting: RefCell<FxHashSet<TypeId>>,
-    depth: RefCell<u32>,
+    /// Unified recursion guard for cycle detection and depth limiting.
+    guard: RefCell<crate::recursion::RecursionGuard<TypeId>>,
     // Context for visitor pattern (set during property access resolution)
     // We store both the str (for immediate use) and Atom (for interned comparisons)
     current_prop_name: RefCell<Option<String>>,
@@ -75,8 +74,7 @@ struct PropertyAccessGuard<'a> {
 
 impl<'a> Drop for PropertyAccessGuard<'a> {
     fn drop(&mut self) {
-        self.evaluator.visiting.borrow_mut().remove(&self.obj_type);
-        *self.evaluator.depth.borrow_mut() -= 1;
+        self.evaluator.guard.borrow_mut().leave(self.obj_type);
     }
 }
 
@@ -85,8 +83,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         PropertyAccessEvaluator {
             db,
             no_unchecked_indexed_access: false,
-            visiting: RefCell::new(FxHashSet::default()),
-            depth: RefCell::new(0),
+            guard: RefCell::new(crate::recursion::RecursionGuard::new(50, 100_000)),
             current_prop_name: RefCell::new(None),
             current_prop_atom: RefCell::new(None),
         }
@@ -98,8 +95,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         PropertyAccessEvaluator {
             db,
             no_unchecked_indexed_access: false,
-            visiting: RefCell::new(FxHashSet::default()),
-            depth: RefCell::new(0),
+            guard: RefCell::new(crate::recursion::RecursionGuard::new(50, 100_000)),
             current_prop_name: RefCell::new(None),
             current_prop_atom: RefCell::new(None),
         }
@@ -778,21 +774,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     fn enter_property_access_guard(&self, obj_type: TypeId) -> Option<PropertyAccessGuard<'_>> {
-        const MAX_PROPERTY_ACCESS_DEPTH: u32 = 50;
+        use crate::recursion::RecursionResult;
 
-        let mut depth = self.depth.borrow_mut();
-        if *depth >= MAX_PROPERTY_ACCESS_DEPTH {
-            return None;
+        let mut guard = self.guard.borrow_mut();
+        match guard.enter(obj_type) {
+            RecursionResult::Entered => {}
+            RecursionResult::Cycle
+            | RecursionResult::DepthExceeded
+            | RecursionResult::IterationExceeded => {
+                return None;
+            }
         }
-        *depth += 1;
-        drop(depth);
-
-        let mut visiting = self.visiting.borrow_mut();
-        if !visiting.insert(obj_type) {
-            drop(visiting);
-            *self.depth.borrow_mut() -= 1;
-            return None;
-        }
+        drop(guard);
 
         Some(PropertyAccessGuard {
             evaluator: self,

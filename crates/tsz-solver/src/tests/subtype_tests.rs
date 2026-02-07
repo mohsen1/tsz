@@ -1137,7 +1137,7 @@ fn test_recursion_depth_limit_provisional_subtyping() {
     // genuinely incompatible types that happen to be deeply nested.
     let result = checker.check_subtype(deep_string, deep_number);
     assert!(matches!(result, SubtypeResult::DepthExceeded));
-    assert!(checker.depth_exceeded);
+    assert!(checker.guard.depth_exceeded);
 }
 
 #[test]

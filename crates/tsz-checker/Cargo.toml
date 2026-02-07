@@ -19,6 +19,7 @@ smallvec = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 globset = { workspace = true }
+stacker = "0.1.23"
 
 [lints]
 workspace = true

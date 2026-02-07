@@ -173,20 +173,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // to their structural forms.
         // =======================================================================
         let def_pair = (*s_def, *t_def);
-        if self.seen_defs.contains(&def_pair) {
-            // We're in a cycle at the DefId level - return CycleDetected
-            // This implements coinductive semantics for recursive types
+
+        // Check reversed pair for bivariant cross-recursion
+        if self.def_guard.is_visiting(&(*t_def, *s_def)) {
             return SubtypeResult::CycleDetected;
         }
 
-        // Also check the reversed pair for bivariant cross-recursion
-        let reversed_def_pair = (*t_def, *s_def);
-        if self.seen_defs.contains(&reversed_def_pair) {
-            return SubtypeResult::CycleDetected;
+        use crate::recursion::RecursionResult;
+        match self.def_guard.enter(def_pair) {
+            RecursionResult::Cycle => return SubtypeResult::CycleDetected,
+            RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
+                return SubtypeResult::DepthExceeded;
+            }
+            RecursionResult::Entered => {}
         }
-
-        // Mark this pair as being checked
-        self.seen_defs.insert(def_pair);
 
         // =======================================================================
         // O(1) NOMINAL CLASS SUBTYPE CHECKING (Phase 3.2: InheritanceGraph Bridge)
@@ -209,7 +209,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         // Both are classes - use nominal inheritance check
                         if graph.is_derived_from(s_sym, t_sym) {
                             // O(1) bitset check: source is a subclass of target
-                            self.seen_defs.remove(&def_pair);
+                            self.def_guard.leave(def_pair);
                             return SubtypeResult::True;
                         }
                         // Not a subclass - fall through to structural check below
@@ -223,8 +223,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let t_resolved = self.resolver.resolve_lazy(*t_def, self.interner);
         let result = self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved);
 
-        // Remove from seen set after checking
-        self.seen_defs.remove(&def_pair);
+        // Leave def_guard after checking
+        self.def_guard.leave(def_pair);
 
         result
     }

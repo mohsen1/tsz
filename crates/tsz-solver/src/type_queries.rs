@@ -522,9 +522,7 @@ where
     let mut checker = ContainsTypeChecker {
         db,
         predicate,
-        visiting: rustc_hash::FxHashSet::default(),
-        max_depth: 20,
-        current_depth: 0,
+        guard: crate::recursion::RecursionGuard::new(20, 100_000),
     };
     checker.check(type_id)
 }
@@ -535,9 +533,7 @@ where
 {
     db: &'a dyn TypeDatabase,
     predicate: F,
-    visiting: rustc_hash::FxHashSet<TypeId>,
-    max_depth: usize,
-    current_depth: usize,
+    guard: crate::recursion::RecursionGuard<TypeId>,
 }
 
 impl<'a, F> ContainsTypeChecker<'a, F>
@@ -545,13 +541,6 @@ where
     F: Fn(&TypeKey) -> bool,
 {
     fn check(&mut self, type_id: TypeId) -> bool {
-        if self.current_depth >= self.max_depth {
-            return false;
-        }
-        if self.visiting.contains(&type_id) {
-            return false;
-        }
-
         let Some(key) = self.db.lookup(type_id) else {
             return false;
         };
@@ -560,13 +549,14 @@ where
             return true;
         }
 
-        self.visiting.insert(type_id);
-        self.current_depth += 1;
+        match self.guard.enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return false,
+        }
 
         let result = self.check_key(&key);
 
-        self.current_depth -= 1;
-        self.visiting.remove(&type_id);
+        self.guard.leave(type_id);
 
         result
     }
