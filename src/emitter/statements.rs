@@ -81,6 +81,11 @@ impl<'a> Printer<'a> {
             self.emit(stmt_idx);
             // Only add newline if something was actually emitted
             if self.writer.len() > before_len {
+                // Emit trailing comments on the same line as the statement
+                // (e.g., `foo(); // comment` should keep `// comment` on the same line)
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.emit_trailing_comments(stmt_node.end);
+                }
                 self.write_line();
             }
         }
