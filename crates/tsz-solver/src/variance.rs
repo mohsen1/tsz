@@ -108,7 +108,9 @@ impl<'a> VarianceVisitor<'a> {
             db,
             target_param,
             result: Variance::empty(),
-            guard: crate::recursion::RecursionGuard::new(50, 100_000),
+            guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::Variance,
+            ),
             polarity_stack: vec![true], // Start with positive (covariant) polarity
         }
     }

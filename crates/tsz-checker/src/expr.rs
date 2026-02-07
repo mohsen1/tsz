@@ -37,8 +37,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-/// Maximum recursion depth for expression checking to prevent stack overflow
-const MAX_EXPR_CHECK_DEPTH: u32 = 500;
+use tsz_common::limits::MAX_EXPR_CHECK_DEPTH;
 
 /// Expression type checker that operates on the shared context.
 ///

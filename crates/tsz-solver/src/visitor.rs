@@ -1374,7 +1374,9 @@ impl<'a> RecursiveTypeCollector<'a> {
         Self {
             types,
             collected: FxHashSet::default(),
-            guard: crate::recursion::RecursionGuard::new(20, 100_000),
+            guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::ShallowTraversal,
+            ),
         }
     }
 
@@ -1651,7 +1653,9 @@ where
         types,
         predicate,
         memo: FxHashMap::default(),
-        guard: crate::recursion::RecursionGuard::new(20, 100_000),
+        guard: crate::recursion::RecursionGuard::with_profile(
+            crate::recursion::RecursionProfile::ShallowTraversal,
+        ),
     };
     checker.check(type_id)
 }
@@ -1980,7 +1984,9 @@ impl<'a> ConstAssertionVisitor<'a> {
     pub fn new(db: &'a dyn TypeDatabase) -> Self {
         Self {
             db,
-            guard: crate::recursion::RecursionGuard::new(50, 100_000),
+            guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::ConstAssertion,
+            ),
         }
     }
 

@@ -28,7 +28,9 @@ impl<'a, R: TypeResolver> ShapeExtractor<'a, R> {
         Self {
             db,
             resolver,
-            guard: crate::recursion::RecursionGuard::new(50, 100_000),
+            guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::ShapeExtraction,
+            ),
         }
     }
 

@@ -16,10 +16,6 @@ use crate::types::*;
 use crate::{TypeDatabase, TypeSubstitution, instantiate_type};
 use std::cell::RefCell;
 
-/// Maximum depth for recursive application evaluation.
-/// Prevents stack overflow on deeply recursive generic types.
-pub const MAX_APPLICATION_DEPTH: u32 = 50;
-
 /// Result of application type evaluation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ApplicationResult {
@@ -62,9 +58,8 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
         Self {
             interner,
             resolver,
-            guard: RefCell::new(crate::recursion::RecursionGuard::new(
-                MAX_APPLICATION_DEPTH,
-                100_000,
+            guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeApplication,
             )),
             cache: RefCell::new(rustc_hash::FxHashMap::default()),
         }

@@ -83,7 +83,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         PropertyAccessEvaluator {
             db,
             no_unchecked_indexed_access: false,
-            guard: RefCell::new(crate::recursion::RecursionGuard::new(50, 100_000)),
+            guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::PropertyAccess,
+            )),
             current_prop_name: RefCell::new(None),
             current_prop_atom: RefCell::new(None),
         }
@@ -95,7 +97,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         PropertyAccessEvaluator {
             db,
             no_unchecked_indexed_access: false,
-            guard: RefCell::new(crate::recursion::RecursionGuard::new(50, 100_000)),
+            guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::PropertyAccess,
+            )),
             current_prop_name: RefCell::new(None),
             current_prop_atom: RefCell::new(None),
         }
