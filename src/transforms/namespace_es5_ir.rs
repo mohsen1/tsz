@@ -1331,10 +1331,17 @@ fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
             k if k == syntax_kind_ext::VARIABLE_STATEMENT
                 || k == syntax_kind_ext::FUNCTION_DECLARATION
                 || k == syntax_kind_ext::CLASS_DECLARATION
-                || k == syntax_kind_ext::ENUM_DECLARATION
-                || k == syntax_kind_ext::MODULE_DECLARATION =>
+                || k == syntax_kind_ext::ENUM_DECLARATION =>
             {
                 return true;
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                // Recursively check if nested namespace is itself instantiated
+                if let Some(ns_data) = arena.get_module(stmt_node) {
+                    if body_has_value_declarations(arena, ns_data.body) {
+                        return true;
+                    }
+                }
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 // Check if the exported declaration is a value declaration
@@ -1344,10 +1351,16 @@ fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
                             k if k == syntax_kind_ext::VARIABLE_STATEMENT
                                 || k == syntax_kind_ext::FUNCTION_DECLARATION
                                 || k == syntax_kind_ext::CLASS_DECLARATION
-                                || k == syntax_kind_ext::ENUM_DECLARATION
-                                || k == syntax_kind_ext::MODULE_DECLARATION =>
+                                || k == syntax_kind_ext::ENUM_DECLARATION =>
                             {
                                 return true;
+                            }
+                            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                                if let Some(ns_data) = arena.get_module(inner_node) {
+                                    if body_has_value_declarations(arena, ns_data.body) {
+                                        return true;
+                                    }
+                                }
                             }
                             _ => {}
                         }
