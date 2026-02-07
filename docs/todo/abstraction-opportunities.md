@@ -307,6 +307,7 @@ macro_rules! wasm_flag_getters {
 **Priority**: Medium (easy win)
 **Impact**: Code volume
 **Occurrences**: ~40 functions
+**Status**: Done — `define_kind_predicates!` macro in `src/wasm_api/ast.rs`
 
 ### Problem
 
@@ -341,6 +342,7 @@ define_kind_predicates! {
 **Priority**: Low-Medium
 **Impact**: Boilerplate reduction
 **Occurrences**: ~50 methods across 10+ structs
+**Status**: Skipped — method names don't match field names and many wrap in `Some()`, making a macro fragile
 
 ### Problem
 
@@ -376,6 +378,7 @@ macro_rules! builder_setters {
 **Priority**: Low
 **Impact**: Boilerplate reduction
 **Occurrences**: ~20
+**Status**: Done — `impl_from_diagnostic_arg!` macro in `crates/tsz-solver/src/diagnostics.rs`
 
 ### Problem
 
@@ -451,9 +454,9 @@ impl CheckerContext<'_> {
 | 5 | Type resolution unwrapping | ~50 | Medium-High | Medium | Judge queries (partial) |
 | 6 | LSP handler initialization | ~15 | Medium | Medium | — |
 | 7 | WASM API flag getters | ~70 | Medium | Low | — |
-| 8 | AST kind predicates | ~40 | Medium | Low | — |
-| 9 | Builder `with_*` methods | ~50 | Low-Medium | Low | — |
-| 10 | `From` impls for enums | ~20 | Low | Low | — |
+| 8 | AST kind predicates | ~40 | Medium | Low | **Done** |
+| 9 | Builder `with_*` methods | ~50 | Low-Medium | Low | Skipped (too varied) |
+| 10 | `From` impls for enums | ~20 | Low | Low | **Done** |
 | 11 | Checker symbol/scope lookups | ~100 | Medium | Medium | — |
 
 ### Recommended execution order
