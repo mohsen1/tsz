@@ -113,9 +113,9 @@ export class CliTranspiler {
     source: string,
     target: number,
     module: number,
-    options: { declaration?: boolean; alwaysStrict?: boolean } = {}
+    options: { declaration?: boolean; alwaysStrict?: boolean; sourceMap?: boolean } = {}
   ): Promise<TranspileResult> {
-    const { declaration = false, alwaysStrict = false } = options;
+    const { declaration = false, alwaysStrict = false, sourceMap = false } = options;
     const testName = `test_${this.counter++}`;
     const inputFile = path.join(this.tempDir, `${testName}.ts`);
 
@@ -135,6 +135,7 @@ export class CliTranspiler {
         args.push('--noCheck', '--noLib');
       }
       if (alwaysStrict) args.push('--alwaysStrict', 'true');
+      if (sourceMap) args.push('--sourceMap');
       args.push('--target', targetArg, '--module', moduleArg, inputFile);
 
       // Run CLI asynchronously without shell overhead.

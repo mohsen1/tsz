@@ -160,12 +160,20 @@ impl<'a> NamespaceES5Transformer<'a> {
         let is_exported = force_exported || has_export_modifier(self.arena, &ns_data.modifiers);
 
         // Transform the innermost body - use the last name part for member exports
-        let body = self.transform_namespace_body(innermost_body, &name_parts);
+        let mut body = self.transform_namespace_body(innermost_body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        // A namespace is instantiated if it has any value declarations
+        // (variables, functions, classes, enums, sub-namespaces),
+        // even if the body produces no IR output (e.g., uninitialized exports).
+        if body.is_empty() && !self.has_value_declarations(innermost_body) {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         // Root name is the first part
         let name = name_parts.first().cloned().unwrap_or_default();
@@ -177,7 +185,14 @@ impl<'a> NamespaceES5Transformer<'a> {
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var,
+            parent_name: None,
+            param_name,
         })
+    }
+
+    /// Check if a namespace body contains any value declarations
+    fn has_value_declarations(&self, body_idx: NodeIndex) -> bool {
+        body_has_value_declarations(self.arena, body_idx)
     }
 
     /// Flatten a module name into parts (handles both identifiers and qualified names)
@@ -270,18 +285,146 @@ impl<'a> NamespaceES5Transformer<'a> {
             return result;
         };
 
+        // Track names declared by classes, functions, enums so that subsequent
+        // namespace declarations merging with them don't re-emit `var`.
+        let mut declared_names = std::collections::HashSet::new();
+
+        // First pass: collect declared names from classes, functions, enums
+        if let Some(block_data) = self.arena.get_module_block(body_node)
+            && let Some(ref stmts) = block_data.statements
+        {
+            for &stmt_idx in &stmts.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    match stmt_node.kind {
+                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                            if let Some(class_data) = self.arena.get_class(stmt_node) {
+                                if let Some(name) = get_identifier_text(self.arena, class_data.name)
+                                {
+                                    declared_names.insert(name);
+                                }
+                            }
+                        }
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                            if let Some(func_data) = self.arena.get_function(stmt_node) {
+                                if let Some(name) = get_identifier_text(self.arena, func_data.name)
+                                {
+                                    declared_names.insert(name);
+                                }
+                            }
+                        }
+                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                            if let Some(enum_data) = self.arena.get_enum(stmt_node) {
+                                if let Some(name) = get_identifier_text(self.arena, enum_data.name)
+                                {
+                                    declared_names.insert(name);
+                                }
+                            }
+                        }
+                        k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                            if let Some(export_data) = self.arena.get_export_decl(stmt_node) {
+                                if let Some(inner) = self.arena.get(export_data.export_clause) {
+                                    match inner.kind {
+                                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                                            if let Some(class_data) = self.arena.get_class(inner) {
+                                                if let Some(name) =
+                                                    get_identifier_text(self.arena, class_data.name)
+                                                {
+                                                    declared_names.insert(name);
+                                                }
+                                            }
+                                        }
+                                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                                            if let Some(func_data) = self.arena.get_function(inner)
+                                            {
+                                                if let Some(name) =
+                                                    get_identifier_text(self.arena, func_data.name)
+                                                {
+                                                    declared_names.insert(name);
+                                                }
+                                            }
+                                        }
+                                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                                            if let Some(enum_data) = self.arena.get_enum(inner) {
+                                                if let Some(name) =
+                                                    get_identifier_text(self.arena, enum_data.name)
+                                                {
+                                                    declared_names.insert(name);
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         // Check if it's a module block
         if let Some(block_data) = self.arena.get_module_block(body_node)
             && let Some(ref stmts) = block_data.statements
         {
             for &stmt_idx in &stmts.nodes {
-                if let Some(ir) = self.transform_namespace_member(ns_name, stmt_idx) {
+                if let Some(ir) = self.transform_namespace_member_with_declared(
+                    ns_name,
+                    stmt_idx,
+                    &declared_names,
+                ) {
+                    // Filter out empty sequences (e.g., from uninitialized exports)
+                    if let IRNode::Sequence(ref items) = ir {
+                        if items.is_empty() {
+                            continue;
+                        }
+                    }
                     result.push(ir);
                 }
             }
         }
 
         result
+    }
+
+    /// Transform a namespace member, considering already-declared names for `should_declare_var`
+    fn transform_namespace_member_with_declared(
+        &self,
+        ns_name: &str,
+        member_idx: NodeIndex,
+        declared_names: &std::collections::HashSet<String>,
+    ) -> Option<IRNode> {
+        let member_node = self.arena.get(member_idx)?;
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                // Check if a class/function/enum already declared this name
+                let ns_data = self.arena.get_module(member_node)?;
+                let name = get_identifier_text(self.arena, ns_data.name)?;
+                let should_declare_var = !declared_names.contains(&name);
+                self.transform_nested_namespace_with_var(ns_name, member_idx, should_declare_var)
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_data) = self.arena.get_export_decl(member_node) {
+                    if let Some(inner) = self.arena.get(export_data.export_clause) {
+                        if inner.kind == syntax_kind_ext::MODULE_DECLARATION {
+                            let ns_data = self.arena.get_module(inner)?;
+                            let name = get_identifier_text(self.arena, ns_data.name)?;
+                            let should_declare_var = !declared_names.contains(&name);
+                            return self.transform_nested_namespace_exported_with_var(
+                                ns_name,
+                                export_data.export_clause,
+                                should_declare_var,
+                            );
+                        }
+                    }
+                    self.transform_namespace_member_exported(ns_name, export_data.export_clause)
+                } else {
+                    None
+                }
+            }
+            _ => self.transform_namespace_member(ns_name, member_idx),
+        }
     }
 
     /// Transform a namespace member to IR
@@ -362,11 +505,14 @@ impl<'a> NamespaceES5Transformer<'a> {
         let func_name = get_identifier_text(self.arena, func_data.name)?;
         let is_exported = has_export_modifier(self.arena, &func_data.modifiers);
 
+        let body_source_range = self.arena.get(func_data.body).map(|n| (n.pos, n.end));
+
         // Convert function to IR (stripping type annotations)
         let func_decl = IRNode::FunctionDecl {
             name: func_name.clone(),
             parameters: convert_function_parameters(self.arena, &func_data.parameters),
             body: convert_function_body(self.arena, func_data.body),
+            body_source_range,
         };
 
         if is_exported {
@@ -392,12 +538,17 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
 
         let func_name = get_identifier_text(self.arena, func_data.name)?;
+        let body_source_range = self
+            .arena
+            .get(func_data.body)
+            .map(|n| (n.pos as u32, n.end as u32));
 
         // Convert function to IR (stripping type annotations)
         let func_decl = IRNode::FunctionDecl {
             name: func_name.clone(),
             parameters: convert_function_parameters(self.arena, &func_data.parameters),
             body: convert_function_body(self.arena, func_data.body),
+            body_source_range,
         };
 
         Some(IRNode::Sequence(vec![
@@ -461,39 +612,33 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         let is_exported = has_export_modifier(self.arena, &var_data.modifiers);
 
-        let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
-
         if is_exported {
-            let var_names = collect_variable_names(self.arena, &var_data.declarations);
-            for name in var_names {
-                result.push(IRNode::NamespaceExport {
-                    namespace: ns_name.to_string(),
-                    name: name.clone(),
-                    value: Box::new(IRNode::Identifier(name)),
-                });
-            }
+            // For exported variables, emit directly as namespace property assignments:
+            // `Namespace.X = initializer;` instead of `var X = initializer; Namespace.X = X;`
+            Some(IRNode::Sequence(convert_exported_variable_declarations(
+                self.arena,
+                &var_data.declarations,
+                ns_name,
+            )))
+        } else {
+            Some(IRNode::Sequence(convert_variable_declarations(
+                self.arena,
+                &var_data.declarations,
+            )))
         }
-
-        Some(IRNode::Sequence(result))
     }
 
     /// Transform an exported variable
     fn transform_variable_exported(&self, ns_name: &str, var_idx: NodeIndex) -> Option<IRNode> {
         let var_data = self.arena.get_variable_at(var_idx)?;
 
-        let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
-
-        // Always export since this is from an export declaration
-        let var_names = collect_variable_names(self.arena, &var_data.declarations);
-        for name in var_names {
-            result.push(IRNode::NamespaceExport {
-                namespace: ns_name.to_string(),
-                name: name.clone(),
-                value: Box::new(IRNode::Identifier(name)),
-            });
-        }
-
-        Some(IRNode::Sequence(result))
+        // For exported variables, emit directly as namespace property assignments:
+        // `Namespace.X = initializer;` instead of `var X = initializer; Namespace.X = X;`
+        Some(IRNode::Sequence(convert_exported_variable_declarations(
+            self.arena,
+            &var_data.declarations,
+            ns_name,
+        )))
     }
 
     /// Transform an enum in namespace
@@ -534,7 +679,16 @@ impl<'a> NamespaceES5Transformer<'a> {
     }
 
     /// Transform a nested namespace
-    fn transform_nested_namespace(&self, _parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_nested_namespace(&self, parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
+        self.transform_nested_namespace_with_var(parent_ns, ns_idx, true)
+    }
+
+    fn transform_nested_namespace_with_var(
+        &self,
+        parent_ns: &str,
+        ns_idx: NodeIndex,
+        should_declare_var: bool,
+    ) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
@@ -550,12 +704,17 @@ impl<'a> NamespaceES5Transformer<'a> {
         let is_exported = has_export_modifier(self.arena, &ns_data.modifiers);
 
         // Transform body
-        let body = self.transform_namespace_body(ns_data.body, &name_parts);
+        let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        if body.is_empty() && !self.has_value_declarations(ns_data.body) {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -565,15 +724,26 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
-            should_declare_var: true,
+            should_declare_var,
+            parent_name: Some(parent_ns.to_string()),
+            param_name,
         })
     }
 
     /// Transform an exported nested namespace
     fn transform_nested_namespace_exported(
         &self,
-        _parent_ns: &str,
+        parent_ns: &str,
         ns_idx: NodeIndex,
+    ) -> Option<IRNode> {
+        self.transform_nested_namespace_exported_with_var(parent_ns, ns_idx, true)
+    }
+
+    fn transform_nested_namespace_exported_with_var(
+        &self,
+        parent_ns: &str,
+        ns_idx: NodeIndex,
+        should_declare_var: bool,
     ) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
@@ -591,12 +761,17 @@ impl<'a> NamespaceES5Transformer<'a> {
         let is_exported = true;
 
         // Transform body
-        let body = self.transform_namespace_body(ns_data.body, &name_parts);
+        let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        if body.is_empty() && !self.has_value_declarations(ns_data.body) {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -606,7 +781,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
-            should_declare_var: true,
+            should_declare_var,
+            parent_name: Some(parent_ns.to_string()),
+            param_name,
         })
     }
 }
@@ -651,12 +828,20 @@ impl<'a> NamespaceTransformContext<'a> {
         let is_exported = has_export_modifier(self.arena, &ns_data.modifiers);
 
         // Transform body
-        let body = self.transform_namespace_body(innermost_body, &name_parts);
+        let mut body = self.transform_namespace_body(innermost_body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        // A namespace is instantiated if it has any value declarations
+        // (variables, functions, classes, enums, sub-namespaces),
+        // even if the body produces no IR output (e.g., uninitialized exports).
+        if body.is_empty() && !self.has_value_declarations(innermost_body) {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -667,7 +852,14 @@ impl<'a> NamespaceTransformContext<'a> {
             is_exported,
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
+            parent_name: None,
+            param_name,
         })
+    }
+
+    /// Check if a namespace body contains any value declarations
+    fn has_value_declarations(&self, body_idx: NodeIndex) -> bool {
+        body_has_value_declarations(self.arena, body_idx)
     }
 
     /// Collect all name parts by walking through nested MODULE_DECLARATION chain
@@ -834,11 +1026,14 @@ impl<'a> NamespaceTransformContext<'a> {
         let func_name = get_identifier_text(self.arena, func_data.name)?;
         let is_exported = has_export_modifier(self.arena, &func_data.modifiers);
 
+        let body_source_range = self.arena.get(func_data.body).map(|n| (n.pos, n.end));
+
         // Convert function to IR (stripping type annotations)
         let func_decl = IRNode::FunctionDecl {
             name: func_name.clone(),
             parameters: convert_function_parameters(self.arena, &func_data.parameters),
             body: convert_function_body(self.arena, func_data.body),
+            body_source_range,
         };
 
         if is_exported {
@@ -868,12 +1063,17 @@ impl<'a> NamespaceTransformContext<'a> {
         }
 
         let func_name = get_identifier_text(self.arena, func_data.name)?;
+        let body_source_range = self
+            .arena
+            .get(func_data.body)
+            .map(|n| (n.pos as u32, n.end as u32));
 
         // Convert function to IR (stripping type annotations)
         let func_decl = IRNode::FunctionDecl {
             name: func_name.clone(),
             parameters: convert_function_parameters(self.arena, &func_data.parameters),
             body: convert_function_body(self.arena, func_data.body),
+            body_source_range,
         };
 
         Some(IRNode::Sequence(vec![
@@ -1027,11 +1227,7 @@ impl<'a> NamespaceTransformContext<'a> {
     }
 
     /// Transform a nested namespace
-    pub fn transform_nested_namespace(
-        &self,
-        _parent_ns: &str,
-        ns_idx: NodeIndex,
-    ) -> Option<IRNode> {
+    pub fn transform_nested_namespace(&self, parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
@@ -1048,12 +1244,20 @@ impl<'a> NamespaceTransformContext<'a> {
         let is_exported = has_export_modifier(self.arena, &ns_data.modifiers);
 
         // Transform body
-        let body = self.transform_namespace_body(innermost_body, &name_parts);
+        let mut body = self.transform_namespace_body(innermost_body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        // A namespace is instantiated if it has any value declarations
+        // (variables, functions, classes, enums, sub-namespaces),
+        // even if the body produces no IR output (e.g., uninitialized exports).
+        if body.is_empty() && !self.has_value_declarations(innermost_body) {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -1064,13 +1268,15 @@ impl<'a> NamespaceTransformContext<'a> {
             is_exported,
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
+            parent_name: Some(parent_ns.to_string()),
+            param_name,
         })
     }
 
     /// Transform an exported nested namespace
     fn transform_nested_namespace_exported(
         &self,
-        _parent_ns: &str,
+        parent_ns: &str,
         ns_idx: NodeIndex,
     ) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
@@ -1089,12 +1295,20 @@ impl<'a> NamespaceTransformContext<'a> {
         let is_exported = true; // Always exported
 
         // Transform body
-        let body = self.transform_namespace_body(innermost_body, &name_parts);
+        let mut body = self.transform_namespace_body(innermost_body, &name_parts);
 
-        // Skip non-instantiated namespaces (only contain types)
-        if body.is_empty() {
+        // Skip non-instantiated namespaces (only contain types).
+        // A namespace is instantiated if it has any value declarations
+        // (variables, functions, classes, enums, sub-namespaces),
+        // even if the body produces no IR output (e.g., uninitialized exports).
+        if body.is_empty() && !self.has_value_declarations(innermost_body) {
             return None;
         }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -1105,6 +1319,8 @@ impl<'a> NamespaceTransformContext<'a> {
             is_exported,
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
+            parent_name: Some(parent_ns.to_string()),
+            param_name,
         })
     }
 }
@@ -1112,6 +1328,74 @@ impl<'a> NamespaceTransformContext<'a> {
 // =============================================================================
 // Helper Functions
 // =============================================================================
+
+/// Check if a namespace body (MODULE_BLOCK) contains any value declarations.
+/// Value declarations are: variables, functions, classes, enums, sub-namespaces.
+/// Type-only declarations (interfaces, type aliases) don't count.
+fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
+    let Some(body_node) = arena.get(body_idx) else {
+        return false;
+    };
+
+    let Some(block_data) = arena.get_module_block(body_node) else {
+        return false;
+    };
+
+    let Some(ref stmts) = block_data.statements else {
+        return false;
+    };
+
+    for &stmt_idx in &stmts.nodes {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::ENUM_DECLARATION =>
+            {
+                return true;
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                // Recursively check if nested namespace is itself instantiated
+                if let Some(ns_data) = arena.get_module(stmt_node) {
+                    if body_has_value_declarations(arena, ns_data.body) {
+                        return true;
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                // Check if the exported declaration is a value declaration
+                if let Some(export_data) = arena.get_export_decl(stmt_node) {
+                    if let Some(inner_node) = arena.get(export_data.export_clause) {
+                        match inner_node.kind {
+                            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                                || k == syntax_kind_ext::CLASS_DECLARATION
+                                || k == syntax_kind_ext::ENUM_DECLARATION =>
+                            {
+                                return true;
+                            }
+                            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                                if let Some(ns_data) = arena.get_module(inner_node) {
+                                    if body_has_value_declarations(arena, ns_data.body) {
+                                        return true;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    false
+}
 
 fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
@@ -1210,6 +1494,41 @@ fn collect_variable_names(arena: &NodeArena, declarations: &NodeList) -> Vec<Str
     names
 }
 
+/// Convert exported variable declarations directly to namespace property assignments.
+/// Instead of `var X = init; NS.X = X;`, emits `NS.X = init;` (matching tsc).
+fn convert_exported_variable_declarations(
+    arena: &NodeArena,
+    declarations: &NodeList,
+    ns_name: &str,
+) -> Vec<IRNode> {
+    let mut result = Vec::new();
+
+    for &decl_list_idx in &declarations.nodes {
+        if let Some(decl_list_node) = arena.get(decl_list_idx)
+            && let Some(decl_list) = arena.get_variable(decl_list_node)
+        {
+            for &decl_idx in &decl_list.declarations.nodes {
+                if let Some(decl_node) = arena.get(decl_idx)
+                    && let Some(decl) = arena.get_variable_declaration(decl_node)
+                    && let Some(name) = get_identifier_text(arena, decl.name)
+                {
+                    if !decl.initializer.is_none() {
+                        let value = AstToIr::new(arena).convert_expression(decl.initializer);
+                        result.push(IRNode::NamespaceExport {
+                            namespace: ns_name.to_string(),
+                            name,
+                            value: Box::new(value),
+                        });
+                    }
+                    // No initializer: tsc omits the assignment entirely in namespaces
+                }
+            }
+        }
+    }
+
+    result
+}
+
 /// Convert variable declarations to proper IR (VarDecl nodes)
 fn convert_variable_declarations(arena: &NodeArena, declarations: &NodeList) -> Vec<IRNode> {
     let mut result = Vec::new();
@@ -1237,6 +1556,106 @@ fn convert_variable_declarations(arena: &NodeArena, declarations: &NodeList) -> 
     }
 
     result
+}
+
+// =============================================================================
+// Namespace IIFE parameter collision detection and renaming
+// =============================================================================
+
+/// Collect all member names declared in the namespace body IR.
+/// These are names that would clash with the IIFE parameter if they match the namespace name.
+fn collect_body_member_names(body: &[IRNode]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for node in body {
+        collect_member_names_from_node(node, &mut names);
+    }
+    names
+}
+
+/// Recursively collect declared names from IR nodes
+fn collect_member_names_from_node(node: &IRNode, names: &mut std::collections::HashSet<String>) {
+    match node {
+        IRNode::ES5ClassIIFE { name, .. } => {
+            names.insert(name.clone());
+        }
+        IRNode::FunctionDecl { name, .. } => {
+            names.insert(name.clone());
+        }
+        IRNode::VarDecl { name, .. } => {
+            names.insert(name.clone());
+        }
+        IRNode::EnumIIFE { name, .. } => {
+            names.insert(name.clone());
+        }
+        IRNode::Sequence(items) => {
+            for item in items {
+                collect_member_names_from_node(item, names);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Generate a unique parameter name by appending `_1`, `_2`, etc.
+/// Ensures the generated name doesn't collide with any existing member name.
+fn generate_unique_param_name(
+    ns_name: &str,
+    member_names: &std::collections::HashSet<String>,
+) -> String {
+    let mut suffix = 1;
+    loop {
+        let candidate = format!("{}_{}", ns_name, suffix);
+        if !member_names.contains(&candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+/// Rename namespace references in body IR nodes.
+/// Updates `NamespaceExport.namespace` and nested `NamespaceIIFE.parent_name`
+/// from `old_name` to `new_name`.
+fn rename_namespace_refs_in_body(body: &mut [IRNode], old_name: &str, new_name: &str) {
+    for node in body.iter_mut() {
+        rename_namespace_refs_in_node(node, old_name, new_name);
+    }
+}
+
+/// Recursively rename namespace references in a single IR node
+fn rename_namespace_refs_in_node(node: &mut IRNode, old_name: &str, new_name: &str) {
+    match node {
+        IRNode::NamespaceExport { namespace, .. } => {
+            if namespace == old_name {
+                *namespace = new_name.to_string();
+            }
+        }
+        IRNode::NamespaceIIFE { parent_name, .. } => {
+            if let Some(parent) = parent_name {
+                if parent == old_name {
+                    *parent = new_name.to_string();
+                }
+            }
+        }
+        IRNode::Sequence(items) => {
+            for item in items.iter_mut() {
+                rename_namespace_refs_in_node(item, old_name, new_name);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Detect collision between namespace name and body member names,
+/// and if found, rename the body's namespace references and return the new parameter name.
+fn detect_and_apply_param_rename(body: &mut Vec<IRNode>, ns_name: &str) -> Option<String> {
+    let member_names = collect_body_member_names(body);
+    if member_names.contains(ns_name) {
+        let renamed = generate_unique_param_name(ns_name, &member_names);
+        rename_namespace_refs_in_body(body, ns_name, &renamed);
+        Some(renamed)
+    } else {
+        None
+    }
 }
 
 // =============================================================================

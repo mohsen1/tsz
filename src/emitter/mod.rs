@@ -87,6 +87,8 @@ pub struct PrinterOptions {
     pub downlevel_iteration: bool,
     /// Set of import specifier nodes that should be elided (type-only imports)
     pub type_only_nodes: Arc<FxHashSet<NodeIndex>>,
+    /// Emit "use strict" for every source file
+    pub always_strict: bool,
 }
 
 impl Default for PrinterOptions {
@@ -101,6 +103,7 @@ impl Default for PrinterOptions {
             new_line: NewLineKind::LineFeed,
             downlevel_iteration: false,
             type_only_nodes: Arc::new(FxHashSet::default()),
+            always_strict: false,
         }
     }
 }
@@ -251,6 +254,18 @@ pub struct Printer<'a> {
     /// Shared index into all_comments, monotonically advancing as comments are emitted.
     /// Used across emit_source_file and emit_block to prevent double-emission.
     pub(super) comment_emit_idx: usize,
+
+    /// All identifier texts in the source file.
+    /// Collected once at emit_source_file start for temp name collision detection.
+    /// Mirrors TypeScript's `sourceFile.identifiers` used by `makeUniqueName`.
+    pub(super) file_identifiers: FxHashSet<String>,
+
+    /// Set of generated temp names (_a, _b, etc.) to avoid collisions.
+    /// Tracks ALL generated temp names across destructuring and for-of lowering.
+    pub(super) generated_temp_names: FxHashSet<String>,
+
+    /// Whether the first for-of loop has been emitted (uses special `_i` index name).
+    pub(super) first_for_of_emitted: bool,
 }
 
 impl<'a> Printer<'a> {
@@ -295,6 +310,9 @@ impl<'a> Printer<'a> {
             emit_recursion_depth: 0,
             all_comments: Vec::new(),
             comment_emit_idx: 0,
+            file_identifiers: FxHashSet::default(),
+            generated_temp_names: FxHashSet::default(),
+            first_for_of_emitted: false,
         }
     }
 
@@ -395,24 +413,36 @@ impl<'a> Printer<'a> {
     /// if there's a newline between them. Uses `rfind` to handle nested braces correctly.
     fn is_single_line(&self, node: &Node) -> bool {
         if let Some(text) = self.source_text {
-            let start = node.pos as usize;
+            let actual_start = self.skip_trivia_forward(node.pos, node.end) as usize;
             let end = std::cmp::min(node.end as usize, text.len());
-            if start < end {
-                let slice = &text[start..end];
-                // Find the first `{` and last `}` in the node's range
+            if actual_start < end {
+                let slice = &text[actual_start..end];
+                // Find the first `{` and its matching `}` using depth counting
+                // to handle nested braces (e.g., `{ return new Line({ x: 0 }, p); }`)
                 if let Some(open) = slice.find('{') {
-                    if let Some(close) = slice.rfind('}') {
-                        if close > open {
-                            let inner = &slice[open..close + 1];
-                            return !inner.contains('\n');
+                    let mut depth = 1;
+                    let mut close = None;
+                    for (i, ch) in slice[open + 1..].char_indices() {
+                        match ch {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    close = Some(open + 1 + i);
+                                    break;
+                                }
+                            }
+                            _ => {}
                         }
                     }
+                    if let Some(close) = close {
+                        let inner = &slice[open..close + 1];
+                        return !inner.contains('\n');
+                    }
                 }
-                // Fallback: check entire span for newlines
                 return !slice.contains('\n');
             }
         }
-        // Default to multi-line if we can't determine
         false
     }
 
@@ -605,6 +635,7 @@ impl<'a> Printer<'a> {
             } => {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_indent_level(self.writer.indent_level());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -634,10 +665,23 @@ impl<'a> Printer<'a> {
                     });
 
                 if !skip {
-                    let export_name = names.first().copied();
-                    self.emit_commonjs_export(names.as_ref(), is_default, |this| {
-                        this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
-                    });
+                    // For non-default function declarations, the preamble already
+                    // emitted `exports.X = X;` (function declarations are hoisted).
+                    // Skip the per-statement export to avoid duplicates.
+                    let is_hoisted_func =
+                        node.kind == syntax_kind_ext::FUNCTION_DECLARATION && !is_default;
+                    if is_hoisted_func {
+                        let prev_module = self.ctx.options.module;
+                        self.ctx.options.module = ModuleKind::None;
+                        let export_name = names.first().copied();
+                        self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                        self.ctx.options.module = prev_module;
+                    } else {
+                        let export_name = names.first().copied();
+                        self.emit_commonjs_export(names.as_ref(), is_default, |this| {
+                            this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                        });
+                    }
                 }
             }
 
@@ -830,6 +874,7 @@ impl<'a> Printer<'a> {
             } => {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_indent_level(self.writer.indent_level());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -965,6 +1010,7 @@ impl<'a> Printer<'a> {
             } => {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_indent_level(self.writer.indent_level());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -1811,6 +1857,15 @@ impl<'a> Printer<'a> {
             self.ctx.module_state.has_export_assignment = true;
         }
 
+        // Collect all identifiers in the file for temp name collision detection.
+        // This mirrors TypeScript's `sourceFile.identifiers` used by `makeUniqueName`.
+        self.file_identifiers.clear();
+        for ident in &self.arena.identifiers {
+            self.file_identifiers.insert(ident.escaped_text.clone());
+        }
+        self.generated_temp_names.clear();
+        self.first_for_of_emitted = false;
+
         // Extract comments. Triple-slash references (/// <reference ...>) are
         // preserved in output (TypeScript keeps them in JS emit).
         // Only AMD-specific directives (/// <amd ...) are stripped.
@@ -1835,20 +1890,38 @@ impl<'a> Printer<'a> {
 
         // Emit "use strict" FIRST (before comments and helpers)
         // TypeScript emits "use strict" when:
-        // 1. Module is CommonJS/AMD/UMD
-        // 2. alwaysStrict compiler option is enabled
-        // 3. File is an ES module with target < ES2015
-        // For now, we emit for CommonJS (most common case)
-        // TODO: Add always_strict support to PrinterOptions
-        let is_es_module = self.file_is_module(&source.statements);
+        // 1. Module is CommonJS/AMD/UMD (always)
+        // 2. alwaysStrict compiler option is enabled (for non-ES-module output)
+        // But NOT when:
+        // - The source already has "use strict" (avoid duplication)
+        // - ES module output (ES2015/ESNext module kind) since ESM is implicitly strict
         let is_commonjs_or_amd = matches!(
             self.ctx.options.module,
             ModuleKind::CommonJS | ModuleKind::AMD | ModuleKind::UMD
         );
-        let target_before_es6 = !self.ctx.options.target.supports_es2015();
+        let is_es_module_output = matches!(
+            self.ctx.options.module,
+            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
+        );
 
-        // Emit for CommonJS/AMD/UMD OR (ES modules with target < ES6)
-        if is_commonjs_or_amd || (is_es_module && target_before_es6) {
+        // Check if source already has "use strict" directive
+        let source_has_use_strict = self
+            .source_text
+            .map(|text| {
+                let trimmed = text.trim_start();
+                trimmed.starts_with("\"use strict\"") || trimmed.starts_with("'use strict'")
+            })
+            .unwrap_or(false);
+
+        // When alwaysStrict is set, only suppress "use strict" for actual ES module files
+        // (files with import/export statements). Script files should still get "use strict"
+        // even when module kind is ES2015/ESNext, because they're not implicitly strict.
+        let is_file_module = self.file_is_module(&source.statements);
+        let should_emit_use_strict = !source_has_use_strict
+            && (is_commonjs_or_amd
+                || (self.ctx.options.always_strict && !(is_es_module_output && is_file_module)));
+
+        if should_emit_use_strict {
             self.write("\"use strict\";");
             self.write_line();
         }
@@ -1997,6 +2070,11 @@ impl<'a> Printer<'a> {
             self.emit(stmt_idx);
             // Only add newline if something was actually emitted
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+                // Emit trailing comments on the same line as the statement
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    self.emit_trailing_comments(token_end);
+                }
                 self.write_line();
             }
 

@@ -298,6 +298,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 if has_static_modifier(self.arena, &prop_data.modifiers) {
                     return None;
                 }
+                // Skip abstract properties (they don't exist at runtime)
+                if has_abstract_modifier(self.arena, &prop_data.modifiers) {
+                    return None;
+                }
                 // Skip private fields (they use WeakMap pattern)
                 if is_private_identifier(self.arena, prop_data.name) {
                     return None;
@@ -419,6 +423,7 @@ impl<'a> ES5ClassTransformer<'a> {
             name: self.class_name.clone(),
             parameters: params,
             body: ctor_body,
+            body_source_range: None,
         })
     }
 
@@ -1076,6 +1081,11 @@ impl<'a> ES5ClassTransformer<'a> {
         let accessor_node = self.arena.get(accessor_idx)?;
         let accessor_data = self.arena.get_accessor(accessor_node)?;
 
+        let body_source_range = self
+            .arena
+            .get(accessor_data.body)
+            .map(|n| (n.pos as u32, n.end as u32));
+
         Some(IRNode::FunctionExpr {
             name: None,
             parameters: vec![],
@@ -1085,7 +1095,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.convert_block_body(accessor_data.body)
             },
             is_expression_body: false,
-            body_source_range: None,
+            body_source_range,
         })
     }
 
@@ -1096,6 +1106,11 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let params = self.extract_parameters(&accessor_data.parameters);
 
+        let body_source_range = self
+            .arena
+            .get(accessor_data.body)
+            .map(|n| (n.pos as u32, n.end as u32));
+
         Some(IRNode::FunctionExpr {
             name: None,
             parameters: params,
@@ -1105,7 +1120,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.convert_block_body(accessor_data.body)
             },
             is_expression_body: false,
-            body_source_range: None,
+            body_source_range,
         })
     }
 
@@ -1168,6 +1183,12 @@ impl<'a> ES5ClassTransformer<'a> {
                     self.convert_block_body_with_alias(method_data.body, class_alias)
                 };
 
+                // Capture body source range for single-line detection
+                let body_source_range = self
+                    .arena
+                    .get(method_data.body)
+                    .map(|body_node| (body_node.pos as u32, body_node.end as u32));
+
                 // ClassName.methodName = function () { body };
                 body.push(IRNode::StaticMethod {
                     class_name: self.class_name.clone(),
@@ -1177,7 +1198,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         parameters: params,
                         body: method_body,
                         is_expression_body: false,
-                        body_source_range: None,
+                        body_source_range,
                     }),
                 });
             } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
@@ -1187,6 +1208,11 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 // Only static properties
                 if !has_static_modifier(self.arena, &prop_data.modifiers) {
+                    continue;
+                }
+
+                // Skip abstract properties (they don't exist at runtime)
+                if has_abstract_modifier(self.arena, &prop_data.modifiers) {
                     continue;
                 }
 
@@ -1941,12 +1967,8 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_string_literal(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
-        if let Some(lit) = self.arena.get_literal(node) {
-            IRNode::StringLiteral(lit.text.clone())
-        } else {
-            IRNode::ASTRef(idx)
-        }
+        // Use ASTRef to preserve original quote style from source text
+        IRNode::ASTRef(idx)
     }
 
     fn convert_call_expression(&self, idx: NodeIndex) -> IRNode {
@@ -2326,23 +2348,29 @@ impl<'a> AstToIr<'a> {
             self.current_class_alias.set(class_alias.clone());
 
             let params = self.convert_parameters(&arrow.parameters);
-            let (body, is_expression_body) = if let Some(body_node) = self.arena.get(arrow.body) {
-                if let Some(block) = self.arena.get_block(body_node) {
-                    let stmts: Vec<IRNode> = block
-                        .statements
-                        .nodes
-                        .iter()
-                        .map(|&s| self.convert_statement(s))
-                        .collect();
-                    (stmts, false)
+            let (body, is_expression_body, body_source_range) =
+                if let Some(body_node) = self.arena.get(arrow.body) {
+                    if let Some(block) = self.arena.get_block(body_node) {
+                        let stmts: Vec<IRNode> = block
+                            .statements
+                            .nodes
+                            .iter()
+                            .map(|&s| self.convert_statement(s))
+                            .collect();
+                        let range = Some((body_node.pos as u32, body_node.end as u32));
+                        (stmts, false, range)
+                    } else {
+                        // Expression body
+                        let expr = self.convert_expression(arrow.body);
+                        (
+                            vec![IRNode::ReturnStatement(Some(Box::new(expr)))],
+                            true,
+                            None,
+                        )
+                    }
                 } else {
-                    // Expression body
-                    let expr = self.convert_expression(arrow.body);
-                    (vec![IRNode::ReturnStatement(Some(Box::new(expr)))], true)
-                }
-            } else {
-                (vec![], false)
-            };
+                    (vec![], false, None)
+                };
 
             // Restore previous state
             self.this_captured.set(prev_captured);
@@ -2354,7 +2382,7 @@ impl<'a> AstToIr<'a> {
                 parameters: params,
                 body,
                 is_expression_body,
-                body_source_range: None,
+                body_source_range,
             };
 
             // Handle this capture:
