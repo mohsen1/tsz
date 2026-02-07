@@ -64,7 +64,7 @@ EOF
 ensure_binaries() {
     echo -e "${YELLOW}Building tsz...${NC}"
     cd "$REPO_ROOT"
-    cargo build --release --bin tsz
+    cargo build --release -p tsz-cli --bin tsz
     echo ""
 
     echo -e "${YELLOW}Building conformance runner...${NC}"

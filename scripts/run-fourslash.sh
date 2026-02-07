@@ -235,7 +235,7 @@ build_tsz_server() {
     cd "$ROOT_DIR"
 
     require_cmd cargo
-    cargo build --release --bin tsz-server 2>&1
+    cargo build --release -p tsz-cli --bin tsz-server 2>&1
 
     local target_dir
     target_dir=$(get_target_dir)
