@@ -104,23 +104,39 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext::*;
         let enclosing_fn = self.find_enclosing_non_arrow_function(idx)?;
         let fn_node = self.ctx.arena.get(enclosing_fn)?;
-        let is_member = fn_node.kind == GET_ACCESSOR
+
+        // Direct class/object literal members: getter, setter, method, constructor
+        if fn_node.kind == GET_ACCESSOR
             || fn_node.kind == SET_ACCESSOR
             || fn_node.kind == METHOD_DECLARATION
-            || fn_node.kind == CONSTRUCTOR;
-        if !is_member {
-            return None;
-        }
-        let parent = self.ctx.arena.get_extended(enclosing_fn)?.parent;
-        let parent_node = self.ctx.arena.get(parent)?;
-        if parent_node.kind == CLASS_DECLARATION
-            || parent_node.kind == CLASS_EXPRESSION
-            || parent_node.kind == OBJECT_LITERAL_EXPRESSION
+            || fn_node.kind == CONSTRUCTOR
         {
-            Some(parent)
-        } else {
-            None
+            let parent = self.ctx.arena.get_extended(enclosing_fn)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == CLASS_DECLARATION
+                || parent_node.kind == CLASS_EXPRESSION
+                || parent_node.kind == OBJECT_LITERAL_EXPRESSION
+            {
+                return Some(parent);
+            }
         }
+
+        // Function expression as value of an object literal property:
+        //   { foo: function() { this; } }
+        // Chain: FUNCTION_EXPRESSION → PROPERTY_ASSIGNMENT → OBJECT_LITERAL_EXPRESSION
+        if fn_node.kind == FUNCTION_EXPRESSION {
+            let parent = self.ctx.arena.get_extended(enclosing_fn)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == PROPERTY_ASSIGNMENT {
+                let grandparent = self.ctx.arena.get_extended(parent)?.parent;
+                let gp_node = self.ctx.arena.get(grandparent)?;
+                if gp_node.kind == OBJECT_LITERAL_EXPRESSION {
+                    return Some(grandparent);
+                }
+            }
+        }
+
+        None
     }
 
     // =========================================================================
