@@ -656,6 +656,12 @@ pub enum TypeKey {
     /// Uses SymbolRef for lazy evaluation to avoid circular dependency issues
     ModuleNamespace(SymbolRef),
 
+    /// NoInfer<T> utility type (TypeScript 5.4+)
+    /// Prevents inference from flowing through this type position.
+    /// During inference, this blocks inference. During evaluation/subtyping,
+    /// it evaluates to the inner type (transparent).
+    NoInfer(TypeId),
+
     /// Error type for recovery
     Error,
 }

@@ -869,6 +869,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeKey::Intersection(list_id) => self.visit_intersection(*list_id),
             TypeKey::Union(list_id) => self.visit_union(*list_id),
+            TypeKey::NoInfer(inner) => {
+                // NoInfer<T> evaluates to T (strip wrapper, evaluate inner)
+                self.evaluate(*inner)
+            }
             // All other types pass through unchanged (default behavior)
             _ => type_id,
         }

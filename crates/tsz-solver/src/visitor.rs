@@ -221,6 +221,12 @@ pub trait TypeVisitor: Sized {
         Self::default_output()
     }
 
+    /// Visit a NoInfer<T> type (TypeScript 5.4+).
+    /// Traverses the inner type (NoInfer is transparent for traversal).
+    fn visit_no_infer(&mut self, _inner: TypeId) -> Self::Output {
+        Self::default_output()
+    }
+
     /// Visit a module namespace type (import * as ns).
     fn visit_module_namespace(&mut self, _symbol_ref: u32) -> Self::Output {
         Self::default_output()
@@ -276,6 +282,7 @@ pub trait TypeVisitor: Sized {
                 self.visit_string_intrinsic(*kind, *type_arg)
             }
             TypeKey::ModuleNamespace(sym_ref) => self.visit_module_namespace(sym_ref.0),
+            TypeKey::NoInfer(inner) => self.visit_no_infer(*inner),
             TypeKey::Error => self.visit_error(),
         }
     }
@@ -325,7 +332,10 @@ where
 {
     match key {
         // Single nested type
-        TypeKey::Array(inner) | TypeKey::ReadonlyType(inner) | TypeKey::KeyOf(inner) => {
+        TypeKey::Array(inner)
+        | TypeKey::ReadonlyType(inner)
+        | TypeKey::KeyOf(inner)
+        | TypeKey::NoInfer(inner) => {
             f(*inner);
         }
 
@@ -616,6 +626,10 @@ impl TypeKindVisitor {
                 // Readonly doesn't change the kind - look through it
                 // Note: This requires lookup which we don't have here
                 // For now, return Other and let callers handle it
+                TypeKind::Other
+            }
+            TypeKey::NoInfer(_inner) => {
+                // NoInfer doesn't change the kind - look through it
                 TypeKind::Other
             }
             TypeKey::UniqueSymbol(_) => TypeKind::Primitive, // unique symbol is a primitive
@@ -1408,6 +1422,10 @@ impl<'a> RecursiveTypeCollector<'a> {
             | TypeKey::BoundParameter(_) => {
                 // Leaf types - nothing to traverse
             }
+            TypeKey::NoInfer(inner) => {
+                // Traverse inner type
+                self.visit(*inner);
+            }
             TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
                 let shape = self.types.object_shape(*shape_id);
                 for prop in shape.properties.iter() {
@@ -1772,7 +1790,9 @@ where
                     }
                 })
             }
-            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) => self.check(*inner),
+            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
+                self.check(*inner)
+            }
             TypeKey::StringIntrinsic { type_arg, .. } => self.check(*type_arg),
             TypeKey::Enum(_def_id, member_type) => self.check(*member_type),
         }
@@ -1846,7 +1866,9 @@ impl LiteralTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
         match types.lookup(type_id) {
             Some(TypeKey::Literal(_)) => true,
-            Some(TypeKey::ReadonlyType(inner)) => Self::check(types, inner),
+            Some(TypeKey::ReadonlyType(inner)) | Some(TypeKey::NoInfer(inner)) => {
+                Self::check(types, inner)
+            }
             Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => info
                 .constraint
                 .map(|c| Self::check(types, c))
@@ -1887,7 +1909,9 @@ impl ObjectTypeChecker {
             | Some(TypeKey::Array(_))
             | Some(TypeKey::Tuple(_))
             | Some(TypeKey::Mapped(_)) => true,
-            Some(TypeKey::ReadonlyType(inner)) => Self::check(types, inner),
+            Some(TypeKey::ReadonlyType(inner)) | Some(TypeKey::NoInfer(inner)) => {
+                Self::check(types, inner)
+            }
             Some(TypeKey::Intersection(members)) => {
                 let members = types.type_list(members);
                 members.iter().all(|&member| Self::check(types, member))
@@ -1923,7 +1947,7 @@ impl<'a> EmptyObjectChecker<'a> {
                     && shape.string_index.is_none()
                     && shape.number_index.is_none()
             }
-            Some(TypeKey::ReadonlyType(inner)) => self.check(inner),
+            Some(TypeKey::ReadonlyType(inner)) | Some(TypeKey::NoInfer(inner)) => self.check(inner),
             Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => {
                 info.constraint.map(|c| self.check(c)).unwrap_or(false)
             }

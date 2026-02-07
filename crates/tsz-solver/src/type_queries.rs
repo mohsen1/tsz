@@ -641,7 +641,9 @@ where
                     }
                 })
             }
-            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) => self.check(*inner),
+            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
+                self.check(*inner)
+            }
             TypeKey::StringIntrinsic { type_arg, .. } => self.check(*type_arg),
             TypeKey::Enum(_def_id, member_type) => self.check(*member_type),
         }
@@ -1036,7 +1038,7 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
             let members = db.type_list(members_id);
             ConstructorTypeKind::Members(members.to_vec())
         }
-        TypeKey::ReadonlyType(inner) => ConstructorTypeKind::Inner(inner),
+        TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => ConstructorTypeKind::Inner(inner),
         TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
             ConstructorTypeKind::Constraint(info.constraint)
         }
@@ -1354,6 +1356,7 @@ pub fn classify_for_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Constr
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
         | TypeKey::ReadonlyType(_)
+        | TypeKey::NoInfer(_)
         | TypeKey::TypeQuery(_)
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
@@ -1424,7 +1427,9 @@ pub fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> Signat
         }
 
         // Readonly wrapper - unwrap and recurse
-        TypeKey::ReadonlyType(inner) => SignatureTypeKind::ReadonlyType(inner),
+        TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
+            SignatureTypeKind::ReadonlyType(inner)
+        }
 
         // Type parameter - may have constraint with signatures
         TypeKey::TypeParameter(info) | TypeKey::Infer(info) => SignatureTypeKind::TypeParameter {
@@ -1562,7 +1567,9 @@ pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Fu
                 constraint: info.constraint,
             }
         }
-        TypeKey::ReadonlyType(inner) => FullIterableTypeKind::Readonly(inner),
+        TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
+            FullIterableTypeKind::Readonly(inner)
+        }
         TypeKey::Function(_) | TypeKey::Callable(_) => FullIterableTypeKind::FunctionOrCallable,
         TypeKey::IndexAccess(_, _) | TypeKey::Conditional(_) | TypeKey::Mapped(_) => {
             FullIterableTypeKind::ComplexType
@@ -1770,6 +1777,7 @@ pub fn classify_for_property_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> P
         | TypeKey::ThisType
         | TypeKey::TypeQuery(_)
         | TypeKey::ReadonlyType(_)
+        | TypeKey::NoInfer(_)
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
         | TypeKey::Enum(_, _)
@@ -1849,7 +1857,7 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
         TypeKey::Infer(info) => EvaluationNeeded::TypeParameter {
             constraint: info.constraint,
         },
-        TypeKey::ReadonlyType(inner) => EvaluationNeeded::Readonly(inner),
+        TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => EvaluationNeeded::Readonly(inner),
         // Already resolved types (Lazy needs special handling when DefId lookup is implemented)
         TypeKey::BoundParameter(_)
         | TypeKey::Intrinsic(_)
@@ -1931,7 +1939,7 @@ pub fn classify_for_property_access(
         TypeKey::IndexAccess(object, index) => {
             PropertyAccessClassification::IndexAccess { object, index }
         }
-        TypeKey::ReadonlyType(inner) => PropertyAccessClassification::Readonly(inner),
+        TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => PropertyAccessClassification::Readonly(inner),
         TypeKey::Function(_) | TypeKey::Callable(_) => {
             PropertyAccessClassification::Callable(type_id)
         }
@@ -2060,7 +2068,9 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
         TypeKey::Tuple(list_id) => TypeTraversalKind::Tuple(list_id),
         TypeKey::Conditional(cond_id) => TypeTraversalKind::Conditional(cond_id),
         TypeKey::Mapped(mapped_id) => TypeTraversalKind::Mapped(mapped_id),
-        TypeKey::ReadonlyType(inner) => TypeTraversalKind::Readonly(inner),
+        TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
+            TypeTraversalKind::Readonly(inner)
+        }
         TypeKey::IndexAccess(object, index) => TypeTraversalKind::IndexAccess { object, index },
         TypeKey::KeyOf(inner) => TypeTraversalKind::KeyOf(inner),
         // Template literal - extract types from spans for traversal
@@ -2194,6 +2204,7 @@ pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> I
         | TypeKey::ThisType
         | TypeKey::TypeQuery(_)
         | TypeKey::ReadonlyType(_)
+        | TypeKey::NoInfer(_)
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
         | TypeKey::Error

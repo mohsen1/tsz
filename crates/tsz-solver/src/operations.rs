@@ -1353,7 +1353,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 return type_id;
             }
             match self.interner.lookup(type_id) {
-                Some(TypeKey::ReadonlyType(inner)) => {
+                Some(TypeKey::ReadonlyType(inner)) | Some(TypeKey::NoInfer(inner)) => {
                     type_id = inner;
                 }
                 _ => return type_id,
@@ -1625,7 +1625,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.type_contains_placeholder(obj, var_map, visited)
                     || self.type_contains_placeholder(idx, var_map, visited)
             }
-            TypeKey::KeyOf(operand) | TypeKey::ReadonlyType(operand) => {
+            TypeKey::KeyOf(operand)
+            | TypeKey::ReadonlyType(operand)
+            | TypeKey::NoInfer(operand) => {
                 self.type_contains_placeholder(operand, var_map, visited)
             }
             TypeKey::TemplateLiteral(spans) => {
@@ -1720,7 +1722,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
 
             // Readonly types: look through to inner type
-            TypeKey::ReadonlyType(inner) => self.is_contextually_sensitive(inner),
+            TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
+                self.is_contextually_sensitive(inner)
+            }
 
             // Type parameters with constraints: check constraint
             TypeKey::TypeParameter(info) | TypeKey::Infer(info) => info
@@ -1849,6 +1853,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.constrain_types(ctx, var_map, s_inner, target, priority);
             }
             (_, Some(TypeKey::ReadonlyType(t_inner))) => {
+                self.constrain_types(ctx, var_map, source, t_inner, priority);
+            }
+            (Some(TypeKey::NoInfer(s_inner)), Some(TypeKey::NoInfer(t_inner))) => {
+                self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
+            }
+            (Some(TypeKey::NoInfer(s_inner)), _) => {
+                self.constrain_types(ctx, var_map, s_inner, target, priority);
+            }
+            (_, Some(TypeKey::NoInfer(t_inner))) => {
                 self.constrain_types(ctx, var_map, source, t_inner, priority);
             }
             (

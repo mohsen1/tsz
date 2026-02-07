@@ -291,23 +291,34 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         self.checker.ctx.in_const_assertion = true;
                     }
 
-                    // Always type-check the expression for side effects / diagnostics.
-                    let expr_type = self.checker.get_type_of_node(assertion.expression);
-
-                    // Restore the previous flag value
-                    self.checker.ctx.in_const_assertion = prev_in_const_assertion;
-
                     // In recovery scenarios we may not have a type node; fall back to the expression type.
                     if assertion.type_node.is_none() {
+                        let expr_type = self.checker.get_type_of_node(assertion.expression);
+                        self.checker.ctx.in_const_assertion = prev_in_const_assertion;
                         expr_type
-                    } else if is_const_assertion {
-                        // as const: apply const assertion to the expression type
-                        use tsz_solver::widening::apply_const_assertion;
-                        apply_const_assertion(self.checker.ctx.types, expr_type)
                     } else {
                         let asserted_type =
                             self.checker.get_type_from_type_node(assertion.type_node);
+
+                        // For `satisfies`, set contextual type before checking expression
+                        // This enables contextual typing for lambdas, object literals, etc.
+                        let prev_contextual_type = self.checker.ctx.contextual_type;
                         if k == syntax_kind_ext::SATISFIES_EXPRESSION {
+                            self.checker.ctx.contextual_type = Some(asserted_type);
+                        }
+
+                        // Always type-check the expression for side effects / diagnostics.
+                        let expr_type = self.checker.get_type_of_node(assertion.expression);
+
+                        // Restore contextual type
+                        self.checker.ctx.contextual_type = prev_contextual_type;
+                        self.checker.ctx.in_const_assertion = prev_in_const_assertion;
+
+                        if is_const_assertion {
+                            // as const: apply const assertion to the expression type
+                            use tsz_solver::widening::apply_const_assertion;
+                            apply_const_assertion(self.checker.ctx.types, expr_type)
+                        } else if k == syntax_kind_ext::SATISFIES_EXPRESSION {
                             // `satisfies` keeps the expression type at runtime, but checks assignability.
                             // This is different from `as` which coerces the type.
                             self.checker.ensure_application_symbols_resolved(expr_type);

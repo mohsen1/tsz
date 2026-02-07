@@ -588,6 +588,12 @@ impl<'a> TypeInstantiator<'a> {
                 self.interner.intern(TypeKey::ReadonlyType(inst_operand))
             }
 
+            // NoInfer: preserve wrapper, instantiate inner
+            TypeKey::NoInfer(inner) => {
+                let inst_inner = self.instantiate(*inner);
+                self.interner.intern(TypeKey::NoInfer(inst_inner))
+            }
+
             // Template literal: instantiate embedded types
             // After substitution, if any type span becomes a union of string literals,
             // we trigger evaluation to expand the template literal into a union of strings.

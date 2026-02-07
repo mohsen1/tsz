@@ -178,6 +178,10 @@ impl<'a> TypePrinter<'a> {
             TypeKey::BoundParameter(index) => format!("P{}", index),
 
             TypeKey::Error => "any".to_string(),
+            TypeKey::NoInfer(inner) => {
+                // NoInfer<T> evaluates to T, so format the inner type
+                self.print_type(inner)
+            }
         }
     }
 
