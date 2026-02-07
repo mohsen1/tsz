@@ -1461,13 +1461,12 @@ impl<'a> CheckerState<'a> {
             // Merged lib symbols can live in the main binder but still carry
             // declaration nodes from other arenas. Lowering those declarations
             // against the current arena produces incomplete interface shapes
-            // (e.g. PromiseConstructor without resolve/race/new).
+            // (e.g. Date without getTime, PromiseConstructor without resolve/race/new).
             let has_out_of_arena_decl = declarations
                 .iter()
                 .any(|&decl_idx| self.ctx.arena.get(decl_idx).is_none());
             if has_out_of_arena_decl
                 && !self.ctx.lib_contexts.is_empty()
-                && escaped_name.ends_with("Constructor")
                 && let Some(lib_type) = self.resolve_lib_type_by_name(&escaped_name)
             {
                 return (lib_type, Vec::new());
