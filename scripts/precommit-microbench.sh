@@ -211,7 +211,7 @@ generate_constraint_conflict_file 100 "$constraint_case"
 
 if [[ "$NO_BUILD" != true ]]; then
     echo "   Building benchmark binary (profile=$PROFILE)..."
-    CARGO_TARGET_DIR="$TARGET_DIR" cargo build --quiet --profile "$PROFILE" --features cli --bin tsz
+    CARGO_TARGET_DIR="$TARGET_DIR" cargo build --quiet --profile "$PROFILE" -p tsz-cli --bin tsz
 fi
 
 if [[ ! -x "$TSZ_BIN" ]]; then

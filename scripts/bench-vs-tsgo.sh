@@ -204,7 +204,7 @@ check_prerequisites() {
     if [ "$need_rebuild" = true ]; then
         echo -e "${CYAN}Building tsz with dist profile (LTO=fat, codegen-units=1)${NC}"
         echo -e "${CYAN}Target directory: $BENCH_TARGET_DIR${NC}"
-        (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" cargo build --profile dist --features cli)
+        (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" cargo build --profile dist -p tsz-cli)
     fi
     
     echo -e "${GREEN}✓${NC} tsz: $($TSZ --version 2>&1 | head -1)"
