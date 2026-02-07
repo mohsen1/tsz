@@ -243,40 +243,56 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
-                // At depth 0, emit TS2322 as the primary error (matching tsc behavior).
-                // TS2741 detail goes into related_information.
-                if depth == 0 {
-                    let source_str = self.format_type(source);
-                    let target_str = self.format_type(target);
-                    let message = format_message(
-                        diagnostic_messages::TYPE_NOT_ASSIGNABLE,
-                        &[&source_str, &target_str],
-                    );
-                    let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                    let src_str = self.format_type(*source_type);
-                    let tgt_str = self.format_type(*target_type);
-                    let detail = format_message(
-                        diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
-                        &[&prop_name, &src_str, &tgt_str],
-                    );
-                    Diagnostic::error(
-                        file_name.clone(),
-                        start,
-                        length,
-                        message,
-                        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                let src_str = self.format_type(*source_type);
+                let tgt_str = self.format_type(*target_type);
+                let message = format_message(
+                    diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
+                    &[&prop_name, &src_str, &tgt_str],
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::PROPERTY_MISSING_IN_TYPE,
+                )
+            }
+
+            SubtypeFailureReason::MissingProperties {
+                property_names,
+                source_type,
+                target_type,
+            } => {
+                // TS2739: Type 'A' is missing the following properties from type 'B': x, y, z
+                let src_str = self.format_type(*source_type);
+                let tgt_str = self.format_type(*target_type);
+                let prop_list: Vec<String> = property_names
+                    .iter()
+                    .take(5)
+                    .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+                    .collect();
+                let props_str = if property_names.len() > 5 {
+                    format!(
+                        "{}, and {} more.",
+                        prop_list.join(", "),
+                        property_names.len() - 5
                     )
-                    .with_related(file_name, start, length, detail)
                 } else {
-                    let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                    let source_str = self.format_type(*source_type);
-                    let target_str = self.format_type(*target_type);
-                    let message = format_message(
-                        diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
-                        &[&prop_name, &source_str, &target_str],
-                    );
-                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
-                }
+                    prop_list.join(", ")
+                };
+                let message = format_message(
+                    diagnostic_messages::TYPE_MISSING_PROPERTIES,
+                    &[&src_str, &tgt_str, &props_str],
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_MISSING_PROPERTIES,
+                )
             }
 
             SubtypeFailureReason::PropertyTypeMismatch {

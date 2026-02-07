@@ -3529,98 +3529,106 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_shape_id: Option<ObjectShapeId>,
         target_props: &[PropertyInfo],
     ) -> Option<SubtypeFailureReason> {
+        // First pass: collect all missing required property names.
+        // tsc emits TS2739 (multiple missing) or TS2741 (single missing) before
+        // checking property type compatibility.
+        let mut missing_props: Vec<tsz_common::interner::Atom> = Vec::new();
+        for t_prop in target_props {
+            if !t_prop.optional {
+                let s_prop = self.lookup_property(source_props, source_shape_id, t_prop.name);
+                if s_prop.is_none() {
+                    missing_props.push(t_prop.name);
+                }
+            }
+        }
+
+        if missing_props.len() > 1 {
+            return Some(SubtypeFailureReason::MissingProperties {
+                property_names: missing_props,
+                source_type: source,
+                target_type: target,
+            });
+        }
+        if missing_props.len() == 1 {
+            return Some(SubtypeFailureReason::MissingProperty {
+                property_name: missing_props[0],
+                source_type: source,
+                target_type: target,
+            });
+        }
+
+        // Second pass: check property type compatibility
         for t_prop in target_props {
             let s_prop = self.lookup_property(source_props, source_shape_id, t_prop.name);
 
-            match s_prop {
-                Some(sp) => {
-                    // Check nominal identity for private/protected properties
-                    // Private and protected members are nominally typed - they must
-                    // originate from the same declaration (same parent_id)
-                    if t_prop.visibility != Visibility::Public {
-                        if sp.parent_id != t_prop.parent_id {
-                            return Some(SubtypeFailureReason::PropertyNominalMismatch {
-                                property_name: t_prop.name,
-                            });
-                        }
-                    }
-                    // Cannot assign private/protected source to public target
-                    else if sp.visibility != Visibility::Public {
-                        return Some(SubtypeFailureReason::PropertyVisibilityMismatch {
-                            property_name: t_prop.name,
-                            source_visibility: sp.visibility,
-                            target_visibility: t_prop.visibility,
-                        });
-                    }
-
-                    // Check optional/required mismatch
-                    if sp.optional && !t_prop.optional {
-                        return Some(SubtypeFailureReason::OptionalPropertyRequired {
+            if let Some(sp) = s_prop {
+                // Check nominal identity for private/protected properties
+                if t_prop.visibility != Visibility::Public {
+                    if sp.parent_id != t_prop.parent_id {
+                        return Some(SubtypeFailureReason::PropertyNominalMismatch {
                             property_name: t_prop.name,
                         });
                     }
-                    // NOTE: TypeScript allows readonly source to satisfy mutable target
-                    // (readonly is a constraint on the reference, not structural compatibility)
+                }
+                // Cannot assign private/protected source to public target
+                else if sp.visibility != Visibility::Public {
+                    return Some(SubtypeFailureReason::PropertyVisibilityMismatch {
+                        property_name: t_prop.name,
+                        source_visibility: sp.visibility,
+                        target_visibility: t_prop.visibility,
+                    });
+                }
 
-                    // Check property type compatibility
-                    let source_type = self.optional_property_type(sp);
-                    let target_type = self.optional_property_type(t_prop);
-                    let allow_bivariant = sp.is_method || t_prop.is_method;
+                // Check optional/required mismatch
+                if sp.optional && !t_prop.optional {
+                    return Some(SubtypeFailureReason::OptionalPropertyRequired {
+                        property_name: t_prop.name,
+                    });
+                }
+
+                // Check property type compatibility
+                let source_type = self.optional_property_type(sp);
+                let target_type = self.optional_property_type(t_prop);
+                let allow_bivariant = sp.is_method || t_prop.is_method;
+                if !self
+                    .check_subtype_with_method_variance(source_type, target_type, allow_bivariant)
+                    .is_true()
+                {
+                    let nested = self.explain_failure_with_method_variance(
+                        source_type,
+                        target_type,
+                        allow_bivariant,
+                    );
+                    return Some(SubtypeFailureReason::PropertyTypeMismatch {
+                        property_name: t_prop.name,
+                        source_property_type: source_type,
+                        target_property_type: target_type,
+                        nested_reason: nested.map(Box::new),
+                    });
+                }
+                if !t_prop.readonly
+                    && (sp.write_type != sp.type_id || t_prop.write_type != t_prop.type_id)
+                {
+                    let source_write = self.optional_property_write_type(sp);
+                    let target_write = self.optional_property_write_type(t_prop);
                     if !self
                         .check_subtype_with_method_variance(
-                            source_type,
-                            target_type,
+                            target_write,
+                            source_write,
                             allow_bivariant,
                         )
                         .is_true()
                     {
-                        // Recursively explain the nested failure
                         let nested = self.explain_failure_with_method_variance(
-                            source_type,
-                            target_type,
+                            target_write,
+                            source_write,
                             allow_bivariant,
                         );
                         return Some(SubtypeFailureReason::PropertyTypeMismatch {
                             property_name: t_prop.name,
-                            source_property_type: source_type,
-                            target_property_type: target_type,
+                            source_property_type: source_write,
+                            target_property_type: target_write,
                             nested_reason: nested.map(Box::new),
-                        });
-                    }
-                    if !t_prop.readonly
-                        && (sp.write_type != sp.type_id || t_prop.write_type != t_prop.type_id)
-                    {
-                        let source_write = self.optional_property_write_type(sp);
-                        let target_write = self.optional_property_write_type(t_prop);
-                        if !self
-                            .check_subtype_with_method_variance(
-                                target_write,
-                                source_write,
-                                allow_bivariant,
-                            )
-                            .is_true()
-                        {
-                            let nested = self.explain_failure_with_method_variance(
-                                target_write,
-                                source_write,
-                                allow_bivariant,
-                            );
-                            return Some(SubtypeFailureReason::PropertyTypeMismatch {
-                                property_name: t_prop.name,
-                                source_property_type: source_write,
-                                target_property_type: target_write,
-                                nested_reason: nested.map(Box::new),
-                            });
-                        }
-                    }
-                }
-                None => {
-                    // Required property is missing
-                    if !t_prop.optional {
-                        return Some(SubtypeFailureReason::MissingProperty {
-                            property_name: t_prop.name,
-                            source_type: source,
-                            target_type: target,
                         });
                     }
                 }

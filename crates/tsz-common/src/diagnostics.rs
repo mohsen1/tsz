@@ -100,6 +100,7 @@ pub fn get_message_template(code: u32) -> Option<&'static str> {
         dc::DUPLICATE_IDENTIFIER => dm::DUPLICATE_IDENTIFIER,
         dc::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL => dm::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL,
         dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE => dm::PROPERTY_DOES_NOT_EXIST,
+        dc::TYPE_MISSING_PROPERTIES => dm::TYPE_MISSING_PROPERTIES,
         dc::PROPERTY_MISSING_IN_TYPE => dm::PROPERTY_MISSING_BUT_REQUIRED,
         dc::TYPES_OF_PROPERTY_INCOMPATIBLE => dm::TYPES_OF_PROPERTY_INCOMPATIBLE,
         dc::NO_COMMON_PROPERTIES => dm::NO_COMMON_PROPERTIES,
@@ -164,6 +165,8 @@ pub mod diagnostic_messages {
     pub const TYPE_IS_NOT_AN_ARRAY_OR_STRING: &str =
         "Type '{0}' is not an array type or a string type.";
     pub const PROPERTY_MISSING: &str = "Property '{0}' is missing in type '{1}'.";
+    pub const TYPE_MISSING_PROPERTIES: &str =
+        "Type '{0}' is missing the following properties from type '{1}': {2}";
     pub const PROPERTY_MISSING_BUT_REQUIRED: &str =
         "Property '{0}' is missing in type '{1}' but required in type '{2}'.";
     pub const TYPES_OF_PROPERTY_INCOMPATIBLE: &str = "Types of property '{0}' are incompatible.";
@@ -500,6 +503,7 @@ pub mod diagnostic_codes {
     pub const GENERIC_TYPE_REQUIRES_TYPE_ARGUMENTS: u32 = 2314;
     pub const TYPE_IS_NOT_GENERIC: u32 = 2315;
     pub const TYPE_NOT_ASSIGNABLE_TO_TYPE: u32 = 2322;
+    pub const TYPE_MISSING_PROPERTIES: u32 = 2739;
     pub const PROPERTY_MISSING_IN_TYPE: u32 = 2741;
     pub const TYPES_OF_PROPERTY_INCOMPATIBLE: u32 = 2326;
     pub const PROPERTY_DOES_NOT_EXIST_ON_TYPE: u32 = 2339;
