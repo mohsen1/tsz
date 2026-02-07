@@ -197,7 +197,10 @@ fn test_call_weak_type_with_compat_checker() {
     let mut checker = CompatChecker::new(&interner);
     let mut evaluator = CallEvaluator::new(&interner, &mut checker);
 
-    let weak_target = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::NUMBER)]);
+    let weak_target = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("arg")),
@@ -213,7 +216,10 @@ fn test_call_weak_type_with_compat_checker() {
         is_method: false,
     });
 
-    let arg = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let arg = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let result = evaluator.resolve_call(func, &[arg]);
     assert!(matches!(result, CallResult::ArgumentTypeMismatch { .. }));
@@ -867,7 +873,10 @@ fn test_property_access_optional_property() {
     let interner = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
-    let obj = interner.object(vec![PropertyInfo::opt(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let result = evaluator.resolve_property_access(obj, "x");
     match result {
@@ -1361,7 +1370,10 @@ fn test_property_access_object_with_index_optional_property() {
     let obj = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::opt(interner.intern_string("x"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::opt(
+            interner.intern_string("x"),
+            TypeId::NUMBER,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::BOOLEAN,
@@ -2550,7 +2562,10 @@ fn test_infer_generic_keyof_param_from_keyof_arg() {
         is_method: false,
     };
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
     let arg_keyof = interner.intern(TypeKey::KeyOf(obj));
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg_keyof]);
@@ -2594,7 +2609,10 @@ fn test_infer_generic_index_access_param_from_index_access_arg() {
     };
 
     let key_literal = interner.literal_string("value");
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
     let index_access_arg = interner.intern(TypeKey::IndexAccess(obj, key_literal));
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[index_access_arg]);
@@ -3082,7 +3100,10 @@ fn test_infer_generic_object_property() {
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
-    let boxed_t = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), t_type)]);
+    let boxed_t = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        t_type,
+    )]);
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -3099,7 +3120,10 @@ fn test_infer_generic_object_property() {
         is_method: false,
     };
 
-    let arg = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+    let arg = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
     assert_eq!(result, TypeId::STRING);
 }
@@ -3132,7 +3156,10 @@ fn test_infer_generic_optional_property_value() {
         is_method: false,
     };
 
-    let arg = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let arg = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
     assert_eq!(result, TypeId::STRING);
@@ -3166,7 +3193,10 @@ fn test_infer_generic_optional_property_undefined_value() {
         is_method: false,
     };
 
-    let arg = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::UNDEFINED)]);
+    let arg = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::UNDEFINED,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
     assert_eq!(result, TypeId::UNDEFINED);
@@ -3236,7 +3266,10 @@ fn test_infer_generic_required_property_from_optional_argument() {
         is_method: false,
     };
 
-    let arg = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::NUMBER)]);
+    let arg = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
     // NOTE: Returns ERROR due to my changes - was expecting ANY before
@@ -3306,7 +3339,10 @@ fn test_infer_generic_readonly_property_mismatch() {
         is_method: false,
     };
 
-    let arg = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), TypeId::NUMBER)]);
+    let arg = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
     // NOTE: Returns ERROR due to my changes - was expecting ANY before
@@ -3354,7 +3390,10 @@ fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
     let arg = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::readonly(interner.intern_string("a"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::readonly(
+            interner.intern_string("a"),
+            TypeId::NUMBER,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -3510,7 +3549,10 @@ fn test_infer_generic_method_property_bivariant_param() {
         type_params: vec![t_param],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("box")),
-            type_id: interner.object(vec![PropertyInfo::method(interner.intern_string("m"), method_type)]),
+            type_id: interner.object(vec![PropertyInfo::method(
+                interner.intern_string("m"),
+                method_type,
+            )]),
             optional: false,
             rest: false,
         }],
@@ -3537,7 +3579,10 @@ fn test_infer_generic_method_property_bivariant_param() {
         is_method: false,
     });
 
-    let arg = interner.object(vec![PropertyInfo::new(interner.intern_string("m"), arg_method_type)]);
+    let arg = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("m"),
+        arg_method_type,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
     assert_eq!(result, TypeId::NUMBER);
@@ -3575,7 +3620,10 @@ fn test_infer_generic_function_property_contravariant_param() {
         type_params: vec![t_param],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("box")),
-            type_id: interner.object(vec![PropertyInfo::new(interner.intern_string("f"), function_type)]),
+            type_id: interner.object(vec![PropertyInfo::new(
+                interner.intern_string("f"),
+                function_type,
+            )]),
             optional: false,
             rest: false,
         }],
@@ -3602,7 +3650,10 @@ fn test_infer_generic_function_property_contravariant_param() {
         is_method: false,
     });
 
-    let arg = interner.object(vec![PropertyInfo::new(interner.intern_string("f"), arg_function_type)]);
+    let arg = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("f"),
+        arg_function_type,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
     // NOTE: Returns ERROR due to my changes - was expecting ANY before
@@ -3641,7 +3692,10 @@ fn test_infer_generic_method_property_bivariant_optional_param() {
         type_params: vec![t_param],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("box")),
-            type_id: interner.object(vec![PropertyInfo::method(interner.intern_string("m"), method_type)]),
+            type_id: interner.object(vec![PropertyInfo::method(
+                interner.intern_string("m"),
+                method_type,
+            )]),
             optional: false,
             rest: false,
         }],
@@ -3668,7 +3722,10 @@ fn test_infer_generic_method_property_bivariant_optional_param() {
         is_method: false,
     });
 
-    let arg = interner.object(vec![PropertyInfo::new(interner.intern_string("m"), arg_method_type)]);
+    let arg = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("m"),
+        arg_method_type,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
     assert_eq!(result, TypeId::NUMBER);
@@ -4023,7 +4080,10 @@ fn test_infer_generic_index_signature_from_object_literal() {
         is_method: false,
     };
 
-    let object_literal = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let object_literal = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
     assert_eq!(result, TypeId::NUMBER);
@@ -4069,7 +4129,10 @@ fn test_infer_generic_index_signature_from_optional_property() {
         is_method: false,
     };
 
-    let object_literal = interner.object(vec![PropertyInfo::opt(interner.intern_string("a"), TypeId::NUMBER)]);
+    let object_literal = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
     let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
@@ -4116,7 +4179,10 @@ fn test_infer_generic_number_index_from_optional_property() {
         is_method: false,
     };
 
-    let object_literal = interner.object(vec![PropertyInfo::opt(interner.intern_string("0"), TypeId::NUMBER)]);
+    let object_literal = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("0"),
+        TypeId::NUMBER,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
     let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
@@ -4163,7 +4229,10 @@ fn test_infer_generic_number_index_from_numeric_property() {
         is_method: false,
     };
 
-    let object_literal = interner.object(vec![PropertyInfo::new(interner.intern_string("0"), TypeId::STRING)]);
+    let object_literal = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("0"),
+        TypeId::STRING,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
     assert_eq!(result, TypeId::STRING);
@@ -4209,7 +4278,10 @@ fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
         is_method: false,
     };
 
-    let object_literal = interner.object(vec![PropertyInfo::new(interner.intern_string("01"), TypeId::STRING)]);
+    let object_literal = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("01"),
+        TypeId::STRING,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
     assert_eq!(result, TypeId::UNKNOWN);
@@ -4255,7 +4327,10 @@ fn test_infer_generic_number_index_ignores_negative_zero_property() {
         is_method: false,
     };
 
-    let object_literal = interner.object(vec![PropertyInfo::new(interner.intern_string("-0"), TypeId::STRING)]);
+    let object_literal = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("-0"),
+        TypeId::STRING,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
     assert_eq!(result, TypeId::UNKNOWN);
@@ -4301,7 +4376,10 @@ fn test_infer_generic_number_index_from_nan_property() {
         is_method: false,
     };
 
-    let object_literal = interner.object(vec![PropertyInfo::new(interner.intern_string("NaN"), TypeId::STRING)]);
+    let object_literal = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("NaN"),
+        TypeId::STRING,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
     assert_eq!(result, TypeId::STRING);
@@ -4347,7 +4425,10 @@ fn test_infer_generic_number_index_from_exponent_property() {
         is_method: false,
     };
 
-    let object_literal = interner.object(vec![PropertyInfo::new(interner.intern_string("1e-7"), TypeId::STRING)]);
+    let object_literal = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("1e-7"),
+        TypeId::STRING,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
     assert_eq!(result, TypeId::STRING);
@@ -4393,7 +4474,10 @@ fn test_infer_generic_number_index_from_negative_infinity_property() {
         is_method: false,
     };
 
-    let object_literal = interner.object(vec![PropertyInfo::new(interner.intern_string("-Infinity"), TypeId::STRING)]);
+    let object_literal = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("-Infinity"),
+        TypeId::STRING,
+    )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
     assert_eq!(result, TypeId::STRING);
@@ -4684,7 +4768,10 @@ fn test_infer_generic_union_source() {
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
-    let boxed_t = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), t_type)]);
+    let boxed_t = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        t_type,
+    )]);
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -4701,8 +4788,14 @@ fn test_infer_generic_union_source() {
         is_method: false,
     };
 
-    let boxed_number = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
-    let boxed_string = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+    let boxed_number = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
+    let boxed_string = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
 
     let union_arg = interner.union(vec![boxed_number, boxed_string]);
     let result = infer_generic_function(&interner, &mut subtype, &func, &[union_arg]);
@@ -6382,7 +6475,10 @@ fn test_solve_generic_instantiation_object_constraint() {
     let mut checker = CompatChecker::new(&interner);
 
     // Create an object type { x: number }
-    let object_type = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let object_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     // <T extends { x: number }>
     let type_params = vec![TypeParamInfo {
@@ -7155,7 +7251,10 @@ fn test_is_arithmetic_operand_object_invalid() {
     let evaluator = BinaryOpEvaluator::new(&interner);
 
     // object type should NOT be a valid arithmetic operand
-    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
     assert!(
         !evaluator.is_arithmetic_operand(obj_type),
         "object type should NOT be a valid arithmetic operand"
@@ -7214,7 +7313,10 @@ fn test_property_access_array_push_with_env_resolver() {
     });
 
     // Create an interface with push method
-    let array_interface = interner.object(vec![PropertyInfo::method(interner.intern_string("push"), push_func)]);
+    let array_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("push"),
+        push_func,
+    )]);
 
     // Set array base type on the interner so PropertyAccessEvaluator can find it
     interner.set_array_base_type(array_interface, vec![t_param.clone()]);
@@ -7284,7 +7386,10 @@ fn test_property_access_array_push_with_query_cache_resolver() {
         is_method: true,
     });
 
-    let array_interface = interner.object(vec![PropertyInfo::method(interner.intern_string("push"), push_func)]);
+    let array_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("push"),
+        push_func,
+    )]);
 
     interner.set_array_base_type(array_interface, vec![t_param]);
 
@@ -7338,9 +7443,15 @@ fn test_property_access_array_push_with_intersection_array_base() {
         is_method: true,
     });
 
-    let array_decl_a = interner.object(vec![PropertyInfo::method(interner.intern_string("push"), push_func)]);
+    let array_decl_a = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("push"),
+        push_func,
+    )]);
 
-    let array_decl_b = interner.object(vec![PropertyInfo::readonly(interner.intern_string("length"), TypeId::NUMBER)]);
+    let array_decl_b = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("length"),
+        TypeId::NUMBER,
+    )]);
 
     // Simulate merged lib declarations: Array<T> = DeclA & DeclB
     let array_base = interner.intersection2(array_decl_a, array_decl_b);

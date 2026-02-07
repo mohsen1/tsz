@@ -161,7 +161,10 @@ fn test_index_with_props_to_simple_object() {
     let source = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("foo"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("foo"),
+            TypeId::NUMBER,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -170,7 +173,10 @@ fn test_index_with_props_to_simple_object() {
         number_index: None,
     });
 
-    let target = interner.object(vec![PropertyInfo::new(interner.intern_string("foo"), TypeId::NUMBER)]);
+    let target = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("foo"),
+        TypeId::NUMBER,
+    )]);
 
     assert!(is_subtype_of(&interner, source, target));
 }
@@ -252,7 +258,10 @@ fn test_index_signature_with_named_property() {
     let source = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("length"),
+            TypeId::NUMBER,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -264,7 +273,10 @@ fn test_index_signature_with_named_property() {
     let target = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("length"),
+            TypeId::NUMBER,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -284,7 +296,10 @@ fn test_index_signature_source_property_mismatch() {
     let source = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("foo"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("foo"),
+            TypeId::NUMBER,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
@@ -316,7 +331,10 @@ fn test_number_index_signature_source_property_mismatch() {
     let source = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("0"), TypeId::STRING)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("0"),
+            TypeId::STRING,
+        )],
         string_index: None,
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,

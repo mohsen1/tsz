@@ -152,7 +152,10 @@ fn test_callable_with_construct() {
     let interner = TypeInterner::new();
 
     // { new(): Foo } <: { new(): Foo }
-    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let sig = CallSignature {
         type_params: vec![],
@@ -329,7 +332,10 @@ fn test_callable_with_properties() {
             is_method: false,
         }],
         construct_signatures: vec![],
-        properties: vec![PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("length"),
+            TypeId::NUMBER,
+        )],
         ..Default::default()
     });
 
@@ -344,7 +350,10 @@ fn test_callable_with_properties() {
             is_method: false,
         }],
         construct_signatures: vec![],
-        properties: vec![PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("length"),
+            TypeId::NUMBER,
+        )],
         ..Default::default()
     });
 
@@ -382,7 +391,10 @@ fn test_callable_missing_property() {
             is_method: false,
         }],
         construct_signatures: vec![],
-        properties: vec![PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("length"),
+            TypeId::NUMBER,
+        )],
         ..Default::default()
     });
 

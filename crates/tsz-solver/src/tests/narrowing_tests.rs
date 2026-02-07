@@ -346,7 +346,10 @@ fn test_narrow_by_typeof_negation_function() {
         is_constructor: false,
         is_method: false,
     });
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
     let union = interner.union(vec![func, obj]);
 
     let narrowed = ctx.narrow_excluding_function(union);
@@ -358,7 +361,10 @@ fn test_narrow_by_typeof_negation_function_branded_intersection() {
     let interner = TypeInterner::new();
     let ctx = NarrowingContext::new(&interner);
 
-    let brand = interner.object(vec![PropertyInfo::new(interner.intern_string("__brand"), interner.literal_string("Tagged"))]);
+    let brand = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__brand"),
+        interner.literal_string("Tagged"),
+    )]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -556,7 +562,10 @@ fn test_narrow_by_typeof_unconstrained_type_param() {
 fn test_narrow_by_typeof_branded_string_intersection() {
     let interner = TypeInterner::new();
 
-    let brand = interner.object(vec![PropertyInfo::new(interner.intern_string("__brand"), interner.literal_string("UserId"))]);
+    let brand = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__brand"),
+        interner.literal_string("UserId"),
+    )]);
     let branded = interner.intersection(vec![TypeId::STRING, brand]);
     let union = interner.union(vec![branded, TypeId::NUMBER]);
 
@@ -568,7 +577,10 @@ fn test_narrow_by_typeof_branded_string_intersection() {
 fn test_narrow_by_typeof_branded_function_intersection() {
     let interner = TypeInterner::new();
 
-    let brand = interner.object(vec![PropertyInfo::new(interner.intern_string("__brand"), interner.literal_string("Tagged"))]);
+    let brand = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__brand"),
+        interner.literal_string("Tagged"),
+    )]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -594,7 +606,10 @@ fn test_narrow_by_typeof_branded_function_intersection() {
 fn test_narrow_by_typeof_object_excludes_branded_function_intersection() {
     let interner = TypeInterner::new();
 
-    let brand = interner.object(vec![PropertyInfo::new(interner.intern_string("__brand"), interner.literal_string("Tagged"))]);
+    let brand = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__brand"),
+        interner.literal_string("Tagged"),
+    )]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -610,7 +625,10 @@ fn test_narrow_by_typeof_object_excludes_branded_function_intersection() {
         is_method: false,
     });
     let branded = interner.intersection(vec![func, brand]);
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
     let union = interner.union(vec![branded, obj]);
 
     let narrowed = narrow_by_typeof(&interner, union, "object");
@@ -621,7 +639,10 @@ fn test_narrow_by_typeof_object_excludes_branded_function_intersection() {
 fn test_narrow_by_typeof_object_with_object_literal() {
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
     let union = interner.union(vec![obj, TypeId::NUMBER]);
 
     let narrowed = narrow_by_typeof(&interner, union, "object");
@@ -632,7 +653,10 @@ fn test_narrow_by_typeof_object_with_object_literal() {
 fn test_narrow_by_typeof_object_excludes_function() {
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),

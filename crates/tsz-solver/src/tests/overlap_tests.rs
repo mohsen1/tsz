@@ -91,10 +91,16 @@ fn test_object_property_type_mismatch() {
     let interner = TypeInterner::new();
 
     // Create { a: string }
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     // Create { a: number }
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     let checker = SubtypeChecker::new(&interner);
 
@@ -107,10 +113,16 @@ fn test_objects_with_different_properties_overlap() {
     let interner = TypeInterner::new();
 
     // Create { a: number }
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     // Create { b: number }
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let checker = SubtypeChecker::new(&interner);
 

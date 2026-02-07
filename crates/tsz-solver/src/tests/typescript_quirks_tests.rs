@@ -37,10 +37,7 @@ fn fn_type(interner: &TypeInterner, param: TypeId, ret: TypeId) -> TypeId {
 fn fn_type2(interner: &TypeInterner, param1: TypeId, param2: TypeId, ret: TypeId) -> TypeId {
     let sig = FunctionShape {
         type_params: vec![],
-        params: vec![
-            ParamInfo::unnamed(param1),
-            ParamInfo::unnamed(param2),
-        ],
+        params: vec![ParamInfo::unnamed(param1), ParamInfo::unnamed(param2)],
         this_type: None,
         return_type: ret,
         type_predicate: None,

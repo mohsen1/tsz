@@ -500,91 +500,49 @@ impl TypeDiagnostic {
 // =============================================================================
 
 /// TypeScript diagnostic codes for type errors.
+///
+/// These are re-exported from `tsz_common::diagnostics::diagnostic_codes` with
+/// short aliases for ergonomic use within the solver. The canonical definitions
+/// live in `tsz-common` to maintain a single source of truth.
 pub mod codes {
-    /// Type '{0}' is not assignable to type '{1}'.
-    pub const TYPE_NOT_ASSIGNABLE: u32 = 2322;
+    use tsz_common::diagnostics::diagnostic_codes as dc;
 
-    /// Argument of type '{0}' is not assignable to parameter of type '{1}'.
-    pub const ARG_NOT_ASSIGNABLE: u32 = 2345;
+    // Type assignability
+    pub use dc::ARGUMENT_NOT_ASSIGNABLE_TO_PARAMETER as ARG_NOT_ASSIGNABLE;
+    pub use dc::CANNOT_ASSIGN_TO_READONLY_PROPERTY as READONLY_PROPERTY;
+    pub use dc::EXCESS_PROPERTY_CHECK as EXCESS_PROPERTY;
+    pub use dc::MEMBER_IS_NOT_ACCESSIBLE as PROPERTY_VISIBILITY_MISMATCH;
+    pub use dc::NO_COMMON_PROPERTIES;
+    pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE as PROPERTY_NOT_EXIST;
+    pub use dc::PROPERTY_MISSING_IN_TYPE as PROPERTY_MISSING;
+    pub use dc::PROPERTY_NOMINAL_MISMATCH;
+    pub use dc::THIS_CONTEXT_MISMATCH;
+    pub use dc::TYPE_NOT_ASSIGNABLE_TO_TYPE as TYPE_NOT_ASSIGNABLE;
+    pub use dc::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED as CONSTRAINT_NOT_SATISFIED;
 
-    /// Property '{0}' is missing in type '{1}' but required in type '{2}'.
-    pub const PROPERTY_MISSING: u32 = 2741;
+    /// Same code as TYPE_NOT_ASSIGNABLE (TS2322) — used for nested property elaboration.
+    pub const NESTED_TYPE_MISMATCH: u32 = dc::TYPE_NOT_ASSIGNABLE_TO_TYPE;
 
-    /// Property '{0}' does not exist on type '{1}'.
-    pub const PROPERTY_NOT_EXIST: u32 = 2339;
+    // Function/call errors
+    pub use dc::ASYNC_RETURN_TYPE_MUST_BE_PROMISE as NEVER_ASYNC_RETURN;
+    pub use dc::CANNOT_FIND_NAME;
+    pub use dc::CANNOT_INVOKE_NON_FUNCTION as NOT_CALLABLE;
+    pub use dc::EXPECTED_ARGUMENTS as ARG_COUNT_MISMATCH;
 
-    /// Type '{0}' has no properties in common with type '{1}'.
-    pub const NO_COMMON_PROPERTIES: u32 = 2559;
+    // Null/undefined errors
+    pub use dc::OBJECT_IS_OF_TYPE_UNKNOWN as OBJECT_IS_UNKNOWN;
+    pub use dc::OBJECT_IS_POSSIBLY_NULL as OBJECT_POSSIBLY_NULL;
+    pub use dc::OBJECT_IS_POSSIBLY_UNDEFINED as OBJECT_POSSIBLY_UNDEFINED;
 
-    /// Cannot assign to '{0}' because it is a read-only property.
-    pub const READONLY_PROPERTY: u32 = 2540;
+    // Implicit any errors (7xxx series)
+    pub use dc::IMPLICIT_ANY;
+    pub use dc::IMPLICIT_ANY_MEMBER;
+    pub use dc::IMPLICIT_ANY_PARAMETER;
+    pub use dc::IMPLICIT_ANY_RETURN;
+    pub use dc::IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION;
 
-    /// Property '{0}' is private in type '{1}' but not in type '{2}'.
-    pub const PROPERTY_VISIBILITY_MISMATCH: u32 = 2341;
-
-    /// Types have separate declarations of a private property '{0}'.
-    pub const PROPERTY_NOMINAL_MISMATCH: u32 = 2446;
-
-    /// Type '{0}' is not assignable to type '{1}'.
-    /// '{2}' is assignable to the constraint of type '{3}', but '{3}' could be instantiated with a different subtype.
-    pub const CONSTRAINT_NOT_SATISFIED: u32 = 2344;
-
-    /// Argument of type '{0}' is not assignable to parameter of type '{1}'.
-    /// Types of property '{2}' are incompatible.
-    pub const NESTED_TYPE_MISMATCH: u32 = 2322;
-
-    /// The 'this' context of type '{0}' is not assignable to method's 'this' of type '{1}'.
-    pub const THIS_CONTEXT_MISMATCH: u32 = 2684;
-
-    /// Type 'never' is not a valid return type for an async function.
-    pub const NEVER_ASYNC_RETURN: u32 = 1064;
-
-    /// Cannot find name '{0}'.
-    pub const CANNOT_FIND_NAME: u32 = 2304;
-
-    /// This expression is not callable. Type '{0}' has no call signatures.
-    pub const NOT_CALLABLE: u32 = 2349;
-
-    /// Expected {0} arguments, but got {1}.
-    pub const ARG_COUNT_MISMATCH: u32 = 2554;
-
-    /// Object is possibly 'undefined'.
-    pub const OBJECT_POSSIBLY_UNDEFINED: u32 = 2532;
-
-    /// Object is possibly 'null'.
-    pub const OBJECT_POSSIBLY_NULL: u32 = 2531;
-
-    /// Object is of type 'unknown'.
-    pub const OBJECT_IS_UNKNOWN: u32 = 2571;
-
-    /// Object literal may only specify known properties, and '{0}' does not exist in type '{1}'.
-    pub const EXCESS_PROPERTY: u32 = 2353;
-
-    // =========================================================================
-    // Implicit Any Errors (7xxx series)
-    // =========================================================================
-
-    /// Variable '{0}' implicitly has an '{1}' type.
-    pub const IMPLICIT_ANY: u32 = 7005;
-
-    /// Parameter '{0}' implicitly has an '{1}' type.
-    pub const IMPLICIT_ANY_PARAMETER: u32 = 7006;
-
-    /// Member '{0}' implicitly has an '{1}' type.
-    pub const IMPLICIT_ANY_MEMBER: u32 = 7008;
-
-    /// '{0}', which lacks return-type annotation, implicitly has an '{1}' return type.
-    pub const IMPLICIT_ANY_RETURN: u32 = 7010;
-
-    /// Function expression, which lacks return-type annotation, implicitly has an '{0}' return type.
-    pub const IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION: u32 = 7011;
-
-    // =========================================================================
-    // Type Instantiation Errors (2xxx series)
-    // =========================================================================
-
-    /// Type instantiation is excessively deep and possibly infinite.
-    pub const INSTANTIATION_TOO_DEEP: u32 = 2589;
+    // Type instantiation errors
+    pub use dc::TYPE_INSTANTIATION_EXCESSIVELY_DEEP as INSTANTIATION_TOO_DEEP;
 }
 
 // =============================================================================
@@ -594,57 +552,38 @@ pub mod codes {
 /// Get the message template for a diagnostic code.
 ///
 /// Templates use {0}, {1}, etc. as placeholders for arguments.
+/// Message strings are sourced from `tsz_common::diagnostics::diagnostic_messages`
+/// to maintain a single source of truth with the checker.
 pub fn get_message_template(code: u32) -> &'static str {
+    use tsz_common::diagnostics::diagnostic_messages as dm;
+
     match code {
-        codes::TYPE_NOT_ASSIGNABLE => "Type '{0}' is not assignable to type '{1}'.",
-        codes::ARG_NOT_ASSIGNABLE => {
-            "Argument of type '{0}' is not assignable to parameter of type '{1}'."
-        }
-        codes::PROPERTY_MISSING => {
-            "Property '{0}' is missing in type '{1}' but required in type '{2}'."
-        }
-        codes::PROPERTY_NOT_EXIST => "Property '{0}' does not exist on type '{1}'.",
-        codes::NO_COMMON_PROPERTIES => "Type '{0}' has no properties in common with type '{1}'.",
-        codes::READONLY_PROPERTY => "Cannot assign to '{0}' because it is a read-only property.",
-        codes::PROPERTY_VISIBILITY_MISMATCH => {
-            "Property '{0}' is private in type '{1}' but not in type '{2}'."
-        }
-        codes::PROPERTY_NOMINAL_MISMATCH => {
-            "Types have separate declarations of a private property '{0}'."
-        }
-        codes::CONSTRAINT_NOT_SATISFIED => {
-            "Type '{0}' is not assignable to type '{1}'. '{2}' is assignable to the constraint of type '{3}', but '{3}' could be instantiated with a different subtype."
-        }
-        codes::THIS_CONTEXT_MISMATCH => {
-            "The 'this' context of type '{0}' is not assignable to method's 'this' of type '{1}'."
-        }
-        codes::NEVER_ASYNC_RETURN => {
-            "Type 'never' is not a valid return type for an async function."
-        }
-        codes::CANNOT_FIND_NAME => "Cannot find name '{0}'.",
-        codes::NOT_CALLABLE => {
-            "This expression is not callable. Type '{0}' has no call signatures."
-        }
-        codes::ARG_COUNT_MISMATCH => "Expected {0} arguments, but got {1}.",
-        codes::OBJECT_POSSIBLY_UNDEFINED => "Object is possibly 'undefined'.",
-        codes::OBJECT_POSSIBLY_NULL => "Object is possibly 'null'.",
-        codes::OBJECT_IS_UNKNOWN => "Object is of type 'unknown'.",
-        codes::EXCESS_PROPERTY => {
-            "Object literal may only specify known properties, and '{0}' does not exist in type '{1}'."
-        }
-        // Implicit any errors (7xxx series)
-        codes::IMPLICIT_ANY => "Variable '{0}' implicitly has an '{1}' type.",
-        codes::IMPLICIT_ANY_PARAMETER => "Parameter '{0}' implicitly has an '{1}' type.",
-        codes::IMPLICIT_ANY_MEMBER => "Member '{0}' implicitly has an '{1}' type.",
-        codes::IMPLICIT_ANY_RETURN => {
-            "'{0}', which lacks return-type annotation, implicitly has an '{1}' return type."
-        }
+        codes::TYPE_NOT_ASSIGNABLE => dm::TYPE_NOT_ASSIGNABLE,
+        codes::ARG_NOT_ASSIGNABLE => dm::ARGUMENT_NOT_ASSIGNABLE,
+        codes::PROPERTY_MISSING => dm::PROPERTY_MISSING_BUT_REQUIRED,
+        codes::PROPERTY_NOT_EXIST => dm::PROPERTY_DOES_NOT_EXIST,
+        codes::NO_COMMON_PROPERTIES => dm::NO_COMMON_PROPERTIES,
+        codes::READONLY_PROPERTY => dm::CANNOT_ASSIGN_READONLY,
+        codes::PROPERTY_VISIBILITY_MISMATCH => dm::PROPERTY_VISIBILITY_MISMATCH,
+        codes::PROPERTY_NOMINAL_MISMATCH => dm::PROPERTY_NOMINAL_MISMATCH,
+        codes::CONSTRAINT_NOT_SATISFIED => dm::TYPE_NOT_SATISFY_CONSTRAINT,
+        codes::THIS_CONTEXT_MISMATCH => dm::THIS_CONTEXT_MISMATCH,
+        codes::NEVER_ASYNC_RETURN => dm::ASYNC_RETURN_TYPE_MUST_BE_PROMISE,
+        codes::CANNOT_FIND_NAME => dm::CANNOT_FIND_NAME,
+        codes::NOT_CALLABLE => dm::CANNOT_INVOKE_EXPRESSION,
+        codes::ARG_COUNT_MISMATCH => dm::EXPECTED_ARGUMENTS,
+        codes::OBJECT_POSSIBLY_UNDEFINED => dm::OBJECT_POSSIBLY_UNDEFINED,
+        codes::OBJECT_POSSIBLY_NULL => dm::OBJECT_POSSIBLY_NULL,
+        codes::OBJECT_IS_UNKNOWN => dm::OBJECT_IS_OF_TYPE_UNKNOWN,
+        codes::EXCESS_PROPERTY => dm::EXCESS_PROPERTY,
+        codes::IMPLICIT_ANY => dm::VARIABLE_IMPLICIT_ANY,
+        codes::IMPLICIT_ANY_PARAMETER => dm::PARAMETER_IMPLICIT_ANY,
+        codes::IMPLICIT_ANY_MEMBER => dm::MEMBER_IMPLICIT_ANY,
+        codes::IMPLICIT_ANY_RETURN => dm::IMPLICIT_ANY_RETURN,
         codes::IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION => {
-            "Function expression, which lacks return-type annotation, implicitly has an '{0}' return type."
+            dm::IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION
         }
-        codes::INSTANTIATION_TOO_DEEP => {
-            "Type instantiation is excessively deep and possibly infinite."
-        }
+        codes::INSTANTIATION_TOO_DEEP => dm::TYPE_INSTANTIATION_EXCESSIVELY_DEEP,
         _ => "Unknown diagnostic",
     }
 }

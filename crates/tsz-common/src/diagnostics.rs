@@ -101,6 +101,14 @@ pub mod diagnostic_messages {
     pub const PROPERTY_MISSING_BUT_REQUIRED: &str =
         "Property '{0}' is missing in type '{1}' but required in type '{2}'.";
     pub const TYPES_OF_PROPERTY_INCOMPATIBLE: &str = "Types of property '{0}' are incompatible.";
+    pub const NO_COMMON_PROPERTIES: &str =
+        "Type '{0}' has no properties in common with type '{1}'.";
+    pub const PROPERTY_VISIBILITY_MISMATCH: &str =
+        "Property '{0}' is private in type '{1}' but not in type '{2}'.";
+    pub const PROPERTY_NOMINAL_MISMATCH: &str =
+        "Types have separate declarations of a private property '{0}'.";
+    pub const THIS_CONTEXT_MISMATCH: &str =
+        "The 'this' context of type '{0}' is not assignable to method's 'this' of type '{1}'.";
     pub const ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE: &str =
         "'{0}' only refers to a type, but is being used as a value here.";
     pub const ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB: &str = "'{0}' only refers to a type, but is being used as a value here. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later.";
@@ -559,6 +567,14 @@ pub mod diagnostic_codes {
     pub const OVERRIDE_MEMBER_NOT_IN_BASE: u32 = 4114; // This member cannot have an 'override' modifier because it is not declared in the base class
     pub const OVERRIDE_MEMBER_REQUIRED: u32 = 4113; // This member must have an 'override' modifier because it overrides a member in the base class
     pub const PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT: u32 = 2819; // Private identifiers are not allowed in ambient contexts.
+
+    // Subtype / property compatibility errors
+    /// TS2559: Type '{0}' has no properties in common with type '{1}'.
+    pub const NO_COMMON_PROPERTIES: u32 = 2559;
+    /// TS2446: Types have separate declarations of a private property '{0}'.
+    pub const PROPERTY_NOMINAL_MISMATCH: u32 = 2446;
+    /// TS2684: The 'this' context of type '{0}' is not assignable to method's 'this' of type '{1}'.
+    pub const THIS_CONTEXT_MISMATCH: u32 = 2684;
 
     // Interface/type errors
     pub const INTERFACE_NAME_CANNOT_BE: u32 = 2427; // Interface name cannot be '{0}'.

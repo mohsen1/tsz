@@ -312,7 +312,10 @@ fn test_apparent_boolean_member_subtyping() {
     };
 
     let value_of = interner.intern_string("valueOf");
-    let target = interner.object(vec![PropertyInfo::method(value_of, method(TypeId::BOOLEAN))]);
+    let target = interner.object(vec![PropertyInfo::method(
+        value_of,
+        method(TypeId::BOOLEAN),
+    )]);
     let mismatch = interner.object(vec![PropertyInfo::method(value_of, method(TypeId::NUMBER))]);
 
     assert!(checker.is_subtype_of(TypeId::BOOLEAN, target));
@@ -407,7 +410,10 @@ fn test_object_trifecta_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
     let array = interner.array(TypeId::STRING);
     let tuple = interner.tuple(vec![TupleElement {
         type_id: TypeId::BOOLEAN,
@@ -449,7 +455,10 @@ fn test_object_trifecta_object_interface_accepts_primitives() {
         is_constructor: false,
         is_method: false,
     });
-    let object_interface = interner.object(vec![PropertyInfo::method(interner.intern_string("toString"), to_string)]);
+    let object_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("toString"),
+        to_string,
+    )]);
 
     let def_id = DefId(1);
     env.insert_def(def_id, object_interface);
@@ -478,7 +487,10 @@ fn test_object_trifecta_nullish_rejection() {
         is_constructor: false,
         is_method: false,
     });
-    let object_interface = interner.object(vec![PropertyInfo::method(interner.intern_string("toString"), to_string)]);
+    let object_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("toString"),
+        to_string,
+    )]);
     let def_id = DefId(99);
     env.insert_def(def_id, object_interface);
     let object_ref = interner.lazy(def_id);
@@ -508,7 +520,10 @@ fn test_primitive_boxing_assignability() {
         is_constructor: false,
         is_method: false,
     });
-    let number_interface = interner.object(vec![PropertyInfo::method(interner.intern_string("toFixed"), to_fixed)]);
+    let number_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("toFixed"),
+        to_fixed,
+    )]);
 
     let def_id = DefId(2);
     env.insert_def(def_id, number_interface);
@@ -534,7 +549,10 @@ fn test_primitive_boxing_bigint_assignability() {
         is_constructor: false,
         is_method: false,
     });
-    let bigint_interface = interner.object(vec![PropertyInfo::method(interner.intern_string("toString"), to_string)]);
+    let bigint_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("toString"),
+        to_string,
+    )]);
 
     let def_id = DefId(3);
     env.insert_def(def_id, bigint_interface);
@@ -560,7 +578,10 @@ fn test_primitive_boxing_boolean_assignability() {
         is_constructor: false,
         is_method: false,
     });
-    let boolean_interface = interner.object(vec![PropertyInfo::method(interner.intern_string("toString"), to_string)]);
+    let boolean_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("toString"),
+        to_string,
+    )]);
 
     let def_id = DefId(4);
     env.insert_def(def_id, boolean_interface);
@@ -586,7 +607,10 @@ fn test_primitive_boxing_string_assignability() {
         is_constructor: false,
         is_method: false,
     });
-    let string_interface = interner.object(vec![PropertyInfo::method(interner.intern_string("toUpperCase"), to_upper)]);
+    let string_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("toUpperCase"),
+        to_upper,
+    )]);
 
     let def_id = DefId(5);
     env.insert_def(def_id, string_interface);
@@ -604,7 +628,10 @@ fn test_primitive_boxing_symbol_assignability() {
     let mut env = TypeEnvironment::new();
 
     let description = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
-    let symbol_interface = interner.object(vec![PropertyInfo::new(interner.intern_string("description"), description)]);
+    let symbol_interface = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("description"),
+        description,
+    )]);
 
     let def_id = DefId(6);
     env.insert_def(def_id, symbol_interface);
@@ -1022,7 +1049,10 @@ fn test_object_subtyping() {
     let mut checker = SubtypeChecker::new(&interner);
 
     // { x: number }
-    let obj_x = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj_x = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     // { x: number, y: string }
     let obj_xy = interner.object(vec![
@@ -1211,7 +1241,10 @@ fn test_ref_to_object_resolution() {
     let mut env = TypeEnvironment::new();
 
     // Create an object type: { x: number }
-    let obj_x = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj_x = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     // Create a Ref that resolves to { x: number, y: string }
     let obj_xy = interner.object(vec![
@@ -2331,7 +2364,10 @@ fn test_number_index_signature_numeric_property() {
     let mut checker = SubtypeChecker::new(&interner);
 
     // { 0: string }
-    let source = interner.object(vec![PropertyInfo::new(interner.intern_string("0"), TypeId::STRING)]);
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("0"),
+        TypeId::STRING,
+    )]);
 
     // { [x: number]: string }
     let target_shape = ObjectShape {
@@ -2359,7 +2395,10 @@ fn test_number_index_signature_type_mismatch() {
     let mut checker = SubtypeChecker::new(&interner);
 
     // { 0: number }
-    let source = interner.object(vec![PropertyInfo::new(interner.intern_string("0"), TypeId::NUMBER)]);
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("0"),
+        TypeId::NUMBER,
+    )]);
 
     // { [x: number]: string }
     let target_shape = ObjectShape {
@@ -2417,9 +2456,15 @@ fn test_number_index_signature_method_bivariant_property() {
         is_method: false,
     });
 
-    let source_method = interner.object(vec![PropertyInfo::method(interner.intern_string("0"), narrow_method)]);
+    let source_method = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("0"),
+        narrow_method,
+    )]);
 
-    let source_prop = interner.object(vec![PropertyInfo::new(interner.intern_string("0"), narrow_method)]);
+    let source_prop = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("0"),
+        narrow_method,
+    )]);
 
     let target_shape = ObjectShape {
         symbol: None,
@@ -2476,9 +2521,15 @@ fn test_string_index_signature_method_bivariant_property() {
         is_method: false,
     });
 
-    let source_method = interner.object(vec![PropertyInfo::method(interner.intern_string("foo"), narrow_method)]);
+    let source_method = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("foo"),
+        narrow_method,
+    )]);
 
-    let source_prop = interner.object(vec![PropertyInfo::new(interner.intern_string("foo"), narrow_method)]);
+    let source_prop = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("foo"),
+        narrow_method,
+    )]);
 
     let target_shape = ObjectShape {
         symbol: None,
@@ -2654,7 +2705,10 @@ fn test_readonly_property_with_mutable_index_signature() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let source = interner.object(vec![PropertyInfo::readonly(interner.intern_string("x"), TypeId::NUMBER)]);
+    let source = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let mutable_index = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -2735,7 +2789,10 @@ fn test_object_with_index_property_mismatch_string_index() {
     let source = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("name"),
+            TypeId::STRING,
+        )],
         number_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -2767,7 +2824,10 @@ fn test_object_with_index_property_mismatch_number_index() {
     let source = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("0"), TypeId::STRING)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("0"),
+            TypeId::STRING,
+        )],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
@@ -2808,7 +2868,10 @@ fn test_object_with_index_satisfies_named_property_string_index() {
         }),
     });
 
-    let target = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let target = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     // Index signatures do NOT satisfy required named properties (TS2741)
     assert!(!checker.is_subtype_of(source, target));
@@ -2831,7 +2894,10 @@ fn test_object_with_index_named_property_mismatch_string_index() {
         }),
     });
 
-    let target = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let target = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     assert!(!checker.is_subtype_of(source, target));
 }
@@ -2841,7 +2907,10 @@ fn test_object_to_indexed_property_mismatch_string_index() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let source = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
     let target = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -2875,7 +2944,10 @@ fn test_object_with_index_satisfies_numeric_property_number_index() {
         string_index: None,
     });
 
-    let target = interner.object(vec![PropertyInfo::new(interner.intern_string("0"), TypeId::STRING)]);
+    let target = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("0"),
+        TypeId::STRING,
+    )]);
 
     // Index signatures do NOT satisfy required named properties (TS2741)
     assert!(!checker.is_subtype_of(source, target));
@@ -2898,7 +2970,10 @@ fn test_object_with_index_noncanonical_numeric_property_fails() {
         string_index: None,
     });
 
-    let target = interner.object(vec![PropertyInfo::new(interner.intern_string("01"), TypeId::STRING)]);
+    let target = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("01"),
+        TypeId::STRING,
+    )]);
 
     assert!(!checker.is_subtype_of(source, target));
 }
@@ -2920,7 +2995,10 @@ fn test_object_with_index_readonly_index_to_mutable_property_fails() {
         }),
     });
 
-    let target = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let target = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     assert!(!checker.is_subtype_of(source, target));
 }
@@ -4154,7 +4232,10 @@ fn test_constructor_void_exception_subtype() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let returns_instance = interner.function(FunctionShape {
         type_params: vec![],
@@ -4871,8 +4952,14 @@ fn test_keyof_intersection_contravariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
     let keyof_a = interner.intern(TypeKey::KeyOf(obj_a));
@@ -4887,7 +4974,10 @@ fn test_keyof_contravariant_object_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
     let obj_ab = interner.object(vec![
         PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
         PropertyInfo::new(interner.intern_string("b"), TypeId::STRING),
@@ -4908,8 +4998,14 @@ fn test_keyof_intersection_union_of_keys() {
 
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
     let result = evaluate_keyof(&interner, intersection);
@@ -4927,8 +5023,14 @@ fn test_keyof_union_disjoint_object_keys_is_never() {
 
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     let union = interner.union(vec![obj_a, obj_b]);
     let result = evaluate_keyof(&interner, union);
@@ -5206,7 +5308,8 @@ fn test_mapped_type_over_number_keys_optional_readonly_add_subtyping() {
         visibility: Visibility::Public,
         parent_id: None,
     }]);
-    let required_readonly = interner.object(vec![PropertyInfo::readonly(to_fixed, TypeId::BOOLEAN)]);
+    let required_readonly =
+        interner.object(vec![PropertyInfo::readonly(to_fixed, TypeId::BOOLEAN)]);
     let optional_mutable = interner.object(vec![PropertyInfo::opt(to_fixed, TypeId::BOOLEAN)]);
 
     assert!(checker.is_subtype_of(mapped, optional_readonly));
@@ -5902,7 +6005,8 @@ fn test_mapped_type_key_remap_optional_readonly_add_subtyping() {
         visibility: Visibility::Public,
         parent_id: None,
     }]);
-    let required_readonly_b = interner.object(vec![PropertyInfo::readonly(prop_b.name, TypeId::NUMBER)]);
+    let required_readonly_b =
+        interner.object(vec![PropertyInfo::readonly(prop_b.name, TypeId::NUMBER)]);
     let optional_mutable_b = interner.object(vec![PropertyInfo::opt(prop_b.name, TypeId::NUMBER)]);
 
     assert!(checker.is_subtype_of(mapped, optional_readonly_b));
@@ -5960,7 +6064,8 @@ fn test_mapped_type_key_remap_optional_readonly_remove_subtyping() {
 
     let required_mutable_b = interner.object(vec![PropertyInfo::new(prop_b.name, TypeId::NUMBER)]);
     let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
-    let required_mutable_b_with_undef = interner.object(vec![PropertyInfo::new(prop_b.name, number_or_undefined)]);
+    let required_mutable_b_with_undef =
+        interner.object(vec![PropertyInfo::new(prop_b.name, number_or_undefined)]);
     let optional_mutable_b = interner.object(vec![PropertyInfo::opt(prop_b.name, TypeId::NUMBER)]);
 
     assert!(!checker.is_subtype_of(mapped, required_mutable_b));
@@ -6402,7 +6507,10 @@ fn test_method_bivariant_callback_param() {
         is_method: false,
     });
 
-    let obj_narrow_cb = interner.object(vec![PropertyInfo::method(method_name, method_with_narrow_cb)]);
+    let obj_narrow_cb = interner.object(vec![PropertyInfo::method(
+        method_name,
+        method_with_narrow_cb,
+    )]);
 
     let obj_wide_cb = interner.object(vec![PropertyInfo::method(method_name, method_with_wide_cb)]);
 
@@ -6541,7 +6649,8 @@ fn test_readonly_property_covariant() {
     let prop_name = interner.intern_string("value");
     let wide_type = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
-    let obj_narrow_readonly = interner.object(vec![PropertyInfo::readonly(prop_name, TypeId::STRING)]);
+    let obj_narrow_readonly =
+        interner.object(vec![PropertyInfo::readonly(prop_name, TypeId::STRING)]);
 
     let obj_wide_readonly = interner.object(vec![PropertyInfo::readonly(prop_name, wide_type)]);
 
@@ -7951,7 +8060,8 @@ fn test_bivariant_event_handler_pattern() {
     // Object with event handler method
     let obj_base_handler = interner.object(vec![PropertyInfo::method(on_event_name, handler_base)]);
 
-    let obj_derived_handler = interner.object(vec![PropertyInfo::method(on_event_name, handler_derived)]);
+    let obj_derived_handler =
+        interner.object(vec![PropertyInfo::method(on_event_name, handler_derived)]);
 
     // With bivariance, handler expecting derived event should be assignable
     // to handler expecting base event (practical for event handling)
@@ -10298,7 +10408,8 @@ fn test_readonly_with_optional() {
         parent_id: None,
     }]);
 
-    let obj_readonly_required = interner.object(vec![PropertyInfo::readonly(a_name, TypeId::STRING)]);
+    let obj_readonly_required =
+        interner.object(vec![PropertyInfo::readonly(a_name, TypeId::STRING)]);
 
     // Required is subtype of optional (even with readonly)
     assert!(checker.is_subtype_of(obj_readonly_required, obj_readonly_optional));
@@ -10314,7 +10425,8 @@ fn test_readonly_array_like() {
 
     let length_name = interner.intern_string("length");
 
-    let readonly_array_like = interner.object(vec![PropertyInfo::readonly(length_name, TypeId::NUMBER)]);
+    let readonly_array_like =
+        interner.object(vec![PropertyInfo::readonly(length_name, TypeId::NUMBER)]);
 
     let mutable_array_like = interner.object(vec![PropertyInfo::new(length_name, TypeId::NUMBER)]);
 
@@ -14538,7 +14650,10 @@ fn test_index_signature_with_properties() {
     let obj = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("x"),
+            TypeId::NUMBER,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: union_type,
@@ -14561,7 +14676,10 @@ fn test_index_signature_property_must_match_index() {
     let obj_valid = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo::new(interner.intern_string("x"), TypeId::STRING)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("x"),
+            TypeId::STRING,
+        )],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
@@ -14683,9 +14801,15 @@ fn test_index_signature_intersection_value() {
     let interner = TypeInterner::new();
     let _checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     let intersection_value = interner.intersection(vec![obj_a, obj_b]);
 
@@ -14804,7 +14928,10 @@ fn test_index_signature_any_value() {
         number_index: None,
     });
 
-    let obj_with_props = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::BOOLEAN)]);
+    let obj_with_props = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::BOOLEAN,
+    )]);
 
     assert!(checker.is_subtype_of(obj_with_props, indexed_any));
 }
@@ -14964,7 +15091,10 @@ fn test_index_signature_nested_object_value() {
     let interner = TypeInterner::new();
     let _checker = SubtypeChecker::new(&interner);
 
-    let nested_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let nested_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let indexed_nested = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -14999,7 +15129,10 @@ fn test_index_signature_intersection_objects() {
         number_index: None,
     });
 
-    let prop_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let prop_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let intersection = interner.intersection(vec![indexed_obj, prop_obj]);
 
@@ -15188,9 +15321,15 @@ fn test_variance_readonly_property_covariant() {
 
     let wide_type = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
-    let narrow_readonly = interner.object(vec![PropertyInfo::readonly(interner.intern_string("x"), TypeId::STRING)]);
+    let narrow_readonly = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
-    let wide_readonly = interner.object(vec![PropertyInfo::readonly(interner.intern_string("x"), wide_type)]);
+    let wide_readonly = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        wide_type,
+    )]);
 
     // Narrow readonly <: wide readonly (covariant)
     assert!(checker.is_subtype_of(narrow_readonly, wide_readonly));
@@ -15205,9 +15344,15 @@ fn test_variance_mutable_property_invariant() {
 
     let wide_type = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
-    let narrow_mutable = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::STRING)]);
+    let narrow_mutable = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
-    let wide_mutable = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), wide_type)]);
+    let wide_mutable = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        wide_type,
+    )]);
 
     // TypeScript allows this (unsound covariance), so we match behavior
     assert!(checker.is_subtype_of(narrow_mutable, wide_mutable));
@@ -15377,9 +15522,15 @@ fn test_variance_intersection_in_covariant_position() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let intersection_ab = interner.intersection(vec![obj_a, obj_b]);
 
@@ -15626,9 +15777,15 @@ fn test_variance_promise_covariant() {
         is_method: false,
     });
 
-    let promise_narrow = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), then_narrow)]);
+    let promise_narrow = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        then_narrow,
+    )]);
 
-    let promise_wide = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), then_wide)]);
+    let promise_wide = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        then_wide,
+    )]);
 
     // Promise<string> <: Promise<string | number> (covariant in T)
     // then callback param is contravariant, then is contravariant in object = covariant overall
@@ -15753,7 +15910,10 @@ fn test_variance_constructor_param_contravariant() {
     let wide_type = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     // Instance type
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
 
     let ctor_narrow = interner.callable(CallableShape {
         symbol: None,
@@ -16215,7 +16375,10 @@ fn test_overload_constructor_subtype() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
 
     let multi_ctor = interner.callable(CallableShape {
         symbol: None,
@@ -16361,7 +16524,10 @@ fn test_this_parameter_explicit_type() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let foo_type = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
+    let foo_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
 
     let fn_with_this = interner.function(FunctionShape {
         type_params: vec![],
@@ -16404,7 +16570,10 @@ fn test_this_parameter_covariant_in_method() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let base_type = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
+    let base_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
 
     let derived_type = interner.object(vec![
         PropertyInfo::new(interner.intern_string("name"), TypeId::STRING),
@@ -16488,7 +16657,10 @@ fn test_this_parameter_in_callable_method() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("data"), TypeId::STRING)]);
+    let obj_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("data"),
+        TypeId::STRING,
+    )]);
 
     // Method with this type
     let method_fn = interner.function(FunctionShape {
@@ -16505,7 +16677,10 @@ fn test_this_parameter_in_callable_method() {
         symbol: None,
         call_signatures: vec![],
         construct_signatures: vec![],
-        properties: vec![PropertyInfo::method(interner.intern_string("getData"), method_fn)],
+        properties: vec![PropertyInfo::method(
+            interner.intern_string("getData"),
+            method_fn,
+        )],
         string_index: None,
         number_index: None,
     });
@@ -16525,7 +16700,10 @@ fn test_this_parameter_in_callable_method() {
         symbol: None,
         call_signatures: vec![],
         construct_signatures: vec![],
-        properties: vec![PropertyInfo::method(interner.intern_string("getData"), plain_method)],
+        properties: vec![PropertyInfo::method(
+            interner.intern_string("getData"),
+            plain_method,
+        )],
         string_index: None,
         number_index: None,
     });
@@ -16541,7 +16719,10 @@ fn test_this_parameter_fluent_api_pattern() {
     let mut checker = SubtypeChecker::new(&interner);
 
     // Builder type with set method returning this
-    let builder_type = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+    let builder_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
 
     // Method returning the builder (this type)
     let set_method = interner.function(FunctionShape {
@@ -16621,7 +16802,10 @@ fn test_overload_with_call_and_construct() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
 
     let dual_callable = interner.callable(CallableShape {
         symbol: None,
@@ -16749,7 +16933,10 @@ fn test_this_in_overload_signature() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let overload_with_this = interner.callable(CallableShape {
         symbol: None,
@@ -17171,9 +17358,15 @@ fn test_symbol_in_discriminated_union() {
     let sym_b = interner.intern(TypeKey::UniqueSymbol(SymbolRef(2)));
 
     // Two variants discriminated by symbol
-    let variant_a = interner.object(vec![PropertyInfo::readonly(interner.intern_string("kind"), sym_a)]);
+    let variant_a = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("kind"),
+        sym_a,
+    )]);
 
-    let variant_b = interner.object(vec![PropertyInfo::readonly(interner.intern_string("kind"), sym_b)]);
+    let variant_b = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("kind"),
+        sym_b,
+    )]);
 
     let discriminated_union = interner.union(vec![variant_a, variant_b]);
 
@@ -17419,7 +17612,10 @@ fn test_nullable_object_type() {
     let mut checker = SubtypeChecker::new(&interner);
     checker.strict_null_checks = true;
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::STRING)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
     let nullable_obj = interner.union(vec![obj, TypeId::NULL]);
 
@@ -18429,7 +18625,10 @@ fn test_keyof_wider_object_has_more_keys() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
     let obj_ab = interner.object(vec![
         PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
@@ -18475,9 +18674,15 @@ fn test_keyof_intersection_is_union_of_keys() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
     let keyof_intersection = interner.intern(TypeKey::KeyOf(intersection));
@@ -18711,7 +18916,10 @@ fn test_keyof_reflexive() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
 
@@ -18799,7 +19007,10 @@ fn test_constructor_basic_new_signature() {
     let interner = TypeInterner::new();
     let _checker = SubtypeChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let constructor = interner.function(FunctionShape {
         type_params: vec![],
@@ -18858,7 +19069,10 @@ fn test_constructor_vs_regular_function() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let constructor = interner.function(FunctionShape {
         type_params: vec![],
@@ -18891,7 +19105,10 @@ fn test_constructor_callable_with_construct_signature() {
     let interner = TypeInterner::new();
     let _checker = SubtypeChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
 
     let callable_with_new = interner.callable(CallableShape {
         symbol: None,
@@ -18917,7 +19134,10 @@ fn test_constructor_with_call_and_construct() {
     // interface F { (): string; new (): T }
     let interner = TypeInterner::new();
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let callable_both = interner.callable(CallableShape {
         symbol: None,
@@ -18951,7 +19171,10 @@ fn test_constructor_subtype_by_return_type() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let base = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let base = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let derived = interner.object(vec![
         PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER),
@@ -18990,7 +19213,10 @@ fn test_constructor_contravariant_parameters() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("result"), TypeId::BOOLEAN)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("result"),
+        TypeId::BOOLEAN,
+    )]);
 
     let string_or_number = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
@@ -19102,9 +19328,15 @@ fn test_constructor_overload_signatures() {
     // interface C { new (): A; new (x: string): B }
     let interner = TypeInterner::new();
 
-    let instance_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let instance_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
-    let instance_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let instance_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     let overloaded_ctor = interner.callable(CallableShape {
         symbol: None,
@@ -19201,7 +19433,10 @@ fn test_constructor_abstract_pattern() {
     let interner = TypeInterner::new();
     let _checker = SubtypeChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     // Abstract constructor (conceptually - just a construct signature)
     let abstract_ctor = interner.callable(CallableShape {
@@ -19241,7 +19476,10 @@ fn test_constructor_with_static_properties() {
     // Constructor function with static members
     let interner = TypeInterner::new();
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
 
     let ctor_with_static = interner.callable(CallableShape {
         symbol: None,
@@ -19362,7 +19600,10 @@ fn test_constructor_reflexive() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let ctor = interner.function(FunctionShape {
         type_params: vec![],
@@ -19416,7 +19657,10 @@ fn test_constructor_any_return() {
         is_method: false,
     });
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let ctor_specific = interner.function(FunctionShape {
         type_params: vec![],
@@ -19438,7 +19682,10 @@ fn test_constructor_multiple_construct_signatures_subtype() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let instance = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let single_sig = interner.callable(CallableShape {
         symbol: None,
@@ -19497,7 +19744,10 @@ fn test_constructor_with_this_type() {
     // new (this: Window) => T
     let interner = TypeInterner::new();
 
-    let window_type = interner.object(vec![PropertyInfo::readonly(interner.intern_string("document"), TypeId::OBJECT)]);
+    let window_type = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("document"),
+        TypeId::OBJECT,
+    )]);
 
     let instance = interner.object(vec![]);
 
@@ -19521,7 +19771,10 @@ fn test_constructor_empty_vs_nonempty() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let empty_instance = interner.object(vec![]);
-    let nonempty_instance = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let nonempty_instance = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let ctor_empty = interner.function(FunctionShape {
         type_params: vec![],
@@ -19583,7 +19836,10 @@ fn test_this_type_in_method_return() {
         is_method: false,
     });
 
-    let obj = interner.object(vec![PropertyInfo::method(interner.intern_string("setName"), fluent_method)]);
+    let obj = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("setName"),
+        fluent_method,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -19716,7 +19972,10 @@ fn test_this_type_in_callback() {
         is_method: false,
     });
 
-    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("onClick"), callback)]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("onClick"),
+        callback,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -19754,7 +20013,10 @@ fn test_this_type_in_class_method() {
         is_method: false,
     });
 
-    let chainable = interner.object(vec![PropertyInfo::method(interner.intern_string("chain"), chain_method)]);
+    let chainable = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("chain"),
+        chain_method,
+    )]);
 
     assert!(chainable != TypeId::ERROR);
 }
@@ -19799,7 +20061,10 @@ fn test_this_type_with_property_access() {
 
     let this_type = interner.intern(TypeKey::ThisType);
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("self"), this_type)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("self"),
+        this_type,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -19833,7 +20098,10 @@ fn test_this_type_in_intersection() {
     let interner = TypeInterner::new();
 
     let this_type = interner.intern(TypeKey::ThisType);
-    let has_id = interner.object(vec![PropertyInfo::new(interner.intern_string("id"), TypeId::STRING)]);
+    let has_id = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("id"),
+        TypeId::STRING,
+    )]);
 
     let this_with_id = interner.intersection(vec![this_type, has_id]);
 
@@ -19857,7 +20125,10 @@ fn test_this_type_clone_method() {
         is_method: false,
     });
 
-    let cloneable = interner.object(vec![PropertyInfo::method(interner.intern_string("clone"), clone_method)]);
+    let cloneable = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("clone"),
+        clone_method,
+    )]);
 
     assert!(cloneable != TypeId::ERROR);
 }
@@ -20390,7 +20661,10 @@ fn test_readonly_property_basic() {
     // { readonly x: string }
     let interner = TypeInterner::new();
 
-    let readonly_obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("x"), TypeId::STRING)]);
+    let readonly_obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
     assert!(readonly_obj != TypeId::ERROR);
 }
@@ -20401,9 +20675,15 @@ fn test_readonly_vs_mutable_property() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let readonly_obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("x"), TypeId::STRING)]);
+    let readonly_obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
-    let mutable_obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::STRING)]);
+    let mutable_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
     // Mutable is subtype of readonly (can assign mutable to readonly)
     assert!(checker.is_subtype_of(mutable_obj, readonly_obj));
@@ -20610,9 +20890,15 @@ fn test_readonly_nested_object() {
     // { readonly data: { readonly inner: string } }
     let interner = TypeInterner::new();
 
-    let inner = interner.object(vec![PropertyInfo::readonly(interner.intern_string("inner"), TypeId::STRING)]);
+    let inner = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("inner"),
+        TypeId::STRING,
+    )]);
 
-    let outer = interner.object(vec![PropertyInfo::readonly(interner.intern_string("data"), inner)]);
+    let outer = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("data"),
+        inner,
+    )]);
 
     assert!(outer != TypeId::ERROR);
 }
@@ -20624,7 +20910,10 @@ fn test_readonly_with_union_property() {
 
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("x"), union)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        union,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -20636,7 +20925,10 @@ fn test_readonly_with_array_property() {
 
     let string_array = interner.array(TypeId::STRING);
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("items"), string_array)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("items"),
+        string_array,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -20648,7 +20940,10 @@ fn test_readonly_deep_with_array() {
 
     let readonly_array = interner.readonly_array(TypeId::STRING);
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("items"), readonly_array)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("items"),
+        readonly_array,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -20668,7 +20963,10 @@ fn test_readonly_with_function_property() {
         is_method: false,
     });
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("callback"), callback)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("callback"),
+        callback,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -20711,7 +21009,10 @@ fn test_readonly_with_literal_type() {
     let lit_inactive = interner.literal_string("inactive");
     let status_union = interner.union(vec![lit_active, lit_inactive]);
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("status"), status_union)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("status"),
+        status_union,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -20741,9 +21042,15 @@ fn test_readonly_intersection() {
     // { readonly a: string } & { readonly b: number }
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::readonly(interner.intern_string("a"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
 
-    let obj_b = interner.object(vec![PropertyInfo::readonly(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj_b = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
 
@@ -20757,7 +21064,10 @@ fn test_readonly_in_generic_context() {
 
     let t_ref = interner.lazy(DefId(50));
 
-    let container = interner.object(vec![PropertyInfo::readonly(interner.intern_string("value"), t_ref)]);
+    let container = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("value"),
+        t_ref,
+    )]);
 
     assert!(container != TypeId::ERROR);
 }
@@ -20770,9 +21080,15 @@ fn test_readonly_preserves_subtype_covariance() {
 
     let lit_a = interner.literal_string("a");
 
-    let readonly_literal = interner.object(vec![PropertyInfo::readonly(interner.intern_string("x"), lit_a)]);
+    let readonly_literal = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        lit_a,
+    )]);
 
-    let readonly_string = interner.object(vec![PropertyInfo::readonly(interner.intern_string("x"), TypeId::STRING)]);
+    let readonly_string = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
     // Literal is subtype of wider type (covariant)
     assert!(checker.is_subtype_of(readonly_literal, readonly_string));
@@ -20785,7 +21101,10 @@ fn test_readonly_with_this_type() {
 
     let this_type = interner.intern(TypeKey::ThisType);
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("self"), this_type)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("self"),
+        this_type,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -20810,7 +21129,10 @@ fn test_readonly_with_tuple_property() {
         },
     ]);
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("coords"), coords)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("coords"),
+        coords,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -20835,7 +21157,10 @@ fn test_readonly_with_readonly_tuple_property() {
         },
     ]);
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("coords"), readonly_coords)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("coords"),
+        readonly_coords,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -20880,7 +21205,10 @@ fn test_readonly_with_bigint() {
     // { readonly value: bigint }
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("value"), TypeId::BIGINT)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("value"),
+        TypeId::BIGINT,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -20890,7 +21218,10 @@ fn test_readonly_with_symbol() {
     // { readonly sym: symbol }
     let interner = TypeInterner::new();
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("sym"), TypeId::SYMBOL)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("sym"),
+        TypeId::SYMBOL,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -20902,7 +21233,10 @@ fn test_readonly_with_null_union() {
 
     let nullable = interner.union(vec![TypeId::STRING, TypeId::NULL]);
 
-    let obj = interner.object(vec![PropertyInfo::readonly(interner.intern_string("value"), nullable)]);
+    let obj = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("value"),
+        nullable,
+    )]);
 
     assert!(obj != TypeId::ERROR);
 }
@@ -21868,7 +22202,10 @@ fn test_overload_construct_signature_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let obj_with_x = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj_with_x = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let obj_with_xy = interner.object(vec![
         PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER),
@@ -21921,9 +22258,15 @@ fn test_overload_with_this_type() {
     // }
     let interner = TypeInterner::new();
 
-    let window_type = interner.object(vec![PropertyInfo::new(interner.intern_string("location"), TypeId::STRING)]);
+    let window_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("location"),
+        TypeId::STRING,
+    )]);
 
-    let document_type = interner.object(vec![PropertyInfo::new(interner.intern_string("body"), TypeId::OBJECT)]);
+    let document_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("body"),
+        TypeId::OBJECT,
+    )]);
 
     let callable = interner.callable(CallableShape {
         symbol: None,
@@ -22242,7 +22585,10 @@ fn test_overload_event_handler_pattern() {
         PropertyInfo::readonly(interner.intern_string("code"), TypeId::STRING),
     ]);
 
-    let base_event = interner.object(vec![PropertyInfo::readonly(interner.intern_string("type"), TypeId::STRING)]);
+    let base_event = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("type"),
+        TypeId::STRING,
+    )]);
 
     // (e: MouseEvent) => void
     let mouse_listener = interner.function(FunctionShape {
@@ -22365,7 +22711,10 @@ fn test_overload_event_handler_pattern() {
         number_index: None,
     });
 
-    let event_target = interner.object(vec![PropertyInfo::method(interner.intern_string("addEventListener"), add_event_listener)]);
+    let event_target = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("addEventListener"),
+        add_event_listener,
+    )]);
 
     assert!(event_target != TypeId::ERROR);
 }
@@ -23900,7 +24249,10 @@ fn test_this_type_class_hierarchy_fluent_return() {
         is_method: true,
     });
 
-    let base_class = interner.object(vec![PropertyInfo::method(interner.intern_string("method"), base_method)]);
+    let base_class = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("method"),
+        base_method,
+    )]);
 
     // Derived class with extra property
     let extra_method = interner.function(FunctionShape {
@@ -23953,10 +24305,16 @@ fn test_this_type_in_method_parameter_covariant() {
         is_method: true,
     });
 
-    let box_class = interner.object(vec![PropertyInfo::method(interner.intern_string("compare"), box_compare)]);
+    let box_class = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("compare"),
+        box_compare,
+    )]);
 
     // StringBox type
-    let stringbox_class = interner.object(vec![PropertyInfo::method(interner.intern_string("compare"), box_compare)]);
+    let stringbox_class = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("compare"),
+        box_compare,
+    )]);
 
     // StringBox should be subtype of Box
     // (this type enables bivariance, which makes this pass)
@@ -23988,7 +24346,10 @@ fn test_this_type_explicit_this_parameter_inheritance() {
         is_method: true,
     });
 
-    let _base_class = interner.object(vec![PropertyInfo::method(interner.intern_string("method"), base_method)]);
+    let _base_class = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("method"),
+        base_method,
+    )]);
 
     // Derived class reference
     let derived_class_ref = interner.lazy(DefId(101));
@@ -24004,7 +24365,10 @@ fn test_this_type_explicit_this_parameter_inheritance() {
         is_method: true,
     });
 
-    let _derived_class = interner.object(vec![PropertyInfo::method(interner.intern_string("method"), derived_method)]);
+    let _derived_class = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("method"),
+        derived_method,
+    )]);
 
     // Check that derived method is compatible with base method
     // (Methods get bivariance)
@@ -24036,7 +24400,10 @@ fn test_this_type_return_covariant_in_hierarchy() {
     });
 
     // Both Base and Derived have the same fluent method returning this
-    let base_class = interner.object(vec![PropertyInfo::method(interner.intern_string("fluent"), base_fluent)]);
+    let base_class = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("fluent"),
+        base_fluent,
+    )]);
 
     let derived_class = interner.object(vec![
         PropertyInfo::method(interner.intern_string("fluent"), base_fluent),
@@ -24164,7 +24531,10 @@ fn test_this_type_with_generics_in_class() {
         is_method: true,
     });
 
-    let container = interner.object(vec![PropertyInfo::method(interner.intern_string("filter"), filter_method)]);
+    let container = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("filter"),
+        filter_method,
+    )]);
 
     // Container with filter returning this should be valid
     assert_ne!(container, TypeId::ERROR);
@@ -24264,7 +24634,10 @@ fn test_this_type_with_constrained_generic() {
         is_method: true,
     });
 
-    let base_class = interner.object(vec![PropertyInfo::method(interner.intern_string("method"), constrained_method)]);
+    let base_class = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("method"),
+        constrained_method,
+    )]);
 
     // Base with constrained this method should be valid
     assert_ne!(base_class, TypeId::ERROR);

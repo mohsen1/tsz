@@ -110,7 +110,7 @@ trait NodeArenaExt {
 **Priority**: High (easy win)
 **Impact**: Developer velocity, consistency
 **Occurrences**: ~200 across solver test files
-**Status**: Partially done — convenience constructors added for `PropertyInfo`, `ParamInfo`, `FunctionShape`, `CallSignature`
+**Status**: Done — convenience constructors + mechanical migration of ~2170 struct literals (-19K lines)
 
 ### Problem
 
@@ -451,7 +451,7 @@ impl CheckerContext<'_> {
 |---|---------|-------------|----------|--------|------------|
 | 1 | Eliminate TypeKey matches in Checker | 75+ | High | Large | Judge classifier API |
 | 2 | Arena node access helpers | ~300 | High | Medium | — |
-| 3 | Test setup boilerplate | ~200 | High | Low | **Partial** (constructors added) |
+| 3 | Test setup boilerplate | ~200 | High | Low | **Done** (-19K lines) |
 | 4 | Diagnostic emission patterns | ~50 | High | Medium | — |
 | 5 | Type resolution unwrapping | ~50 | Medium-High | Medium | Judge queries (partial) |
 | 6 | LSP handler initialization | ~15 | Medium | Medium | — |

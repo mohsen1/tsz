@@ -160,8 +160,14 @@ fn test_interner_intersection_any_over_unknown() {
 fn test_interner_intersection_flattens_and_dedups() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
-    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
 
     let inner = interner.intersection(vec![obj_a, obj_b]);
     let outer = interner.intersection(vec![inner, obj_a]);
@@ -250,7 +256,10 @@ fn test_interner_object_property_lookup_cache() {
     let mut props = Vec::with_capacity(PROPERTY_MAP_THRESHOLD + 2);
     for i in 0..(PROPERTY_MAP_THRESHOLD + 2) {
         let name = format!("prop{}", i);
-        props.push(PropertyInfo::new(interner.intern_string(&name), TypeId::NUMBER));
+        props.push(PropertyInfo::new(
+            interner.intern_string(&name),
+            TypeId::NUMBER,
+        ));
     }
 
     let obj = interner.object(props);
@@ -275,7 +284,10 @@ fn test_interner_object_property_lookup_cache() {
         PropertyLookup::NotFound
     );
 
-    let small = interner.object(vec![PropertyInfo::new(interner.intern_string("only"), TypeId::STRING)]);
+    let small = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("only"),
+        TypeId::STRING,
+    )]);
     let small_shape_id = match interner.lookup(small) {
         Some(TypeKey::Object(shape_id)) => shape_id,
         other => panic!("expected object type, got {:?}", other),
@@ -381,7 +393,10 @@ fn test_intersection_visibility_merging() {
     }]);
 
     // Create object { x: string } with public visibility
-    let obj_public = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::STRING)]);
+    let obj_public = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
 
     // Intersection should merge visibility (Private > Public = Private)
     let intersection = interner.intersection2(obj_private, obj_public);
@@ -412,9 +427,15 @@ fn test_intersection_object_merging() {
     let interner = TypeInterner::new();
 
     // Test: { a: 1 } & { b: 2 } should merge to { a: 1, b: 2 }
-    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
 
-    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
 
     let intersection = interner.intersection2(obj1, obj2);
 
@@ -455,7 +476,10 @@ fn test_visibility_interning_distinct_shape_ids() {
     let interner = TypeInterner::new();
 
     // Create two objects with identical structure but different visibility
-    let obj_public = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
+    let obj_public = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
 
     let obj_private = interner.object(vec![PropertyInfo {
         name: interner.intern_string("x"),
