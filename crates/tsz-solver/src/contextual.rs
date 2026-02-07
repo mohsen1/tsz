@@ -472,24 +472,39 @@ fn extract_param_type_at(
     params: &[ParamInfo],
     index: usize,
 ) -> Option<TypeId> {
-    if let Some(last_param) = params.last() {
-        if last_param.rest {
-            if let Some(TypeKey::Array(elem)) = db.lookup(last_param.type_id) {
-                return Some(elem);
-            }
-            if let Some(TypeKey::Tuple(elements)) = db.lookup(last_param.type_id) {
-                let elements = db.tuple_list(elements);
-                if index < elements.len() {
-                    return Some(elements[index].type_id);
-                } else if let Some(last_elem) = elements.last()
-                    && last_elem.rest
-                {
-                    return Some(last_elem.type_id);
-                }
-            }
-            return Some(last_param.type_id);
-        }
+    let rest_param = params.last().filter(|p| p.rest);
+    let rest_start = if rest_param.is_some() {
+        params.len().saturating_sub(1)
+    } else {
+        params.len()
+    };
+
+    // Regular (non-rest) parameters: return directly by index
+    if index < rest_start {
+        return Some(params[index].type_id);
     }
+
+    // Rest parameter handling
+    if let Some(last_param) = rest_param {
+        // Adjust index relative to rest parameter start
+        let rest_index = index - rest_start;
+        if let Some(TypeKey::Array(elem)) = db.lookup(last_param.type_id) {
+            return Some(elem);
+        }
+        if let Some(TypeKey::Tuple(elements)) = db.lookup(last_param.type_id) {
+            let elements = db.tuple_list(elements);
+            if rest_index < elements.len() {
+                return Some(elements[rest_index].type_id);
+            } else if let Some(last_elem) = elements.last()
+                && last_elem.rest
+            {
+                return Some(last_elem.type_id);
+            }
+        }
+        return Some(last_param.type_id);
+    }
+
+    // Index within non-rest params
     if index < params.len() {
         Some(params[index].type_id)
     } else {

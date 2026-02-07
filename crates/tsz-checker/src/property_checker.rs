@@ -115,11 +115,11 @@ impl<'a> CheckerState<'a> {
     // Computed Property Name Validation
     // =========================================================================
 
-    /// Check a computed property name for type errors.
+    /// Check a computed property name for type errors (TS2464).
     ///
-    /// This function validates that the expression used for a computed
-    /// property name is well-formed. It computes the type of the expression
-    /// to ensure any type errors are reported.
+    /// Validates that the expression used for a computed property name
+    /// has a type that is string, number, symbol, or any (including literals).
+    /// This check is independent of strictNullChecks.
     pub(crate) fn check_computed_property_name(&mut self, name_idx: NodeIndex) {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return;
@@ -133,8 +133,28 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Simply compute the type - this will report any type errors in the expression
-        self.get_type_of_node(computed.expression);
+        let expr_type = self.get_type_of_node(computed.expression);
+
+        // Skip error types to avoid cascading diagnostics
+        if expr_type == tsz_solver::TypeId::ERROR {
+            return;
+        }
+
+        // TS2464: type must be string, number, symbol, or any (including literals).
+        // This check ignores strictNullChecks: undefined/null always fail.
+        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+        let is_valid = evaluator.is_string_like(expr_type)
+            || evaluator.is_number_like(expr_type)
+            || evaluator.is_symbol_like(expr_type);
+
+        if !is_valid {
+            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                name_idx,
+                diagnostic_messages::COMPUTED_PROPERTY_NAME_MUST_BE_STRING_NUMBER_SYMBOL_OR_ANY,
+                diagnostic_codes::COMPUTED_PROPERTY_NAME_MUST_BE_STRING_NUMBER_SYMBOL_OR_ANY,
+            );
+        }
     }
 
     // =========================================================================

@@ -187,6 +187,10 @@ pub mod diagnostic_messages {
     pub const LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS: &str =
         "Left side of comma operator is unused and has no side effects.";
 
+    // Computed property name errors
+    pub const COMPUTED_PROPERTY_NAME_MUST_BE_STRING_NUMBER_SYMBOL_OR_ANY: &str =
+        "A computed property name must be of type 'string', 'number', 'symbol', or 'any'.";
+
     // Arithmetic operator errors
     pub const ARITHMETIC_OPERAND_MUST_BE_NUMBER: &str =
         "An arithmetic operand must be of type 'any', 'number', 'bigint' or an enum type.";
@@ -746,6 +750,7 @@ pub mod diagnostic_codes {
     /// Used for circular class inheritance (class C extends C, class C extends D, D extends C).
     pub const CIRCULAR_BASE_REFERENCE: u32 = 2506;
     pub const REST_ELEMENT_MUST_BE_LAST: u32 = 2462;
+    pub const COMPUTED_PROPERTY_NAME_MUST_BE_STRING_NUMBER_SYMBOL_OR_ANY: u32 = 2464;
 
     // JSX errors
     pub const JSX_ELEMENT_HAS_NO_CORRESPONDING_CLOSING_TAG: u32 = 17002;
