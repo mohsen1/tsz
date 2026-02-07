@@ -4493,7 +4493,7 @@ impl Server {
             experimental_decorators: options.experimental_decorators,
             no_unused_locals: options.no_unused_locals,
             no_unused_parameters: options.no_unused_parameters,
-            always_strict: options.strict,
+            always_strict: options.always_strict.unwrap_or(options.strict),
         }
     }
 }
