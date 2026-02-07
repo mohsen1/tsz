@@ -354,39 +354,30 @@ pub enum DiagnosticArg {
     Number(usize),
 }
 
-impl From<TypeId> for DiagnosticArg {
-    fn from(t: TypeId) -> Self {
-        DiagnosticArg::Type(t)
-    }
+macro_rules! impl_from_diagnostic_arg {
+    ($($source:ty => $variant:ident),* $(,)?) => {
+        $(impl From<$source> for DiagnosticArg {
+            fn from(v: $source) -> Self { Self::$variant(v) }
+        })*
+    };
 }
 
-impl From<SymbolId> for DiagnosticArg {
-    fn from(s: SymbolId) -> Self {
-        DiagnosticArg::Symbol(s)
-    }
-}
-
-impl From<Atom> for DiagnosticArg {
-    fn from(a: Atom) -> Self {
-        DiagnosticArg::Atom(a)
-    }
+impl_from_diagnostic_arg! {
+    TypeId   => Type,
+    SymbolId => Symbol,
+    Atom     => Atom,
+    usize    => Number,
 }
 
 impl From<&str> for DiagnosticArg {
     fn from(s: &str) -> Self {
-        DiagnosticArg::String(s.into())
+        Self::String(s.into())
     }
 }
 
 impl From<String> for DiagnosticArg {
     fn from(s: String) -> Self {
-        DiagnosticArg::String(s.into())
-    }
-}
-
-impl From<usize> for DiagnosticArg {
-    fn from(n: usize) -> Self {
-        DiagnosticArg::Number(n)
+        Self::String(s.into())
     }
 }
 
