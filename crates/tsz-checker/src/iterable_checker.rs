@@ -176,6 +176,9 @@ impl<'a> CheckerState<'a> {
             return iterable_type;
         }
 
+        // Resolve lazy types (type aliases) before computing element type
+        let iterable_type = self.resolve_lazy_type(iterable_type);
+
         self.for_of_element_type_classified(iterable_type, 0)
     }
 
@@ -231,6 +234,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Resolve lazy types (type aliases) before checking iterability
+        let expr_type = self.resolve_lazy_type(expr_type);
+
         // For async for-of, first check async iterable, then fall back to sync iterable
         if is_async {
             if self.is_async_iterable_type(expr_type) || self.is_iterable_type(expr_type) {
@@ -259,6 +265,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
+
         if let Some((start, end)) = self.get_node_span(expr_idx) {
             let type_str = self.format_type(expr_type);
             let message = format_message(
@@ -288,11 +295,15 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Resolve lazy types (type aliases) before checking iterability
+        let spread_type = self.resolve_lazy_type(spread_type);
+
         if self.is_iterable_type(spread_type) {
             return true;
         }
 
         // Not iterable - emit TS2488
+
         if let Some((start, end)) = self.get_node_span(expr_idx) {
             let type_str = self.format_type(spread_type);
             let message = format_message(
@@ -337,12 +348,16 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Resolve lazy types (type aliases) before checking iterability
+        let resolved_type = self.resolve_lazy_type(pattern_type);
+
         // Check if the type is iterable
-        if self.is_iterable_type(pattern_type) {
+        if self.is_iterable_type(resolved_type) {
             return true;
         }
 
         // Not iterable - emit TS2488
+
         // Use the initializer expression for error location if available
         let error_idx = if init_expr.is_some() {
             init_expr
