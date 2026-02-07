@@ -971,7 +971,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                 || k == SyntaxKind::NumericLiteral as u16
         ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
-            && !lit.text.is_empty()
         {
             return Some(lit.text.clone());
         }

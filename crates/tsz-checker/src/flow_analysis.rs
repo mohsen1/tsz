@@ -900,7 +900,6 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                 || k == SyntaxKind::NumericLiteral as u16
         ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
-            && !lit.text.is_empty()
         {
             let key = if name_node.kind == SyntaxKind::NumericLiteral as u16 {
                 PropertyKey::Computed(ComputedKey::Number(lit.text.clone()))
