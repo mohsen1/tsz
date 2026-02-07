@@ -1858,6 +1858,20 @@ impl<'a> CheckerState<'a> {
         &self,
         sym_id: SymbolId,
     ) -> Option<MemberAccessLevel> {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.class_constructor_access_level_inner(sym_id, &mut visited)
+    }
+
+    fn class_constructor_access_level_inner(
+        &self,
+        sym_id: SymbolId,
+        visited: &mut rustc_hash::FxHashSet<SymbolId>,
+    ) -> Option<MemberAccessLevel> {
+        // Cycle detection: bail out if we've already visited this symbol
+        if !visited.insert(sym_id) {
+            return None;
+        }
+
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::CLASS == 0 {
             return None;
@@ -1933,7 +1947,7 @@ impl<'a> CheckerState<'a> {
 
             // Recursively check the base class's constructor access level
             // This handles inherited private/protected constructors
-            return self.class_constructor_access_level(base_sym);
+            return self.class_constructor_access_level_inner(base_sym, visited);
         }
 
         // No extends clause or couldn't resolve base class - public default
