@@ -66,11 +66,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .get_class_instance_type(class_info.class_idx, class_data);
                     }
                     TypeId::ANY
-                } else if self.checker.find_class_for_this(idx).is_some() {
-                    // `this` in a class member (getter/setter/method/constructor) but
-                    // enclosing_class not yet set (e.g. during class type construction).
-                    // Return ANY without emitting TS2683 - computing the class instance
-                    // type here would cause circular dependency during construction.
+                } else if self.checker.this_has_contextual_owner(idx).is_some() {
+                    // `this` in a class or object literal member but enclosing_class
+                    // not yet set. Suppress TS2683 - `this` is contextually typed.
                     TypeId::ANY
                 } else if self.checker.ctx.no_implicit_this()
                     && self

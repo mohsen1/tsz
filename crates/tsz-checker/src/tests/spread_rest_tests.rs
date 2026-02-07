@@ -408,9 +408,7 @@ const t: Tuple = [1, "test", ...createTuple()];
 }
 
 #[test]
-fn test_this_in_getter_no_false_ts2683() {
-    // `this` inside a class getter should resolve to the class instance type,
-    // not emit TS2683. Uses `// @strict: true` to enable noImplicitThis.
+fn test_this_in_class_getter_no_false_ts2683() {
     let source = r#"
 // @strict: true
 class Foo {
@@ -429,14 +427,30 @@ class Foo {
     let diagnostics = check_source(source);
     let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
     assert_eq!(
-        ts2683_count,
-        0,
-        "Expected no TS2683 for `this` in class getter/setter/method, got {} errors: {:?}",
-        ts2683_count,
-        diagnostics
-            .iter()
-            .filter(|d| d.code == 2683)
-            .collect::<Vec<_>>()
+        ts2683_count, 0,
+        "Expected no TS2683 for `this` in class getter/setter/method, got {ts2683_count}"
+    );
+}
+
+#[test]
+fn test_this_in_object_literal_getter_no_false_ts2683() {
+    let source = r#"
+// @strict: true
+var obj = {
+    get foo() {
+        var _this = this;
+        return _this;
+    },
+    bar() {
+        return this;
+    }
+};
+"#;
+    let diagnostics = check_source(source);
+    let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
+    assert_eq!(
+        ts2683_count, 0,
+        "Expected no TS2683 for `this` in object literal getter/method, got {ts2683_count}"
     );
 }
 
