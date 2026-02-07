@@ -122,6 +122,65 @@ Target: under 50 lines per function, under 2000 lines per file. Long match arms 
 
 ---
 
+## Recursion Safety
+
+All recursive algorithms must use the guards from `crates/tsz-solver/src/recursion.rs`. Never hand-roll depth tracking with raw `Cell<u32>` or manual counters.
+
+### Two guard types
+
+| Guard | When to use |
+|-------|-------------|
+| `RecursionGuard<K>` | Recursive algorithms where the same key can form cycles (subtype checking, type evaluation, variance). Provides depth limiting **and** cycle detection via a visiting set. |
+| `DepthCounter` | Stack overflow protection where the same node may be legitimately re-visited (expression checking, type node resolution, call depth). Depth limiting only. |
+
+### Use `RecursionProfile` — no magic numbers
+
+```rust
+// WRONG — what do 50 and 100_000 mean?
+let guard = RecursionGuard::new(50, 100_000);
+
+// RIGHT — intent is clear, limits are centralized
+let guard = RecursionGuard::with_profile(RecursionProfile::TypeEvaluation);
+let counter = DepthCounter::with_profile(RecursionProfile::ExpressionCheck);
+```
+
+Available profiles: `SubtypeCheck`, `TypeEvaluation`, `TypeApplication`, `PropertyAccess`, `Variance`, `ShapeExtraction`, `ShallowTraversal`, `ConstAssertion`, `ExpressionCheck`, `TypeNodeCheck`, `CallResolution`, `CheckerRecursion`. Add new profiles to the enum if none fit.
+
+### Always pair `enter()` / `leave()`
+
+```rust
+// RecursionGuard pattern
+match guard.enter(key) {
+    RecursionResult::Entered => {
+        let result = do_work();
+        guard.leave(key); // MUST be called on every exit path
+        result
+    }
+    RecursionResult::Cycle => handle_cycle(),
+    _ => handle_exceeded(),
+}
+
+// DepthCounter pattern
+if !counter.enter() {
+    return TypeId::ERROR; // depth exceeded — do NOT call leave()
+}
+let result = do_work();
+counter.leave(); // MUST be called on every exit path
+result
+```
+
+In debug builds, forgotten `leave()` calls trigger a panic on drop. This catches bugs early.
+
+### When a checker context inherits depth from its parent
+
+Use `DepthCounter::with_initial_depth(max, parent_depth)` so the inherited depth is treated as the base level and doesn't trigger debug leak detection when the child context is dropped.
+
+### Don't put limits in `limits.rs` for solver recursion
+
+Solver recursion limits (subtype depth, evaluation depth, etc.) are owned by `RecursionProfile` in `recursion.rs`. The `limits.rs` file is for checker/parser/emitter/capacity constants only. This prevents the "centralized file that nobody actually imports" problem.
+
+---
+
 ## Don't Repeat Yourself
 
 Before writing code, check if the pattern already exists. These are the most common traps.
@@ -197,6 +256,7 @@ Full list of abstraction opportunities: `docs/todo/abstraction-opportunities.md`
 - [ ] No new `TypeKey::` matches in `crates/tsz-checker/`
 - [ ] No `.unwrap()` in library code without a reason
 - [ ] New public items are `pub(crate)` unless they need to be exported
+- [ ] No raw `Cell<u32>` / manual depth counters — use `RecursionGuard` or `DepthCounter`
 - [ ] Tests pass: `cargo nextest run -p <crate-you-changed>`
 - [ ] `cargo clippy` clean on changed files
 - [ ] If touching solver/checker hot paths: benchmarked before and after
