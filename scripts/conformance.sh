@@ -256,46 +256,29 @@ run_tests() {
         show_summary=true
     fi
 
-    # If summary mode, capture output and print test file contents BEFORE final results
     if [ "$show_summary" = true ]; then
-        # Use temp file to capture output
+        # Stream output in real-time AND capture for post-summary
         local tmpfile
         tmpfile=$(mktemp)
         trap "rm -f '$tmpfile'" EXIT
-        
-        # Capture all output (don't show in real-time so we can reorder)
+
         local runner_exit=0
         $RUNNER_BIN \
             --test-dir "$TEST_DIR" \
             --cache-file "$CACHE_FILE" \
             --tsz-binary "$TSZ_BIN" \
             --workers $WORKERS \
-            "${extra_args[@]}" 2>&1 > "$tmpfile" || runner_exit=$?
-        
+            "${extra_args[@]}" 2>&1 | tee "$tmpfile" || runner_exit=$?
+
         local output
         output=$(cat "$tmpfile")
-        
-        # Split output: everything before "FINAL RESULTS" and from "FINAL RESULTS" onwards
-        local before_final after_final
-        if echo "$output" | grep -q "FINAL RESULTS"; then
-            before_final=$(echo "$output" | sed -n '/FINAL RESULTS/q;p')
-            after_final=$(echo "$output" | sed -n '/FINAL RESULTS/,$p')
-        else
-            before_final="$output"
-            after_final=""
-        fi
-        
-        # Print output before final results
-        echo "$before_final"
-        
-        # Extract failing test paths (up to 10)
+
+        # Extract failing test paths (up to 10) from captured output
         local failing_tests=()
         while IFS= read -r line; do
             if [[ "$line" =~ ^FAIL[[:space:]]+(.+) ]]; then
                 local rel_path="${BASH_REMATCH[1]}"
-                # Paths are relative to repo root
                 local test_path="$REPO_ROOT/$rel_path"
-                # Check if file exists
                 if [ -f "$test_path" ]; then
                     failing_tests+=("$test_path")
                     if [ ${#failing_tests[@]} -ge 10 ]; then
@@ -304,15 +287,15 @@ run_tests() {
                 fi
             fi
         done <<< "$output"
-        
-        # Print test file contents BEFORE final results
+
+        # Print test file contents after results
         if [ ${#failing_tests[@]} -gt 0 ]; then
             echo ""
             echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
             echo -e "${YELLOW}Test File Contents (${#failing_tests[@]} failing tests)${NC}"
             echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
             echo ""
-            
+
             for test_file in "${failing_tests[@]}"; do
                 local rel_path="${test_file#$REPO_ROOT/}"
                 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -321,16 +304,10 @@ run_tests() {
                 cat "$test_file"
                 echo ""
             done
-            
+
             echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
         fi
-        
-        # Now print final results
-        if [ -n "$after_final" ]; then
-            echo ""
-            echo "$after_final"
-        fi
-        
+
         rm -f "$tmpfile"
     else
         # No summary mode, run normally

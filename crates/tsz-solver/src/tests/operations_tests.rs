@@ -5150,7 +5150,6 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
 // Same reasoning as above - required properties don't infer from index signatures.
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_infer_generic_union_source() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);

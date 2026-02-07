@@ -259,6 +259,12 @@ if [ "$ROOT_CHANGED" = "true" ]; then
     fi
 fi
 
+# The workspace's integration test binaries live in the root `wasm` package.
+# Ensure we always include it so crate-only edits still execute tests.
+if ! echo "$NEXTEST_FILTER" | grep -q "package(wasm)"; then
+    NEXTEST_FILTER="$NEXTEST_FILTER | package(wasm)"
+fi
+
 if cargo nextest --version >/dev/null 2>&1; then
     TEST_OUTPUT=$(cargo nextest run --profile precommit -E "$NEXTEST_FILTER" 2>&1) || {
         echo "$TEST_OUTPUT" | tail -20
