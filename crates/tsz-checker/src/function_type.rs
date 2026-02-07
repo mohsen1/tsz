@@ -982,14 +982,47 @@ impl<'a> CheckerState<'a> {
                         return property_type.unwrap_or(TypeId::ERROR);
                     }
 
-                    // Check if this is definitely nullish (only null/undefined, no other types)
-                    // For possibly nullish values (union types with non-nullish parts), emit TS2531/2532/2533
-                    let is_definitely_nullish = object_type_for_access == TypeId::NULL
+                    // Check if the type is entirely nullish (no non-nullish part in union)
+                    let is_type_nullish = object_type_for_access == TypeId::NULL
                         || object_type_for_access == TypeId::UNDEFINED;
 
                     // For possibly-nullish values in non-strict mode, don't error
                     // But for definitely-nullish values in non-strict mode, fall through to error reporting below
-                    if !self.ctx.compiler_options.strict_null_checks && !is_definitely_nullish {
+                    if !self.ctx.compiler_options.strict_null_checks && !is_type_nullish {
+                        return self
+                            .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
+                    }
+
+                    // Check if the expression is a literal null/undefined keyword (not a variable)
+                    // TS18050 is only for `null.foo` and `undefined.bar`, not `x.foo` where x: null
+                    let is_literal_nullish =
+                        if let Some(expr_node) = self.ctx.arena.get(access.expression) {
+                            expr_node.kind == SyntaxKind::NullKeyword as u16
+                                || (expr_node.kind == SyntaxKind::Identifier as u16
+                                    && self
+                                        .ctx
+                                        .arena
+                                        .get_identifier(expr_node)
+                                        .is_some_and(|ident| ident.escaped_text == "undefined"))
+                        } else {
+                            false
+                        };
+
+                    // When the expression IS a literal null/undefined keyword (e.g., null.foo or undefined.bar),
+                    // emit TS18050 "The value 'X' cannot be used here."
+                    if is_literal_nullish {
+                        let value_name = if cause == TypeId::NULL {
+                            "null"
+                        } else if cause == TypeId::UNDEFINED {
+                            "undefined"
+                        } else {
+                            "null | undefined"
+                        };
+                        self.error_at_node_msg(
+                            access.expression,
+                            diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                            &[value_name],
+                        );
                         return self
                             .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
                     }

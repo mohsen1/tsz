@@ -623,7 +623,6 @@ const result = MyEnum.A + MyEnum.B;  // OK: enum arithmetic is valid
 }
 
 #[test]
-#[ignore = "TODO: TS18050 for null property access not yet implemented"]
 fn test_null_property_access_emits_ts18050() {
     // Test accessing property on null literal - should emit TS18050
     let source = r#"
@@ -661,7 +660,6 @@ const x = null.toString();  // TS18050: The value 'null' cannot be used here.
 }
 
 #[test]
-#[ignore = "TODO: TS18050 for undefined property access not yet implemented"]
 fn test_undefined_property_access_emits_ts18050() {
     // Test accessing property on undefined - should emit TS18050
     let source = r#"
@@ -815,5 +813,46 @@ function test(x: never) {
         ts18050_count >= 1,
         "Expected at least 1 TS18050 error for never type call, got {}",
         ts18050_count
+    );
+}
+
+#[test]
+fn test_array_object_prototype_properties() {
+    // Arrays should have access to Object.prototype properties like constructor,
+    // valueOf, hasOwnProperty, etc. (through Array<T> → Object prototype chain)
+    let source = r#"
+var arr: number[] = [1, 2, 3];
+arr.constructor;
+arr.valueOf();
+arr.hasOwnProperty("length");
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should have no TS2339 errors — these properties exist on Object.prototype
+    let ts2339_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2339)
+        .count();
+    assert!(
+        ts2339_count == 0,
+        "Expected no TS2339 errors for array Object.prototype properties, got {}",
+        ts2339_count
     );
 }

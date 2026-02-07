@@ -1050,6 +1050,39 @@ impl<'a> CheckerState<'a> {
             .and_then(|node| self.ctx.arena.get_identifier(node))
             .map(|ident| ident.escaped_text.clone());
 
+        // Check if the expression is a literal null/undefined keyword (not a variable)
+        // TS18050 is only for `null.foo` and `undefined.bar`, not `x.foo` where x: null
+        let is_literal_nullish = if let Some(node) = self.ctx.arena.get(idx) {
+            use tsz_scanner::SyntaxKind;
+            node.kind == SyntaxKind::NullKeyword as u16
+                || (node.kind == SyntaxKind::Identifier as u16
+                    && self
+                        .ctx
+                        .arena
+                        .get_identifier(node)
+                        .is_some_and(|ident| ident.escaped_text == "undefined"))
+        } else {
+            false
+        };
+
+        // When the expression IS a literal null/undefined keyword (e.g., null.foo or undefined.bar),
+        // emit TS18050 "The value 'X' cannot be used here."
+        if is_definitely_nullish && is_literal_nullish {
+            let value_name = if cause == TypeId::NULL {
+                "null"
+            } else if cause == TypeId::UNDEFINED {
+                "undefined"
+            } else {
+                "null | undefined"
+            };
+            self.error_at_node(
+                idx,
+                &format!("The value '{}' cannot be used here.", value_name),
+                diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+            );
+            return;
+        }
+
         let (code, message) = if let Some(ref name) = name {
             // Use specific error codes with the variable name
             if cause == TypeId::NULL {
