@@ -83,38 +83,11 @@ fn test_intersection_distributes_with_object_types() {
     // { a: string } & ({ a: string } | { a: number }) should distribute
     let interner = TypeInterner::new();
 
-    let obj1 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
 
-    let obj2 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
 
-    let obj3 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj3 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
 
     let union = interner.union(vec![obj3, obj2]);
     let result = interner.intersection(vec![obj1, union]);

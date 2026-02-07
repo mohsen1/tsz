@@ -14,26 +14,8 @@ fn test_mapped_type_as_never_skips_property() {
 
     // Create a simple type: { x: number, y: string }
     let source_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("y"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("y"), TypeId::STRING),
     ]);
 
     // Create keyof T

@@ -66,27 +66,9 @@ fn test_intersection_order_independence() {
     // {a: number} & {b: string} should equal {b: string} & {a: number}
     let interner = create_test_interner();
 
-    let prop_a = PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop_a = PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER);
 
-    let prop_b = PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop_b = PropertyInfo::new(interner.intern_string("b"), TypeId::STRING);
 
     let obj1 = interner.object(vec![prop_a.clone(), prop_b.clone()]);
     let obj2 = interner.object(vec![prop_b.clone(), prop_a.clone()]);
@@ -195,27 +177,9 @@ fn test_intersection_duplication_elimination() {
     // {a: 1} & {b: 2} & {a: 1} should equal {a: 1} & {b: 2}
     let interner = create_test_interner();
 
-    let prop_a = PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop_a = PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER);
 
-    let prop_b = PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    };
+    let prop_b = PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER);
 
     let obj_a = interner.object(vec![prop_a.clone()]);
     let obj_b = interner.object(vec![prop_b.clone()]);

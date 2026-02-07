@@ -134,16 +134,7 @@ fn test_instantiate_object() {
         default: None,
         is_const: false,
     }));
-    let obj = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: type_param_t,
-        write_type: type_param_t,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), type_param_t)]);
 
     // Substitute T = number -> { value: number }
     let mut subst = TypeSubstitution::new();
@@ -151,16 +142,7 @@ fn test_instantiate_object() {
     let result = instantiate_type(&interner, obj, &subst);
 
     // Result should be { value: number }
-    let expected = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let expected = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
     assert_eq!(result, expected);
 }
 
@@ -845,16 +827,7 @@ fn test_instantiate_template_literal_in_object() {
     ]);
 
     // Create an object { prop: `key_${T}` }
-    let obj = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("prop"),
-        type_id: template,
-        write_type: template,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("prop"), template)]);
 
     // Substitute T = "name"
     let name_lit = interner.literal_string("name");

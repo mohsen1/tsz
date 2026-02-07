@@ -91,28 +91,10 @@ fn test_object_property_type_mismatch() {
     let interner = TypeInterner::new();
 
     // Create { a: string }
-    let obj1 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
 
     // Create { a: number }
-    let obj2 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
 
     let checker = SubtypeChecker::new(&interner);
 
@@ -125,28 +107,10 @@ fn test_objects_with_different_properties_overlap() {
     let interner = TypeInterner::new();
 
     // Create { a: number }
-    let obj1 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
 
     // Create { b: number }
-    let obj2 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj2 = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
 
     let checker = SubtypeChecker::new(&interner);
 

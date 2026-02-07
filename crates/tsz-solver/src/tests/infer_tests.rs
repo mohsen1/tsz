@@ -385,16 +385,7 @@ fn test_resolve_circular_upper_bound_defaults_unknown() {
         is_const: false,
     }));
     let name_next = interner.intern_string("next");
-    let upper = interner.object(vec![PropertyInfo {
-        name: name_next,
-        type_id: t_type,
-        write_type: t_type,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let upper = interner.object(vec![PropertyInfo::new(name_next, t_type)]);
 
     ctx.add_upper_bound(var, upper);
 
@@ -514,26 +505,8 @@ fn test_resolve_self_recursive_object_bounds_two_params_unknown() {
     }));
     let name_next = interner.intern_string("next");
 
-    let upper_t = interner.object(vec![PropertyInfo {
-        name: name_next,
-        type_id: t_type,
-        write_type: t_type,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let upper_u = interner.object(vec![PropertyInfo {
-        name: name_next,
-        type_id: u_type,
-        write_type: u_type,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let upper_t = interner.object(vec![PropertyInfo::new(name_next, t_type)]);
+    let upper_u = interner.object(vec![PropertyInfo::new(name_next, u_type)]);
 
     ctx.add_upper_bound(var_t, upper_t);
     ctx.add_upper_bound(var_u, upper_u);
@@ -569,26 +542,8 @@ fn test_resolve_mutual_recursive_object_bounds_unknown() {
     }));
     let name_next = interner.intern_string("next");
 
-    let upper_t = interner.object(vec![PropertyInfo {
-        name: name_next,
-        type_id: u_type,
-        write_type: u_type,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let upper_u = interner.object(vec![PropertyInfo {
-        name: name_next,
-        type_id: t_type,
-        write_type: t_type,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let upper_t = interner.object(vec![PropertyInfo::new(name_next, u_type)]);
+    let upper_u = interner.object(vec![PropertyInfo::new(name_next, t_type)]);
 
     ctx.add_upper_bound(var_t, upper_t);
     ctx.add_upper_bound(var_u, upper_u);
@@ -690,37 +645,10 @@ fn test_resolve_bounds_object_subtype() {
     let name_a = interner.intern_string("a");
     let name_b = interner.intern_string("b");
 
-    let upper = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let upper = interner.object(vec![PropertyInfo::new(name_a, TypeId::STRING)]);
     let lower = interner.object(vec![
-        PropertyInfo {
-            name: name_a,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: name_b,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(name_a, TypeId::STRING),
+        PropertyInfo::new(name_b, TypeId::NUMBER),
     ]);
 
     ctx.add_lower_bound(var, lower);
@@ -760,27 +688,9 @@ fn test_resolve_bounds_object_readonly_property_mismatch() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
-    let upper = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let upper = interner.object(vec![PropertyInfo::new(name_a, TypeId::STRING)]);
 
-    let lower = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: true,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let lower = interner.object(vec![PropertyInfo::readonly(name_a, TypeId::STRING)]);
 
     ctx.add_lower_bound(var, lower);
     ctx.add_upper_bound(var, upper);
@@ -804,27 +714,9 @@ fn test_resolve_bounds_object_readonly_property_ok() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
-    let upper = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: true,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let upper = interner.object(vec![PropertyInfo::readonly(name_a, TypeId::STRING)]);
 
-    let lower = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let lower = interner.object(vec![PropertyInfo::new(name_a, TypeId::STRING)]);
 
     ctx.add_lower_bound(var, lower);
     ctx.add_upper_bound(var, upper);
@@ -900,26 +792,8 @@ fn test_resolve_bounds_method_property_bivariant_params() {
         is_method: false,
     });
 
-    let lower = interner.object(vec![PropertyInfo {
-        name: name_m,
-        type_id: lower_fn,
-        write_type: lower_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let upper = interner.object(vec![PropertyInfo {
-        name: name_m,
-        type_id: upper_fn,
-        write_type: upper_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let lower = interner.object(vec![PropertyInfo::method(name_m, lower_fn)]);
+    let upper = interner.object(vec![PropertyInfo::method(name_m, upper_fn)]);
 
     ctx.add_lower_bound(var, lower);
     ctx.add_upper_bound(var, upper);
@@ -968,26 +842,8 @@ fn test_resolve_bounds_function_property_contravariant_params() {
         is_method: false,
     });
 
-    let lower = interner.object(vec![PropertyInfo {
-        name: name_f,
-        type_id: lower_fn,
-        write_type: lower_fn,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let upper = interner.object(vec![PropertyInfo {
-        name: name_f,
-        type_id: upper_fn,
-        write_type: upper_fn,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let lower = interner.object(vec![PropertyInfo::new(name_f, lower_fn)]);
+    let upper = interner.object(vec![PropertyInfo::new(name_f, upper_fn)]);
 
     ctx.add_lower_bound(var, lower);
     ctx.add_upper_bound(var, upper);
@@ -1044,26 +900,8 @@ fn test_resolve_bounds_with_assignability_bivariant_function_property() {
         is_method: false,
     });
 
-    let lower = interner.object(vec![PropertyInfo {
-        name: name_f,
-        type_id: lower_fn,
-        write_type: lower_fn,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let upper = interner.object(vec![PropertyInfo {
-        name: name_f,
-        type_id: upper_fn,
-        write_type: upper_fn,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let lower = interner.object(vec![PropertyInfo::new(name_f, lower_fn)]);
+    let upper = interner.object(vec![PropertyInfo::new(name_f, upper_fn)]);
 
     ctx.add_lower_bound(var, lower);
     ctx.add_upper_bound(var, upper);
@@ -1225,16 +1063,7 @@ fn test_resolve_bounds_object_with_index_subtype() {
     let lower = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo {
-            name: name_a,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        }],
+        properties: vec![PropertyInfo::new(name_a, TypeId::STRING)],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
@@ -1270,16 +1099,7 @@ fn test_resolve_bounds_string_index_property_mismatch() {
         number_index: None,
     });
 
-    let lower = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let lower = interner.object(vec![PropertyInfo::new(name_a, TypeId::NUMBER)]);
 
     ctx.add_lower_bound(var, lower);
     ctx.add_upper_bound(var, upper);
@@ -1315,16 +1135,7 @@ fn test_resolve_bounds_index_readonly_property_mismatch() {
         number_index: None,
     });
 
-    let lower = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: true,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let lower = interner.object(vec![PropertyInfo::readonly(name_a, TypeId::NUMBER)]);
 
     ctx.add_lower_bound(var, lower);
     ctx.add_upper_bound(var, upper);
@@ -1446,16 +1257,7 @@ fn test_resolve_bounds_number_index_allows_non_numeric_property() {
     let lower = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo {
-            name: name_a,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        }],
+        properties: vec![PropertyInfo::new(name_a, TypeId::STRING)],
         string_index: None,
         number_index: None,
     });
@@ -1490,16 +1292,7 @@ fn test_resolve_bounds_number_index_numeric_property_mismatch() {
     let lower_type = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
-        properties: vec![PropertyInfo {
-            name: name_zero,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        }],
+        properties: vec![PropertyInfo::new(name_zero, TypeId::STRING)],
         string_index: None,
         number_index: None,
     });
@@ -1538,16 +1331,7 @@ fn test_resolve_bounds_number_index_readonly_property_mismatch() {
         }),
     });
 
-    let lower_type = interner.object(vec![PropertyInfo {
-        name: name_zero,
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: true,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let lower_type = interner.object(vec![PropertyInfo::readonly(name_zero, TypeId::NUMBER)]);
 
     ctx.add_lower_bound(var, lower_type);
     ctx.add_upper_bound(var, upper_type);
@@ -4799,26 +4583,8 @@ fn test_resolve_bounds_optional_property_compatible() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
-    let upper = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: true,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let lower = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let upper = interner.object(vec![PropertyInfo::opt(name_a, TypeId::STRING)]);
+    let lower = interner.object(vec![PropertyInfo::new(name_a, TypeId::STRING)]);
 
     ctx.add_lower_bound(var, lower);
     ctx.add_upper_bound(var, upper);
@@ -4835,26 +4601,8 @@ fn test_resolve_bounds_optional_property_mismatch() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
-    let upper = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let lower = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: true,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let upper = interner.object(vec![PropertyInfo::new(name_a, TypeId::STRING)]);
+    let lower = interner.object(vec![PropertyInfo::opt(name_a, TypeId::STRING)]);
 
     ctx.add_lower_bound(var, lower);
     ctx.add_upper_bound(var, upper);
@@ -4878,16 +4626,7 @@ fn test_resolve_bounds_optional_property_missing_ok() {
     let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
-    let upper = interner.object(vec![PropertyInfo {
-        name: name_a,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: true,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let upper = interner.object(vec![PropertyInfo::opt(name_a, TypeId::STRING)]);
     let lower = interner.object(Vec::new());
 
     ctx.add_lower_bound(var, lower);
@@ -6543,16 +6282,7 @@ fn test_constraint_propagation_object_properties() {
 
     // Create object type with property
     let prop_name = interner.intern_string("x");
-    let obj_type = interner.object(vec![PropertyInfo {
-        name: prop_name,
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_type = interner.object(vec![PropertyInfo::new(prop_name, TypeId::NUMBER)]);
 
     ctx.add_lower_bound(var_t, obj_type);
 
@@ -6617,16 +6347,7 @@ fn test_constructor_with_constraint() {
 
     // Argument is specific object type
     let prop_name = interner.intern_string("name");
-    let obj_type = interner.object(vec![PropertyInfo {
-        name: prop_name,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_type = interner.object(vec![PropertyInfo::new(prop_name, TypeId::STRING)]);
     ctx.add_lower_bound(var_t, obj_type);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -6792,16 +6513,7 @@ fn test_method_this_type_inference() {
     });
 
     // Create an object type to represent `this`
-    let obj_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::STRING)]);
 
     // Called on object, so This should be inferred as that object type
     ctx.add_lower_bound(var_this, obj_type);
@@ -6948,16 +6660,7 @@ fn test_circular_type_alias_nested_object() {
 
     // Just test that we can have object bounds without infinite recursion
     let prop_name = interner.intern_string("value");
-    let obj_type = interner.object(vec![PropertyInfo {
-        name: prop_name,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_type = interner.object(vec![PropertyInfo::new(prop_name, TypeId::STRING)]);
     ctx.add_lower_bound(var_t, obj_type);
 
     let result = ctx.resolve_with_constraints(var_t);
@@ -7037,16 +6740,7 @@ fn test_self_ref_constraint_builder_pattern() {
         is_constructor: false,
         is_method: false,
     });
-    let builder_type = interner.object(vec![PropertyInfo {
-        name: build_prop,
-        type_id: builder_fn,
-        write_type: builder_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let builder_type = interner.object(vec![PropertyInfo::method(build_prop, builder_fn)]);
 
     ctx.add_lower_bound(var_t, builder_type);
 
@@ -7138,28 +6832,10 @@ fn test_mutual_recursion_two_types() {
 
     // Both get object lower bounds (breaking the cycle with concrete types)
     let prop_a = interner.intern_string("value");
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: prop_a,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(prop_a, TypeId::STRING)]);
 
     let prop_b = interner.intern_string("count");
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: prop_b,
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_b = interner.object(vec![PropertyInfo::new(prop_b, TypeId::NUMBER)]);
 
     ctx.add_lower_bound(var_a, obj_a);
     ctx.add_lower_bound(var_b, obj_b);
@@ -7600,16 +7276,7 @@ fn test_default_type_param_with_constraint() {
 
     // Specific object as lower bound
     let prop = interner.intern_string("x");
-    let obj = interner.object(vec![PropertyInfo {
-        name: prop,
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj = interner.object(vec![PropertyInfo::new(prop, TypeId::NUMBER)]);
     ctx.add_lower_bound(var_t, obj);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -8474,16 +8141,7 @@ fn test_discriminated_union_basic() {
     let kind_prop = interner.intern_string("kind");
     let lit_a = interner.literal_string("a");
 
-    let type_a = interner.object(vec![PropertyInfo {
-        name: kind_prop,
-        type_id: lit_a,
-        write_type: lit_a,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let type_a = interner.object(vec![PropertyInfo::new(kind_prop, lit_a)]);
 
     // After checking kind === "a", narrow to type_a
     ctx.add_lower_bound(var_t, type_a);
@@ -8507,26 +8165,8 @@ fn test_discriminated_union_switch() {
     let lit_circle = interner.literal_string("circle");
 
     let circle_type = interner.object(vec![
-        PropertyInfo {
-            name: kind_prop,
-            type_id: lit_circle,
-            write_type: lit_circle,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: radius_prop,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(kind_prop, lit_circle),
+        PropertyInfo::new(radius_prop, TypeId::NUMBER),
     ]);
 
     ctx.add_lower_bound(var_t, circle_type);
@@ -8549,26 +8189,8 @@ fn test_discriminated_union_type_property() {
     let body_prop = interner.intern_string("body");
 
     let request_type = interner.object(vec![
-        PropertyInfo {
-            name: type_prop,
-            type_id: lit_request,
-            write_type: lit_request,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: body_prop,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(type_prop, lit_request),
+        PropertyInfo::new(body_prop, TypeId::STRING),
     ]);
 
     ctx.add_lower_bound(var_t, request_type);
@@ -8591,26 +8213,8 @@ fn test_discriminated_union_boolean_discriminant() {
 
     // Use BOOLEAN for success field (representing literal true)
     let success_type = interner.object(vec![
-        PropertyInfo {
-            name: success_prop,
-            type_id: TypeId::BOOLEAN,
-            write_type: TypeId::BOOLEAN,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: data_prop,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(success_prop, TypeId::BOOLEAN),
+        PropertyInfo::new(data_prop, TypeId::STRING),
     ]);
 
     ctx.add_lower_bound(var_t, success_type);
@@ -8633,26 +8237,8 @@ fn test_discriminated_union_numeric_discriminant() {
     let lit_200 = interner.literal_number(200.0);
 
     let ok_response = interner.object(vec![
-        PropertyInfo {
-            name: code_prop,
-            type_id: lit_200,
-            write_type: lit_200,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: body_prop,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(code_prop, lit_200),
+        PropertyInfo::new(body_prop, TypeId::STRING),
     ]);
 
     ctx.add_lower_bound(var_t, ok_response);
@@ -8677,16 +8263,7 @@ fn test_in_operator_basic() {
 
     // After "name" in x, narrow to object with name
     let name_prop = interner.intern_string("name");
-    let with_name = interner.object(vec![PropertyInfo {
-        name: name_prop,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let with_name = interner.object(vec![PropertyInfo::new(name_prop, TypeId::STRING)]);
 
     ctx.add_lower_bound(var_t, with_name);
 
@@ -8715,16 +8292,7 @@ fn test_in_operator_union_narrowing() {
         is_method: false,
     });
 
-    let bird_type = interner.object(vec![PropertyInfo {
-        name: fly_prop,
-        type_id: fly_fn,
-        write_type: fly_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let bird_type = interner.object(vec![PropertyInfo::method(fly_prop, fly_fn)]);
 
     ctx.add_lower_bound(var_t, bird_type);
 
@@ -8743,16 +8311,7 @@ fn test_in_operator_optional_property() {
 
     // Object with optional property (in check confirms it exists)
     let opt_prop = interner.intern_string("optional");
-    let with_optional = interner.object(vec![PropertyInfo {
-        name: opt_prop,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: true,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let with_optional = interner.object(vec![PropertyInfo::opt(opt_prop, TypeId::STRING)]);
 
     ctx.add_lower_bound(var_t, with_optional);
 
@@ -8781,16 +8340,7 @@ fn test_in_operator_method_check() {
         is_method: false,
     });
 
-    let array_like = interner.object(vec![PropertyInfo {
-        name: foreach_prop,
-        type_id: foreach_fn,
-        write_type: foreach_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let array_like = interner.object(vec![PropertyInfo::method(foreach_prop, foreach_fn)]);
 
     ctx.add_lower_bound(var_t, array_like);
 
@@ -8809,16 +8359,7 @@ fn test_in_operator_negation() {
 
     // After !("special" in x), narrow to object without special
     let other_prop = interner.intern_string("basic");
-    let without_special = interner.object(vec![PropertyInfo {
-        name: other_prop,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let without_special = interner.object(vec![PropertyInfo::new(other_prop, TypeId::STRING)]);
 
     ctx.add_lower_bound(var_t, without_special);
 
@@ -9665,16 +9206,7 @@ fn test_method_return_generic_call() {
     let var_t = ctx.fresh_type_param(t_name, false);
 
     // Return type flows into T
-    let return_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("id"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let return_type = interner.object(vec![PropertyInfo::new(interner.intern_string("id"), TypeId::NUMBER)]);
     ctx.add_lower_bound(var_t, return_type);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -9782,16 +9314,7 @@ fn test_static_member_property() {
     let var_t = ctx.fresh_type_param(t_name, false);
 
     // T from static property type
-    let config_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("debug"),
-        type_id: TypeId::BOOLEAN,
-        write_type: TypeId::BOOLEAN,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let config_type = interner.object(vec![PropertyInfo::new(interner.intern_string("debug"), TypeId::BOOLEAN)]);
     ctx.add_lower_bound(var_t, config_type);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -9832,16 +9355,7 @@ fn test_static_member_with_constraint() {
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
 
     // Lower bound from argument
-    let obj_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("name"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
     ctx.add_lower_bound(var_t, obj_type);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -10119,26 +9633,8 @@ fn test_chain_builder_pattern() {
     let name_prop = interner.intern_string("name");
     let age_prop = interner.intern_string("age");
     let obj = interner.object(vec![
-        PropertyInfo {
-            name: name_prop,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: age_prop,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(name_prop, TypeId::STRING),
+        PropertyInfo::new(age_prop, TypeId::NUMBER),
     ]);
     ctx.add_lower_bound(var_t, obj);
 
@@ -10773,41 +10269,14 @@ fn test_constraint_upper_bound_object() {
 
     // Constraint: T extends { name: string }
     let name_prop = interner.intern_string("name");
-    let constraint = interner.object(vec![PropertyInfo {
-        name: name_prop,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let constraint = interner.object(vec![PropertyInfo::new(name_prop, TypeId::STRING)]);
     ctx.add_upper_bound(var_t, constraint);
 
     // Inference: T is { name: string, age: number }
     let age_prop = interner.intern_string("age");
     let inferred = interner.object(vec![
-        PropertyInfo {
-            name: name_prop,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: age_prop,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(name_prop, TypeId::STRING),
+        PropertyInfo::new(age_prop, TypeId::NUMBER),
     ]);
     ctx.add_lower_bound(var_t, inferred);
 
@@ -10971,51 +10440,15 @@ fn test_constraint_multiple_bounds_intersection() {
     // Constraint: T extends { name: string } & { age: number }
     let name_prop = interner.intern_string("name");
     let age_prop = interner.intern_string("age");
-    let a = interner.object(vec![PropertyInfo {
-        name: name_prop,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
-    let b = interner.object(vec![PropertyInfo {
-        name: age_prop,
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let a = interner.object(vec![PropertyInfo::new(name_prop, TypeId::STRING)]);
+    let b = interner.object(vec![PropertyInfo::new(age_prop, TypeId::NUMBER)]);
     let intersection = interner.intersection(vec![a, b]);
     ctx.add_upper_bound(var_t, intersection);
 
     // Inference: T is { name: string, age: number }
     let both = interner.object(vec![
-        PropertyInfo {
-            name: name_prop,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: age_prop,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(name_prop, TypeId::STRING),
+        PropertyInfo::new(age_prop, TypeId::NUMBER),
     ]);
     ctx.add_lower_bound(var_t, both);
 
@@ -11130,16 +10563,7 @@ fn test_constraint_intersection_primitives() {
 
     // For branded primitives, the intersection is with an object
     let brand_prop = interner.intern_string("__brand");
-    let brand = interner.object(vec![PropertyInfo {
-        name: brand_prop,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: true,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let brand = interner.object(vec![PropertyInfo::readonly(brand_prop, TypeId::STRING)]);
     let branded = interner.intersection(vec![TypeId::STRING, brand]);
     ctx.add_upper_bound(var_t, branded);
 
@@ -11209,41 +10633,14 @@ fn test_constraint_satisfaction_object_structural() {
 
     // Constraint: { x: number }
     let x_prop = interner.intern_string("x");
-    let constraint = interner.object(vec![PropertyInfo {
-        name: x_prop,
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let constraint = interner.object(vec![PropertyInfo::new(x_prop, TypeId::NUMBER)]);
     ctx.add_upper_bound(var_t, constraint);
 
     // Inference: { x: number, y: string }
     let y_prop = interner.intern_string("y");
     let inferred = interner.object(vec![
-        PropertyInfo {
-            name: x_prop,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: y_prop,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(x_prop, TypeId::NUMBER),
+        PropertyInfo::new(y_prop, TypeId::STRING),
     ]);
     ctx.add_lower_bound(var_t, inferred);
 
@@ -11290,16 +10687,7 @@ fn test_constraint_satisfaction_array_element() {
         is_constructor: false,
         is_method: false,
     });
-    let comparable = interner.object(vec![PropertyInfo {
-        name: compare_prop,
-        type_id: compare_fn,
-        write_type: compare_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let comparable = interner.object(vec![PropertyInfo::method(compare_prop, compare_fn)]);
     ctx.add_upper_bound(var_t, comparable);
 
     // Inference provides object with compare
@@ -11639,16 +11027,7 @@ fn test_self_ref_type_param_promise_of_self() {
     });
 
     // Lower bound: Promise<number>
-    let promise_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("then"),
-        type_id: then_fn,
-        write_type: then_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let promise_type = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), then_fn)]);
     ctx.add_lower_bound(var_t, promise_type);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -11666,16 +11045,7 @@ fn test_self_ref_type_param_node_with_children() {
 
     // Create a node type with children array
     let children_array = interner.array(TypeId::OBJECT);
-    let node_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("children"),
-        type_id: children_array,
-        write_type: children_array,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let node_type = interner.object(vec![PropertyInfo::new(interner.intern_string("children"), children_array)]);
     ctx.add_lower_bound(var_t, node_type);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
@@ -11694,26 +11064,8 @@ fn test_self_ref_type_param_linked_list() {
     // Create a linked list node with next pointer
     let next_type = interner.union(vec![TypeId::OBJECT, TypeId::NULL]);
     let list_node = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("value"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("next"),
-            type_id: next_type,
-            write_type: next_type,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("next"), next_type),
     ]);
     ctx.add_lower_bound(var_t, list_node);
 
@@ -11763,16 +11115,7 @@ fn test_mutual_dependency_key_value() {
     ctx.add_lower_bound(var_k, name_literal);
 
     // V gets an object with that key
-    let obj_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("name"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
     ctx.add_lower_bound(var_v, obj_type);
 
     let results = ctx.resolve_all_with_constraints().unwrap();
@@ -11793,28 +11136,10 @@ fn test_mutual_dependency_parent_child() {
     let var_c = ctx.fresh_type_param(c_name, false);
 
     // Create parent type with child reference
-    let parent_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("child"),
-        type_id: TypeId::OBJECT,
-        write_type: TypeId::OBJECT,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let parent_type = interner.object(vec![PropertyInfo::new(interner.intern_string("child"), TypeId::OBJECT)]);
 
     // Create child type with parent reference
-    let child_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("parent"),
-        type_id: TypeId::OBJECT,
-        write_type: TypeId::OBJECT,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let child_type = interner.object(vec![PropertyInfo::new(interner.intern_string("parent"), TypeId::OBJECT)]);
 
     ctx.add_lower_bound(var_p, parent_type);
     ctx.add_lower_bound(var_c, child_type);
@@ -11885,50 +11210,14 @@ fn test_mutual_dependency_request_response() {
 
     // Request type with respond method
     let request_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("id"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("respond"),
-            type_id: respond_fn,
-            write_type: respond_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("id"), TypeId::NUMBER),
+        PropertyInfo::method(interner.intern_string("respond"), respond_fn),
     ]);
 
     // Response type with request reference
     let response_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("data"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("request"),
-            type_id: TypeId::OBJECT,
-            write_type: TypeId::OBJECT,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("data"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("request"), TypeId::OBJECT),
     ]);
 
     ctx.add_lower_bound(var_req, request_type);
@@ -11953,38 +11242,11 @@ fn test_mutual_dependency_three_way() {
     let var_b = ctx.fresh_type_param(b_name, false);
     let var_c = ctx.fresh_type_param(c_name, false);
 
-    let type_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::OBJECT,
-        write_type: TypeId::OBJECT,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let type_a = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::OBJECT)]);
 
-    let type_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("c"),
-        type_id: TypeId::OBJECT,
-        write_type: TypeId::OBJECT,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let type_b = interner.object(vec![PropertyInfo::new(interner.intern_string("c"), TypeId::OBJECT)]);
 
-    let type_c = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::OBJECT,
-        write_type: TypeId::OBJECT,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let type_c = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::OBJECT)]);
 
     ctx.add_lower_bound(var_a, type_a);
     ctx.add_lower_bound(var_b, type_b);
@@ -12022,16 +11284,7 @@ fn test_recursive_constraint_comparable() {
     });
 
     // Comparable interface with compareTo method
-    let comparable_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("compareTo"),
-        type_id: compare_fn,
-        write_type: compare_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let comparable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("compareTo"), compare_fn)]);
 
     ctx.add_lower_bound(var_t, comparable_type);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -12072,26 +11325,8 @@ fn test_recursive_constraint_builder_pattern() {
 
     // Builder with methods that return the builder itself
     let builder_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("set"),
-            type_id: set_fn,
-            write_type: set_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("build"),
-            type_id: build_fn,
-            write_type: build_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::method(interner.intern_string("set"), set_fn),
+        PropertyInfo::method(interner.intern_string("build"), build_fn),
     ]);
 
     ctx.add_lower_bound(var_t, builder_type);
@@ -12122,26 +11357,8 @@ fn test_recursive_constraint_expression_tree() {
 
     // Expression with evaluate method
     let expr_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("evaluate"),
-            type_id: evaluate_fn,
-            write_type: evaluate_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("children"),
-            type_id: interner.array(TypeId::OBJECT),
-            write_type: interner.array(TypeId::OBJECT),
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::method(interner.intern_string("evaluate"), evaluate_fn),
+        PropertyInfo::new(interner.intern_string("children"), interner.array(TypeId::OBJECT)),
     ]);
 
     ctx.add_lower_bound(var_t, expr_type);
@@ -12171,16 +11388,7 @@ fn test_recursive_constraint_cloneable() {
     });
 
     // Cloneable with clone method
-    let cloneable_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("clone"),
-        type_id: clone_fn,
-        write_type: clone_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let cloneable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("clone"), clone_fn)]);
 
     ctx.add_lower_bound(var_t, cloneable_type);
 
@@ -12209,16 +11417,7 @@ fn test_recursive_constraint_iterable() {
     });
 
     // Iterable with Symbol.iterator method
-    let iterable_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("next"),
-        type_id: next_fn,
-        write_type: next_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let iterable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("next"), next_fn)]);
 
     ctx.add_lower_bound(var_t, iterable_type);
 
@@ -12269,38 +11468,11 @@ fn test_constraint_cycle_interface_extends() {
     let var_c = ctx.fresh_type_param(c_name, false);
 
     // Create distinct interface types
-    let type_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("propA"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let type_a = interner.object(vec![PropertyInfo::new(interner.intern_string("propA"), TypeId::STRING)]);
 
-    let type_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("propB"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let type_b = interner.object(vec![PropertyInfo::new(interner.intern_string("propB"), TypeId::NUMBER)]);
 
-    let type_c = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("propC"),
-        type_id: TypeId::BOOLEAN,
-        write_type: TypeId::BOOLEAN,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let type_c = interner.object(vec![PropertyInfo::new(interner.intern_string("propC"), TypeId::BOOLEAN)]);
 
     ctx.add_lower_bound(var_a, type_a);
     ctx.add_lower_bound(var_b, type_b);
@@ -12335,26 +11507,8 @@ fn test_constraint_cycle_generic_extends() {
 
     // Container type with self-referential constraint
     let container_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("value"),
-            type_id: TypeId::UNKNOWN,
-            write_type: TypeId::UNKNOWN,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("getContainer"),
-            type_id: get_container_fn,
-            write_type: get_container_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("value"), TypeId::UNKNOWN),
+        PropertyInfo::method(interner.intern_string("getContainer"), get_container_fn),
     ]);
 
     ctx.add_lower_bound(var_t, container_type);
@@ -12587,16 +11741,7 @@ fn test_param_inference_from_property_access() {
 
     // Object argument
     let name_prop = interner.intern_string("name");
-    let obj = interner.object(vec![PropertyInfo {
-        name: name_prop,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj = interner.object(vec![PropertyInfo::new(name_prop, TypeId::STRING)]);
     ctx.add_lower_bound(var_t, obj);
 
     // Key argument
@@ -12625,27 +11770,9 @@ fn test_param_inference_nested_callback() {
     let children_prop = interner.intern_string("children");
     let name_prop = interner.intern_string("name");
 
-    let child_type = interner.object(vec![PropertyInfo {
-        name: name_prop,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let child_type = interner.object(vec![PropertyInfo::new(name_prop, TypeId::STRING)]);
 
-    let parent_type = interner.object(vec![PropertyInfo {
-        name: children_prop,
-        type_id: interner.array(child_type),
-        write_type: interner.array(child_type),
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let parent_type = interner.object(vec![PropertyInfo::new(children_prop, interner.array(child_type))]);
 
     ctx.add_lower_bound(var_t, parent_type);
     ctx.add_lower_bound(var_u, child_type);
@@ -12802,16 +11929,7 @@ fn test_f_bounded_comparable() {
         is_method: false,
     });
 
-    let comparable_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("compareTo"),
-        type_id: compare_to_fn,
-        write_type: compare_to_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let comparable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("compareTo"), compare_to_fn)]);
 
     ctx.add_lower_bound(var_t, comparable_type);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -12856,26 +11974,8 @@ fn test_f_bounded_builder_pattern() {
     });
 
     let builder_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("build"),
-            type_id: build_fn,
-            write_type: build_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("set"),
-            type_id: set_fn,
-            write_type: set_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::method(interner.intern_string("build"), build_fn),
+        PropertyInfo::method(interner.intern_string("set"), set_fn),
     ]);
 
     ctx.add_lower_bound(var_t, builder_type);
@@ -12899,36 +11999,9 @@ fn test_f_bounded_tree_node() {
     let children_array = interner.array(TypeId::OBJECT);
 
     let tree_node_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("value"),
-            type_id: TypeId::UNKNOWN,
-            write_type: TypeId::UNKNOWN,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("children"),
-            type_id: children_array,
-            write_type: children_array,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("parent"),
-            type_id: TypeId::OBJECT,
-            write_type: TypeId::OBJECT,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("value"), TypeId::UNKNOWN),
+        PropertyInfo::new(interner.intern_string("children"), children_array),
+        PropertyInfo::opt(interner.intern_string("parent"), TypeId::OBJECT),
     ]);
 
     ctx.add_lower_bound(var_t, tree_node_type);
@@ -12957,16 +12030,7 @@ fn test_f_bounded_cloneable() {
         is_method: false,
     });
 
-    let cloneable_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("clone"),
-        type_id: clone_fn,
-        write_type: clone_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let cloneable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("clone"), clone_fn)]);
 
     ctx.add_lower_bound(var_t, cloneable_type);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -13012,26 +12076,8 @@ fn test_f_bounded_with_additional_constraint() {
 
     // Combined type with both Comparable and Serializable methods
     let combined_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("compareTo"),
-            type_id: compare_fn,
-            write_type: compare_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("serialize"),
-            type_id: serialize_fn,
-            write_type: serialize_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::method(interner.intern_string("compareTo"), compare_fn),
+        PropertyInfo::method(interner.intern_string("serialize"), serialize_fn),
     ]);
 
     ctx.add_lower_bound(var_t, combined_type);
@@ -13052,27 +12098,9 @@ fn test_mutually_recursive_constraints() {
     let var_t = ctx.fresh_type_param(t_name, false);
     let var_u = ctx.fresh_type_param(u_name, false);
 
-    let type_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let type_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
 
-    let type_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let type_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
 
     ctx.add_lower_bound(var_t, type_a);
     ctx.add_lower_bound(var_u, type_b);
@@ -13236,26 +12264,8 @@ fn test_partial_type_inference() {
     let age_prop = interner.intern_string("age");
 
     let obj = interner.object(vec![
-        PropertyInfo {
-            name: name_prop,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: age_prop,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(name_prop, TypeId::STRING),
+        PropertyInfo::new(age_prop, TypeId::NUMBER),
     ]);
 
     ctx.add_lower_bound(var_t, obj);
@@ -13445,36 +12455,9 @@ fn test_pick_utility_inference() {
 
     // Source object with 3 properties
     let source = interner.object(vec![
-        PropertyInfo {
-            name: name_prop,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: age_prop,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: email_prop,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(name_prop, TypeId::STRING),
+        PropertyInfo::new(age_prop, TypeId::NUMBER),
+        PropertyInfo::new(email_prop, TypeId::STRING),
     ]);
 
     ctx.add_lower_bound(var_t, source);
@@ -13618,16 +12601,7 @@ fn test_instance_type_inference() {
 
     // Instance has specific shape
     let name_prop = interner.intern_string("name");
-    let instance = interner.object(vec![PropertyInfo {
-        name: name_prop,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let instance = interner.object(vec![PropertyInfo::new(name_prop, TypeId::STRING)]);
 
     ctx.add_lower_bound(var_t, instance);
 
@@ -13660,26 +12634,8 @@ fn test_circular_constraint_polymorphic_this() {
     });
 
     let chain_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("next"),
-            type_id: next_fn,
-            write_type: next_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("value"),
-            type_id: TypeId::UNKNOWN,
-            write_type: TypeId::UNKNOWN,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::method(interner.intern_string("next"), next_fn),
+        PropertyInfo::new(interner.intern_string("value"), TypeId::UNKNOWN),
     ]);
 
     ctx.add_lower_bound(var_this, chain_type);
@@ -13713,16 +12669,7 @@ fn test_circular_constraint_recursive_promise() {
         is_method: false,
     });
 
-    let promise_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("then"),
-        type_id: then_fn,
-        write_type: then_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let promise_type = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), then_fn)]);
 
     ctx.add_lower_bound(var_t, promise_type);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -13779,26 +12726,8 @@ fn test_circular_constraint_event_emitter() {
     });
 
     let emitter_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("on"),
-            type_id: on_fn,
-            write_type: on_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("emit"),
-            type_id: emit_fn,
-            write_type: emit_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::method(interner.intern_string("on"), on_fn),
+        PropertyInfo::method(interner.intern_string("emit"), emit_fn),
     ]);
 
     ctx.add_lower_bound(var_t, emitter_type);
@@ -13841,36 +12770,9 @@ fn test_circular_constraint_fluent_interface() {
     });
 
     let fluent_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("withName"),
-            type_id: with_fn,
-            write_type: with_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("withValue"),
-            type_id: with_fn,
-            write_type: with_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("withConfig"),
-            type_id: with_fn,
-            write_type: with_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::method(interner.intern_string("withName"), with_fn),
+        PropertyInfo::method(interner.intern_string("withValue"), with_fn),
+        PropertyInfo::method(interner.intern_string("withConfig"), with_fn),
     ]);
 
     ctx.add_lower_bound(var_t, fluent_type);
@@ -13973,38 +12875,11 @@ fn test_circular_constraint_state_machine() {
     });
 
     let state_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("name"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: true,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("transition"),
-            type_id: transition_fn,
-            write_type: transition_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::readonly(interner.intern_string("name"), TypeId::STRING),
+        PropertyInfo::method(interner.intern_string("transition"), transition_fn),
     ]);
 
-    let event_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("type"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: true,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let event_type = interner.object(vec![PropertyInfo::readonly(interner.intern_string("type"), TypeId::STRING)]);
 
     ctx.add_lower_bound(var_s, state_type);
     ctx.add_lower_bound(var_e, event_type);
@@ -14039,16 +12914,7 @@ fn test_circular_constraint_visitor_pattern() {
         is_method: false,
     });
 
-    let visitable_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("accept"),
-        type_id: accept_fn,
-        write_type: accept_fn,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let visitable_type = interner.object(vec![PropertyInfo::method(interner.intern_string("accept"), accept_fn)]);
 
     ctx.add_lower_bound(var_t, visitable_type);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -14092,26 +12958,8 @@ fn test_circular_constraint_expression_tree() {
     });
 
     let expr_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("eval"),
-            type_id: eval_fn,
-            write_type: eval_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("combine"),
-            type_id: combine_fn,
-            write_type: combine_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::method(interner.intern_string("eval"), eval_fn),
+        PropertyInfo::method(interner.intern_string("combine"), combine_fn),
     ]);
 
     ctx.add_lower_bound(var_t, expr_type);
@@ -14162,38 +13010,11 @@ fn test_circular_constraint_repository_pattern() {
         is_method: false,
     });
 
-    let entity_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("id"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let entity_type = interner.object(vec![PropertyInfo::new(interner.intern_string("id"), TypeId::STRING)]);
 
     let repo_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("find"),
-            type_id: find_fn,
-            write_type: find_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("save"),
-            type_id: save_fn,
-            write_type: save_fn,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::method(interner.intern_string("find"), find_fn),
+        PropertyInfo::method(interner.intern_string("save"), save_fn),
     ]);
 
     ctx.add_lower_bound(var_t, entity_type);
@@ -14220,16 +13041,7 @@ fn test_inference_from_method_chain() {
     let var_t = ctx.fresh_type_param(t_name, false);
 
     // T is inferred from the input array element type
-    let obj_with_name = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("name"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_with_name = interner.object(vec![PropertyInfo::new(interner.intern_string("name"), TypeId::STRING)]);
 
     ctx.add_lower_bound(var_t, obj_with_name);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -14266,16 +13078,7 @@ fn test_inference_from_spread_in_object() {
 
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    let obj1 = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj1 = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
 
     ctx.add_lower_bound(var_t, obj1);
     ctx.add_upper_bound(var_t, TypeId::OBJECT);
@@ -14360,26 +13163,8 @@ fn test_inference_from_object_destructure() {
     let var_t = ctx.fresh_type_param(t_name, false);
 
     let obj_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::new(interner.intern_string("a"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
     ]);
 
     ctx.add_lower_bound(var_t, obj_type);
@@ -14424,16 +13209,7 @@ fn test_inference_bidirectional_callback() {
     // T is inferred from array element, U from callback return
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
 
-    let wrapper = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let wrapper = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER)]);
     ctx.add_lower_bound(var_u, wrapper);
 
     let results = ctx.resolve_all_with_constraints().unwrap();
@@ -14861,16 +13637,7 @@ fn test_inference_object_spread() {
 
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    let obj_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("x"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
 
     ctx.add_lower_bound(var_t, obj_type);
 
@@ -14954,27 +13721,9 @@ fn test_overload_intersection_argument() {
 
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    let obj_a = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("a"),
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_a = interner.object(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::STRING)]);
 
-    let obj_b = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("b"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER)]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
     ctx.add_lower_bound(var_t, intersection);
@@ -15171,16 +13920,7 @@ fn test_overload_nested_generics() {
         is_constructor: false,
         is_method: false,
     });
-    let promise_like = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("then"),
-        type_id: then_method,
-        write_type: then_method,
-        optional: false,
-        readonly: false,
-        is_method: true,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let promise_like = interner.object(vec![PropertyInfo::method(interner.intern_string("then"), then_method)]);
 
     ctx.add_lower_bound(var_t, promise_like);
 
@@ -15245,16 +13985,7 @@ fn test_conditional_type_inference_basic() {
         is_const: false,
     }));
 
-    let object_t = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("value"),
-        type_id: t_type,
-        write_type: t_type,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let object_t = interner.object(vec![PropertyInfo::new(interner.intern_string("value"), t_type)]);
 
     let _cond = interner.conditional(ConditionalType {
         check_type: t_type,
@@ -15387,26 +14118,8 @@ fn test_variance_computation_invariant() {
     });
 
     let rw_type = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("get"),
-            type_id: get_func,
-            write_type: get_func,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
-        PropertyInfo {
-            name: interner.intern_string("set"),
-            type_id: set_func,
-            write_type: set_func,
-            optional: false,
-            readonly: false,
-            is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
-        },
+        PropertyInfo::method(interner.intern_string("get"), get_func),
+        PropertyInfo::method(interner.intern_string("set"), set_func),
     ]);
 
     let (covariant, contravariant, _invariant, _bivariant) = ctx.compute_variance(rw_type, t_name);

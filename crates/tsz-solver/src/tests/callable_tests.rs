@@ -152,16 +152,7 @@ fn test_callable_with_construct() {
     let interner = TypeInterner::new();
 
     // { new(): Foo } <: { new(): Foo }
-    let obj_type = interner.object(vec![PropertyInfo {
-        name: interner.intern_string("x"),
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        visibility: Visibility::Public,
-        parent_id: None,
-    }]);
+    let obj_type = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER)]);
 
     let sig = CallSignature {
         type_params: vec![],
@@ -338,16 +329,7 @@ fn test_callable_with_properties() {
             is_method: false,
         }],
         construct_signatures: vec![],
-        properties: vec![PropertyInfo {
-            name: interner.intern_string("length"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        }],
+        properties: vec![PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER)],
         ..Default::default()
     });
 
@@ -362,16 +344,7 @@ fn test_callable_with_properties() {
             is_method: false,
         }],
         construct_signatures: vec![],
-        properties: vec![PropertyInfo {
-            name: interner.intern_string("length"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        }],
+        properties: vec![PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER)],
         ..Default::default()
     });
 
@@ -409,16 +382,7 @@ fn test_callable_missing_property() {
             is_method: false,
         }],
         construct_signatures: vec![],
-        properties: vec![PropertyInfo {
-            name: interner.intern_string("length"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-        }],
+        properties: vec![PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER)],
         ..Default::default()
     });
 

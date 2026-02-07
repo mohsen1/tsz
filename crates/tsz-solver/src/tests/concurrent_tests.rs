@@ -70,16 +70,7 @@ fn test_concurrent_object_creation() {
         .into_par_iter()
         .map(|i| {
             let props = vec![
-                PropertyInfo {
-                    name: interner.intern_string("x"),
-                    type_id: TypeId::NUMBER,
-                    write_type: TypeId::NUMBER,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                },
+                PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER),
                 PropertyInfo {
                     name: interner.intern_string(&format!("prop_{}", i)),
                     type_id: TypeId::STRING,
@@ -286,16 +277,7 @@ fn test_concurrent_callable_creation() {
                 symbol: None,
                 call_signatures: vec![],
                 construct_signatures: vec![],
-                properties: vec![PropertyInfo {
-                    name: interner.intern_string("length"),
-                    type_id: TypeId::NUMBER,
-                    write_type: TypeId::NUMBER,
-                    optional: false,
-                    readonly: true,
-                    is_method: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                }],
+                properties: vec![PropertyInfo::readonly(interner.intern_string("length"), TypeId::NUMBER)],
                 number_index: None,
                 string_index: None,
             };
