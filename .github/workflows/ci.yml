@@ -335,7 +335,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [changes, build]
-    if: needs.changes.outputs.root == 'true' || needs.changes.outputs.any_rust == 'true'
+    if: >-
+      needs.changes.outputs.root == 'true' ||
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.checker == 'true'
     steps:
       - uses: actions/checkout@v4
 

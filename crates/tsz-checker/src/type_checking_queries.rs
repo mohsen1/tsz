@@ -944,9 +944,10 @@ impl<'a> CheckerState<'a> {
                 .any(|&t| self.is_array_destructurable_type(t));
         }
 
-        // Object types might have an iterator - for now conservatively return false
+        // Object types: check if they have [Symbol.iterator] or numeric index (array-like)
         if type_queries::is_object_type(self.ctx.types, type_id) {
-            return false;
+            // Check if iterable (has [Symbol.iterator]) or has numeric index signature
+            return self.is_iterable_type(type_id) || self.has_numeric_index_signature(type_id);
         }
 
         // Literal types: check the base type (string literals are destructurable)
