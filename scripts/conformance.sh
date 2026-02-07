@@ -242,8 +242,8 @@ run_tests() {
         local output
         output=$(cat "$tmpfile")
 
-        # Print per-test lines (PASS/FAIL/SKIP) in real-time order
-        grep -E '^(PASS|FAIL|SKIP) ' "$tmpfile" 2>/dev/null || true
+        # Print per-test lines (PASS/FAIL/SKIP) with details (expected/actual/options)
+        grep -E '^(PASS|FAIL|SKIP) |^  (expected|actual|options):' "$tmpfile" 2>/dev/null || true
 
         # Extract failing test paths (up to 10) from captured output
         local failing_tests=()

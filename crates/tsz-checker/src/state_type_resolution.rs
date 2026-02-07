@@ -277,62 +277,28 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         }
-                        // If not found in file arena, search lib arenas
-                        if !found {
-                            let lib_contexts = self.ctx.lib_contexts.clone();
-                            'outer: for lib_ctx in &lib_contexts {
-                                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
-                                    if let Some(symbol) = lib_ctx.binder.get_symbol(lib_sym_id) {
-                                        for &decl_idx in &symbol.declarations {
-                                            let arena = lib_ctx
-                                                .binder
-                                                .declaration_arenas
-                                                .get(&(lib_sym_id, decl_idx))
-                                                .map(|arc| arc.as_ref())
-                                                .unwrap_or(lib_ctx.arena.as_ref());
-                                            if let Some(node) = arena.get(decl_idx)
-                                                && let Some(iface) = arena.get_interface(node)
-                                                && let Some(ref tpl) = iface.type_parameters
-                                            {
-                                                let mut params: Vec<tsz_solver::TypeParamInfo> =
-                                                    Vec::new();
-                                                for &tp_idx in &tpl.nodes {
-                                                    let Some(tp_node) = arena.get(tp_idx) else {
-                                                        continue;
-                                                    };
-                                                    let Some(tp) =
-                                                        arena.get_type_parameter(tp_node)
-                                                    else {
-                                                        continue;
-                                                    };
-                                                    let Some(tp_name_node) = arena.get(tp.name)
-                                                    else {
-                                                        continue;
-                                                    };
-                                                    let Some(ident) =
-                                                        arena.get_identifier(tp_name_node)
-                                                    else {
-                                                        continue;
-                                                    };
-                                                    params.push(tsz_solver::TypeParamInfo {
-                                                        name: self
-                                                            .ctx
-                                                            .types
-                                                            .intern_string(&ident.escaped_text),
-                                                        constraint: None,
-                                                        default: None,
-                                                        is_const: false,
-                                                    });
-                                                }
-                                                if !params.is_empty() {
-                                                    self.ctx.insert_def_type_params(def_id, params);
-                                                }
-                                                break 'outer;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        // If not found in file arena, use resolve_lib_type_by_name
+                        // which lowers the full interface from lib arenas and registers
+                        // both the body type and type params in type_env.
+                        if !found && !self.ctx.lib_contexts.is_empty() {
+                            let _ = self.resolve_lib_type_by_name(name);
+                        }
+                    }
+
+                    // Ensure the body type is registered in type_env for generic
+                    // lib interfaces. The solver's resolve_lazy needs the body to
+                    // perform property access with type parameter substitution.
+                    if self.ctx.get_def_type_params(def_id).is_some()
+                        && !self.ctx.lib_contexts.is_empty()
+                    {
+                        let has_body = self
+                            .ctx
+                            .type_env
+                            .try_borrow()
+                            .map(|env| env.get_def(def_id).is_some())
+                            .unwrap_or(false);
+                        if !has_body {
+                            let _ = self.resolve_lib_type_by_name(name);
                         }
                     }
                 }
@@ -914,17 +880,50 @@ impl<'a> CheckerState<'a> {
                         })
                         .collect();
 
-                    // Get type parameters from first declaration that has them
-                    let type_params_list =
+                    // Get type parameters from first declaration that has them,
+                    // along with the arena they came from (needed for lib interfaces).
+                    let type_params_with_arena: Option<(tsz_parser::parser::NodeList, &NodeArena)> =
                         decls_with_arenas.iter().find_map(|(decl_idx, arena)| {
                             arena
                                 .get(*decl_idx)
                                 .and_then(|node| arena.get_interface(node))
-                                .and_then(|iface| iface.type_parameters.clone())
+                                .and_then(|iface| {
+                                    iface.type_parameters.clone().map(|tpl| (tpl, *arena))
+                                })
                         });
+                    let type_params_list =
+                        type_params_with_arena.as_ref().map(|(tpl, _)| tpl.clone());
 
-                    // Push type params, lower interface, pop type params
-                    let (params, updates) = self.push_type_parameters(&type_params_list);
+                    // Push type params, lower interface, pop type params.
+                    // push_type_parameters uses self.ctx.arena (user arena) to read
+                    // type param nodes. For lib interfaces the nodes are in a lib arena,
+                    // so push_type_parameters may return empty params. In that case,
+                    // extract params directly from the lib arena.
+                    let (mut params, updates) = self.push_type_parameters(&type_params_list);
+                    if params.is_empty() {
+                        if let Some((tpl, decl_arena)) = &type_params_with_arena {
+                            for &tp_idx in &tpl.nodes {
+                                let Some(tp_node) = decl_arena.get(tp_idx) else {
+                                    continue;
+                                };
+                                let Some(tp) = decl_arena.get_type_parameter(tp_node) else {
+                                    continue;
+                                };
+                                let Some(tp_name_node) = decl_arena.get(tp.name) else {
+                                    continue;
+                                };
+                                let Some(ident) = decl_arena.get_identifier(tp_name_node) else {
+                                    continue;
+                                };
+                                params.push(tsz_solver::TypeParamInfo {
+                                    name: self.ctx.types.intern_string(&ident.escaped_text),
+                                    constraint: None,
+                                    default: None,
+                                    is_const: false,
+                                });
+                            }
+                        }
+                    }
 
                     let type_param_bindings = self.get_type_param_bindings();
                     let type_resolver =

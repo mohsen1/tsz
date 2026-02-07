@@ -2055,6 +2055,11 @@ impl<'a> CheckerState<'a> {
         // Track canonical TypeIds for the first definition's type parameters.
         let mut canonical_param_type_ids: Vec<TypeId> = Vec::new();
         let mut first_params_set = false;
+        // Track the first symbol and type parameters for generic interfaces.
+        // Used after merging to wrap in Lazy(DefId) so Application types can
+        // resolve type parameters during property access.
+        let mut first_sym_id: Option<tsz_binder::SymbolId> = None;
+        let mut first_params_info: Option<Vec<tsz_solver::TypeParamInfo>> = None;
 
         for lib_ctx in &lib_contexts {
             // Look up the symbol in this lib file's file_locals
@@ -2149,12 +2154,22 @@ impl<'a> CheckerState<'a> {
                             // For the first definition, record canonical type parameter TypeIds
                             if !first_params_set && !params.is_empty() {
                                 first_params_set = true;
+                                first_sym_id = Some(sym_id);
+                                first_params_info = Some(params.clone());
                                 canonical_param_type_ids = params
                                     .iter()
                                     .map(|p| {
                                         self.ctx.types.intern(TypeKey::TypeParameter(p.clone()))
                                     })
                                     .collect();
+
+                                // Cache type params for Application expansion
+                                // (matches resolve_lib_type_with_params pattern)
+                                let file_sym_id =
+                                    self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
+                                let def_id = self.ctx.get_or_create_def_id(file_sym_id);
+                                self.ctx.insert_def_type_params(def_id, params.clone());
+
                                 lib_types.push(ty);
                             } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
                                 // For subsequent definitions, substitute type params with canonical ones
@@ -2296,10 +2311,28 @@ impl<'a> CheckerState<'a> {
 
             // Merge lib type with augmentation using intersection
             if let Some(lib_type) = lib_type_id {
-                return Some(self.ctx.types.intersection2(lib_type, augmentation_type));
+                lib_type_id = Some(self.ctx.types.intersection2(lib_type, augmentation_type));
             } else {
-                // No lib type found, just return the augmentation
-                return Some(augmentation_type);
+                lib_type_id = Some(augmentation_type);
+            }
+        }
+
+        // For generic lib interfaces, wrap in Lazy(DefId) so Application types
+        // can resolve type parameters during property access.
+        // This mirrors the type alias path (lines above) that already uses
+        // Lazy(DefId) + insert_def_with_params.
+        if let Some(merged_type) = lib_type_id {
+            if let Some(ref params) = first_params_info {
+                if !params.is_empty() {
+                    let sym_id = first_sym_id.unwrap();
+                    let file_sym_id = self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
+                    let def_id = self.ctx.get_or_create_def_id(file_sym_id);
+                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                        env.insert_def_with_params(def_id, merged_type, params.clone());
+                    }
+                    let lazy_type = self.ctx.types.intern(TypeKey::Lazy(def_id));
+                    return Some(lazy_type);
+                }
             }
         }
 
