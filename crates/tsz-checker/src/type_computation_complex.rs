@@ -1434,37 +1434,33 @@ impl<'a> CheckerState<'a> {
                 // Lib globals often model value-side constructors through a sibling
                 // `*Constructor` interface (Promise -> PromiseConstructor).
                 // Prefer that when available to avoid falling back to the instance interface.
-                if name == "Promise" {
-                    if let Some(constructor_sym_id) =
-                        self.resolve_global_value_symbol("PromiseConstructor")
-                    {
-                        let constructor_type = self.get_type_of_symbol(constructor_sym_id);
-                        if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR
-                        {
-                            value_type = constructor_type;
-                        }
-                    } else if let Some(constructor_type) =
-                        self.resolve_lib_type_by_name("PromiseConstructor")
-                        && constructor_type != TypeId::UNKNOWN
-                        && constructor_type != TypeId::ERROR
-                    {
+                let constructor_name = format!("{}Constructor", name);
+                if let Some(constructor_sym_id) =
+                    self.resolve_global_value_symbol(&constructor_name)
+                {
+                    let constructor_type = self.get_type_of_symbol(constructor_sym_id);
+                    if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR {
                         value_type = constructor_type;
                     }
-                } else if name == "Error" {
-                    if let Some(constructor_sym_id) =
-                        self.resolve_global_value_symbol("ErrorConstructor")
-                    {
-                        let constructor_type = self.get_type_of_symbol(constructor_sym_id);
-                        if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR
-                        {
-                            value_type = constructor_type;
+                } else if let Some(constructor_type) =
+                    self.resolve_lib_type_by_name(&constructor_name)
+                    && constructor_type != TypeId::UNKNOWN
+                    && constructor_type != TypeId::ERROR
+                {
+                    value_type = constructor_type;
+                }
+                // For `declare var X: X` pattern (self-referential type annotation),
+                // the type resolved through type_of_value_declaration may be incomplete
+                // because the interface is resolved in a child checker with only one
+                // lib arena. Use resolve_lib_type_by_name to get the complete interface
+                // type merged from all lib files.
+                if !self.ctx.lib_contexts.is_empty()
+                    && self.is_self_referential_var_type(sym_id, value_decl, name)
+                {
+                    if let Some(lib_type) = self.resolve_lib_type_by_name(name) {
+                        if lib_type != TypeId::UNKNOWN && lib_type != TypeId::ERROR {
+                            value_type = lib_type;
                         }
-                    } else if let Some(constructor_type) =
-                        self.resolve_lib_type_by_name("ErrorConstructor")
-                        && constructor_type != TypeId::UNKNOWN
-                        && constructor_type != TypeId::ERROR
-                    {
-                        value_type = constructor_type;
                     }
                 }
                 if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
@@ -1794,6 +1790,54 @@ impl<'a> CheckerState<'a> {
     ///
     /// This is used for merged interface+value globals where value position must
     /// use the constructor/variable declaration type, not the interface type.
+    /// Check if a value declaration has a self-referential type annotation.
+    /// For example, `declare var Math: Math` has type annotation "Math"
+    /// which matches the symbol name "Math". This pattern is common for
+    /// lib globals that follow the `declare var X: X` pattern.
+    fn is_self_referential_var_type(
+        &self,
+        _sym_id: SymbolId,
+        value_decl: NodeIndex,
+        name: &str,
+    ) -> bool {
+        // Try to find the value declaration in the current arena first
+        if let Some(node) = self.ctx.arena.get(value_decl)
+            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
+            && !var_decl.type_annotation.is_none()
+        {
+            if let Some(type_node) = self.ctx.arena.get(var_decl.type_annotation)
+                && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+                && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                return ident.escaped_text == name;
+            }
+        }
+
+        // For declarations in other arenas (lib files), check via declaration_arenas
+        if let Some(decl_arena) = self
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(_sym_id, value_decl))
+        {
+            if let Some(node) = decl_arena.get(value_decl)
+                && let Some(var_decl) = decl_arena.get_variable_declaration(node)
+                && !var_decl.type_annotation.is_none()
+            {
+                if let Some(type_node) = decl_arena.get(var_decl.type_annotation)
+                    && let Some(type_ref) = decl_arena.get_type_ref(type_node)
+                    && let Some(name_node) = decl_arena.get(type_ref.type_name)
+                    && let Some(ident) = decl_arena.get_identifier(name_node)
+                {
+                    return ident.escaped_text == name;
+                }
+            }
+        }
+
+        false
+    }
+
     fn type_of_value_declaration(&mut self, decl_idx: NodeIndex) -> TypeId {
         if decl_idx.is_none() {
             return TypeId::UNKNOWN;
