@@ -868,28 +868,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Classes inherit Object members (toString, hasOwnProperty, etc.)
-        if let Some(object_type) = self.resolve_lib_type_by_name("Object") {
-            if let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, object_type)
-            {
-                for prop in shape.properties.iter() {
-                    properties.entry(prop.name).or_insert_with(|| prop.clone());
-                }
-                if let Some(ref idx) = shape.string_index {
-                    Self::merge_index_signature(&mut string_index, idx.clone());
-                }
-                if let Some(ref idx) = shape.number_index {
-                    Self::merge_index_signature(&mut number_index, idx.clone());
-                }
-            } else if let Some(shape) =
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, object_type)
-            {
-                for prop in shape.properties.iter() {
-                    properties.entry(prop.name).or_insert_with(|| prop.clone());
-                }
-            }
-        }
+        // NOTE: Object prototype members (toString, hasOwnProperty, etc.) are NOT
+        // merged into the class instance type. The solver handles these via its own
+        // Object prototype fallback (resolve_object_member) during property access.
+        // Including them as explicit properties would cause false TS2322 errors when
+        // assigning plain objects to class-typed variables, since the plain objects
+        // wouldn't have these as own properties.
 
         // Build the final instance type
         let props: Vec<PropertyInfo> = properties.into_values().collect();
