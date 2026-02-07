@@ -1001,6 +1001,23 @@ impl<'a> CheckerState<'a> {
                         return property_type.unwrap_or(TypeId::ERROR);
                     }
 
+                    // Check if the type is entirely nullish (no non-nullish part in union)
+                    let is_type_nullish = object_type_for_access == TypeId::NULL
+                        || object_type_for_access == TypeId::UNDEFINED;
+
+                    // For possibly-nullish values in non-strict mode, don't error
+                    // But for definitely-nullish values in non-strict mode, fall through to error reporting below
+                    tracing::debug!(
+                        strict_null_checks = self.ctx.compiler_options.strict_null_checks,
+                        is_type_nullish,
+                        object_type = object_type_for_access.0,
+                        cause_type = cause.0,
+                        "PossiblyNullOrUndefined check"
+                    );
+                    if !self.ctx.compiler_options.strict_null_checks && !is_type_nullish {
+                        return self
+                            .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
+                    }
                     // Check if the expression is a literal null/undefined keyword (not a variable)
                     // TS18050 is only for `null.foo` and `undefined.bar`, not `x.foo` where x: null
                     // TS18050 is emitted even without strictNullChecks, so check first

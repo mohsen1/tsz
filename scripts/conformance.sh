@@ -30,26 +30,31 @@ Commands:
   download    Download TSC cache from GitHub artifacts (fastest)
   generate    Generate TSC cache locally (required if download unavailable)
   run         Run conformance tests against TSC cache
+  analyze     Analyze failures: categorize, rank by impact, find easy wins
   all         Download/generate cache and run tests (default)
   clean       Remove cache file
 
 Options:
   --workers N       Number of parallel workers (default: 16)
   --max N           Maximum number of tests to run (default: all)
+  --offset N        Skip first N tests (default: 0)
   --verbose         Show per-test results
   --filter PAT      Filter test files by pattern
   --error-code N    Only show tests with this error code (e.g., 2304)
   --no-cache        Force cache regeneration even if cache exists
   --no-download     Skip trying to download cache from GitHub
 
+Analyze options:
+  --category CAT    Filter by category: false-positive, all-missing, wrong-code, close
+  --top N           Show top N items per section (default: 20)
+
 Examples:
-  ./scripts/conformance.sh all                        # Download cache (or generate) and run
-  ./scripts/conformance.sh download                   # Download cache from GitHub artifacts
   ./scripts/conformance.sh run --max 100              # Test first 100 files
   ./scripts/conformance.sh run --filter "strict"      # Run tests matching "strict"
   ./scripts/conformance.sh run --error-code 2304      # Only show tests with TS2304
-  ./scripts/conformance.sh generate --workers 32      # Regenerate cache with 32 workers
-  ./scripts/conformance.sh generate --no-cache        # Force regenerate cache
+  ./scripts/conformance.sh analyze --offset 0 --max 3101  # Analyze slice failures
+  ./scripts/conformance.sh analyze --category false-positive  # Show only false positives
+  ./scripts/conformance.sh analyze --category close    # Tests closest to passing
 
 Note: Binaries are automatically built if not found.
       Cache is downloaded from GitHub artifacts when available (per TypeScript version).
@@ -299,6 +304,52 @@ run_tests() {
     echo -e "${GREEN}Tests completed${NC}"
 }
 
+analyze_tests() {
+    local category_filter=""
+    local top_n=20
+    local extra_args=()
+
+    # Parse analyze-specific args
+    local args=("$@")
+    local i=0
+    while [ $i -lt ${#args[@]} ]; do
+        case "${args[$i]}" in
+            --category)
+                i=$((i + 1))
+                category_filter="${args[$i]}"
+                ;;
+            --top)
+                i=$((i + 1))
+                top_n="${args[$i]}"
+                ;;
+            *)
+                extra_args+=("${args[$i]}")
+                ;;
+        esac
+        i=$((i + 1))
+    done
+
+    echo -e "${GREEN}Running conformance tests for analysis...${NC}"
+
+    cd "$REPO_ROOT"
+
+    # Run with --print-test to get expected/actual per test
+    local tmpfile
+    tmpfile=$(mktemp)
+    trap "rm -f '$tmpfile'" EXIT
+
+    $RUNNER_BIN \
+        --test-dir "$TEST_DIR" \
+        --cache-file "$CACHE_FILE" \
+        --tsz-binary "$TSZ_BIN" \
+        --workers $WORKERS \
+        --print-test \
+        "${extra_args[@]}" > "$tmpfile" 2>/dev/null || true
+
+    # Use python to analyze the output
+    python3 "$REPO_ROOT/scripts/analyze-conformance.py" "$tmpfile" "$category_filter" "$top_n"
+}
+
 clean_cache() {
     echo "Removing cache file: $CACHE_FILE"
     rm -f "$CACHE_FILE"
@@ -359,6 +410,14 @@ case "$COMMAND" in
             echo ""
         fi
         run_tests "${REMAINING_ARGS[@]}"
+        ;;
+    analyze)
+        ensure_binaries
+        if [ ! -f "$CACHE_FILE" ]; then
+            ensure_cache "$NO_DOWNLOAD"
+            echo ""
+        fi
+        analyze_tests "${REMAINING_ARGS[@]}"
         ;;
     all)
         ensure_binaries

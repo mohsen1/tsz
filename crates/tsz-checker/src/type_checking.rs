@@ -3245,7 +3245,21 @@ impl<'a> CheckerState<'a> {
             });
 
             let name = symbol.escaped_name.clone();
-            let (message, code) = if !has_non_block_scoped {
+
+            // Check if any conflicting declaration is an enum
+            let has_enum_conflict = declarations.iter().any(|(decl_idx, flags)| {
+                conflicts.contains(decl_idx)
+                    && (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM)) != 0
+            });
+
+            let (message, code) = if has_enum_conflict && has_non_block_scoped {
+                // Enum merging conflict: TS2567
+                (
+                    diagnostic_messages::ENUM_DECLARATIONS_MUST_MERGE_WITH_NAMESPACE_OR_ENUM
+                        .to_string(),
+                    diagnostic_codes::ENUM_DECLARATIONS_MUST_MERGE_WITH_NAMESPACE_OR_ENUM,
+                )
+            } else if !has_non_block_scoped {
                 // Pure block-scoped duplicates (let/const/import conflicts) emit TS2451
                 (
                     format_message(

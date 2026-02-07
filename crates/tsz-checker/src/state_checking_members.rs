@@ -2354,7 +2354,10 @@ impl<'a> CheckerState<'a> {
             }
 
             // 6. Get the overload's type using manual lowering
-            let mut overload_type = lowering.lower_signature_from_declaration(decl_idx, None);
+            // For overloads without return type annotations, use VOID (matching tsc behavior).
+            let overload_return_override = self.get_overload_return_type_override(decl_idx);
+            let mut overload_type =
+                lowering.lower_signature_from_declaration(decl_idx, overload_return_override);
             if overload_type == tsz_solver::TypeId::ERROR {
                 // Fall back to get_type_of_node for cases where manual lowering fails
                 overload_type = self.get_type_of_node(decl_idx);
@@ -2362,10 +2365,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
             }
+            // Fix ERROR param types in overload (untyped params → any)
+            overload_type = self.fix_error_params_in_function(overload_type);
 
-            // 7. Check assignability: Impl <: Overload
-            // The implementation must be compatible with each overload signature.
-            if !self.is_assignable_to(impl_type, overload_type) {
+            // 7. Check compatibility using tsc's bidirectional return type rule:
+            // First check if return types are compatible in EITHER direction,
+            // then check parameter-only assignability (ignoring return types).
+            // This matches tsc's isImplementationCompatibleWithOverload.
+            if !self.is_implementation_compatible_with_overload(impl_type, overload_type) {
                 self.error_at_node(
                     decl_idx,
                     diagnostic_messages::OVERLOAD_NOT_COMPATIBLE_WITH_IMPLEMENTATION,
@@ -2449,6 +2456,104 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(tsz_solver::TypeId::ANY)
         }
+    }
+
+    /// Returns `Some(TypeId::VOID)` if an overload node has no explicit return type annotation.
+    /// Overloads without return type annotations default to void (matching tsc behavior).
+    fn get_overload_return_type_override(&self, node_idx: NodeIndex) -> Option<tsz_solver::TypeId> {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return None;
+        };
+        let has_annotation = match node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .ctx
+                .arena
+                .get_function(node)
+                .map(|f| !f.type_annotation.is_none())
+                .unwrap_or(false),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .map(|m| !m.type_annotation.is_none())
+                .unwrap_or(false),
+            k if k == syntax_kind_ext::CONSTRUCTOR => {
+                return None;
+            }
+            _ => return None,
+        };
+        if has_annotation {
+            None
+        } else {
+            Some(tsz_solver::TypeId::VOID)
+        }
+    }
+
+    /// Check overload compatibility using tsc's bidirectional return type rule.
+    /// Matches tsc's `isImplementationCompatibleWithOverload`:
+    /// 1. Check if return types are compatible in EITHER direction (or target is void)
+    /// 2. If so, check parameter-only assignability (with return types ignored)
+    fn is_implementation_compatible_with_overload(
+        &mut self,
+        impl_type: tsz_solver::TypeId,
+        overload_type: tsz_solver::TypeId,
+    ) -> bool {
+        use tsz_solver::type_queries::get_return_type;
+
+        // Get return types of both signatures
+        let impl_return = get_return_type(self.ctx.types, impl_type);
+        let overload_return = get_return_type(self.ctx.types, overload_type);
+
+        match (impl_return, overload_return) {
+            (Some(impl_ret), Some(overload_ret)) => {
+                // Bidirectional return type check: either direction must be assignable,
+                // or the overload returns void
+                let return_compatible = overload_ret == tsz_solver::TypeId::VOID
+                    || self.is_assignable_to(overload_ret, impl_ret)
+                    || self.is_assignable_to(impl_ret, overload_ret);
+
+                if !return_compatible {
+                    return false;
+                }
+
+                // Now check parameter-only compatibility by creating versions
+                // with ANY return types
+                let impl_with_any_ret =
+                    self.replace_return_type(impl_type, tsz_solver::TypeId::ANY);
+                let overload_with_any_ret =
+                    self.replace_return_type(overload_type, tsz_solver::TypeId::ANY);
+                self.is_assignable_to(impl_with_any_ret, overload_with_any_ret)
+            }
+            _ => {
+                // If we can't get return types, fall back to direct assignability
+                self.is_assignable_to(impl_type, overload_type)
+            }
+        }
+    }
+
+    /// Replace the return type of a function type with the given type.
+    /// Returns the original type unchanged if it's not a Function.
+    fn replace_return_type(
+        &mut self,
+        type_id: tsz_solver::TypeId,
+        new_return: tsz_solver::TypeId,
+    ) -> tsz_solver::TypeId {
+        use tsz_solver::type_queries::get_function_shape;
+        let Some(shape) = get_function_shape(self.ctx.types, type_id) else {
+            return type_id;
+        };
+        if shape.return_type == new_return {
+            return type_id;
+        }
+        self.ctx.types.function(tsz_solver::FunctionShape {
+            type_params: shape.type_params.clone(),
+            params: shape.params.clone(),
+            this_type: shape.this_type,
+            return_type: new_return,
+            type_predicate: shape.type_predicate.clone(),
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        })
     }
 
     /// Check for TS1038: 'declare' modifier in already ambient context
