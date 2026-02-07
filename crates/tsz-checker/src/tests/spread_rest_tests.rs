@@ -210,6 +210,36 @@ const [s, n, ...rest] = t;
 }
 
 #[test]
+fn test_tuple_assignment_destructuring_no_false_ts2322() {
+    // Tuple assignment destructuring should not produce false TS2322 errors.
+    // tsc checks each element individually, not the whole tuple against an inferred array type.
+    let source = r#"
+type Robot = [number, string, string];
+var robotA: Robot = [1, "mower", "mowing"];
+let nameA: string;
+let numberB: number;
+[, nameA] = robotA;
+[numberB] = robotA;
+[numberB, nameA] = robotA;
+"#;
+
+    let diagnostics = check_source(source);
+
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        0,
+        "Expected no TS2322 for tuple assignment destructuring, got {} errors: {:?}",
+        ts2322_count,
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2322)
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_spread_in_function_call() {
     let source = r#"
 function add(a: number, b: number, c: number) {
