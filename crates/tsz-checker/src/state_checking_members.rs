@@ -2040,6 +2040,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Fix up ERROR parameter types in the implementation signature.
+        // When implementation params lack type annotations, lowering produces ERROR.
+        // Replace with ANY since TypeScript treats untyped impl params as `any`.
+        impl_type = self.fix_error_params_in_function(impl_type);
+
         // 4. Check each overload declaration
         for &decl_idx in &symbol.declarations {
             // Skip the implementation itself
@@ -2102,6 +2107,49 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Returns `Some(TypeId::ANY)` if the implementation node has no explicit return type annotation.
+    /// Replace ERROR parameter types with ANY in a function type.
+    /// Used for overload compatibility: untyped implementation params are treated as `any`.
+    fn fix_error_params_in_function(&mut self, type_id: tsz_solver::TypeId) -> tsz_solver::TypeId {
+        use tsz_solver::type_queries::get_function_shape;
+        let Some(shape) = get_function_shape(self.ctx.types, type_id) else {
+            return type_id;
+        };
+        let has_error = shape
+            .params
+            .iter()
+            .any(|p| p.type_id == tsz_solver::TypeId::ERROR)
+            || shape.return_type == tsz_solver::TypeId::ERROR;
+        if !has_error {
+            return type_id;
+        }
+        let new_params: Vec<tsz_solver::ParamInfo> = shape
+            .params
+            .iter()
+            .map(|p| tsz_solver::ParamInfo {
+                type_id: if p.type_id == tsz_solver::TypeId::ERROR {
+                    tsz_solver::TypeId::ANY
+                } else {
+                    p.type_id
+                },
+                ..p.clone()
+            })
+            .collect();
+        let new_return = if shape.return_type == tsz_solver::TypeId::ERROR {
+            tsz_solver::TypeId::ANY
+        } else {
+            shape.return_type
+        };
+        self.ctx.types.function(tsz_solver::FunctionShape {
+            type_params: shape.type_params.clone(),
+            params: new_params,
+            this_type: shape.this_type,
+            return_type: new_return,
+            type_predicate: shape.type_predicate.clone(),
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        })
+    }
+
     /// This is used for overload compatibility checking: when the implementation omits a return type,
     /// the lowering would produce ERROR, but TypeScript treats it as `any` for compatibility purposes.
     fn get_impl_return_type_override(&self, node_idx: NodeIndex) -> Option<tsz_solver::TypeId> {
