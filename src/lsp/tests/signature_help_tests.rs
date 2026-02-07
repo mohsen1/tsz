@@ -613,10 +613,7 @@ fn test_signature_help_method_overload_jsdoc_this_rest() {
         .get_class(arena.get(class_decl).expect("class node"))
         .expect("class data");
     let has_method_jsdoc = class_data.members.nodes.iter().any(|&member| {
-        let Some(member_node) = arena.get(member) else {
-            return false;
-        };
-        let Some(method) = arena.get_method_decl(member_node) else {
+        let Some(method) = arena.get_method_decl_at(member) else {
             return false;
         };
         if !method.body.is_none() {

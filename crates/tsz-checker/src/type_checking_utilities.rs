@@ -1679,17 +1679,13 @@ impl<'a> CheckerState<'a> {
         } else {
             *symbol.declarations.first()?
         };
-        let node = self.ctx.arena.get(decl_idx)?;
-        let enum_decl = self.ctx.arena.get_enum(node)?;
+        let enum_decl = self.ctx.arena.get_enum_at(decl_idx)?;
 
         let mut saw_string = false;
         let mut saw_numeric = false;
 
         for &member_idx in &enum_decl.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
+            let Some(member) = self.ctx.arena.get_enum_member_at(member_idx) else {
                 continue;
             };
 
@@ -1869,8 +1865,7 @@ impl<'a> CheckerState<'a> {
         } else {
             *symbol.declarations.first()?
         };
-        let node = self.ctx.arena.get(decl_idx)?;
-        let class = self.ctx.arena.get_class(node)?;
+        let class = self.ctx.arena.get_class_at(decl_idx)?;
 
         // First, check if this class has an explicit constructor
         for &member_idx in &class.members.nodes {
@@ -2286,8 +2281,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the class name if the variable is initialized with a class expression.
     pub(crate) fn get_class_name_from_var_decl(&self, decl_idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(decl_idx)?;
-        let var_decl = self.ctx.arena.get_variable_declaration(node)?;
+        let var_decl = self.ctx.arena.get_variable_declaration_at(decl_idx)?;
 
         if var_decl.initializer.is_none() {
             return None;
@@ -2303,8 +2297,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let name_node = self.ctx.arena.get(class.name)?;
-        let ident = self.ctx.arena.get_identifier(name_node)?;
+        let ident = self.ctx.arena.get_identifier_at(class.name)?;
         Some(ident.escaped_text.clone())
     }
 
@@ -2364,8 +2357,7 @@ impl<'a> CheckerState<'a> {
             if class.name.is_none() {
                 continue;
             }
-            let name_node = self.ctx.arena.get(class.name)?;
-            let ident = self.ctx.arena.get_identifier(name_node)?;
+            let ident = self.ctx.arena.get_identifier_at(class.name)?;
             if ident.escaped_text == name {
                 return Some(stmt_idx);
             }
@@ -2411,8 +2403,7 @@ impl<'a> CheckerState<'a> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
         for &decl_idx in &symbol.declarations {
-            let node = self.ctx.arena.get(decl_idx)?;
-            let func = self.ctx.arena.get_function(node)?;
+            let func = self.ctx.arena.get_function_at(decl_idx)?;
             if !func.body.is_none() {
                 return Some(decl_idx);
             }
@@ -2420,8 +2411,7 @@ impl<'a> CheckerState<'a> {
 
         if !symbol.value_declaration.is_none() {
             let decl_idx = symbol.value_declaration;
-            let node = self.ctx.arena.get(decl_idx)?;
-            let func = self.ctx.arena.get_function(node)?;
+            let func = self.ctx.arena.get_function_at(decl_idx)?;
             if !func.body.is_none() {
                 return Some(decl_idx);
             }

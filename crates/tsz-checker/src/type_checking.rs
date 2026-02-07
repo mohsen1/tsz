@@ -2046,22 +2046,18 @@ impl<'a> CheckerState<'a> {
         // Check if the object type is a class instance with a get accessor for this property
         if let Some(&obj_type) = self.ctx.node_types.get(&access.expression.0) {
             if let Some(class_idx) = self.ctx.class_instance_type_to_decl.get(&obj_type).copied() {
-                if let Some(class_node) = self.ctx.arena.get(class_idx) {
-                    if let Some(class) = self.ctx.arena.get_class(class_node) {
-                        for &member_idx in &class.members.nodes {
-                            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                                continue;
-                            };
-                            if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                                if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
-                                    if let Some(acc_name_node) = self.ctx.arena.get(accessor.name) {
-                                        if let Some(acc_ident) =
-                                            self.ctx.arena.get_identifier(acc_name_node)
-                                        {
-                                            if acc_ident.escaped_text == *prop_name {
-                                                return true;
-                                            }
-                                        }
+                if let Some(class) = self.ctx.arena.get_class_at(class_idx) {
+                    for &member_idx in &class.members.nodes {
+                        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                            continue;
+                        };
+                        if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                            if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                                if let Some(acc_ident) =
+                                    self.ctx.arena.get_identifier_at(accessor.name)
+                                {
+                                    if acc_ident.escaped_text == *prop_name {
+                                        return true;
                                     }
                                 }
                             }
@@ -2382,12 +2378,8 @@ impl<'a> CheckerState<'a> {
             }
         };
         // Check the name node is an identifier with the expected name
-        if let Some(name_node) = self.ctx.arena.get(name_node_idx) {
-            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
-            }
-            // For binding patterns (destructuring), the name might not be a simple identifier
-            // Consider these as not matching for safety
+        if let Some(ident) = self.ctx.arena.get_identifier_at(name_node_idx) {
+            return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
         }
         false
     }

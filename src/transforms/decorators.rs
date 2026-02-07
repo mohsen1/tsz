@@ -386,13 +386,11 @@ pub fn collect_class_decorator_info<'a>(
     arena: &'a NodeArena,
     class_idx: NodeIndex,
 ) -> Option<ClassDecoratorInfo> {
-    let class_node = arena.get(class_idx)?;
-    let class_data = arena.get_class(class_node)?;
+    let class_data = arena.get_class_at(class_idx)?;
 
     // Get class name
     let class_name = if !class_data.name.is_none() {
-        let name_node = arena.get(class_data.name)?;
-        let ident = arena.get_identifier(name_node)?;
+        let ident = arena.get_identifier_at(class_data.name)?;
         ident.escaped_text.clone()
     } else {
         return None; // Anonymous classes can't be decorated meaningfully

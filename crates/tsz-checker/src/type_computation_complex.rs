@@ -139,61 +139,54 @@ impl<'a> CheckerState<'a> {
 
         use tsz_solver::{CallEvaluator, CallResult, CompatChecker};
 
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::ERROR; // Missing node - propagate error
-        };
-
-        let Some(new_expr) = self.ctx.arena.get_call_expr(node) else {
+        let Some(new_expr) = self.ctx.arena.get_call_expr_at(idx) else {
             return TypeId::ERROR; // Missing new expression data - propagate error
         };
 
         // Check if trying to instantiate an abstract class or type-only symbol
         // The expression is typically an identifier referencing the class
-        if let Some(expr_node) = self.ctx.arena.get(new_expr.expression) {
-            // If it's a direct identifier (e.g., `new MyClass()`)
-            if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
-                let class_name = &ident.escaped_text;
+        if let Some(ident) = self.ctx.arena.get_identifier_at(new_expr.expression) {
+            let class_name = &ident.escaped_text;
 
-                // Try multiple ways to find the symbol:
-                // 1. Check if the identifier node has a direct symbol binding
-                // 2. Look up in file_locals
-                // 3. Search all symbols by name (handles local scopes like classes inside functions)
+            // Try multiple ways to find the symbol:
+            // 1. Check if the identifier node has a direct symbol binding
+            // 2. Look up in file_locals
+            // 3. Search all symbols by name (handles local scopes like classes inside functions)
 
-                let symbol_opt = self
-                    .ctx
-                    .binder
-                    .get_node_symbol(new_expr.expression)
-                    .or_else(|| self.ctx.binder.file_locals.get(class_name))
-                    .or_else(|| self.ctx.binder.get_symbols().find_by_name(class_name));
+            let symbol_opt = self
+                .ctx
+                .binder
+                .get_node_symbol(new_expr.expression)
+                .or_else(|| self.ctx.binder.file_locals.get(class_name))
+                .or_else(|| self.ctx.binder.get_symbols().find_by_name(class_name));
 
-                if let Some(sym_id) = symbol_opt
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                {
-                    // Check if it's type-only (interface, type alias without value, or type-only import)
-                    let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
-                    let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
-                    let is_type_alias = (symbol.flags & symbol_flags::TYPE_ALIAS) != 0;
+            if let Some(sym_id) = symbol_opt
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                // Check if it's type-only (interface, type alias without value, or type-only import)
+                let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+                let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
+                let is_type_alias = (symbol.flags & symbol_flags::TYPE_ALIAS) != 0;
 
-                    // Emit TS2693 for type-only symbols used as values
-                    // This includes:
-                    // 1. Symbols with TYPE flag but no VALUE flag (interfaces without namespace merge, type-only imports)
-                    // 2. Type aliases (never have VALUE, even if they reference a class)
-                    //
-                    // IMPORTANT: Don't emit for interfaces that have VALUE (merged with namespace)
-                    if is_type_alias || (has_type && !has_value) {
-                        self.error_type_only_value_at(class_name, new_expr.expression);
-                        return TypeId::ERROR;
-                    }
+                // Emit TS2693 for type-only symbols used as values
+                // This includes:
+                // 1. Symbols with TYPE flag but no VALUE flag (interfaces without namespace merge, type-only imports)
+                // 2. Type aliases (never have VALUE, even if they reference a class)
+                //
+                // IMPORTANT: Don't emit for interfaces that have VALUE (merged with namespace)
+                if is_type_alias || (has_type && !has_value) {
+                    self.error_type_only_value_at(class_name, new_expr.expression);
+                    return TypeId::ERROR;
+                }
 
-                    // Check if it has the ABSTRACT flag
-                    if symbol.flags & symbol_flags::ABSTRACT != 0 {
-                        self.error_at_node(
-                            idx,
-                            "Cannot create an instance of an abstract class.",
-                            diagnostic_codes::CANNOT_CREATE_INSTANCE_OF_ABSTRACT_CLASS,
-                        );
-                        return TypeId::ERROR;
-                    }
+                // Check if it has the ABSTRACT flag
+                if symbol.flags & symbol_flags::ABSTRACT != 0 {
+                    self.error_at_node(
+                        idx,
+                        "Cannot create an instance of an abstract class.",
+                        diagnostic_codes::CANNOT_CREATE_INSTANCE_OF_ABSTRACT_CLASS,
+                    );
+                    return TypeId::ERROR;
                 }
             }
         }

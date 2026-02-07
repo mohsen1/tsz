@@ -321,8 +321,7 @@ impl<'a> CheckerState<'a> {
         // This matches the pattern used successfully in generators.rs (lookup_global_type).
         if result.is_none() && !ignore_libs {
             // Get the identifier name
-            let node = self.ctx.arena.get(idx)?;
-            let name = if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            let name = if let Some(ident) = self.ctx.arena.get_identifier_at(idx) {
                 ident.escaped_text.as_str()
             } else {
                 return None;
@@ -1173,8 +1172,7 @@ impl<'a> CheckerState<'a> {
             let name = self
                 .ctx
                 .arena
-                .get(access.name_or_argument)
-                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .get_identifier_at(access.name_or_argument)
                 .map(|ident| ident.escaped_text.clone())?;
 
             // First, check the raw symbol's direct exports (for namespace symbols)
@@ -1433,16 +1431,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let call = self.ctx.arena.get_call_expr(node)?;
-        let callee_node = self.ctx.arena.get(call.expression)?;
-        let callee_ident = self.ctx.arena.get_identifier(callee_node)?;
+        let callee_ident = self.ctx.arena.get_identifier_at(call.expression)?;
         if callee_ident.escaped_text != "require" {
             return None;
         }
 
         let args = call.arguments.as_ref()?;
         let first_arg = args.nodes.first().copied()?;
-        let arg_node = self.ctx.arena.get(first_arg)?;
-        let literal = self.ctx.arena.get_literal(arg_node)?;
+        let literal = self.ctx.arena.get_literal_at(first_arg)?;
         Some(literal.text.clone())
     }
 

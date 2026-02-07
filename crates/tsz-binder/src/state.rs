@@ -601,12 +601,8 @@ impl BinderState {
         let _span = span!(Level::DEBUG, "resolve_identifier", node_idx = node_idx.0).entered();
 
         let result = 'resolve: {
-            let Some(node) = arena.get(node_idx) else {
-                break 'resolve None;
-            };
-
             // Get the identifier text
-            let name = if let Some(ident) = arena.get_identifier(node) {
+            let name = if let Some(ident) = arena.get_identifier_at(node_idx) {
                 &ident.escaped_text
             } else {
                 break 'resolve None;
@@ -864,10 +860,8 @@ impl BinderState {
                 let node = arena.get(current)?;
                 if let Some(func) = arena.get_function(node) {
                     for &param_idx in &func.parameters.nodes {
-                        let param_node = arena.get(param_idx)?;
-                        let param = arena.get_parameter(param_node)?;
-                        let ident_node = arena.get(param.name)?;
-                        let ident = arena.get_identifier(ident_node)?;
+                        let param = arena.get_parameter_at(param_idx)?;
+                        let ident = arena.get_identifier_at(param.name)?;
                         if ident.escaped_text == name {
                             return self.node_symbols.get(&param.name.0).copied();
                         }
@@ -1108,10 +1102,7 @@ impl BinderState {
         arena: &NodeArena,
         root: NodeIndex,
     ) -> bool {
-        let Some(node) = arena.get(root) else {
-            return false;
-        };
-        let Some(source) = arena.get_source_file(node) else {
+        let Some(source) = arena.get_source_file_at(root) else {
             return false;
         };
 
@@ -1885,10 +1876,10 @@ impl BinderState {
                             self.collect_hoisted_from_node(arena, try_data.try_block);
                             // Hoist from catch clause's block
                             if !try_data.catch_clause.is_none() {
-                                if let Some(catch_node) = arena.get(try_data.catch_clause) {
-                                    if let Some(catch_data) = arena.get_catch_clause(catch_node) {
-                                        self.collect_hoisted_from_node(arena, catch_data.block);
-                                    }
+                                if let Some(catch_data) =
+                                    arena.get_catch_clause_at(try_data.catch_clause)
+                                {
+                                    self.collect_hoisted_from_node(arena, catch_data.block);
                                 }
                             }
                             // Hoist from finally block
@@ -1900,20 +1891,15 @@ impl BinderState {
                     k if k == syntax_kind_ext::SWITCH_STATEMENT => {
                         if let Some(switch_data) = arena.get_switch(node) {
                             // The case_block is treated as a block - get its children (case/default clauses)
-                            if let Some(case_block_node) = arena.get(switch_data.case_block) {
-                                if let Some(block_data) = arena.get_block(case_block_node) {
-                                    // Each child is a case/default clause with statements
-                                    for &clause_idx in &block_data.statements.nodes {
-                                        if let Some(clause_node) = arena.get(clause_idx) {
-                                            if let Some(clause_data) =
-                                                arena.get_case_clause(clause_node)
-                                            {
-                                                self.collect_hoisted_declarations(
-                                                    arena,
-                                                    &clause_data.statements,
-                                                );
-                                            }
-                                        }
+                            if let Some(block_data) = arena.get_block_at(switch_data.case_block) {
+                                // Each child is a case/default clause with statements
+                                for &clause_idx in &block_data.statements.nodes {
+                                    if let Some(clause_data) = arena.get_case_clause_at(clause_idx)
+                                    {
+                                        self.collect_hoisted_declarations(
+                                            arena,
+                                            &clause_data.statements,
+                                        );
                                     }
                                 }
                             }
@@ -1938,9 +1924,7 @@ impl BinderState {
             let is_var = (node.flags as u32 & (node_flags::LET | node_flags::CONST)) == 0;
             if is_var {
                 for &decl_idx in &list.declarations.nodes {
-                    if let Some(decl_node) = arena.get(decl_idx)
-                        && let Some(decl) = arena.get_variable_declaration(decl_node)
-                    {
+                    if let Some(decl) = arena.get_variable_declaration_at(decl_idx) {
                         if let Some(name) = self.get_identifier_name(arena, decl.name) {
                             self.hoisted_vars.push((name.to_string(), decl_idx));
                         } else {
@@ -2934,9 +2918,7 @@ impl BinderState {
         }
 
         for &decl_idx in &list.declarations.nodes {
-            if let Some(decl_node) = arena.get(decl_idx)
-                && let Some(decl) = arena.get_variable_declaration(decl_node)
-            {
+            if let Some(decl) = arena.get_variable_declaration_at(decl_idx) {
                 if let Some(name) = self.get_identifier_name(arena, decl.name) {
                     out.insert(name.to_string());
                 } else {
@@ -3041,18 +3023,13 @@ impl BinderState {
         decl_list_idx: NodeIndex,
         out: &mut Vec<NodeIndex>,
     ) {
-        let Some(node) = arena.get(decl_list_idx) else {
-            return;
-        };
-        let Some(list) = arena.get_variable(node) else {
+        let Some(list) = arena.get_variable_at(decl_list_idx) else {
             return;
         };
 
         for &decl_idx in &list.declarations.nodes {
             out.push(decl_idx);
-            if let Some(decl_node) = arena.get(decl_idx)
-                && let Some(decl) = arena.get_variable_declaration(decl_node)
-            {
+            if let Some(decl) = arena.get_variable_declaration_at(decl_idx) {
                 if let Some(_name) = self.get_identifier_name(arena, decl.name) {
                     out.push(decl.name);
                 } else {

@@ -1284,47 +1284,42 @@ impl<'a> CheckerState<'a> {
             // resolution for each distinct member.
             let mut member_types = Vec::new();
             if !decl_idx.is_none() {
-                if let Some(node) = self.ctx.arena.get(decl_idx) {
-                    if let Some(enum_decl) = self.ctx.arena.get_enum(node) {
-                        let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
-                        member_types.reserve(enum_decl.members.nodes.len());
-                        for &member_idx in &enum_decl.members.nodes {
-                            if let Some(member_node) = self.ctx.arena.get(member_idx) {
-                                if let Some(member) = self.ctx.arena.get_enum_member(member_node) {
-                                    let member_type = self.enum_member_type_from_decl(member_idx);
-                                    if member_type != TypeId::ERROR {
-                                        member_types.push(member_type);
-                                    }
+                if let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx) {
+                    let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
+                    member_types.reserve(enum_decl.members.nodes.len());
+                    for &member_idx in &enum_decl.members.nodes {
+                        if let Some(member) = self.ctx.arena.get_enum_member_at(member_idx) {
+                            let member_type = self.enum_member_type_from_decl(member_idx);
+                            if member_type != TypeId::ERROR {
+                                member_types.push(member_type);
+                            }
 
-                                    // Pre-cache member symbol types.
-                                    // This avoids per-member `get_type_of_symbol` overhead in
-                                    // hot paths such as large enum property-access switches.
-                                    if let Some(member_name) = self.get_property_name(member.name)
-                                        && let Some(member_sym_id) = self
-                                            .ctx
-                                            .binder
-                                            .get_symbol(sym_id)
-                                            .and_then(|enum_symbol| enum_symbol.exports.as_ref())
-                                            .and_then(|exports| exports.get(&member_name))
-                                    {
-                                        let member_def_id =
-                                            self.ctx.get_or_create_def_id(member_sym_id);
-                                        let member_enum_type = self
-                                            .ctx
-                                            .types
-                                            .intern(TypeKey::Enum(member_def_id, member_type));
-                                        self.ctx
-                                            .symbol_types
-                                            .insert(member_sym_id, member_enum_type);
-                                        if let Some(env) = maybe_env.as_mut() {
-                                            env.insert(
-                                                tsz_solver::SymbolRef(member_sym_id.0),
-                                                member_enum_type,
-                                            );
-                                            if member_def_id != tsz_solver::DefId::INVALID {
-                                                env.insert_def(member_def_id, member_enum_type);
-                                            }
-                                        }
+                            // Pre-cache member symbol types.
+                            // This avoids per-member `get_type_of_symbol` overhead in
+                            // hot paths such as large enum property-access switches.
+                            if let Some(member_name) = self.get_property_name(member.name)
+                                && let Some(member_sym_id) = self
+                                    .ctx
+                                    .binder
+                                    .get_symbol(sym_id)
+                                    .and_then(|enum_symbol| enum_symbol.exports.as_ref())
+                                    .and_then(|exports| exports.get(&member_name))
+                            {
+                                let member_def_id = self.ctx.get_or_create_def_id(member_sym_id);
+                                let member_enum_type = self
+                                    .ctx
+                                    .types
+                                    .intern(TypeKey::Enum(member_def_id, member_type));
+                                self.ctx
+                                    .symbol_types
+                                    .insert(member_sym_id, member_enum_type);
+                                if let Some(env) = maybe_env.as_mut() {
+                                    env.insert(
+                                        tsz_solver::SymbolRef(member_sym_id.0),
+                                        member_enum_type,
+                                    );
+                                    if member_def_id != tsz_solver::DefId::INVALID {
+                                        env.insert_def(member_def_id, member_enum_type);
                                     }
                                 }
                             }

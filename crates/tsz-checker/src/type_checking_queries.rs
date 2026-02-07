@@ -747,11 +747,8 @@ impl<'a> CheckerState<'a> {
     /// Get the name of a parameter from its binding name node.
     /// Returns None for destructuring patterns.
     pub(crate) fn get_parameter_name(&self, name_idx: NodeIndex) -> Option<String> {
-        let name_node = self.ctx.arena.get(name_idx)?;
-        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some(ident.escaped_text.clone());
-        }
-        None
+        let ident = self.ctx.arena.get_identifier_at(name_idx)?;
+        Some(ident.escaped_text.clone())
     }
 
     // =========================================================================
@@ -770,9 +767,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let &type_idx = heritage.types.nodes.first()?;
-            let type_node = self.ctx.arena.get(type_idx)?;
             let expr_idx =
-                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args_at(type_idx) {
                     expr_type_args.expression
                 } else {
                     type_idx
@@ -1815,13 +1811,9 @@ impl<'a> CheckerState<'a> {
 
                 // Get the parameter type from the setter's first parameter
                 let param_type = if let Some(&first_param_idx) = accessor.parameters.nodes.first() {
-                    if let Some(param_node) = self.ctx.arena.get(first_param_idx) {
-                        if let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                            if !param.type_annotation.is_none() {
-                                self.resolve_type_annotation(param.type_annotation)
-                            } else {
-                                TypeId::ANY
-                            }
+                    if let Some(param) = self.ctx.arena.get_parameter_at(first_param_idx) {
+                        if !param.type_annotation.is_none() {
+                            self.resolve_type_annotation(param.type_annotation)
                         } else {
                             TypeId::ANY
                         }
@@ -2659,8 +2651,7 @@ impl<'a> CheckerState<'a> {
             let right = self
                 .ctx
                 .arena
-                .get(access.name_or_argument)
-                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .get_identifier_at(access.name_or_argument)
                 .map(|ident| ident.escaped_text.clone())?;
             let mut combined = String::with_capacity(left.len() + 1 + right.len());
             combined.push_str(&left);

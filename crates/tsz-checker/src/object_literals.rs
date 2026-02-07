@@ -30,11 +30,7 @@ impl<'a> ObjectLiteralChecker<'a> {
     pub fn collect_properties(&self, obj_literal_idx: NodeIndex) -> Vec<ObjectLiteralProperty> {
         let mut properties = Vec::new();
 
-        let Some(node) = self.arena.get(obj_literal_idx) else {
-            return properties;
-        };
-
-        let Some(literal) = self.arena.get_literal_expr(node) else {
+        let Some(literal) = self.arena.get_literal_expr_at(obj_literal_idx) else {
             return properties;
         };
 

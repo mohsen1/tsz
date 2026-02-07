@@ -2104,20 +2104,14 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             return false;
         }
 
-        let Some(node) = self.arena.get(decl_idx) else {
-            return false;
-        };
-        let Some(enum_decl) = self.arena.get_enum(node) else {
+        let Some(enum_decl) = self.arena.get_enum_at(decl_idx) else {
             return false;
         };
 
         let mut has_string_member = false;
 
         for &member_idx in &enum_decl.members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            let Some(member) = self.arena.get_enum_member(member_node) else {
+            let Some(member) = self.arena.get_enum_member_at(member_idx) else {
                 continue;
             };
 

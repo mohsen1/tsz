@@ -2180,10 +2180,7 @@ fn collect_export_signatures(
     signatures: &mut Vec<String>,
 ) {
     let arena = &file.arena;
-    let Some(node) = arena.get(file.source_file) else {
-        return;
-    };
-    let Some(source) = arena.get_source_file(node) else {
+    let Some(source) = arena.get_source_file_at(file.source_file) else {
         return;
     };
 
@@ -2205,11 +2202,7 @@ fn collect_export_signatures(
             if export_decl.module_specifier.is_none() {
                 if !export_decl.export_clause.is_none() {
                     let clause_node = export_decl.export_clause;
-                    let clause_node_ref = arena.get(clause_node);
-                    if clause_node_ref
-                        .and_then(|node| arena.get_named_imports(node))
-                        .is_some()
-                    {
+                    if arena.get_named_imports_at(clause_node).is_some() {
                         collect_local_named_export_signatures(
                             arena,
                             file.source_file,
@@ -2247,14 +2240,10 @@ fn collect_export_signatures(
             }
 
             let clause_node = export_decl.export_clause;
-            let clause_node_ref = arena.get(clause_node);
-            if let Some(named) = clause_node_ref.and_then(|node| arena.get_named_imports(node)) {
+            if let Some(named) = arena.get_named_imports_at(clause_node) {
                 let mut specifiers = Vec::new();
                 for &spec_idx in &named.elements.nodes {
-                    let Some(spec_node) = arena.get(spec_idx) else {
-                        continue;
-                    };
-                    let Some(spec) = arena.get_specifier(spec_node) else {
+                    let Some(spec) = arena.get_specifier_at(spec_idx) else {
                         continue;
                     };
                     let name = arena.get_identifier_text(spec.name).unwrap_or("");
@@ -2303,18 +2292,12 @@ fn collect_local_named_export_signatures(
     type_prefix: &str,
     signatures: &mut Vec<String>,
 ) {
-    let Some(named_node) = arena.get(named_idx) else {
-        return;
-    };
-    let Some(named) = arena.get_named_imports(named_node) else {
+    let Some(named) = arena.get_named_imports_at(named_idx) else {
         return;
     };
 
     for &spec_idx in &named.elements.nodes {
-        let Some(spec_node) = arena.get(spec_idx) else {
-            continue;
-        };
-        let Some(spec) = arena.get_specifier(spec_node) else {
+        let Some(spec) = arena.get_specifier_at(spec_idx) else {
             continue;
         };
         let exported_name = if !spec.name.is_none() {
@@ -2452,10 +2435,7 @@ fn find_local_declaration(
     source_file: NodeIndex,
     name: &str,
 ) -> Option<NodeIndex> {
-    let Some(node) = arena.get(source_file) else {
-        return None;
-    };
-    let Some(source) = arena.get_source_file(node) else {
+    let Some(source) = arena.get_source_file_at(source_file) else {
         return None;
     };
 
@@ -2468,10 +2448,7 @@ fn find_local_declaration(
                 continue;
             }
             let clause_idx = export_decl.export_clause;
-            let Some(clause_node) = arena.get(clause_idx) else {
-                continue;
-            };
-            if arena.get_named_imports(clause_node).is_some() {
+            if arena.get_named_imports_at(clause_idx).is_some() {
                 continue;
             }
             if let Some(found) = find_local_declaration_in_node(arena, clause_idx, name) {
