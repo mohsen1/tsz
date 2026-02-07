@@ -330,6 +330,15 @@ impl Runner {
         // Sort for deterministic order
         files.sort();
 
+        // Apply offset (skip first N tests)
+        if self.args.offset > 0 {
+            if self.args.offset >= files.len() {
+                files.clear();
+            } else {
+                files = files.split_off(self.args.offset);
+            }
+        }
+
         // Apply max limit
         if files.len() > self.args.max {
             files.truncate(self.args.max);
