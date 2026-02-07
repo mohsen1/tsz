@@ -82,28 +82,10 @@ impl<'a> Printer<'a> {
         self.emit_function_parameters_js(&func.parameters.nodes);
         self.write(") ");
 
-        // Emit body - check if it's a simple single-statement body
-        let body_node = self.arena.get(func.body);
-        let is_simple_body = if let Some(body) = body_node {
-            if let Some(block) = self.arena.get_block(body) {
-                let stmt_count = block.statements.nodes.len();
-                if stmt_count == 1 {
-                    self.is_simple_return_statement(block.statements.nodes[0])
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        if is_simple_body {
-            self.emit_single_line_block(func.body);
-        } else {
-            self.emit(func.body);
-        }
+        // Emit body - tsc never collapses multi-line function expression bodies
+        // to single lines. Single-line formatting is preserved via emit_block
+        // when the source was originally single-line.
+        self.emit(func.body);
     }
 
     /// Check if a statement is a simple return statement (for single-line emission).
