@@ -66,31 +66,28 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .get_class_instance_type(class_info.class_idx, class_data);
                     }
                     TypeId::ANY
+                } else if self.checker.find_class_for_this(idx).is_some() {
+                    // `this` in a class member (getter/setter/method/constructor) but
+                    // enclosing_class not yet set (e.g. during class type construction).
+                    // Return ANY without emitting TS2683 - computing the class instance
+                    // type here would cause circular dependency during construction.
+                    TypeId::ANY
+                } else if self.checker.ctx.no_implicit_this()
+                    && self
+                        .checker
+                        .find_enclosing_non_arrow_function(idx)
+                        .is_some()
+                {
+                    // TS2683: 'this' implicitly has type 'any'
+                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.checker.error_at_node(
+                        idx,
+                        diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY,
+                        diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY,
+                    );
+                    TypeId::ANY
                 } else {
-                    // Not in a class - check if we're in a NON-ARROW function
-                    // Arrow functions capture `this` from their enclosing scope, so they
-                    // should NOT trigger TS2683. We need to skip past arrow functions
-                    // to find the actual enclosing function that defines the `this` context.
-                    if self.checker.ctx.no_implicit_this()
-                        && self
-                            .checker
-                            .find_enclosing_non_arrow_function(idx)
-                            .is_some()
-                    {
-                        // TS2683: 'this' implicitly has type 'any'
-                        // Only emit when noImplicitThis is enabled
-                        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        self.checker.error_at_node(
-                            idx,
-                            diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY,
-                            diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY,
-                        );
-                        TypeId::ANY
-                    } else {
-                        // Outside function, only inside arrow functions, or noImplicitThis disabled
-                        // Use ANY for recovery without error
-                        TypeId::ANY
-                    }
+                    TypeId::ANY
                 }
             }
             k if k == SyntaxKind::SuperKeyword as u16 => {
