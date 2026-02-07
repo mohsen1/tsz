@@ -3174,6 +3174,17 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    // Namespace + Variable merging is allowed
+                    // TypeScript's NamespaceModuleExcludes = 0 (can merge with anything)
+                    // e.g., `namespace m2 { ... } var m2: { ... };`
+                    let decl_is_variable = (decl_flags & symbol_flags::VARIABLE) != 0;
+                    let other_is_variable = (other_flags & symbol_flags::VARIABLE) != 0;
+                    if (decl_is_namespace && other_is_variable)
+                        || (decl_is_variable && other_is_namespace)
+                    {
+                        continue;
+                    }
+
                     // Ambient class + Function merging is allowed
                     // (declare class provides the type, function provides the value)
                     if (decl_is_class && other_is_function) || (decl_is_function && other_is_class)
