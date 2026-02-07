@@ -2800,6 +2800,12 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.experimental_decorators {
         options.checker.experimental_decorators = true;
     }
+    if args.no_unused_locals {
+        options.checker.no_unused_locals = true;
+    }
+    if args.no_unused_parameters {
+        options.checker.no_unused_parameters = true;
+    }
     if args.no_emit {
         options.no_emit = true;
     }
