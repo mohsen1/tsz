@@ -83,7 +83,7 @@ pub enum TestResult {
 ## Building
 
 ```bash
-cd conformance-rust
+cd crates/conformance
 cargo build --release
 ```
 

@@ -260,7 +260,7 @@ keyword position. `for await` only works with `of`, not `in`.
 
 Run parser conformance tests:
 ```bash
-cd conformance-rust && cargo run --release --bin tsz-conformance -- \
+cd crates/conformance && cargo run --release --bin tsz-conformance -- \
   --filter parser --all \
   --test-dir ../TypeScript/tests/cases \
   --tsz-binary ../.target/release/tsz \

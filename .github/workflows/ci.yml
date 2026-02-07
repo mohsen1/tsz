@@ -464,22 +464,22 @@ jobs:
           path: tsc-cache-full.json
           key: tsc-cache-${{ steps.ts-version.outputs.sha }}
 
-      - name: Install Rust (for conformance-rust build if needed)
+      - name: Install Rust (for crates/conformance build if needed)
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache conformance-rust build
+      - name: Cache crates/conformance build
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            conformance-rust/target
-          key: ${{ runner.os }}-conformance-${{ hashFiles('conformance-rust/Cargo.lock') }}
+            crates/conformance/target
+          key: ${{ runner.os }}-conformance-${{ hashFiles('crates/conformance/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-conformance-
 
       - name: Build conformance runner
         run: |
-          cd conformance-rust
+          cd crates/conformance
           cargo build --release
           mkdir -p ../.target/release
           cp target/release/tsz-conformance ../.target/release/ || true

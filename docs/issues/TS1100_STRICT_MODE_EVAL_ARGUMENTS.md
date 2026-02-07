@@ -80,7 +80,7 @@ The check needs to:
 ## Testing
 
 ```bash
-cd conformance-rust && cargo run --release --bin tsz-conformance -- \
+cd crates/conformance && cargo run --release --bin tsz-conformance -- \
   --filter "strict" --all \
   --test-dir ../TypeScript/tests/cases \
   --tsz-binary ../.target/release/tsz \

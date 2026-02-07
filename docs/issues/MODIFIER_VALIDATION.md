@@ -67,7 +67,7 @@ The grammar validation in tsz's checker doesn't have all the specific modifier v
 
 Run constructor declaration tests:
 ```bash
-cd conformance-rust && cargo run --release --bin tsz-conformance -- \
+cd crates/conformance && cargo run --release --bin tsz-conformance -- \
   --filter ConstructorDeclaration --all \
   --test-dir ../TypeScript/tests/cases \
   --tsz-binary ../.target/release/tsz \

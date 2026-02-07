@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*"]
-exclude = ["conformance-rust"]
+exclude = ["crates/conformance"]
 resolver = "3"
 
 [workspace.package]
