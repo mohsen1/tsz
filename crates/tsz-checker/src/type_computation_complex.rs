@@ -194,6 +194,45 @@ impl<'a> CheckerState<'a> {
         // Get the type of the constructor expression
         let constructor_type = self.get_type_of_node(new_expr.expression);
 
+        // Handle self-referencing class in static initializer:
+        // When a class's static property initializer does `new C()` where C is the class
+        // being defined, get_type_of_symbol returns a Lazy placeholder (circular reference).
+        // The Lazy type has no construct signatures, so we'd falsely emit TS2351.
+        // Fix: If the constructor type is Lazy and the expression resolves to a class symbol,
+        // return the cached instance type directly since the class IS constructable.
+        if tsz_solver::visitor::lazy_def_id(self.ctx.types, constructor_type).is_some() {
+            if let Some(sym_id) = self
+                .ctx
+                .binder
+                .resolve_identifier(self.ctx.arena, new_expr.expression)
+                .or_else(|| self.ctx.binder.get_node_symbol(new_expr.expression))
+            {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    if symbol.flags & symbol_flags::CLASS != 0 {
+                        // Try to find the cached instance type
+                        if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
+                            return instance_type;
+                        }
+                        // Also check the class_instance_type_cache by looking up the declaration
+                        let decl_idx = if !symbol.value_declaration.is_none() {
+                            symbol.value_declaration
+                        } else {
+                            symbol
+                                .declarations
+                                .first()
+                                .copied()
+                                .unwrap_or(NodeIndex::NONE)
+                        };
+                        if let Some(&instance_type) =
+                            self.ctx.class_instance_type_cache.get(&decl_idx)
+                        {
+                            return instance_type;
+                        }
+                    }
+                }
+            }
+        }
+
         // Validate explicit type arguments against constraints (TS2344)
         if let Some(ref type_args_list) = new_expr.type_arguments
             && !type_args_list.nodes.is_empty()
