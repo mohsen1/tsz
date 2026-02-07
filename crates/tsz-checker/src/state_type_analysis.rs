@@ -554,6 +554,7 @@ impl<'a> CheckerState<'a> {
         let mut params = Vec::new();
         let mut updates = Vec::new();
         let mut param_indices = Vec::new();
+        let mut seen_names = FxHashSet::default();
 
         // First pass: Add all type parameters to scope WITHOUT resolving constraints
         // This allows self-referential constraints like T extends Box<T>
@@ -572,6 +573,16 @@ impl<'a> CheckerState<'a> {
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                 .map(|id_data| id_data.escaped_text.clone())
                 .unwrap_or_else(|| "T".to_string());
+
+            // Check for duplicate type parameter names (TS2300)
+            if !seen_names.insert(name.clone()) {
+                self.error_at_node_msg(
+                    data.name,
+                    crate::types::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    &[&name],
+                );
+            }
+
             let atom = self.ctx.types.intern_string(&name);
 
             // Create unconstrained type parameter initially

@@ -143,11 +143,7 @@ impl<'a> CheckerState<'a> {
         // TS2464: type must be string, number, symbol, or any (including literals).
         // This check ignores strictNullChecks: undefined/null always fail.
         let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
-        let is_valid = evaluator.is_string_like(expr_type)
-            || evaluator.is_number_like(expr_type)
-            || evaluator.is_symbol_like(expr_type);
-
-        if !is_valid {
+        if !evaluator.is_valid_computed_property_name_type(expr_type) {
             use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 name_idx,

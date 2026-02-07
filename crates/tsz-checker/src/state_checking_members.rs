@@ -629,6 +629,7 @@ impl<'a> CheckerState<'a> {
                     let updates =
                         self.push_missing_name_type_parameters(&func_type.type_parameters);
                     self.check_type_parameters_for_missing_names(&func_type.type_parameters);
+                    self.check_duplicate_type_parameters(&func_type.type_parameters);
                     for &param_idx in &func_type.parameters.nodes {
                         self.check_parameter_type_for_missing_names(param_idx);
                     }
@@ -836,6 +837,7 @@ impl<'a> CheckerState<'a> {
         if let Some(sig) = self.ctx.arena.get_signature(member_node) {
             let updates = self.push_missing_name_type_parameters(&sig.type_parameters);
             self.check_type_parameters_for_missing_names(&sig.type_parameters);
+            self.check_duplicate_type_parameters(&sig.type_parameters);
             if let Some(ref params) = sig.parameters {
                 for &param_idx in &params.nodes {
                     self.check_parameter_type_for_missing_names(param_idx);

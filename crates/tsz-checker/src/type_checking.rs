@@ -567,6 +567,43 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check for duplicate type parameter names in a type parameter list (TS2300).
+    ///
+    /// This is used for type parameter lists that are NOT processed through
+    /// `push_type_parameters` during the checking pass, such as interface method
+    /// signatures and function type expressions.
+    pub(crate) fn check_duplicate_type_parameters(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) {
+        let Some(list) = type_parameters else {
+            return;
+        };
+        let mut seen = FxHashSet::default();
+        for &param_idx in &list.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                continue;
+            };
+            let name = &ident.escaped_text;
+            if !seen.insert(name.clone()) {
+                self.error_at_node_msg(
+                    param.name,
+                    crate::types::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    &[name],
+                );
+            }
+        }
+    }
+
     /// Check a single type parameter node for missing type names.
     ///
     /// Validates that the constraint and default type of a type parameter
