@@ -1078,6 +1078,12 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|s| !s.type_params.is_empty())
             && call.type_arguments.is_none(); // Only use two-pass if no explicit type args
 
+        tracing::debug!(
+            is_generic_call,
+            callee_shape_has_type_params = callee_shape.as_ref().map(|s| s.type_params.len()),
+            "two-pass inference check"
+        );
+
         // Create contextual context from callee type with type arguments applied
         let ctx_helper =
             ContextualTypeContext::with_expected(self.ctx.types, callee_type_for_resolution);
