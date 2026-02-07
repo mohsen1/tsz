@@ -92,6 +92,34 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Find the enclosing class for a `this` keyword when `enclosing_class` is not set.
+    ///
+    /// Walks up the AST to find the nearest non-arrow function. If that function is
+    /// a class member (getter, setter, method, constructor), returns its parent class
+    /// node index. Returns None if the enclosing function is not a class member.
+    ///
+    /// This handles the case where `this` is evaluated during class type construction
+    /// (e.g., `infer_getter_return_type`) before `enclosing_class` is set on the context.
+    pub(crate) fn find_class_for_this(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext::*;
+        let enclosing_fn = self.find_enclosing_non_arrow_function(idx)?;
+        let fn_node = self.ctx.arena.get(enclosing_fn)?;
+        let is_class_member = fn_node.kind == GET_ACCESSOR
+            || fn_node.kind == SET_ACCESSOR
+            || fn_node.kind == METHOD_DECLARATION
+            || fn_node.kind == CONSTRUCTOR;
+        if !is_class_member {
+            return None;
+        }
+        let parent = self.ctx.arena.get_extended(enclosing_fn)?.parent;
+        let parent_node = self.ctx.arena.get(parent)?;
+        if parent_node.kind == CLASS_DECLARATION || parent_node.kind == CLASS_EXPRESSION {
+            Some(parent)
+        } else {
+            None
+        }
+    }
+
     // =========================================================================
     // Variable Enclosure
     // =========================================================================

@@ -408,6 +408,39 @@ const t: Tuple = [1, "test", ...createTuple()];
 }
 
 #[test]
+fn test_this_in_getter_no_false_ts2683() {
+    // `this` inside a class getter should resolve to the class instance type,
+    // not emit TS2683. Uses `// @strict: true` to enable noImplicitThis.
+    let source = r#"
+// @strict: true
+class Foo {
+    x = 5;
+    get bar() {
+        return this.x;
+    }
+    set baz(v: number) {
+        this.x = v;
+    }
+    method() {
+        return this.x;
+    }
+}
+"#;
+    let diagnostics = check_source(source);
+    let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
+    assert_eq!(
+        ts2683_count,
+        0,
+        "Expected no TS2683 for `this` in class getter/setter/method, got {} errors: {:?}",
+        ts2683_count,
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2683)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_spread_string() {
     let source = r#"
 const str = "hello";
