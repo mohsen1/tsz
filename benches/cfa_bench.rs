@@ -8,11 +8,11 @@
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::time::Duration;
-use wasm::binder::BinderState;
-use wasm::checker::CheckerOptions;
-use wasm::checker::state::CheckerState;
-use wasm::parser::ParserState;
-use wasm::solver::TypeInterner;
+use tsz::binder::BinderState;
+use tsz::checker::CheckerOptions;
+use tsz::checker::state::CheckerState;
+use tsz::parser::ParserState;
+use tsz::solver::TypeInterner;
 
 /// Simple code without complex control flow.
 const SIMPLE_CODE: &str = r#"
@@ -268,7 +268,7 @@ fn bench_type_check(c: &mut Criterion) {
                 let mut binder = BinderState::new();
                 binder.bind_source_file(parser.get_arena(), root);
                 let types = TypeInterner::new();
-                let compiler_options = wasm::cli::config::CheckerOptions::default();
+                let compiler_options = tsz::cli::config::CheckerOptions::default();
                 let mut checker = CheckerState::new(
                     parser.get_arena(),
                     &binder,

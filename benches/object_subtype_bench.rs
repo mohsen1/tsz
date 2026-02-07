@@ -3,8 +3,8 @@
 //! Focus: property lookup cost in check_object_subtype.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use wasm::solver::types::{PropertyInfo, TypeId, Visibility};
-use wasm::solver::{SubtypeChecker, TypeInterner};
+use tsz::solver::types::{PropertyInfo, TypeId, Visibility};
+use tsz::solver::{SubtypeChecker, TypeInterner};
 
 fn make_object(interner: &TypeInterner, count: usize) -> TypeId {
     let mut props = Vec::with_capacity(count);

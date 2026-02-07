@@ -12,7 +12,7 @@
 //! - Package.json exports/imports fields
 //! - TypeScript-specific extensions (.ts, .tsx, .d.ts)
 
-use crate::cli::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
+use crate::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
 use crate::diagnostics::{Diagnostic, DiagnosticBag};
 use crate::span::Span;
 use rustc_hash::FxHashMap;

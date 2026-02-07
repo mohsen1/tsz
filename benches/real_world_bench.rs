@@ -4,7 +4,7 @@
 //! of varying sizes to simulate real-world scenarios.
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use wasm::{emitter::Printer, parser::ParserState};
+use tsz::{emitter::Printer, parser::ParserState};
 
 /// Generate a synthetic TypeScript file with many class definitions
 fn generate_large_ts(class_count: usize) -> String {

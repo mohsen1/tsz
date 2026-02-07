@@ -1,8 +1,8 @@
 //! Solver microbenchmarks (subtype, evaluate, infer).
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use wasm::interner::Atom;
-use wasm::solver::{
+use tsz::interner::Atom;
+use tsz::solver::{
     CompatChecker, ConditionalType, FunctionShape, ObjectShapeId, ParamInfo, PropertyInfo, TypeId,
     TypeInterner, TypeKey, TypeParamInfo, Visibility, evaluate_type, infer_generic_function,
     is_subtype_of,

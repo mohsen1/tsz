@@ -3,8 +3,8 @@
 //! Provides a simple API to compile TypeScript code and extract error codes.
 
 use std::collections::HashMap;
-use wasm::diagnostics::{Diagnostic, DiagnosticSeverity};
-use wasm::span::Span;
+use tsz::diagnostics::{Diagnostic, DiagnosticSeverity};
+use tsz::span::Span;
 
 /// Result of compiling a test file
 #[derive(Debug, Clone)]

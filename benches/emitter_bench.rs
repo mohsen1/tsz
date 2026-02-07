@@ -3,7 +3,7 @@
 //! Measures emitter throughput (bytes/sec) for Phase 6.1 performance analysis.
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use wasm::{emitter::Printer, parser::ParserState};
+use tsz::{emitter::Printer, parser::ParserState};
 
 // =============================================================================
 // Test Sources

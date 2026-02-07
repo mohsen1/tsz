@@ -8,7 +8,7 @@
 //! - Serialization overhead (critical for JS boundary)
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use wasm::parser::ParserState;
+use tsz::parser::ParserState;
 
 /// Small TypeScript source
 const SMALL_SOURCE: &str = r#"
