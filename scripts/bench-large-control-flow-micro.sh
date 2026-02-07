@@ -97,7 +97,7 @@ fi
 
 if [[ "$FORCE_REBUILD" == true || ! -x "$TSZ" ]]; then
     echo "Building tsz (dist profile) into $BENCH_TARGET_DIR ..."
-    (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" cargo build --profile dist --features cli)
+    (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" cargo build --profile dist -p tsz-cli)
 fi
 
 if [[ ! -x "$TSZ" ]]; then

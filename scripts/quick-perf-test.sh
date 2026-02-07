@@ -9,7 +9,7 @@ TEST_FILE="TypeScript/tests/cases/compiler/enumLiteralsSubtypeReduction.ts"
 
 if [ ! -f "$TSZ" ]; then
     echo "Error: tsz binary not found at $TSZ"
-    echo "Build with: cargo build --release --features cli"
+    echo "Build with: cargo build --release -p tsz-cli"
     exit 1
 fi
 
