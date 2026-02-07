@@ -508,6 +508,14 @@ impl<'a> CheckerState<'a> {
             if !var_decl.initializer.is_none() {
                 let init_type = checker.get_type_of_node(var_decl.initializer);
 
+                // When strictNullChecks is off, undefined and null widen to any
+                // (TypeScript treats `var x = undefined` as `any` without strict)
+                if !checker.ctx.strict_null_checks()
+                    && (init_type == TypeId::UNDEFINED || init_type == TypeId::NULL)
+                {
+                    return TypeId::ANY;
+                }
+
                 // Note: Freshness is tracked by the TypeId flags.
                 // Fresh vs non-fresh object types are interned distinctly.
 
@@ -1483,6 +1491,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         heritage_clauses: &Option<tsz_parser::parser::NodeList>,
         is_class_declaration: bool,
+        class_type_param_names: &[String],
     ) {
         use tsz_parser::parser::syntax_kind_ext::HERITAGE_CLAUSE;
         use tsz_scanner::SyntaxKind;
@@ -1787,6 +1796,20 @@ impl<'a> CheckerState<'a> {
                             if self.is_property_access_on_unresolved_import(expr_idx) {
                                 continue;
                             }
+                            // TS2422: For implements clauses referencing type parameters,
+                            // emit "A class may only implement another class or interface"
+                            if !is_extends_clause
+                                && is_class_declaration
+                                && class_type_param_names.contains(&name)
+                            {
+                                use crate::types::diagnostics::diagnostic_codes;
+                                self.error_at_node(
+                                    expr_idx,
+                                    "A class may only implement another class or interface.",
+                                    diagnostic_codes::INTERFACE_CAN_ONLY_EXTEND_INTERFACE,
+                                );
+                                continue;
+                            }
                             self.error_cannot_find_name_at(&name, expr_idx);
                         }
                     }
@@ -1853,7 +1876,11 @@ impl<'a> CheckerState<'a> {
 
         // Check heritage clauses for unresolved names (TS2304)
         // Must be checked AFTER type parameters are pushed so heritage can reference type params
-        self.check_heritage_clauses_for_unresolved_names(&class.heritage_clauses, true);
+        self.check_heritage_clauses_for_unresolved_names(
+            &class.heritage_clauses,
+            true,
+            &class_type_param_names,
+        );
 
         // Check for abstract members in non-abstract class (error 1253),
         // private identifiers in ambient classes (error 2819),
