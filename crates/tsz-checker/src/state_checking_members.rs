@@ -46,7 +46,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check heritage clauses for unresolved names (TS2304)
-        self.check_heritage_clauses_for_unresolved_names(&iface.heritage_clauses, false);
+        self.check_heritage_clauses_for_unresolved_names(&iface.heritage_clauses, false, &[]);
 
         let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
 

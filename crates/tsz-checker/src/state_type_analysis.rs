@@ -1601,6 +1601,13 @@ impl<'a> CheckerState<'a> {
                         if !self.is_const_variable_declaration(value_decl) {
                             let widened_type =
                                 tsz_solver::widening::widen_type(self.ctx.types, inferred_type);
+                            // When strictNullChecks is off, undefined and null widen to any
+                            if !self.ctx.strict_null_checks()
+                                && (widened_type == TypeId::UNDEFINED
+                                    || widened_type == TypeId::NULL)
+                            {
+                                return (TypeId::ANY, Vec::new());
+                            }
                             return (widened_type, Vec::new());
                         }
                         return (inferred_type, Vec::new());
