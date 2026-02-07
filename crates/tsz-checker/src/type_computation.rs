@@ -996,6 +996,18 @@ impl<'a> CheckerState<'a> {
         let object_type = self.get_type_of_node(access.expression);
         let object_type = self.evaluate_application_type(object_type);
 
+        // Handle optional chain continuations: for `o?.b["c"]`, when processing `["c"]`,
+        // the object type from `o?.b` includes `undefined`. Strip nullish types when this
+        // element access is a continuation of an optional chain.
+        let object_type = if !access.question_dot_token
+            && crate::optional_chain::is_optional_chain(&self.ctx.arena, access.expression)
+        {
+            let (non_nullish, _) = self.split_nullish_type(object_type);
+            non_nullish.unwrap_or(object_type)
+        } else {
+            object_type
+        };
+
         let literal_string = self.get_literal_string_from_node(access.name_or_argument);
         let numeric_string_index = literal_string
             .as_deref()
@@ -1152,12 +1164,17 @@ impl<'a> CheckerState<'a> {
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
             let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             result_type = match result {
-                PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                PropertyAccessResult::Success { type_id, .. } => {
+                    use_index_signature_check = false;
+                    Some(type_id)
+                }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    use_index_signature_check = false;
                     // Use ERROR instead of UNKNOWN to prevent TS2571 errors
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
+                    use_index_signature_check = false;
                     // TS2339: Property does not exist on type 'unknown'
                     // Use the same error as TypeScript for property access on unknown
                     self.error_property_not_exist_at(
