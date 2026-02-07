@@ -177,6 +177,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var,
+            parent_name: None,
         })
     }
 
@@ -532,7 +533,7 @@ impl<'a> NamespaceES5Transformer<'a> {
     }
 
     /// Transform a nested namespace
-    fn transform_nested_namespace(&self, _parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_nested_namespace(&self, parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
@@ -564,13 +565,14 @@ impl<'a> NamespaceES5Transformer<'a> {
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var: true,
+            parent_name: Some(parent_ns.to_string()),
         })
     }
 
     /// Transform an exported nested namespace
     fn transform_nested_namespace_exported(
         &self,
-        _parent_ns: &str,
+        parent_ns: &str,
         ns_idx: NodeIndex,
     ) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
@@ -605,6 +607,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var: true,
+            parent_name: Some(parent_ns.to_string()),
         })
     }
 }
@@ -665,6 +668,7 @@ impl<'a> NamespaceTransformContext<'a> {
             is_exported,
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
+            parent_name: None,
         })
     }
 
@@ -1029,11 +1033,7 @@ impl<'a> NamespaceTransformContext<'a> {
     }
 
     /// Transform a nested namespace
-    pub fn transform_nested_namespace(
-        &self,
-        _parent_ns: &str,
-        ns_idx: NodeIndex,
-    ) -> Option<IRNode> {
+    pub fn transform_nested_namespace(&self, parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
@@ -1066,13 +1066,14 @@ impl<'a> NamespaceTransformContext<'a> {
             is_exported,
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
+            parent_name: Some(parent_ns.to_string()),
         })
     }
 
     /// Transform an exported nested namespace
     fn transform_nested_namespace_exported(
         &self,
-        _parent_ns: &str,
+        parent_ns: &str,
         ns_idx: NodeIndex,
     ) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
@@ -1107,6 +1108,7 @@ impl<'a> NamespaceTransformContext<'a> {
             is_exported,
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
+            parent_name: Some(parent_ns.to_string()),
         })
     }
 }
