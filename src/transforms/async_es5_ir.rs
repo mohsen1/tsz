@@ -192,6 +192,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 name: func_name,
                 parameters: ir_params,
                 body: vec![awaiter_call],
+                body_source_range: None,
             }
         } else {
             IRNode::FunctionExpr {
