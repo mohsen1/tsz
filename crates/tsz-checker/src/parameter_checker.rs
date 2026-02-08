@@ -226,6 +226,41 @@ impl<'a> CheckerState<'a> {
     /// Check that parameter default values are assignable to declared parameter types.
     ///
     /// This function validates parameter initializers against their type annotations:
+    /// Check for parameter initializers in ambient functions (TS2371).
+    ///
+    /// Ambient functions (with `declare` modifier) cannot have parameter initializers.
+    /// This check emits TS2371 when a parameter has a default value in an ambient context.
+    ///
+    /// ## Error TS2371:
+    /// "A parameter initializer is only allowed in a function or constructor implementation."
+    pub(crate) fn check_ambient_parameter_initializers(
+        &mut self,
+        parameters: &[NodeIndex],
+        has_declare_modifier: bool,
+    ) {
+        if !has_declare_modifier {
+            return;
+        }
+
+        for &param_idx in parameters {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // If parameter has an initializer in an ambient function, emit TS2371
+            if !param.initializer.is_none() {
+                self.error_at_node(
+                    param.initializer,
+                    "A parameter initializer is only allowed in a function or constructor implementation.",
+                    2371, // TS2371
+                );
+            }
+        }
+    }
+
     /// - Emits TS2322 when the default value type doesn't match the parameter type
     /// - Checks for undefined identifiers in default expressions (TS2304)
     /// - Checks for self-referential parameter defaults (TS2372)
