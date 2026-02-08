@@ -43,6 +43,10 @@ mod trailing_comma_tests;
 #[path = "tests/spelling_integration_tests.rs"]
 mod spelling_integration_tests;
 
+#[cfg(test)]
+#[path = "tests/duplicate_label_tests.rs"]
+mod duplicate_label_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 
