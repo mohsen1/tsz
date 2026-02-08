@@ -2090,6 +2090,11 @@ impl<'a> CheckerState<'a> {
         // Check that class properly implements all interfaces from implements clauses (error 2420)
         self.check_implements_clauses(stmt_idx, class);
 
+        // Check that class properties are compatible with index signatures (TS2411)
+        // Get the class instance type (not constructor type) to access instance index signatures
+        let class_instance_type = self.get_class_instance_type(stmt_idx, class);
+        self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
+
         // Check for decorator-related global types (TS2318)
         // When experimentalDecorators is enabled and a method/accessor has decorators,
         // TypedPropertyDescriptor must be available

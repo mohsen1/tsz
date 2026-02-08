@@ -160,18 +160,35 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // We only care about property and method signatures, not index signatures themselves
-            if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE
-                && member_node.kind != syntax_kind_ext::METHOD_SIGNATURE
+            // Extract property name based on member kind
+            let (prop_name, name_idx) = if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                || member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
             {
-                continue;
-            }
-
-            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                // Interface members
+                let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                    continue;
+                };
+                let name = self.get_member_name_text(sig.name).unwrap_or_default();
+                (name, sig.name)
+            } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                // Class property declarations
+                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                let name = self.get_member_name_text(prop.name).unwrap_or_default();
+                (name, prop.name)
+            } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                // Class method declarations
+                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                    continue;
+                };
+                let name = self.get_member_name_text(method.name).unwrap_or_default();
+                (name, method.name)
+            } else {
+                // Skip other member kinds (index signatures, constructors, etc.)
                 continue;
             };
 
-            let prop_name = self.get_member_name_text(sig.name).unwrap_or_default();
             let prop_type = self.get_type_of_node(member_idx);
 
             // Check against string index signature
@@ -185,7 +202,7 @@ impl<'a> CheckerState<'a> {
                     let index_type_str = self.format_type(string_idx.value_type);
 
                     self.error_at_node_msg(
-                        sig.name,
+                        name_idx,
                         diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                         &[&prop_name, &prop_type_str, "string", &index_type_str],
                     );
@@ -205,7 +222,7 @@ impl<'a> CheckerState<'a> {
                     let index_type_str = self.format_type(number_idx.value_type);
 
                     self.error_at_node_msg(
-                        sig.name,
+                        name_idx,
                         diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                         &[&prop_name, &prop_type_str, "number", &index_type_str],
                     );
@@ -1403,8 +1420,13 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            syntax_kind_ext::INDEX_SIGNATURE => {
+                // Index signatures are metadata used during type resolution, not members
+                // with their own types. They're handled separately by get_index_signatures.
+                // Nothing to check here.
+            }
             _ => {
-                // Other class member types (index signatures, etc.)
+                // Other class member types (semicolons, etc.)
                 self.get_type_of_node(member_idx);
             }
         }
