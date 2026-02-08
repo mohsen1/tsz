@@ -167,6 +167,24 @@ cargo nextest run -E 'not test(test_run_with_timeout_fails)'
    - Flow analysis is used everywhere
    - Small changes can have large impacts
 
+## Additional Investigation
+
+### Case 3: privateNameReadonly.ts (Missing TS2322)
+- **Issue**: Missing type incompatibility error alongside readonly error
+- **Expected**: Both TS2322 (type mismatch) and TS2803 (readonly)
+- **Actual**: Only TS2803
+- **Initial hypothesis**: Type check skipped after readonly error
+- **Reality**: Assignment checker runs both checks; issue is elsewhere
+- **Complexity**: MEDIUM - requires understanding error suppression logic
+
+### Lesson Learned
+
+Even "close to passing" tests (differ by 1 error) are not simple:
+- Each missing error has a reason (intentional suppression, bug, or design choice)
+- "Extra" errors might indicate cascading error issues
+- Type checking has many conditional paths that interact subtly
+- Unit test coverage alone doesn't reveal conformance gaps
+
 ## Conclusion
 
 While no conformance test fixes were implemented in this session, significant groundwork was laid:
@@ -174,9 +192,15 @@ While no conformance test fixes were implemented in this session, significant gr
 - **Established baseline**: 56.3% pass rate, 2764 tests
 - **Identified patterns**: 3 major, multiple minor
 - **Created documentation**: 5 comprehensive documents
-- **Investigated issues**: 2 specific failing tests
+- **Investigated issues**: 3 specific failing tests (deep dives)
 - **Assessed complexity**: All patterns rated for effort
+- **Verified**: Even "simple" fixes require architectural understanding
 
-The analysis and documentation provide a clear roadmap for future improvements. The recommendation is to start with close-to-passing tests (131 candidates) and missing simple validations rather than tackling the complex flow analysis or parser issues immediately.
+The analysis and documentation provide a clear roadmap for future improvements. The recommendation is to start with close-to-passing tests (131 candidates) BUT with the understanding that each will require careful investigation. These are not "quick wins" - they are opportunities to understand and improve the checker's error reporting.
 
-**Next session should**: Pick one close-to-passing test, write a failing unit test, implement the minimal fix, and measure improvement.
+**Next session should**:
+1. Pick ONE close-to-passing test
+2. Spend time understanding the root cause (not assuming it's simple)
+3. Write a failing unit test that isolates the issue
+4. Implement the minimal fix with full understanding
+5. Measure improvement and document learnings
