@@ -127,18 +127,26 @@ impl<'a> CheckerState<'a> {
         let this_atom = self.ctx.types.intern_string("this");
 
         // Setup contextual typing context if available
-        // IMPORTANT: Evaluate Application types before creating context to fix TS2571 false positives
-        // See: docs/TS2571_INVESTIGATION.md
+        // IMPORTANT: Evaluate Application and Lazy types before creating context
+        // - Application types: fix TS2571 false positives (see: docs/TS2571_INVESTIGATION.md)
+        // - Lazy types (type aliases): fix TS7006 false positives for contextual parameter typing
         let ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
-            // Check if ctx_type is an Application type that needs evaluation
+            use tsz_solver::TypeKey;
             use tsz_solver::type_queries::get_type_application;
+
+            // Evaluate the contextual type to resolve type aliases and generic applications
             let evaluated_type = if get_type_application(self.ctx.types, ctx_type).is_some() {
                 // Evaluate Application type to get the actual function signature
                 // This fixes cases like: Destructuring<TFuncs1, T> where the contextual type
                 // is a generic type alias that needs to be instantiated
                 self.evaluate_application_type(ctx_type)
+            } else if matches!(self.ctx.types.lookup(ctx_type), Some(TypeKey::Lazy(_))) {
+                // Evaluate Lazy type (type alias) to get the underlying function signature
+                // This fixes cases like: type Handler = (e: string) => void
+                // where contextual typing should infer parameter types from the alias
+                self.judge_evaluate(ctx_type)
             } else {
-                // Not an Application type, use as-is
+                // Not an Application or Lazy type, use as-is
                 ctx_type
             };
 
@@ -219,11 +227,6 @@ impl<'a> CheckerState<'a> {
 
                 // Check all function parameters for implicit any (TS7006)
                 // This includes function declarations, expressions, arrow functions, and methods
-                tracing::debug!(
-                    has_contextual_type,
-                    contextual_type = ?self.ctx.contextual_type.map(|t| t.0),
-                    "about to check TS7006 for function param"
-                );
                 self.maybe_report_implicit_any_parameter(param, has_contextual_type);
 
                 // Check if optional or has initializer
