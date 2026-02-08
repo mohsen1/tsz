@@ -10,9 +10,15 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Default values (relative to repo root)
 TEST_DIR="$REPO_ROOT/TypeScript/tests/cases"
 CACHE_FILE="$REPO_ROOT/tsc-cache-full.json"
+
+# Build profile (release or dist)
+BUILD_PROFILE="release"
+
+# Binary paths (will be updated based on profile)
 TSZ_BIN="$REPO_ROOT/.target/release/tsz"
 CACHE_GEN_BIN="$REPO_ROOT/.target/release/generate-tsc-cache"
 RUNNER_BIN="$REPO_ROOT/.target/release/tsz-conformance"
+
 WORKERS=16
 
 # Colors
@@ -43,6 +49,7 @@ Options:
   --error-code N    Only show tests with this error code (e.g., 2304)
   --no-cache        Force cache regeneration even if cache exists
   --no-download     Skip trying to download cache from GitHub
+  --profile NAME    Use specific cargo profile (default: release, available: dist, release, dev)
 
 Analyze options:
   --category CAT    Filter by category: false-positive, all-missing, wrong-code, close
@@ -65,11 +72,94 @@ Test directory: TypeScript/tests/cases/conformance
 EOF
 }
 
+# Check if binaries are up-to-date with source code
+# Returns 0 if binaries are fresh (up-to-date), 1 if they need rebuilding
+binaries_are_fresh() {
+    local binary_dir="$REPO_ROOT/.target/$BUILD_PROFILE"
+    local tsz_bin="$binary_dir/tsz"
+    local conformance_bin="$binary_dir/tsz-conformance"
+    local cache_gen_bin="$binary_dir/generate-tsc-cache"
+    
+    # Check if all binaries exist
+    if [ ! -f "$tsz_bin" ] || [ ! -f "$conformance_bin" ] || [ ! -f "$cache_gen_bin" ]; then
+        return 1
+    fi
+    
+    # Find the newest binary modification time
+    local newest_binary_mtime=$(stat -f %m "$tsz_bin" "$conformance_bin" "$cache_gen_bin" 2>/dev/null | sort -n | tail -1)
+    
+    # Check if any Rust source file in the relevant crates is newer than the binaries
+    # These are all the workspace crates that tsz-cli and tsz-conformance depend on
+    local crates_to_check=(
+        "tsz-cli"
+        "conformance"
+        "tsz-common"
+        "tsz-scanner"
+        "tsz-parser"
+        "tsz-binder"
+        "tsz-solver"
+        "tsz-checker"
+        "tsz-emitter"
+        "tsz-lsp"
+        "tsz-wasm"
+    )
+    
+    local crates_dir="$REPO_ROOT/crates"
+    
+    for crate_name in "${crates_to_check[@]}"; do
+        local crate_dir="$crates_dir/$crate_name"
+        
+        # Check source files
+        if [ -d "$crate_dir/src" ]; then
+            while IFS= read -r -d '' src_file; do
+                local src_mtime=$(stat -f %m "$src_file" 2>/dev/null)
+                if [ "$src_mtime" -gt "$newest_binary_mtime" ]; then
+                    return 1
+                fi
+            done < <(find "$crate_dir/src" -name "*.rs" -print0 2>/dev/null)
+        fi
+        
+        # Check Cargo.toml
+        if [ -f "$crate_dir/Cargo.toml" ]; then
+            local toml_mtime=$(stat -f %m "$crate_dir/Cargo.toml" 2>/dev/null)
+            if [ "$toml_mtime" -gt "$newest_binary_mtime" ]; then
+                return 1
+            fi
+        fi
+    done
+    
+    # Check root Cargo.toml and Cargo.lock
+    if [ -f "$REPO_ROOT/Cargo.toml" ]; then
+        local root_toml_mtime=$(stat -f %m "$REPO_ROOT/Cargo.toml" 2>/dev/null)
+        if [ "$root_toml_mtime" -gt "$newest_binary_mtime" ]; then
+            return 1
+        fi
+    fi
+    if [ -f "$REPO_ROOT/Cargo.lock" ]; then
+        local lock_mtime=$(stat -f %m "$REPO_ROOT/Cargo.lock" 2>/dev/null)
+        if [ "$lock_mtime" -gt "$newest_binary_mtime" ]; then
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
 # Build binaries (always rebuilds to pick up code changes; cargo no-ops if unchanged)
 ensure_binaries() {
-    echo -e "${YELLOW}Building tsz and conformance runner...${NC}"
+    # Fast path: check if binaries are already fresh
+    if binaries_are_fresh; then
+        echo -e "${GREEN}Binaries are up-to-date (profile: $BUILD_PROFILE)${NC}"
+        return 0
+    fi
+    
+    echo -e "${YELLOW}Building tsz and conformance runner (profile: $BUILD_PROFILE)...${NC}"
     cd "$REPO_ROOT"
-    cargo build --release -p tsz-cli --bin tsz -p tsz-conformance
+    
+    # For dev profile, optimize for fast build (link time not important)
+    # For release/dist, LTO is already configured in Cargo.toml
+    cargo build --profile "$BUILD_PROFILE" -p tsz-cli -p tsz-conformance
+    
     echo ""
 }
 
@@ -395,14 +485,23 @@ fi
 NO_CACHE=false
 NO_DOWNLOAD=false
 REMAINING_ARGS=()
-for arg in "$@"; do
+i=0
+while [ $i -lt ${#@} ]; do
+    arg="${@:$((i+1)):1}"
     if [ "$arg" = "--no-cache" ]; then
         NO_CACHE=true
     elif [ "$arg" = "--no-download" ]; then
         NO_DOWNLOAD=true
+    elif [ "$arg" = "--profile" ]; then
+        i=$((i + 1))
+        BUILD_PROFILE="${@:$((i+1)):1}"
+        TSZ_BIN="$REPO_ROOT/.target/$BUILD_PROFILE/tsz"
+        CACHE_GEN_BIN="$REPO_ROOT/.target/$BUILD_PROFILE/generate-tsc-cache"
+        RUNNER_BIN="$REPO_ROOT/.target/$BUILD_PROFILE/tsz-conformance"
     else
         REMAINING_ARGS+=("$arg")
     fi
+    i=$((i + 1))
 done
 
 case "$COMMAND" in
