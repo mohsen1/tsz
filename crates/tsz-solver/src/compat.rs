@@ -1271,8 +1271,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 has_private_brands = true;
                 let source_prop = source_shape
                     .properties
-                    .iter()
-                    .find(|p| p.name == target_prop.name);
+                    .binary_search_by_key(&target_prop.name, |p| p.name)
+                    .ok()
+                    .map(|idx| &source_shape.properties[idx]);
 
                 match source_prop {
                     Some(sp) => {
@@ -1298,8 +1299,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 has_private_brands = true;
                 if let Some(target_prop) = target_shape
                     .properties
-                    .iter()
-                    .find(|p| p.name == source_prop.name)
+                    .binary_search_by_key(&source_prop.name, |p| p.name)
+                    .ok()
+                    .map(|idx| &target_shape.properties[idx])
                 {
                     if target_prop.visibility == Visibility::Public {
                         return Some(false);

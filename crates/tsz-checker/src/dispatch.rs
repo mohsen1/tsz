@@ -374,6 +374,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Qualified name (A.B.C) - resolve namespace member access
             k if k == syntax_kind_ext::QUALIFIED_NAME => self.checker.resolve_qualified_name(idx),
 
+            // Declaration nodes - not expressions, return VOID to avoid wasted work.
+            // These are handled by check_statement → check_interface_declaration / check_class_declaration.
+            // get_type_of_node may be called on them (e.g., for index signature compatibility checks),
+            // but they don't have a meaningful expression type.
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION
+                || k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                || k == syntax_kind_ext::ENUM_DECLARATION
+                || k == syntax_kind_ext::MODULE_DECLARATION =>
+            {
+                TypeId::VOID
+            }
+
             // JSX Elements (Rule #36: JSX Intrinsic Lookup)
             k if k == syntax_kind_ext::JSX_ELEMENT => {
                 if let Some(jsx) = self.checker.ctx.arena.get_jsx_element(node) {
