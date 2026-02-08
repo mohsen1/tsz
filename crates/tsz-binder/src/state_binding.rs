@@ -124,15 +124,18 @@ impl BinderState {
         }
     }
 
+    #[tracing::instrument(level = "debug", skip(self, arena), fields(param_idx = idx.0))]
     pub(crate) fn bind_parameter(&mut self, arena: &NodeArena, idx: NodeIndex) {
         if let Some(node) = arena.get(idx)
             && let Some(param) = arena.get_parameter(node)
         {
             self.bind_modifiers(arena, &param.modifiers);
             if let Some(name) = self.get_identifier_name(arena, param.name) {
+                tracing::debug!(param_name = %name, param_name_idx = param.name.0, "Binding parameter");
                 let sym_id =
                     self.declare_symbol(name, symbol_flags::FUNCTION_SCOPED_VARIABLE, idx, false);
                 self.node_symbols.insert(param.name.0, sym_id);
+                tracing::debug!(param_name = %name, sym_id = sym_id.0, "Parameter bound");
             } else {
                 let mut names = Vec::new();
                 self.collect_binding_identifiers(arena, param.name, &mut names);
@@ -155,8 +158,13 @@ impl BinderState {
     }
 
     /// Bind an arrow function expression - creates a scope and binds the body.
+    #[tracing::instrument(level = "debug", skip(self, arena, node), fields(arrow_fn_idx = idx.0))]
     pub(crate) fn bind_arrow_function(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(func) = arena.get_function(node) {
+            tracing::debug!(
+                param_count = func.parameters.nodes.len(),
+                "Entering arrow function"
+            );
             self.bind_modifiers(arena, &func.modifiers);
             // Enter function scope
             self.enter_scope(ContainerKind::Function, idx);
@@ -165,6 +173,10 @@ impl BinderState {
             self.with_fresh_flow_inner(
                 |binder| {
                     // Bind parameters
+                    tracing::debug!(
+                        param_count = func.parameters.nodes.len(),
+                        "Binding arrow function parameters"
+                    );
                     for &param_idx in &func.parameters.nodes {
                         binder.bind_parameter(arena, param_idx);
                     }
