@@ -3279,9 +3279,9 @@ impl<'a> CheckerState<'a> {
             let (message, code) = if has_enum_conflict && has_non_block_scoped {
                 // Enum merging conflict: TS2567
                 (
-                    diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W
+                    diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS
                         .to_string(),
-                    diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W,
+                    diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
                 )
             } else if !has_non_block_scoped {
                 // Pure block-scoped duplicates (let/const/import conflicts) emit TS2451
