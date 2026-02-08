@@ -343,8 +343,8 @@ impl<'a> CheckerState<'a> {
                             {
                                 // Check if any of this namespace's declarations match the container node
                                 // of the import's enclosing scope
-                                let is_enclosing_namespace = sym
-                                    .declarations.contains(&scope.container_node);
+                                let is_enclosing_namespace =
+                                    sym.declarations.contains(&scope.container_node);
                                 if is_enclosing_namespace {
                                     // This namespace is the enclosing context, not a conflicting declaration
                                     continue;

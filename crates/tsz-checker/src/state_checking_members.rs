@@ -1211,7 +1211,25 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Skip TS7006 for parameters on nodes with parse errors.
+        // This prevents cascading "implicitly has any type" errors on malformed AST nodes.
+        // The parse error itself should already be emitted (e.g., TS1005, TS2390).
+        use tsz_parser::parser::node_flags;
+        if let Some(name_node) = self.ctx.arena.get(param.name) {
+            let flags = name_node.flags as u32;
+            if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+            {
+                return;
+            }
+        }
+
         let param_name = self.parameter_name_for_error(param.name);
+        // Skip if the parameter name is empty (parse recovery artifact)
+        if param_name.is_empty() {
+            return;
+        }
+
         // Rest parameters implicitly have 'any[]' type, regular parameters have 'any'
         let implicit_type = if param.dot_dot_dot_token {
             "any[]"
