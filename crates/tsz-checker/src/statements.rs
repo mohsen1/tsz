@@ -159,6 +159,10 @@ pub trait StatementCheckCallbacks {
     /// Called when a statement in a control flow construct (if/while/do/for) body
     /// is a declaration that requires a block context.
     fn check_declaration_in_statement_position(&mut self, stmt_idx: NodeIndex);
+
+    /// Check a with statement and emit TS2410.
+    /// The 'with' statement is not supported in TypeScript.
+    fn check_with_statement(&mut self, stmt_idx: NodeIndex);
 }
 
 /// Statement type checker that dispatches to specialized handlers.
@@ -516,6 +520,9 @@ impl StatementChecker {
             }
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => {
                 state.check_function_declaration(stmt_idx);
+            }
+            syntax_kind_ext::WITH_STATEMENT => {
+                state.check_with_statement(stmt_idx);
             }
             syntax_kind_ext::LABELED_STATEMENT => {
                 // Extract labeled statement data before mutable operations
