@@ -1856,6 +1856,91 @@ impl<'a> CheckerState<'a> {
                     });
                 }
             }
+            return;
+        }
+
+        // Handle bitwise operators: &, |, ^, <<, >>, >>>
+        let is_bitwise = matches!(op, "&" | "|" | "^" | "<<" | ">>" | ">>>");
+        if is_bitwise {
+            // TS2447: For &, |, ^ with both boolean operands, emit special error
+            let left_is_boolean = evaluator.is_boolean_like(left_type);
+            let right_is_boolean = evaluator.is_boolean_like(right_type);
+            let is_boolean_bitwise =
+                matches!(op, "&" | "|" | "^") && left_is_boolean && right_is_boolean;
+
+            if is_boolean_bitwise {
+                let suggestion = match op {
+                    "&" => "&&",
+                    "|" => "||",
+                    "^" => "!==",
+                    _ => unreachable!(),
+                };
+                if let Some(loc) = self.get_source_location(node_idx) {
+                    let message = format!(
+                        "The '{}' operator is not allowed for boolean types. Consider using '{}' instead.",
+                        op, suggestion
+                    );
+                    self.ctx.diagnostics.push(Diagnostic {
+                        code: diagnostic_codes::OPERATOR_NOT_ALLOWED_FOR_BOOLEAN,
+                        category: DiagnosticCategory::Error,
+                        message_text: message,
+                        file: self.ctx.file_name.clone(),
+                        start: loc.start,
+                        length: loc.length(),
+                        related_information: Vec::new(),
+                    });
+                }
+            } else {
+                // For other invalid bitwise operands, emit TS2362/TS2363
+                let mut emitted_specific_error = emitted_nullish_error;
+                if !left_is_valid_arithmetic && (!left_is_nullish || !emitted_nullish_error) {
+                    if let Some(loc) = self.get_source_location(left_idx) {
+                        let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                        self.ctx.diagnostics.push(Diagnostic {
+                            code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            category: DiagnosticCategory::Error,
+                            message_text: message,
+                            file: self.ctx.file_name.clone(),
+                            start: loc.start,
+                            length: loc.length(),
+                            related_information: Vec::new(),
+                        });
+                        emitted_specific_error = true;
+                    }
+                }
+                if !right_is_valid_arithmetic && (!right_is_nullish || !emitted_nullish_error) {
+                    if let Some(loc) = self.get_source_location(right_idx) {
+                        let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                        self.ctx.diagnostics.push(Diagnostic {
+                            code: diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            category: DiagnosticCategory::Error,
+                            message_text: message,
+                            file: self.ctx.file_name.clone(),
+                            start: loc.start,
+                            length: loc.length(),
+                            related_information: Vec::new(),
+                        });
+                        emitted_specific_error = true;
+                    }
+                }
+                if !emitted_specific_error {
+                    if let Some(loc) = self.get_source_location(node_idx) {
+                        let message = format!(
+                            "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                            op, left_str, right_str
+                        );
+                        self.ctx.diagnostics.push(Diagnostic {
+                            code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
+                            category: DiagnosticCategory::Error,
+                            message_text: message,
+                            file: self.ctx.file_name.clone(),
+                            start: loc.start,
+                            length: loc.length(),
+                            related_information: Vec::new(),
+                        });
+                    }
+                }
+            }
         }
     }
 

@@ -253,6 +253,25 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Emit TS2447 error for boolean bitwise operators (&, |, ^, &=, |=, ^=).
+    fn emit_boolean_operator_error(&mut self, node_idx: NodeIndex, op_str: &str, suggestion: &str) {
+        if let Some(loc) = self.get_source_location(node_idx) {
+            let message = format!(
+                "The '{}' operator is not allowed for boolean types. Consider using '{}' instead.",
+                op_str, suggestion
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::OPERATOR_NOT_ALLOWED_FOR_BOOLEAN,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
     // =========================================================================
     // Compound Assignment Checking
     // =========================================================================
@@ -319,16 +338,34 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check bitwise compound assignments: &=, |=, ^=, <<=, >>=, >>>=
-        let is_bitwise_compound = matches!(
+        let is_boolean_bitwise_compound = matches!(
             operator,
             k if k == SyntaxKind::AmpersandEqualsToken as u16
                 || k == SyntaxKind::BarEqualsToken as u16
                 || k == SyntaxKind::CaretEqualsToken as u16
-                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
+        );
+        let is_shift_compound = matches!(
+            operator,
+            k if k == SyntaxKind::LessThanLessThanEqualsToken as u16
                 || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
                 || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
         );
-        if is_bitwise_compound {
+        if is_boolean_bitwise_compound {
+            // TS2447: For &=, |=, ^= with both boolean operands, emit special error
+            let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+            let left_is_boolean = evaluator.is_boolean_like(left_type);
+            let right_is_boolean = evaluator.is_boolean_like(right_type);
+            if left_is_boolean && right_is_boolean {
+                let (op_str, suggestion) = match operator {
+                    k if k == SyntaxKind::AmpersandEqualsToken as u16 => ("&=", "&&"),
+                    k if k == SyntaxKind::BarEqualsToken as u16 => ("|=", "||"),
+                    _ => ("^=", "!=="),
+                };
+                self.emit_boolean_operator_error(left_idx, op_str, suggestion);
+            } else {
+                self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+            }
+        } else if is_shift_compound {
             self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
         }
 
