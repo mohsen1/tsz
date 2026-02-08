@@ -1638,14 +1638,18 @@ impl<'a> CheckerState<'a> {
 
         // TS18050: "The value 'X' cannot be used here" for null/undefined operands (STRICT mode only)
         // TSC emits TS18050 for the null/undefined operand AND TS2362/TS2363 for any OTHER invalid operand
+        // IMPORTANT: TS18050 is only emitted for ARITHMETIC operators, not for comparison operators
         let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
         let mut emitted_nullish_error = false;
 
-        // Only emit TS18050 for null/undefined operands when strictNullChecks is enabled
-        let should_emit_nullish_error = self.ctx.compiler_options.strict_null_checks;
+        // TS18050 is only emitted for arithmetic operators with null/undefined operands
+        // Comparison operators (==, !=, ===, !==, <, >, <=, >=) are allowed to have null/undefined operands
+        let is_arithmetic = matches!(op, "+" | "-" | "*" | "/" | "%" | "**");
+        let should_emit_nullish_error =
+            is_arithmetic && self.ctx.compiler_options.strict_null_checks;
 
-        // Emit TS18050 for null/undefined operands
+        // Emit TS18050 for null/undefined operands in arithmetic operations
         if left_is_nullish && should_emit_nullish_error {
             let value_name = if left_type == TypeId::NULL {
                 "null"
