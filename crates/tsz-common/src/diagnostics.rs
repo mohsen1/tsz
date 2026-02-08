@@ -579,6 +579,7 @@ pub mod diagnostic_codes {
     pub const RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: u32 = 2363; // The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
     pub const INVALID_LEFT_HAND_SIDE_OF_ASSIGNMENT: u32 = 2364; // The left-hand side of an assignment expression must be a variable or a property access.
     pub const OPERATOR_CANNOT_BE_APPLIED_TO_TYPES: u32 = 2365; // Operator '{0}' cannot be applied to types '{1}' and '{2}'.
+    pub const OPERATOR_NOT_ALLOWED_FOR_BOOLEAN: u32 = 2447; // The '{0}' operator is not allowed for boolean types. Consider using '{1}' instead.
     pub const OPERATOR_CANNOT_BE_APPLIED_TO_TYPE: u32 = 2469; // The '{0}' operator cannot be applied to type '{1}'.
     pub const FUNCTION_LACKS_RETURN_TYPE: u32 = 2355;
     pub const FUNCTION_RETURN_TYPE_MISMATCH: u32 = 2322;

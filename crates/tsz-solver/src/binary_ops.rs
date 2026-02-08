@@ -638,7 +638,7 @@ impl<'a> BinaryOpEvaluator<'a> {
     }
 
     /// Check if a type is boolean-like (boolean or boolean literal).
-    fn is_boolean_like(&self, type_id: TypeId) -> bool {
+    pub fn is_boolean_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::BOOLEAN || type_id == TypeId::ANY {
             return true;
         }
