@@ -614,8 +614,12 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::CANNOT_FIND_NAMESPACE,
                             &[&name],
                         );
+                        return; // Don't check for TS2694 if left doesn't exist
                     }
-                    // TODO: If left is resolved, check if right member exists (TS2694)
+
+                    // If left is resolved, check if right member exists (TS2694)
+                    // Use the existing report_type_query_missing_member which handles this correctly
+                    self.report_type_query_missing_member(module_ref);
                 }
             }
         }
