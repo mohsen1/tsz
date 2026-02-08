@@ -2047,6 +2047,13 @@ impl BinderState {
             None => return,
         };
 
+        // Debug trace to see what nodes are being bound
+        if node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.kind == syntax_kind_ext::RETURN_STATEMENT
+        {
+            tracing::debug!(idx = idx.0, kind = node.kind, "bind_node called");
+        }
+
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
                 self.record_flow(idx);
@@ -2456,6 +2463,11 @@ impl BinderState {
                 if let Some(ret) = arena.get_return_statement(node)
                     && !ret.expression.is_none()
                 {
+                    tracing::debug!(
+                        return_idx = idx.0,
+                        expr_idx = ret.expression.0,
+                        "Binding return expression"
+                    );
                     self.bind_node(arena, ret.expression);
                 }
                 self.current_flow = self.unreachable_flow;
@@ -2697,6 +2709,7 @@ impl BinderState {
 
             // Arrow function expressions - bind body
             k if k == syntax_kind_ext::ARROW_FUNCTION => {
+                tracing::debug!(arrow_idx = idx.0, "MATCHED ARROW_FUNCTION in bind_node");
                 self.bind_arrow_function(arena, node, idx);
             }
 
