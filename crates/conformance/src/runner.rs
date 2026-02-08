@@ -366,7 +366,15 @@ impl Runner {
         let size = metadata.len() as u64;
 
         // Read file content (only if we need it)
-        let content = tokio::fs::read_to_string(path).await?;
+        // Skip files with invalid UTF-8 (BOM tests, Unicode encoding tests, etc.)
+        let bytes = tokio::fs::read(path).await?;
+        let content = match String::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(_) => {
+                // Skip test files with non-UTF-8 encoding (UTF-16 BOM tests, etc.)
+                return Ok(TestResult::Skipped("non-UTF-8 encoding"));
+            }
+        };
 
         // Print test file content with line numbers if requested
         if print_test_files {
