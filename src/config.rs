@@ -406,6 +406,7 @@ pub fn resolve_compiler_options(
     }
     if let Some(resolve_json_module) = options.resolve_json_module {
         resolved.resolve_json_module = resolve_json_module;
+        resolved.checker.resolve_json_module = resolve_json_module;
     }
     if let Some(allow_arbitrary_extensions) = options.allow_arbitrary_extensions {
         resolved.allow_arbitrary_extensions = allow_arbitrary_extensions;

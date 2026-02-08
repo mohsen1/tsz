@@ -1310,12 +1310,15 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Emit TS1192 error when a module has no default export.
+    /// Emit TS1192 error when a module has no default export, or TS2732 for JSON files.
     ///
     /// This is emitted when trying to use a default import (`import X from 'mod'`)
     /// but the module doesn't export a default binding.
     ///
-    /// Note: This error is suppressed when `allowSyntheticDefaultImports` or
+    /// For JSON files (.json extension), emits TS2732 when `resolveJsonModule` is disabled,
+    /// suggesting to enable the flag. This takes precedence over TS1192.
+    ///
+    /// Note: TS1192 is suppressed when `allowSyntheticDefaultImports` or
     /// `esModuleInterop` is enabled, as those flags allow importing modules
     /// without explicit default exports.
     pub(crate) fn emit_no_default_export_error(
@@ -1325,7 +1328,37 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::types::diagnostics::diagnostic_codes;
 
-        // Only emit if report_unresolved_imports is enabled
+        // Check if this is a JSON file import without resolveJsonModule enabled
+        // TS2732 takes precedence over TS1192 for JSON files
+        // IMPORTANT: This check must come BEFORE report_unresolved_imports guard
+        // because TS2732 should be emitted even in single-file mode
+        if module_specifier.ends_with(".json") && !self.ctx.compiler_options.resolve_json_module {
+            // Get span from declaration node
+            let (start, length) = if !decl_node.is_none() {
+                if let Some(node) = self.ctx.arena.get(decl_node) {
+                    (node.pos, node.end - node.pos)
+                } else {
+                    (0, 0)
+                }
+            } else {
+                (0, 0)
+            };
+
+            use crate::types::diagnostics::{diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::CANNOT_FIND_MODULE_CONSIDER_USING_RESOLVEJSONMODULE_TO_IMPORT_MODULE_WITH_JSON_E,
+                &[module_specifier],
+            );
+            self.error(
+                start,
+                length,
+                message,
+                diagnostic_codes::CANNOT_FIND_MODULE_CONSIDER_USING_RESOLVEJSONMODULE_TO_IMPORT_MODULE_WITH_JSON_E,
+            );
+            return;
+        }
+
+        // Only emit TS1192 if report_unresolved_imports is enabled
         if !self.ctx.report_unresolved_imports {
             return;
         }

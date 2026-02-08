@@ -576,6 +576,7 @@ impl CompilerOptions {
             no_unused_locals: false,
             no_unused_parameters: false,
             always_strict: strict,
+            resolve_json_module: false, // WASM API: defaults to false
         }
     }
 }

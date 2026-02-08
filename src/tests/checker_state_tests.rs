@@ -29042,6 +29042,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             no_unused_locals: false,
             no_unused_parameters: false,
             always_strict: true,
+            resolve_json_module: false,
         },
     );
     assert!(
