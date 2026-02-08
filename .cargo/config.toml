@@ -17,13 +17,14 @@ jobs = 14
 # Faster linker configuration (Linux only - mold is fastest)
 # To use: install mold (e.g., `sudo apt install mold` or build from source)
 # For macOS: system ld is already optimized, no changes needed
-[target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "link-arg=-Wl,--threads=auto"]
+# Disabled for now since mold is not available
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "link-arg=-Wl,--threads=auto"]
 
-[target.aarch64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "link-arg=-Wl,--threads=auto"]
+# [target.aarch64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "link-arg=-Wl,--threads=auto"]
 
 [profile.dev]
 # Faster builds for development
