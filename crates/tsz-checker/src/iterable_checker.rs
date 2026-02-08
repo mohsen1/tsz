@@ -255,6 +255,14 @@ impl<'a> CheckerState<'a> {
         // Resolve lazy types (type aliases) before checking iterability
         let expr_type = self.resolve_lazy_type(expr_type);
 
+        // Check if the expression is nullish (undefined/null)
+        // Emit TS18050 "The value 'undefined'/'null' cannot be used here"
+        // when trying to iterate over undefined/null
+        if expr_type == TypeId::NULL || expr_type == TypeId::UNDEFINED {
+            self.report_nullish_object(expr_idx, expr_type, true);
+            return false;
+        }
+
         // For async for-of, first check async iterable, then fall back to sync iterable
         if is_async {
             if self.is_async_iterable_type(expr_type) || self.is_iterable_type(expr_type) {
