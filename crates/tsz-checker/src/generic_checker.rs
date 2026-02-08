@@ -137,9 +137,10 @@ impl<'a> CheckerState<'a> {
 
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
             if let Some(constraint) = param.constraint {
-                // Skip validation for type parameter and infer type arguments
-                // (e.g., `Reducer<any, infer A>` - can't validate infer types)
-                if tsz_solver::type_queries::is_type_parameter(self.ctx.types, type_arg) {
+                // Skip validation when type arguments contain unresolved type parameters
+                // or infer types. TypeScript defers constraint checking when args aren't
+                // fully concrete (e.g., indexed access `T[K]`, conditional types, etc.)
+                if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_arg) {
                     continue;
                 }
 
