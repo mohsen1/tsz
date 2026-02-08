@@ -2906,18 +2906,25 @@ impl<'a> CheckerState<'a> {
                         if let Some(list_node) = self.ctx.arena.get(list_idx)
                             && let Some(decl_list) = self.ctx.arena.get_variable(list_node)
                         {
-                            for &decl_idx in &decl_list.declarations.nodes {
-                                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                                    && let Some(var_decl) =
-                                        self.ctx.arena.get_variable_declaration(decl_node)
-                                    && !var_decl.initializer.is_none()
-                                {
-                                    // TS1039: Initializers are not allowed in ambient contexts
-                                    self.error_at_node(
-                                        var_decl.initializer,
-                                        diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                                        diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                                    );
+                            // TypeScript allows `export const x = literal;` in ambient contexts (Constant Ambient Modules)
+                            // TS1039 only applies to non-const variables with initializers
+                            use tsz_parser::parser::node_flags;
+                            let is_const = (list_node.flags & node_flags::CONST as u16) != 0;
+
+                            if !is_const {
+                                for &decl_idx in &decl_list.declarations.nodes {
+                                    if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                                        && let Some(var_decl) =
+                                            self.ctx.arena.get_variable_declaration(decl_node)
+                                        && !var_decl.initializer.is_none()
+                                    {
+                                        // TS1039: Initializers are not allowed in ambient contexts
+                                        self.error_at_node(
+                                            var_decl.initializer,
+                                            diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                                            diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                                        );
+                                    }
                                 }
                             }
                         }
