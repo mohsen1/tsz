@@ -86,6 +86,17 @@ impl<'a> CheckerState<'a> {
                     false
                 }
             }
+            k if k == syntax_kind_ext::SATISFIES_EXPRESSION
+                || k == syntax_kind_ext::AS_EXPRESSION =>
+            {
+                // Satisfies and as expressions are valid assignment targets if their inner expression is valid
+                // Example: (x satisfies number) = 10
+                if let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
+                    self.is_valid_assignment_target(assertion.expression)
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
     }
