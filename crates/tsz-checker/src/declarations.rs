@@ -4,7 +4,7 @@
 //! This module separates declaration checking logic from the monolithic CheckerState.
 
 use super::context::CheckerContext;
-use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+use crate::types::diagnostics::diagnostic_messages;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -249,12 +249,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
             // Get the span for the property name
             if let Some((pos, end)) = self.ctx.get_node_span(name_node) {
-                self.ctx.error(
-                    pos,
-                    end - pos,
-                    message,
-                    diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
-                );
+                self.ctx.error(pos, end - pos, message, 2564);
             }
         }
     }
@@ -1018,7 +1013,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::diagnostics::diagnostic_codes;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
     use tsz_solver::TypeInterner;
@@ -1089,11 +1083,7 @@ class Foo {
             checker.check(stmt_idx);
 
             // Should have one TS2564 error for property 'x'
-            let ts2564_errors: Vec<_> = ctx
-                .diagnostics
-                .iter()
-                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                .collect();
+            let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
             assert_eq!(
                 ts2564_errors.len(),
@@ -1149,11 +1139,7 @@ class Foo {
             checker.check(stmt_idx);
 
             // Should have NO TS2564 errors
-            let ts2564_errors: Vec<_> = ctx
-                .diagnostics
-                .iter()
-                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                .collect();
+            let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
             assert_eq!(
                 ts2564_errors.len(),
@@ -1200,11 +1186,7 @@ class Foo {
             checker.check(stmt_idx);
 
             // Should have NO TS2564 errors
-            let ts2564_errors: Vec<_> = ctx
-                .diagnostics
-                .iter()
-                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                .collect();
+            let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
             assert_eq!(
                 ts2564_errors.len(),
@@ -1247,11 +1229,7 @@ class Foo {
             checker.check(stmt_idx);
 
             // Should have NO TS2564 errors (strict mode disabled)
-            let ts2564_errors: Vec<_> = ctx
-                .diagnostics
-                .iter()
-                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                .collect();
+            let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
             assert_eq!(
                 ts2564_errors.len(),
@@ -1302,11 +1280,7 @@ class Foo {
             checker.check(stmt_idx);
 
             // Should have NO TS2564 errors (property initialized in constructor)
-            let ts2564_errors: Vec<_> = ctx
-                .diagnostics
-                .iter()
-                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                .collect();
+            let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
             assert_eq!(
                 ts2564_errors.len(),
@@ -1359,11 +1333,7 @@ class Foo {
             checker.check(stmt_idx);
 
             // Should have NO TS2564 errors (property initialized on all paths)
-            let ts2564_errors: Vec<_> = ctx
-                .diagnostics
-                .iter()
-                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                .collect();
+            let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
             assert_eq!(
                 ts2564_errors.len(),
@@ -1415,11 +1385,7 @@ class Foo {
             checker.check(stmt_idx);
 
             // Should have 1 TS2564 error (property not initialized on all paths)
-            let ts2564_errors: Vec<_> = ctx
-                .diagnostics
-                .iter()
-                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                .collect();
+            let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
             assert_eq!(
                 ts2564_errors.len(),
@@ -1471,11 +1437,7 @@ class Foo {
             checker.check(stmt_idx);
 
             // Should have 1 TS2564 error (property not initialized on all exit paths)
-            let ts2564_errors: Vec<_> = ctx
-                .diagnostics
-                .iter()
-                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                .collect();
+            let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
             assert_eq!(
                 ts2564_errors.len(),
@@ -1526,11 +1488,7 @@ class Foo {
             checker.check(stmt_idx);
 
             // Should have 1 TS2564 error for 'y'
-            let ts2564_errors: Vec<_> = ctx
-                .diagnostics
-                .iter()
-                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                .collect();
+            let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
             assert_eq!(
                 ts2564_errors.len(),
