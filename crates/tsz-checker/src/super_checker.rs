@@ -88,6 +88,14 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Regular functions create a new scope - super is not valid inside them
+            // TS2660: 'super' can only be referenced in members of derived classes
+            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            {
+                return false;
+            }
+
             if parent_node.kind == syntax_kind_ext::METHOD_DECLARATION {
                 // `super` property access is valid in both static and non-static methods
                 return true;
@@ -126,6 +134,13 @@ impl<'a> CheckerState<'a> {
             if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
                 current = parent_idx;
                 continue;
+            }
+
+            // Regular functions create a new scope - super is not valid inside them
+            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            {
+                return false;
             }
 
             if parent_node.kind == syntax_kind_ext::GET_ACCESSOR
@@ -167,6 +182,13 @@ impl<'a> CheckerState<'a> {
             if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
                 current = parent_idx;
                 continue;
+            }
+
+            // Regular functions create a new scope - super is not valid inside them
+            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            {
+                return false;
             }
 
             if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
@@ -242,6 +264,13 @@ impl<'a> CheckerState<'a> {
             if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
                 current = parent_idx;
                 continue;
+            }
+
+            // Regular functions create a new scope - super is not valid inside them
+            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            {
+                return false;
             }
 
             // Found a property declaration
@@ -448,7 +477,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // TS2336: super property access must be in constructor, method, accessor, or property initializer
+        // TS2336/TS2660: super property access must be in constructor, method, accessor, or property initializer
         // Note: Arrow functions capture the class context, so super inside arrow functions is valid
         // if the arrow itself is in a valid context (checked by the helper functions)
         if is_super_property_access {
@@ -459,10 +488,13 @@ impl<'a> CheckerState<'a> {
                 || self.is_in_class_static_block(idx);
 
             if !in_valid_context {
+                // TS2660: Super can only be referenced in members of derived classes or object literal expressions
+                // This is emitted when super is used in contexts that break the "member" requirement,
+                // such as inside nested regular functions (not arrow functions)
                 self.error_at_node(
                     idx,
-                    diagnostic_messages::SUPER_PROPERTY_ACCESS_IS_PERMITTED_ONLY_IN_A_CONSTRUCTOR_MEMBER_FUNCTION_OR_MEMB,
-                    diagnostic_codes::SUPER_PROPERTY_ACCESS_IS_PERMITTED_ONLY_IN_A_CONSTRUCTOR_MEMBER_FUNCTION_OR_MEMB,
+                    diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_MEMBERS_OF_DERIVED_CLASSES_OR_OBJECT_LITERAL_EXP,
+                    diagnostic_codes::SUPER_CAN_ONLY_BE_REFERENCED_IN_MEMBERS_OF_DERIVED_CLASSES_OR_OBJECT_LITERAL_EXP,
                 );
             }
         }
