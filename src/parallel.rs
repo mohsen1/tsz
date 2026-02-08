@@ -382,6 +382,16 @@ pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::Li
 
             // Create the LibFile
             let arena = Arc::new(lib_parser.into_arena());
+
+            // CRITICAL: Populate symbol_arenas for all lib symbols.
+            // Without this, merge_bind_results_ref cannot find the arena for each symbol's
+            // declarations, causing cross-arena NodeIndex collisions (Symbol -> RTCEncodedVideoFrameType).
+            for i in 0..lib_binder.symbols.len() {
+                lib_binder
+                    .symbol_arenas
+                    .insert(SymbolId(i as u32), Arc::clone(&arena));
+            }
+
             let binder = Arc::new(lib_binder);
 
             Some(Arc::new(lib_loader::LibFile::new(file_name, arena, binder)))
@@ -433,6 +443,16 @@ pub fn load_lib_files_for_binding_strict(
             lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
 
             let arena = Arc::new(lib_parser.into_arena());
+
+            // CRITICAL: Populate symbol_arenas for all lib symbols.
+            // Without this, merge_bind_results_ref cannot find the arena for each symbol's
+            // declarations, causing cross-arena NodeIndex collisions (Symbol -> RTCEncodedVideoFrameType).
+            for i in 0..lib_binder.symbols.len() {
+                lib_binder
+                    .symbol_arenas
+                    .insert(SymbolId(i as u32), Arc::clone(&arena));
+            }
+
             let binder = Arc::new(lib_binder);
             Ok(Arc::new(lib_loader::LibFile::new(file_name, arena, binder)))
         })
@@ -673,13 +693,20 @@ pub fn merge_bind_results(results: Vec<BindResult>) -> MergedProgram {
 
 pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // Collect lib_binders from all results (deduplicated by address)
+    // Also collect their arenas for declaration_arenas mapping
     let mut lib_binders: Vec<Arc<BinderState>> = Vec::new();
     let mut lib_binder_set: FxHashSet<usize> = FxHashSet::default();
+    let mut lib_binder_to_arena: FxHashMap<usize, Arc<NodeArena>> = FxHashMap::default();
     for result in results {
         for lib_binder in &result.lib_binders {
             let binder_addr = Arc::as_ptr(lib_binder) as usize;
             if lib_binder_set.insert(binder_addr) {
                 lib_binders.push(Arc::clone(lib_binder));
+                // Find the arena for this lib binder from symbol_arenas
+                // All lib symbols should have their arena tracked
+                if let Some((&_first_sym_id, arena)) = lib_binder.symbol_arenas.iter().next() {
+                    lib_binder_to_arena.insert(binder_addr, Arc::clone(arena));
+                }
             }
         }
     }
@@ -785,12 +812,26 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // Without this, the checker's compute_type_of_symbol will fail to find
                 // the declaration arena for lib symbols like WeakSet, Symbol, Promise, etc.
                 // This was the root cause of "Any poisoning" where global types resolved to Error.
-                if let Some(lib_arena) = lib_binder.symbol_arenas.get(&local_id) {
+                let symbol_arena = lib_binder
+                    .symbol_arenas
+                    .get(&local_id)
+                    .or_else(|| lib_binder_to_arena.get(&lib_binder_ptr));
+                if let Some(lib_arena) = symbol_arena {
                     symbol_arenas.insert(global_id, Arc::clone(lib_arena));
                 }
 
-                // Also copy declaration_arenas for precise cross-file declaration lookup
-                // This is needed when a symbol has declarations across multiple lib files
+                // CRITICAL: Create declaration_arenas entries for this symbol's declarations.
+                // Individual lib binders don't populate declaration_arenas during binding - that
+                // only happens in merge_lib_contexts_into_binder when merging multiple libs.
+                // Without these entries, the checker's out-of-arena check fails, causing it to
+                // use NodeIndex values from the wrong arena (e.g., Symbol resolves to RTCEncodedVideoFrameType).
+                if let Some(lib_arena) = symbol_arena {
+                    for &decl in &lib_sym.declarations {
+                        declaration_arenas.insert((global_id, decl), Arc::clone(lib_arena));
+                    }
+                }
+
+                // Also copy any existing declaration_arenas from lib_binder (for already-merged libs)
                 for (&(old_sym_id, decl_idx), arena) in &lib_binder.declaration_arenas {
                     if old_sym_id == local_id {
                         declaration_arenas.insert((global_id, decl_idx), Arc::clone(arena));
