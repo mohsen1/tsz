@@ -24689,3 +24689,56 @@ fn test_rest_param_flag_is_preserved() {
         panic!("Target is not a function type");
     }
 }
+
+#[test]
+fn test_rest_param_any_with_extra_fixed_params() {
+    // Test case from conformance: (a, b, c) => R <: (a, b, ...rest: any[]) => R
+    let interner = TypeInterner::new();
+
+    // Source: (name: string, mixed: any, args_0: any) => any
+    let source = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo::unnamed(TypeId::STRING),
+            ParamInfo::unnamed(TypeId::ANY),
+            ParamInfo::unnamed(TypeId::ANY),
+        ],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Target: (name: string, mixed: any, ...args: any[]) => any
+    let rest_any = interner.array(TypeId::ANY);
+    let target = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo::unnamed(TypeId::STRING),
+            ParamInfo::unnamed(TypeId::ANY),
+            ParamInfo {
+                name: None,
+                type_id: rest_any,
+                optional: false,
+                rest: true,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // TypeScript allows this assignment because the extra fixed param (args_0: any)
+    // is compatible with the rest element type (any). This works even without
+    // allow_bivariant_rest because undefined <: any (checked by extra_required_accepts_undefined).
+    assert!(checker.is_subtype_of(source, target));
+
+    // Should still work with allow_bivariant_rest
+    checker.allow_bivariant_rest = true;
+    assert!(checker.is_subtype_of(source, target));
+}
