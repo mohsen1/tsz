@@ -2115,7 +2115,13 @@ impl<'a> NarrowingContext<'a> {
                 } else {
                     // Negative: !(x instanceof Class)
                     // Exclude the instance type
-                    self.narrow_excluding_type(source_type, *instance_type)
+                    // CRITICAL: Don't narrow when instance_type is TypeId::OBJECT (fallback from unresolved constructor).
+                    // Excluding all objects would incorrectly narrow to 'never'.
+                    if *instance_type == TypeId::OBJECT {
+                        source_type
+                    } else {
+                        self.narrow_excluding_type(source_type, *instance_type)
+                    }
                 }
             }
 
