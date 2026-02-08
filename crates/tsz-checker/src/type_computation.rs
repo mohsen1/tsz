@@ -514,6 +514,14 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> TypeId {
+        // Suppress cascading errors when the object type is already invalid
+        if object_type == TypeId::ERROR {
+            return TypeId::ERROR;
+        }
+        if object_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+
         use tsz_solver::operations_property::PropertyAccessResult;
 
         let object_type = self.resolve_type_for_property_access(object_type);
