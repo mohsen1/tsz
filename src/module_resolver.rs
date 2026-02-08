@@ -1056,7 +1056,9 @@ impl ModuleResolver {
             }
         }
 
-        Err(ResolutionFailure::NotFound {
+        // Classic resolution can't resolve bare specifiers via node_modules.
+        // Return TS2792 (suggesting moduleResolution change) instead of TS2307.
+        Err(ResolutionFailure::ModuleResolutionModeMismatch {
             specifier: specifier.to_string(),
             containing_file: containing_file.to_string(),
             span: specifier_span,
