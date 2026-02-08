@@ -904,6 +904,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Also suppress TS2304 in files with parse errors to avoid cascading noise
+        // Example: `( y = 1 ; 2 )` has parse error on `;`, but `y` is valid identifier
+        if self.has_parse_errors() {
+            return;
+        }
+
         // Check if this is an ES2015+ type that requires a specific lib
         // If so, emit TS2583 with a suggestion to change the lib
         if lib_loader::is_es2015_plus_type(name) {
