@@ -130,7 +130,42 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Check a function declaration.
-    pub fn check_function_declaration(&mut self, _func_idx: NodeIndex) {
+    pub fn check_function_declaration(&mut self, func_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(func_idx) else {
+            return;
+        };
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return;
+        };
+
+        // TS2371: Check for parameter initializers in ambient functions
+        // Ambient functions (with 'declare' modifier) cannot have default parameter values
+        let has_declare = self.ctx.has_modifier(
+            &func.modifiers,
+            tsz_scanner::SyntaxKind::DeclareKeyword as u16,
+        );
+
+        if has_declare && !func.parameters.nodes.is_empty() {
+            for &param_idx in &func.parameters.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+
+                // If parameter has an initializer in an ambient function, emit TS2371
+                if !param.initializer.is_none() {
+                    self.ctx.error(
+                        param_node.pos,
+                        param_node.end - param_node.pos,
+                        "A parameter initializer is only allowed in a function or constructor implementation.".to_string(),
+                        2371, // TS2371
+                    );
+                }
+            }
+        }
+
         // Function declaration checking is handled by CheckerState for now
         // Will be migrated incrementally
         // Key checks:

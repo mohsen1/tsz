@@ -3070,6 +3070,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Check that parameter default values are assignable to declared types (TS2322)
             self.check_parameter_initializers(&func.parameters.nodes);
 
+            // Check for parameter initializers in ambient functions (TS2371)
+            self.check_ambient_parameter_initializers(
+                &func.parameters.nodes,
+                self.has_declare_modifier(&func.modifiers),
+            );
+
             if !has_type_annotation {
                 // Suppress definite assignment errors during return type inference.
                 // The function body will be checked again below, and that's when
