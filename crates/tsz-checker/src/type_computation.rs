@@ -1033,6 +1033,15 @@ impl<'a> CheckerState<'a> {
             return self.apply_flow_narrowing(idx, property_type);
         }
 
+        // Don't report errors for any/error types - check BEFORE accessibility
+        // to prevent cascading errors when the object type is already invalid
+        if object_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+        if object_type == TypeId::ERROR {
+            return TypeId::ERROR;
+        }
+
         if let Some(name) = literal_string.as_deref() {
             if !self.check_property_accessibility(
                 access.expression,
@@ -1052,14 +1061,6 @@ impl<'a> CheckerState<'a> {
             ) {
                 return TypeId::ERROR;
             }
-        }
-
-        // Don't report errors for any/error types
-        if object_type == TypeId::ANY {
-            return TypeId::ANY;
-        }
-        if object_type == TypeId::ERROR {
-            return TypeId::ERROR;
         }
         // TS18050: Cannot access elements on 'never' type (impossible union after narrowing)
         if object_type == TypeId::NEVER {
