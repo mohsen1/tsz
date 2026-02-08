@@ -381,16 +381,46 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_super_expression(&mut self, idx: NodeIndex) {
         use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
+        // Detect if this is a super() call early (needed for error selection)
+        let parent_info = self
+            .ctx
+            .arena
+            .get_extended(idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent).map(|n| (ext.parent, n)));
+
+        let is_super_call = parent_info
+            .as_ref()
+            .map(|(_, parent_node)| {
+                parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                    && self
+                        .ctx
+                        .arena
+                        .get_call_expr(parent_node)
+                        .map(|call| call.expression == idx)
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
         // Find the enclosing class by walking up the parent chain
         // This works even during type computation when `enclosing_class` is not yet set
         let class_idx = match self.find_enclosing_class(idx) {
             Some(idx) => idx,
             None => {
-                self.error_at_node(
-                    idx,
-                    diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
-                    diagnostic_codes::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
-                );
+                // Emit TS2337 for super() calls, TS2335 for super property access
+                // This matches TypeScript's behavior when super is used outside a class
+                if is_super_call {
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::SUPER_CALLS_ARE_NOT_PERMITTED_OUTSIDE_CONSTRUCTORS_OR_IN_NESTED_FUNCTIONS_INSIDE,
+                        diagnostic_codes::SUPER_CALLS_ARE_NOT_PERMITTED_OUTSIDE_CONSTRUCTORS_OR_IN_NESTED_FUNCTIONS_INSIDE,
+                    );
+                } else {
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
+                        diagnostic_codes::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
+                    );
+                }
                 return;
             }
         };
@@ -405,26 +435,6 @@ impl<'a> CheckerState<'a> {
             .get(class_idx)
             .and_then(|node| self.ctx.arena.get_class(node))
             .map(|class| self.class_has_base(class))
-            .unwrap_or(false);
-
-        // Detect if this is a super() call or super property access
-        let parent_info = self
-            .ctx
-            .arena
-            .get_extended(idx)
-            .and_then(|ext| self.ctx.arena.get(ext.parent).map(|n| (ext.parent, n)));
-
-        let is_super_call = parent_info
-            .as_ref()
-            .map(|(_, parent_node)| {
-                if parent_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-                    return false;
-                }
-                let Some(call) = self.ctx.arena.get_call_expr(parent_node) else {
-                    return false;
-                };
-                call.expression == idx
-            })
             .unwrap_or(false);
 
         let is_super_property_access = parent_info
