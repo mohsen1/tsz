@@ -2911,6 +2911,18 @@ impl<'a> CheckerState<'a> {
     // Note: is_derived_property_redeclaration, find_containing_class are in type_checking.rs
 
     /// Check a break statement for validity.
+    /// Check a with statement and emit TS2410.
+    /// The 'with' statement is not supported in TypeScript.
+    pub(crate) fn check_with_statement(&mut self, stmt_idx: NodeIndex) {
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        self.error_at_node(
+            stmt_idx,
+            diagnostic_messages::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
+            diagnostic_codes::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
+        );
+    }
+
     /// TS1105: A 'break' statement can only be used within an enclosing iteration statement or switch statement.
     /// TS1107: Jump target cannot cross function boundary.
     /// TS1116: A 'break' statement can only jump to a label of an enclosing statement.
@@ -3624,6 +3636,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         //
         // The FlowAnalyzer uses no_match_type to correctly narrow types within
         // subsequent code blocks, but the error emission happens elsewhere.
+    }
+
+    fn check_with_statement(&mut self, stmt_idx: NodeIndex) {
+        CheckerState::check_with_statement(self, stmt_idx)
     }
 
     fn check_break_statement(&mut self, stmt_idx: NodeIndex) {
