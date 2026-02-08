@@ -1704,7 +1704,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return true;
             }
 
-            // 3. Compare primitives
+            // 3. Handle Null/Undefined comparisons (always allowed for TS2367 purposes)
+            // TypeScript allows null/undefined to be compared with ANY type without TS2367.
+            // This is true even with strict null checks enabled.
+            // Examples that should NOT emit TS2367:
+            //   - null !== undefined
+            //   - null == 5
+            //   - "hello" === undefined
+            // TS2367 is only for truly incompatible types like "hello" === 5 or 1 === "2".
+            if matches!(a_kind, IntrinsicKind::Null | IntrinsicKind::Undefined)
+                || matches!(b_kind, IntrinsicKind::Null | IntrinsicKind::Undefined)
+            {
+                return true;
+            }
+
+            // 4. Compare primitives
             match (a_kind, b_kind) {
                 (IntrinsicKind::String, IntrinsicKind::String)
                 | (IntrinsicKind::Number, IntrinsicKind::Number)
