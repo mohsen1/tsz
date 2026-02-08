@@ -189,7 +189,7 @@ pub struct BindResult {
     /// Shorthand ambient modules (`declare module "foo"` without body)
     pub shorthand_ambient_modules: FxHashSet<String>,
     /// Global augmentations (interface declarations inside `declare global` blocks)
-    pub global_augmentations: FxHashMap<String, Vec<NodeIndex>>,
+    pub global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
     /// Maps module specifier -> [ModuleAugmentation]
     pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
@@ -551,7 +551,7 @@ pub struct BoundFile {
     /// Parse diagnostics
     pub parse_diagnostics: Vec<ParseDiagnostic>,
     /// Global augmentations (interface declarations inside `declare global` blocks)
-    pub global_augmentations: FxHashMap<String, Vec<NodeIndex>>,
+    pub global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
     pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
     /// Flow nodes for control flow analysis
@@ -1558,6 +1558,30 @@ pub fn create_binder_from_bound_file(
         }
     }
 
+    // Merge global augmentations from all files
+    // When checking a file, we need access to `declare global` augmentations from all other files.
+    // Each augmentation gets tagged with its source arena for cross-file resolution.
+    let mut merged_global_augmentations: rustc_hash::FxHashMap<
+        String,
+        Vec<crate::binder::GlobalAugmentation>,
+    > = rustc_hash::FxHashMap::default();
+
+    for other_file in &program.files {
+        for (name, decls) in &other_file.global_augmentations {
+            merged_global_augmentations
+                .entry(name.clone())
+                .or_default()
+                .extend(decls.iter().map(|aug| {
+                    // Tag each augmentation with its source file's arena
+                    // so the checker can read declaration nodes from the correct arena
+                    crate::binder::GlobalAugmentation::with_arena(
+                        aug.node,
+                        Arc::clone(&other_file.arena),
+                    )
+                }));
+        }
+    }
+
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),
         program.symbols.clone(),
@@ -1565,7 +1589,7 @@ pub fn create_binder_from_bound_file(
         file.node_symbols.clone(),
         file.scopes.clone(),
         file.node_scope_ids.clone(),
-        file.global_augmentations.clone(),
+        merged_global_augmentations,
         merged_module_augmentations,
         program.module_exports.clone(),
         program.reexports.clone(),

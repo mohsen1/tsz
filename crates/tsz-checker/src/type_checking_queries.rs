@@ -4,6 +4,8 @@
 //! Split from type_checking.rs for maintainability.
 
 use crate::state::{CheckerState, MemberAccessLevel};
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -2264,57 +2266,89 @@ impl<'a> CheckerState<'a> {
             lib_type_id = Some(merged);
         }
 
-        // Check for global augmentations in the current file that should merge with this type
+        // Check for global augmentations that should merge with this type.
+        // Augmentations may come from the current file or other files (cross-file merge).
         if let Some(augmentation_decls) = self.ctx.binder.global_augmentations.get(name)
             && !augmentation_decls.is_empty()
         {
-            // Create a resolver for the current file's binder
-            let arena_ref = self.ctx.arena;
+            // Group augmentation declarations by arena.
+            // Declarations with arena=None use the current file's arena.
+            let current_arena: &NodeArena = self.ctx.arena;
             let binder_ref = self.ctx.binder;
-            let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                // Get the identifier name from the node
-                let ident_name = arena_ref.get_identifier_text(node_idx)?;
 
-                // Skip built-in types that have special handling in TypeLowering
-                if is_compiler_managed_type(ident_name) {
-                    return None;
+            // Collect declarations grouped by arena pointer identity
+            let mut current_file_decls: Vec<NodeIndex> = Vec::new();
+            let mut cross_file_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
+                FxHashMap::default();
+
+            for aug in augmentation_decls {
+                if let Some(ref arena) = aug.arena {
+                    let key = Arc::as_ptr(arena) as usize;
+                    cross_file_groups
+                        .entry(key)
+                        .or_insert_with(|| (Arc::clone(arena), Vec::new()))
+                        .1
+                        .push(aug.node);
+                } else {
+                    current_file_decls.push(aug.node);
                 }
+            }
 
-                // First check the current file's locals
-                if let Some(found_sym) = binder_ref.file_locals.get(ident_name) {
-                    return Some(found_sym.0);
-                }
-
-                // Then check all lib contexts
-                for ctx in &lib_contexts {
-                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+            // Helper: lower augmentation declarations using a given arena
+            let mut lower_with_arena = |arena_ref: &NodeArena, decls: &[NodeIndex]| {
+                let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                    let ident_name = arena_ref.get_identifier_text(node_idx)?;
+                    if is_compiler_managed_type(ident_name) {
+                        return None;
+                    }
+                    if let Some(found_sym) = binder_ref.file_locals.get(ident_name) {
                         return Some(found_sym.0);
                     }
-                }
-                None
+                    for ctx in &lib_contexts {
+                        if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                            return Some(found_sym.0);
+                        }
+                    }
+                    None
+                };
+                let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
+                    let ident_name = arena_ref.get_identifier_text(node_idx)?;
+                    if is_compiler_managed_type(ident_name) {
+                        return None;
+                    }
+                    let sym_id = binder_ref.file_locals.get(ident_name).or_else(|| {
+                        lib_contexts
+                            .iter()
+                            .find_map(|ctx| ctx.binder.file_locals.get(ident_name))
+                    })?;
+                    Some(
+                        self.ctx
+                            .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
+                    )
+                };
+                let lowering = TypeLowering::with_hybrid_resolver(
+                    arena_ref,
+                    self.ctx.types,
+                    &resolver,
+                    &def_id_resolver,
+                    &|_| None,
+                );
+                let aug_type = lowering.lower_interface_declarations(decls);
+                lib_type_id = if let Some(lib_type) = lib_type_id {
+                    Some(self.ctx.types.intersection2(lib_type, aug_type))
+                } else {
+                    Some(aug_type)
+                };
             };
 
-            // Create def_id_resolver that converts SymbolIds to DefIds
-            let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                resolver(node_idx)
-                    .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
-            };
+            // Lower current-file augmentations
+            if !current_file_decls.is_empty() {
+                lower_with_arena(current_arena, &current_file_decls);
+            }
 
-            // Lower the augmentation declarations from the current file's arena with the resolvers
-            let lowering = TypeLowering::with_hybrid_resolver(
-                self.ctx.arena,
-                self.ctx.types,
-                &resolver,
-                &def_id_resolver,
-                &|_| None,
-            );
-            let augmentation_type = lowering.lower_interface_declarations(augmentation_decls);
-
-            // Merge lib type with augmentation using intersection
-            if let Some(lib_type) = lib_type_id {
-                lib_type_id = Some(self.ctx.types.intersection2(lib_type, augmentation_type));
-            } else {
-                lib_type_id = Some(augmentation_type);
+            // Lower cross-file augmentations (each group uses its own arena)
+            for (_, (arena, decls)) in &cross_file_groups {
+                lower_with_arena(arena.as_ref(), decls);
             }
         }
 
@@ -2539,44 +2573,83 @@ impl<'a> CheckerState<'a> {
         if let Some(augmentation_decls) = self.ctx.binder.global_augmentations.get(name)
             && !augmentation_decls.is_empty()
         {
-            let arena_ref = self.ctx.arena;
+            let current_arena: &NodeArena = self.ctx.arena;
             let binder_ref = self.ctx.binder;
-            let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                let ident_name = arena_ref.get_identifier_text(node_idx)?;
-                if is_compiler_managed_type(ident_name) {
-                    return None;
+
+            // Group augmentation declarations by arena
+            let mut current_file_decls: Vec<NodeIndex> = Vec::new();
+            let mut cross_file_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
+                FxHashMap::default();
+
+            for aug in augmentation_decls {
+                if let Some(ref arena) = aug.arena {
+                    let key = Arc::as_ptr(arena) as usize;
+                    cross_file_groups
+                        .entry(key)
+                        .or_insert_with(|| (Arc::clone(arena), Vec::new()))
+                        .1
+                        .push(aug.node);
+                } else {
+                    current_file_decls.push(aug.node);
                 }
-                if let Some(found_sym) = binder_ref.file_locals.get(ident_name) {
-                    return Some(found_sym.0);
-                }
-                for ctx in &lib_contexts {
-                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+            }
+
+            // Helper: lower augmentation declarations using a given arena
+            let mut lower_with_arena = |arena_ref: &NodeArena, decls: &[NodeIndex]| {
+                let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                    let ident_name = arena_ref.get_identifier_text(node_idx)?;
+                    if is_compiler_managed_type(ident_name) {
+                        return None;
+                    }
+                    if let Some(found_sym) = binder_ref.file_locals.get(ident_name) {
                         return Some(found_sym.0);
                     }
-                }
-                None
+                    for ctx in &lib_contexts {
+                        if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                            return Some(found_sym.0);
+                        }
+                    }
+                    None
+                };
+                let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
+                    let ident_name = arena_ref.get_identifier_text(node_idx)?;
+                    if is_compiler_managed_type(ident_name) {
+                        return None;
+                    }
+                    let sym_id = binder_ref.file_locals.get(ident_name).or_else(|| {
+                        lib_contexts
+                            .iter()
+                            .find_map(|ctx| ctx.binder.file_locals.get(ident_name))
+                    })?;
+                    Some(
+                        self.ctx
+                            .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
+                    )
+                };
+                let lowering = TypeLowering::with_hybrid_resolver(
+                    arena_ref,
+                    self.ctx.types,
+                    &resolver,
+                    &def_id_resolver,
+                    &|_| None,
+                );
+                let aug_type = lowering.lower_interface_declarations(decls);
+                lib_type_id = if let Some(lib_type) = lib_type_id {
+                    Some(self.ctx.types.intersection2(lib_type, aug_type))
+                } else {
+                    Some(aug_type)
+                };
             };
 
-            // Create def_id_resolver that converts SymbolIds to DefIds
-            let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                resolver(node_idx)
-                    .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
-            };
+            // Lower current-file augmentations
+            if !current_file_decls.is_empty() {
+                lower_with_arena(current_arena, &current_file_decls);
+            }
 
-            let lowering = TypeLowering::with_hybrid_resolver(
-                self.ctx.arena,
-                self.ctx.types,
-                &resolver,
-                &def_id_resolver,
-                &|_| None,
-            );
-            let augmentation_type = lowering.lower_interface_declarations(augmentation_decls);
-
-            lib_type_id = if let Some(lib_type) = lib_type_id {
-                Some(self.ctx.types.intersection2(lib_type, augmentation_type))
-            } else {
-                Some(augmentation_type)
-            };
+            // Lower cross-file augmentations (each group uses its own arena)
+            for (_, (arena, decls)) in &cross_file_groups {
+                lower_with_arena(arena.as_ref(), decls);
+            }
         }
 
         (lib_type_id, first_params.unwrap_or_default())
