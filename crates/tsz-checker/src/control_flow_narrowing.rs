@@ -1993,6 +1993,17 @@ impl<'a> FlowAnalyzer<'a> {
             return self.extract_call_type_guard(condition);
         }
 
+        // Unwrap assignment expressions: if (flag = (x instanceof Foo)) should extract from RHS
+        // TypeScript narrows based on the assigned value, not the assignment itself
+        if cond_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(bin) = self.arena.get_binary_expr(cond_node) {
+                if bin.operator_token == SyntaxKind::EqualsToken as u16 {
+                    // Recursively extract guard from the right-hand side
+                    return self.extract_type_guard(bin.right);
+                }
+            }
+        }
+
         let bin = self.arena.get_binary_expr(cond_node)?;
 
         // Check for instanceof operator: x instanceof MyClass
