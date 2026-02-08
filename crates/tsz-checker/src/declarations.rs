@@ -915,6 +915,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         if let Some(module) = self.ctx.arena.get_module(node) {
             // TS2668: 'export' modifier cannot be applied to ambient modules
+            // This only applies to string-literal-named ambient modules (declare module "foo"),
+            // not to namespace-form modules (declare namespace Foo)
             // Check this FIRST before early returns so we can emit multiple errors
             let has_declare = self
                 .ctx
@@ -923,7 +925,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 .ctx
                 .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword as u16);
 
-            if has_declare && has_export {
+            // Only check for TS2668 if this is a string-literal-named module
+            let is_string_named = if let Some(name_node) = self.ctx.arena.get(module.name) {
+                name_node.kind == SyntaxKind::StringLiteral as u16
+            } else {
+                false
+            };
+
+            if has_declare && has_export && is_string_named {
                 // Find the export modifier position to report error there
                 if let Some(ref mods) = module.modifiers {
                     for &mod_idx in &mods.nodes {
