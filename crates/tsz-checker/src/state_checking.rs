@@ -436,10 +436,35 @@ impl<'a> CheckerState<'a> {
             // If there's a type annotation, that determines the type (even for 'any')
             if has_type_annotation {
                 if !var_decl.initializer.is_none() {
+                    // Evaluate the declared type to resolve conditionals before using as context.
+                    // This ensures types like `type C = string extends string ? "yes" : "no"`
+                    // provide proper contextual typing for literals, preventing them from widening to string.
+                    // Only evaluate conditional/mapped/index access types - NOT type aliases or interface
+                    // references, as evaluating those can change their representation and break variance checking.
+                    let evaluated_type = if declared_type != TypeId::ANY {
+                        use tsz_solver::TypeKey;
+                        let should_evaluate =
+                            checker.ctx.types.lookup(declared_type).is_some_and(|key| {
+                                matches!(
+                                    key,
+                                    TypeKey::Conditional(_)
+                                        | TypeKey::Mapped(_)
+                                        | TypeKey::IndexAccess(_, _)
+                                )
+                            });
+                        if should_evaluate {
+                            checker.judge_evaluate(declared_type)
+                        } else {
+                            declared_type
+                        }
+                    } else {
+                        declared_type
+                    };
+
                     // Set contextual type for the initializer (but not for 'any')
                     let prev_context = checker.ctx.contextual_type;
-                    if declared_type != TypeId::ANY {
-                        checker.ctx.contextual_type = Some(declared_type);
+                    if evaluated_type != TypeId::ANY {
+                        checker.ctx.contextual_type = Some(evaluated_type);
                     }
                     let init_type = checker.get_type_of_node(var_decl.initializer);
                     checker.ctx.contextual_type = prev_context;
