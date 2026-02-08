@@ -17,6 +17,8 @@ use crate::parser::{
     node::{IdentifierData, NodeArena},
     syntax_kind_ext,
 };
+use rustc_hash::FxHashMap;
+use tracing::trace;
 use tsz_common::interner::Atom;
 use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
 use tsz_scanner::{SyntaxKind, token_is_keyword};
@@ -98,6 +100,9 @@ pub struct ParserState {
     pub(crate) recursion_depth: u32,
     /// Position of last error (to prevent cascading errors at same position)
     pub(crate) last_error_pos: u32,
+    /// Stack of label scopes for duplicate label detection (TS1114)
+    /// Each scope is a map from label name to the position where it was first defined
+    pub(crate) label_scopes: Vec<FxHashMap<String, u32>>,
 }
 
 impl ParserState {
@@ -117,6 +122,7 @@ impl ParserState {
             node_count: 0,
             recursion_depth: 0,
             last_error_pos: 0,
+            label_scopes: vec![FxHashMap::default()],
         }
     }
 
@@ -130,6 +136,8 @@ impl ParserState {
         self.node_count = 0;
         self.recursion_depth = 0;
         self.last_error_pos = 0;
+        self.label_scopes.clear();
+        self.label_scopes.push(FxHashMap::default());
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded
@@ -1390,6 +1398,46 @@ impl ParserState {
             SyntaxKind::AsteriskAsteriskToken => 14,
             _ => 0,
         }
+    }
+
+    /// Push a new label scope (called when entering a function or module)
+    pub(crate) fn push_label_scope(&mut self) {
+        let new_depth = self.label_scopes.len() + 1;
+        trace!(pos = self.token_pos(), new_depth, "push_label_scope");
+        self.label_scopes.push(FxHashMap::default());
+    }
+
+    /// Pop the current label scope (called when exiting a function or module)
+    pub(crate) fn pop_label_scope(&mut self) {
+        let old_depth = self.label_scopes.len();
+        trace!(pos = self.token_pos(), old_depth, "pop_label_scope");
+        self.label_scopes.pop();
+    }
+
+    /// Check if a label already exists in the current scope, and if so, emit TS1114.
+    /// Returns true if the label is a duplicate.
+    pub(crate) fn check_duplicate_label(&mut self, label_name: &str, label_pos: u32) -> bool {
+        let scope_depth = self.label_scopes.len();
+        trace!(label_name, label_pos, scope_depth, "check_duplicate_label");
+        if let Some(current_scope) = self.label_scopes.last_mut() {
+            if current_scope.contains_key(label_name) {
+                // Duplicate label - emit TS1114
+                use tsz_common::diagnostics::diagnostic_codes;
+                let message = format!("Duplicate label '{}'.", label_name);
+                trace!(label_name, "duplicate label found");
+                self.parse_error_at(
+                    label_pos,
+                    label_name.len() as u32,
+                    &message,
+                    diagnostic_codes::DUPLICATE_LABEL,
+                );
+                return true;
+            }
+            // Not a duplicate - record this label
+            trace!(label_name, "adding label to scope");
+            current_scope.insert(label_name.to_string(), label_pos);
+        }
+        false
     }
 }
 

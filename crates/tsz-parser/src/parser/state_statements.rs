@@ -577,11 +577,33 @@ impl ParserState {
         // Parse the label (identifier)
         let label = self.parse_identifier_name();
 
+        // Check for duplicate labels (TS1114) and record this label
+        let label_name = if let Some(label_node) = self.arena.get(label) {
+            if let Some(ident) = self.arena.get_identifier_at(label) {
+                let escaped_text = ident.escaped_text.clone();
+                let pos = label_node.pos;
+                self.check_duplicate_label(&escaped_text, pos);
+                Some(escaped_text)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Consume the colon
         self.parse_expected(SyntaxKind::ColonToken);
 
         // Parse the statement
         let statement = self.parse_statement();
+
+        // Remove the label from the current scope (labels are statement-scoped)
+        // This allows sequential labels with the same name: target: stmt1; target: stmt2;
+        if let Some(label_name) = label_name {
+            if let Some(current_scope) = self.label_scopes.last_mut() {
+                current_scope.remove(&label_name);
+            }
+        }
 
         let end_pos = self.token_end();
 
@@ -982,6 +1004,7 @@ impl ParserState {
 
     /// Parse function declaration (optionally async)
     pub(crate) fn parse_function_declaration(&mut self) -> NodeIndex {
+        tracing::trace!(pos = self.token_pos(), "parse_function_declaration");
         self.parse_function_declaration_with_async(false, None)
     }
 
@@ -1068,6 +1091,8 @@ impl ParserState {
 
         // Parse body - may be missing for overload signatures (just a semicolon)
         // Context flags remain set for await/yield expressions in body
+        // Push a new label scope for the function body
+        self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
@@ -1075,6 +1100,7 @@ impl ParserState {
             self.parse_optional(SyntaxKind::SemicolonToken);
             NodeIndex::NONE
         };
+        self.pop_label_scope();
 
         // Restore context flags
         self.context_flags = saved_flags;
@@ -1108,6 +1134,10 @@ impl ParserState {
         modifiers: Option<NodeList>,
     ) -> NodeIndex {
         let start_pos = self.token_pos();
+        tracing::trace!(
+            start_pos,
+            "parse_function_declaration_with_async_optional_name"
+        );
 
         let is_async = is_async || self.parse_optional(SyntaxKind::AsyncKeyword);
         self.parse_expected(SyntaxKind::FunctionKeyword);
@@ -1144,12 +1174,19 @@ impl ParserState {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
 
+        // Push a new label scope for the function body
+        // Labels are function-scoped, so each function gets its own label namespace
+        self.push_label_scope();
+
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
             self.parse_optional(SyntaxKind::SemicolonToken);
             NodeIndex::NONE
         };
+
+        // Pop the label scope when exiting the function
+        self.pop_label_scope();
 
         self.context_flags = saved_flags;
 
@@ -1254,7 +1291,10 @@ impl ParserState {
         };
 
         // Parse body (context flags remain set for await/yield expressions in body)
+        // Push a new label scope for the function body
+        self.push_label_scope();
         let body = self.parse_block();
+        self.pop_label_scope();
 
         // Restore context flags
         self.context_flags = saved_flags;
@@ -2728,11 +2768,14 @@ impl ParserState {
             let _ = self.parse_type();
         };
 
+        // Push a new label scope for the constructor body
+        self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
             NodeIndex::NONE
         };
+        self.pop_label_scope();
 
         let end_pos = self.token_end();
         self.arena.add_constructor(
@@ -2790,6 +2833,7 @@ impl ParserState {
         };
 
         // Parse body (may be empty for ambient declarations or abstract accessors)
+        self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
@@ -2809,6 +2853,7 @@ impl ParserState {
             self.parse_semicolon();
             NodeIndex::NONE
         };
+        self.pop_label_scope();
 
         let end_pos = self.token_end();
         self.arena.add_accessor(
@@ -2873,6 +2918,7 @@ impl ParserState {
         }
 
         // Parse body (may be empty for ambient declarations or abstract accessors)
+        self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
@@ -2892,6 +2938,7 @@ impl ParserState {
             self.parse_semicolon();
             NodeIndex::NONE
         };
+        self.pop_label_scope();
 
         let end_pos = self.token_end();
         self.arena.add_accessor(
@@ -3189,11 +3236,13 @@ impl ParserState {
             }
 
             // Parse body
+            self.push_label_scope();
             let body = if self.is_token(SyntaxKind::OpenBraceToken) {
                 self.parse_block()
             } else {
                 NodeIndex::NONE
             };
+            self.pop_label_scope();
 
             // Restore context flags
             self.context_flags = saved_flags;
