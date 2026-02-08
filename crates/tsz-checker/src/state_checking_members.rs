@@ -2064,7 +2064,15 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            self.push_return_type(return_type);
+            // For async functions, unwrap Promise<T> to T for return type checking
+            // The function body should return T, which gets auto-wrapped in Promise
+            let effective_return_type = if is_async && !is_generator {
+                self.unwrap_promise_type(return_type).unwrap_or(return_type)
+            } else {
+                return_type
+            };
+
+            self.push_return_type(effective_return_type);
 
             // Enter async context for await expression checking
             if is_async {
