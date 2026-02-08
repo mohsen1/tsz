@@ -219,86 +219,119 @@ run_tests() {
         extra_args+=("$arg")
     done
 
-    # If --verbose, also add --print-test for per-test output
-    if [ "$verbose" = true ]; then
-        extra_args+=(--print-test)
-    fi
+    # Always add --print-test to get expected/actual/config values for failing tests
+    # But only show per-test summary lines when --verbose, --error-code, or --max is used
+    extra_args+=(--print-test)
 
-    # Show summary with failing test contents when --error-code, --max, or --verbose is used
-    local show_summary=false
+    # Show per-test summary lines when --error-code, --max, or --verbose is used
+    local show_per_test=false
     if [ "$has_error_code" = true ] || [ "$has_max" = true ] || [ "$verbose" = true ]; then
-        show_summary=true
+        show_per_test=true
     fi
 
-    if [ "$show_summary" = true ]; then
-        # Capture output so we can reorder: test contents first, final results last
-        local tmpfile
-        tmpfile=$(mktemp)
-        trap "rm -f '$tmpfile'" EXIT
+    # Always capture output to extract failing tests and their details
+    local tmpfile
+    tmpfile=$(mktemp)
+    trap "rm -f '$tmpfile'" EXIT
 
-        local runner_exit=0
-        $RUNNER_BIN \
-            --test-dir "$TEST_DIR" \
-            --cache-file "$CACHE_FILE" \
-            --tsz-binary "$TSZ_BIN" \
-            --workers $WORKERS \
-            "${extra_args[@]}" > "$tmpfile" 2>&1 || runner_exit=$?
+    local runner_exit=0
+    $RUNNER_BIN \
+        --test-dir "$TEST_DIR" \
+        --cache-file "$CACHE_FILE" \
+        --tsz-binary "$TSZ_BIN" \
+        --workers $WORKERS \
+        "${extra_args[@]}" > "$tmpfile" 2>&1 || runner_exit=$?
 
-        local output
-        output=$(cat "$tmpfile")
+    local output
+    output=$(cat "$tmpfile")
 
-        # Print per-test lines (PASS/FAIL/SKIP) with details (expected/actual/options)
+    # Print per-test lines (PASS/FAIL/SKIP) with details (expected/actual/options) only when requested
+    if [ "$show_per_test" = true ]; then
         grep -E '^(PASS|FAIL|SKIP) |^  (expected|actual|options):' "$tmpfile" 2>/dev/null || true
+    fi
 
-        # Extract failing test paths (up to 10) from captured output
-        local failing_tests=()
-        while IFS= read -r line; do
-            if [[ "$line" =~ ^FAIL[[:space:]]+(.+) ]]; then
-                local rel_path="${BASH_REMATCH[1]}"
-                local test_path="$REPO_ROOT/$rel_path"
-                if [ -f "$test_path" ]; then
-                    failing_tests+=("$test_path")
-                    if [ ${#failing_tests[@]} -ge 10 ]; then
-                        break
-                    fi
+    # Extract failing test paths (up to 10) from captured output
+    local failing_tests=()
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^FAIL[[:space:]]+(.+) ]]; then
+            local rel_path="${BASH_REMATCH[1]}"
+            local test_path="$REPO_ROOT/$rel_path"
+            if [ -f "$test_path" ]; then
+                failing_tests+=("$test_path")
+                if [ ${#failing_tests[@]} -ge 10 ]; then
+                    break
                 fi
             fi
-        done <<< "$output"
-
-        # Print test file contents BEFORE final results
-        if [ ${#failing_tests[@]} -gt 0 ]; then
-            echo ""
-            echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
-            echo -e "${YELLOW}Test File Contents (${#failing_tests[@]} failing tests)${NC}"
-            echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
-            echo ""
-
-            for test_file in "${failing_tests[@]}"; do
-                local rel_path="${test_file#$REPO_ROOT/}"
-                echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo -e "${GREEN}File: $rel_path${NC}"
-                echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                cat "$test_file"
-                echo ""
-            done
-
-            echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
         fi
+    done <<< "$output"
 
-        # Print final results block LAST
+    # Always print test file contents with expected/actual/config for failing tests
+    if [ ${#failing_tests[@]} -gt 0 ]; then
         echo ""
-        sed -n '/^=\{10,\}/,/^=\{10,\}/p' "$tmpfile" 2>/dev/null || true
+        echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}Test File Contents (${#failing_tests[@]} failing tests)${NC}"
+        echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+        echo ""
 
-        rm -f "$tmpfile"
-    else
-        # No summary mode, run normally
-        $RUNNER_BIN \
-            --test-dir "$TEST_DIR" \
-            --cache-file "$CACHE_FILE" \
-            --tsz-binary "$TSZ_BIN" \
-            --workers $WORKERS \
-            "${extra_args[@]}"
+        for test_file in "${failing_tests[@]}"; do
+            local rel_path="${test_file#$REPO_ROOT/}"
+            echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo -e "${GREEN}File: $rel_path${NC}"
+            
+            # Extract expected, actual, and config values for this test
+            local expected=""
+            local actual=""
+            local config=""
+            local in_test_block=false
+            while IFS= read -r line; do
+                # Match FAIL line with this test path (may have additional text after path)
+                if [[ "$line" =~ ^FAIL[[:space:]]+$rel_path(.*)$ ]]; then
+                    in_test_block=true
+                    continue
+                fi
+                if [ "$in_test_block" = true ]; then
+                    # Stop at next test result line
+                    if [[ "$line" =~ ^FAIL[[:space:]]+ ]] || [[ "$line" =~ ^PASS[[:space:]]+ ]] || [[ "$line" =~ ^SKIP[[:space:]]+ ]]; then
+                        break
+                    fi
+                    # Extract expected/actual/options values (indented with 2 spaces)
+                    if [[ "$line" =~ ^[[:space:]][[:space:]]expected:[[:space:]]+(.+) ]]; then
+                        expected="${BASH_REMATCH[1]}"
+                    elif [[ "$line" =~ ^[[:space:]][[:space:]]actual:[[:space:]]+(.+) ]]; then
+                        actual="${BASH_REMATCH[1]}"
+                    elif [[ "$line" =~ ^[[:space:]][[:space:]]options:[[:space:]]+(.+) ]]; then
+                        config="${BASH_REMATCH[1]}"
+                    fi
+                fi
+            done <<< "$output"
+            
+            # Print verbose expected, actual, and config values
+            if [ -n "$expected" ] || [ -n "$actual" ] || [ -n "$config" ]; then
+                echo ""
+                if [ -n "$expected" ]; then
+                    echo -e "  ${YELLOW}expected:${NC} $expected"
+                fi
+                if [ -n "$actual" ]; then
+                    echo -e "  ${YELLOW}actual:${NC} $actual"
+                fi
+                if [ -n "$config" ]; then
+                    echo -e "  ${YELLOW}config:${NC} $config"
+                fi
+            fi
+            
+            echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            cat "$test_file"
+            echo ""
+        done
+
+        echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
     fi
+
+    # Print final results block LAST
+    echo ""
+    sed -n '/^=\{10,\}/,/^=\{10,\}/p' "$tmpfile" 2>/dev/null || true
+
+    rm -f "$tmpfile"
 
     echo ""
     echo -e "${GREEN}Tests completed${NC}"

@@ -359,10 +359,23 @@ impl<'a> FlowAnalyzer<'a> {
         match predicate.target {
             TypePredicateTarget::Identifier(name) => {
                 let param_index = params.iter().position(|param| param.name == Some(name))?;
-                // TODO: Handle spread arguments correctly.
-                // Currently assumes 1:1 mapping which breaks for `fn(...args)`.
                 let args = call.arguments.as_ref()?.nodes.as_slice();
-                args.get(param_index).copied()
+
+                // Walk through arguments, accounting for spread elements.
+                // A spread argument expands to an unknown number of positional args,
+                // so once we encounter one we can no longer map param_index to a
+                // specific argument expression — bail out.
+                for (arg_pos, &arg_idx) in args.iter().enumerate() {
+                    if let Some(arg_node) = self.arena.get(arg_idx) {
+                        if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                            return None;
+                        }
+                    }
+                    if arg_pos == param_index {
+                        return Some(arg_idx);
+                    }
+                }
+                None
             }
             TypePredicateTarget::This => {
                 // CRITICAL: Skip parens/assertions to find the actual access node

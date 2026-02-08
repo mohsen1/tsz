@@ -1360,12 +1360,12 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
-        // TEMPORARY FIX: Removed is_narrowable_type check to allow instanceof narrowing
-        // This check was blocking class types from being narrowed
-        // TODO: Re-enable with proper logic that allows instanceof-narrowable types
-        // if !self.is_narrowable_type(declared_type) {
-        //     return declared_type;
-        // }
+        // Skip narrowing for `never` — it's the bottom type, nothing to narrow.
+        // All other types (unions, objects, callables, type params, primitives, etc.)
+        // can benefit from flow narrowing (instanceof, typeof, truthiness, etc.).
+        if declared_type == TypeId::NEVER {
+            return declared_type;
+        }
 
         // Create a flow analyzer and apply narrowing
         let analyzer = FlowAnalyzer::with_node_types(

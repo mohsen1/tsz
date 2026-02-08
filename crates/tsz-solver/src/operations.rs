@@ -3571,6 +3571,68 @@ fn get_tuple_iterator_info(db: &dyn TypeDatabase, tuple_type: TypeId) -> Option<
     }
 }
 
+/// Extract T from a Promise<T> type.
+///
+/// Handles two representations:
+/// 1. Application(base=PROMISE_BASE, args=[T]) — synthetic promise
+/// 2. Object types with a `then` callback — structurally promise-like
+///
+/// Returns the inner type T, or None if not a promise type.
+fn extract_promise_inner_type(
+    db: &dyn crate::db::QueryDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        // Application: Promise<T> where base is PROMISE_BASE
+        Some(TypeKey::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            if app.base == TypeId::PROMISE_BASE {
+                return app.args.first().copied();
+            }
+            // For other applications, the first arg is typically T
+            // e.g. PromiseLike<T>, custom Promise subclasses
+            app.args.first().copied()
+        }
+        // Object type: look for then(onfulfilled: (value: T) => any) => any
+        Some(TypeKey::Object(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            let then_atom = db.intern_string("then");
+            let then_prop = shape.properties.iter().find(|p| p.name == then_atom)?;
+            // then is a function: (onfulfilled: (value: T) => any) => any
+            // Extract T from the first parameter of the first parameter
+            match db.lookup(then_prop.type_id) {
+                Some(TypeKey::Function(fn_id)) => {
+                    let fn_shape = db.function_shape(fn_id);
+                    let onfulfilled = fn_shape.params.first()?;
+                    // onfulfilled: (value: T) => any — extract T from its first param
+                    match db.lookup(onfulfilled.type_id) {
+                        Some(TypeKey::Function(inner_fn_id)) => {
+                            let inner_shape = db.function_shape(inner_fn_id);
+                            inner_shape.params.first().map(|p| p.type_id)
+                        }
+                        _ => None,
+                    }
+                }
+                Some(TypeKey::Callable(callable_id)) => {
+                    let callable = db.callable_shape(callable_id);
+                    let sig = callable.call_signatures.first()?;
+                    let onfulfilled = sig.params.first()?;
+                    match db.lookup(onfulfilled.type_id) {
+                        Some(TypeKey::Function(inner_fn_id)) => {
+                            let inner_shape = db.function_shape(inner_fn_id);
+                            inner_shape.params.first().map(|p| p.type_id)
+                        }
+                        _ => None,
+                    }
+                }
+                // If then is itself a type (e.g. structural shorthand), just return it
+                _ => Some(then_prop.type_id),
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Extract yield/return/next types from the next() method's return type.
 ///
 /// For sync iterators: next() returns IteratorResult<T, TReturn>
@@ -3583,83 +3645,138 @@ fn extract_iterator_result_types(
 ) -> Option<IteratorInfo> {
     use crate::type_queries::is_promise_like;
 
-    // Get the return type of next()
-    let next_return_type = match db.lookup(next_method_type) {
-        Some(TypeKey::Function(shape_id)) => db.function_shape(shape_id).return_type,
+    // Get the return type and parameter types of next()
+    let (next_return_type, next_params) = match db.lookup(next_method_type) {
+        Some(TypeKey::Function(shape_id)) => {
+            let shape = db.function_shape(shape_id);
+            (shape.return_type, shape.params.clone())
+        }
         Some(TypeKey::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
-            shape.call_signatures.first()?.return_type
+            let sig = shape.call_signatures.first()?;
+            (sig.return_type, sig.params.clone())
         }
         _ => return None,
     };
 
-    // For async iterators, unwrap the Promise
+    // For async iterators, unwrap the Promise wrapper
     let iterator_result_type = if is_async {
         if is_promise_like(db, next_return_type) {
-            // TODO: Extract T from Promise<T>
-            // For now, just return the Promise type as yield_type
-            next_return_type
+            extract_promise_inner_type(db, next_return_type).unwrap_or(next_return_type)
         } else {
-            // Not promise-like - invalid async iterator
             return None;
         }
     } else {
         next_return_type
     };
 
-    // Extract value type from IteratorResult<T, TReturn>
-    // The result type is usually: { value: T, done: false } | { value: TReturn, done: true }
-    let yield_type = match db.lookup(iterator_result_type) {
-        Some(TypeKey::Union(list_id)) => {
-            // Union of both branches - get value from both
-            let members = db.type_list(list_id);
-            let value_types: Vec<TypeId> = members
-                .iter()
-                .filter_map(|&member_id| {
-                    if let Some(TypeKey::Object(shape_id)) = db.lookup(member_id) {
-                        let shape = db.object_shape(shape_id);
-                        shape
-                            .properties
-                            .iter()
-                            .find(|p| p.name == db.intern_string("value"))
-                            .map(|p| p.type_id)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+    // Extract yield_type and return_type from IteratorResult<T, TReturn>
+    // IteratorResult = { value: T, done: false } | { value: TReturn, done: true }
+    let (yield_type, return_type) = extract_iterator_result_value_types(db, iterator_result_type);
 
-            // Union of all value types found
-            if value_types.is_empty() {
-                TypeId::ANY
-            } else {
-                value_types
-                    .into_iter()
-                    .reduce(|acc, t| db.union2(acc, t))
-                    .unwrap_or(TypeId::ANY)
-            }
-        }
-        Some(TypeKey::Object(shape_id)) => {
-            // Single object type - get value property
-            let shape = db.object_shape(shape_id);
-            shape
-                .properties
-                .iter()
-                .find(|p| p.name == db.intern_string("value"))
-                .map(|p| p.type_id)
-                .unwrap_or(TypeId::ANY)
-        }
-        _ => TypeId::ANY,
-    };
+    // Extract next_type from the first parameter of next()
+    let next_type = next_params
+        .first()
+        .map(|p| p.type_id)
+        .unwrap_or(TypeId::UNDEFINED);
 
-    // TODO: Extract return_type (from done: true branch) and next_type (from params)
-    // For now, use sensible defaults
     Some(IteratorInfo {
         iterator_type,
         yield_type,
-        return_type: TypeId::ANY,
-        next_type: TypeId::UNDEFINED,
+        return_type,
+        next_type,
     })
+}
+
+/// Extract yield and return types from an IteratorResult type.
+///
+/// IteratorResult<T, TReturn> is typically:
+///   { value: T, done: false } | { value: TReturn, done: true }
+///
+/// Returns (yield_type, return_type). Yield comes from done:false branches,
+/// return comes from done:true branches.
+fn extract_iterator_result_value_types(
+    db: &dyn crate::db::QueryDatabase,
+    iterator_result_type: TypeId,
+) -> (TypeId, TypeId) {
+    let done_atom = db.intern_string("done");
+    let value_atom = db.intern_string("value");
+
+    match db.lookup(iterator_result_type) {
+        Some(TypeKey::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            let mut yield_types = Vec::new();
+            let mut return_types = Vec::new();
+
+            for &member_id in members.iter() {
+                if let Some(TypeKey::Object(shape_id)) = db.lookup(member_id) {
+                    let shape = db.object_shape(shape_id);
+                    let value_type = shape
+                        .properties
+                        .iter()
+                        .find(|p| p.name == value_atom)
+                        .map(|p| p.type_id);
+                    let done_type = shape
+                        .properties
+                        .iter()
+                        .find(|p| p.name == done_atom)
+                        .map(|p| p.type_id);
+
+                    match done_type {
+                        // done: true branch → return_type
+                        Some(t) if t == TypeId::BOOLEAN_TRUE => {
+                            if let Some(v) = value_type {
+                                return_types.push(v);
+                            }
+                        }
+                        // done: false branch → yield_type
+                        Some(t) if t == TypeId::BOOLEAN_FALSE => {
+                            if let Some(v) = value_type {
+                                yield_types.push(v);
+                            }
+                        }
+                        // No done property or unknown done → treat as yield
+                        _ => {
+                            if let Some(v) = value_type {
+                                yield_types.push(v);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let yield_type = if yield_types.is_empty() {
+                TypeId::ANY
+            } else {
+                yield_types
+                    .into_iter()
+                    .reduce(|acc, t| db.union2(acc, t))
+                    .unwrap_or(TypeId::ANY)
+            };
+
+            let return_type = if return_types.is_empty() {
+                TypeId::ANY
+            } else {
+                return_types
+                    .into_iter()
+                    .reduce(|acc, t| db.union2(acc, t))
+                    .unwrap_or(TypeId::ANY)
+            };
+
+            (yield_type, return_type)
+        }
+        Some(TypeKey::Object(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            let value_type = shape
+                .properties
+                .iter()
+                .find(|p| p.name == value_atom)
+                .map(|p| p.type_id)
+                .unwrap_or(TypeId::ANY);
+            (value_type, TypeId::ANY)
+        }
+        _ => (TypeId::ANY, TypeId::ANY),
+    }
 }
 
 /// Get the element type yielded by an async iterable type.

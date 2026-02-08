@@ -338,7 +338,8 @@ fn is_definitely_truthy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match interner.lookup(type_id) {
         Some(TypeKey::Literal(LiteralValue::Boolean(true))) => true,
         Some(TypeKey::Literal(LiteralValue::String(s))) if !s.is_none() => true,
-        Some(TypeKey::Literal(LiteralValue::Number(_ordered_float))) => true, // TODO: Check if zero
+        // Non-zero, non-NaN numbers are truthy
+        Some(TypeKey::Literal(LiteralValue::Number(n))) => n.0 != 0.0 && !n.0.is_nan(),
         Some(TypeKey::Object(_)) => true,
         Some(TypeKey::Function(_)) => true,
         _ => false,
@@ -350,7 +351,8 @@ fn is_definitely_falsy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match interner.lookup(type_id) {
         Some(TypeKey::Literal(LiteralValue::Boolean(false))) => true,
         Some(TypeKey::Literal(LiteralValue::String(s))) if s.is_none() => true,
-        Some(TypeKey::Literal(LiteralValue::Number(_ordered_float))) => true, // TODO: Check if zero
+        // 0, -0, and NaN are falsy
+        Some(TypeKey::Literal(LiteralValue::Number(n))) => n.0 == 0.0 || n.0.is_nan(),
         Some(TypeKey::Intrinsic(IntrinsicKind::Null)) => true,
         Some(TypeKey::Intrinsic(IntrinsicKind::Undefined)) => true,
         Some(TypeKey::Intrinsic(IntrinsicKind::Void)) => true,

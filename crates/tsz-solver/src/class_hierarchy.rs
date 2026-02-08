@@ -13,7 +13,7 @@
 //! This module assumes the inheritance graph is acyclic.
 
 use crate::TypeDatabase;
-use crate::types::{ObjectFlags, ObjectShape, PropertyInfo, TypeId};
+use crate::types::{CallSignature, CallableShape, ObjectFlags, ObjectShape, PropertyInfo, TypeId};
 use rustc_hash::FxHashMap;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
@@ -65,19 +65,35 @@ impl<'a> ClassTypeBuilder<'a> {
 
     /// Creates a class constructor type.
     ///
-    /// The constructor type is an object type with:
-    /// - Static properties
+    /// The constructor type is a callable type with:
     /// - A construct signature that returns the instance type
+    /// - Static properties as own properties
+    /// - Optional nominal identity via the class symbol
     pub fn create_constructor_type(
         &self,
         static_members: Vec<PropertyInfo>,
-        _instance_type: TypeId,
-        _symbol: SymbolId,
+        instance_type: TypeId,
+        constructor_params: Vec<crate::types::ParamInfo>,
+        type_params: Vec<crate::types::TypeParamInfo>,
+        symbol: SymbolId,
     ) -> TypeId {
-        // For now, we just return an object type with static members
-        // In a full implementation, this would include construct signatures
-        // TODO: Add construct signature support
-        self.db.object(static_members)
+        let construct_sig = CallSignature {
+            type_params,
+            params: constructor_params,
+            this_type: None,
+            return_type: instance_type,
+            type_predicate: None,
+            is_method: false,
+        };
+
+        self.db.callable(CallableShape {
+            call_signatures: Vec::new(),
+            construct_signatures: vec![construct_sig],
+            properties: static_members,
+            string_index: None,
+            number_index: None,
+            symbol: Some(symbol),
+        })
     }
 
     /// Extract properties from a type.

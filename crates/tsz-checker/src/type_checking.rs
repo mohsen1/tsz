@@ -2975,13 +2975,21 @@ impl<'a> CheckerState<'a> {
     ///
     /// This heuristic determines if a feature that requires a specific global type
     /// is likely being used in the code. These errors are NOT emitted just because
-    /// noLib is set - they require the actual feature to be used.
-    pub(crate) fn should_check_for_feature_type(&self, _type_name: &str) -> bool {
-        // Don't emit feature-specific global type errors based on simple noLib detection.
-        // TSC only emits these when the actual feature is used (generators, decorators, etc.)
-        // For now, disable these to match TSC's behavior for @noLib tests.
-        // TODO: Implement proper feature detection (AST traversal for generators, decorators, etc.)
-        false
+    /// noLib is set — they require the actual feature to be used.
+    pub(crate) fn should_check_for_feature_type(&self, type_name: &str) -> bool {
+        use tsz_binder::FileFeatures;
+        let features = self.ctx.binder.file_features;
+        match type_name {
+            "IterableIterator" => features.has(FileFeatures::GENERATORS),
+            "AsyncIterableIterator" => features.has(FileFeatures::ASYNC_GENERATORS),
+            "TypedPropertyDescriptor" => {
+                self.ctx.compiler_options.experimental_decorators
+                    && features.has(FileFeatures::DECORATORS)
+            }
+            "Disposable" => features.has(FileFeatures::USING),
+            "AsyncDisposable" => features.has(FileFeatures::AWAIT_USING),
+            _ => false,
+        }
     }
 
     /// Check for duplicate identifiers (TS2300, TS2451, TS2392).

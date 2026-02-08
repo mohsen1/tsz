@@ -27,8 +27,6 @@ pub struct TestDirectives {
 pub struct ParsedTest {
     /// Parsed directives
     pub directives: TestDirectives,
-    /// Full file content
-    pub content: String,
 }
 
 /// Parse @ directives from test file content
@@ -90,10 +88,7 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
 
     directives.filenames = filenames;
 
-    Ok(ParsedTest {
-        directives,
-        content: content.to_string(),
-    })
+    Ok(ParsedTest { directives })
 }
 
 /// Check if test should be skipped based on directives

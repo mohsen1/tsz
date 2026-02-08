@@ -4,6 +4,7 @@
 //! split from `state.rs` for maintainability.
 
 use crate::lib_loader;
+use crate::state::FileFeatures;
 use crate::{
     ContainerKind, FlowNodeId, Symbol, SymbolArena, SymbolId, SymbolTable, flow_flags, symbol_flags,
 };
@@ -81,6 +82,14 @@ impl BinderState {
         idx: NodeIndex,
     ) {
         if let Some(func) = arena.get_function(node) {
+            // Track generator/async-generator features for TS2318 diagnostics
+            if func.asterisk_token {
+                if func.is_async {
+                    self.file_features.set(FileFeatures::ASYNC_GENERATORS);
+                } else {
+                    self.file_features.set(FileFeatures::GENERATORS);
+                }
+            }
             self.bind_modifiers(arena, &func.modifiers);
             // Function declaration creates a symbol in the current scope
             if let Some(name) = self.get_identifier_name(arena, func.name) {
