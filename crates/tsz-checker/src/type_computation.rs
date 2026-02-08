@@ -379,9 +379,9 @@ impl<'a> CheckerState<'a> {
                     if let Some(loc) = self.get_source_location(unary.operand) {
                         use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                         self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::ARITHMETIC_OPERAND_MUST_BE_NUMBER,
+                            code: diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
                             category: DiagnosticCategory::Error,
-                            message_text: diagnostic_messages::ARITHMETIC_OPERAND_MUST_BE_NUMBER
+                            message_text: diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE
                                 .to_string(),
                             file: self.ctx.file_name.clone(),
                             start: loc.start,
@@ -1060,7 +1060,7 @@ impl<'a> CheckerState<'a> {
             use crate::types::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 access.expression,
-                diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
                 &["never"],
             );
             return TypeId::NEVER;
@@ -1455,13 +1455,13 @@ impl<'a> CheckerState<'a> {
                         && value_type == TypeId::ANY
                     {
                         let message = format_message(
-                            diagnostic_messages::MEMBER_IMPLICIT_ANY,
+                            diagnostic_messages::MEMBER_IMPLICITLY_HAS_AN_TYPE,
                             &[&name, "any"],
                         );
                         self.error_at_node(
                             prop.name,
                             &message,
-                            diagnostic_codes::IMPLICIT_ANY_MEMBER,
+                            diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
                         );
                     }
 
@@ -1470,13 +1470,13 @@ impl<'a> CheckerState<'a> {
                     // Check for duplicate property (skip in destructuring targets)
                     if !skip_duplicate_check && properties.contains_key(&name_atom) {
                         let message = format_message(
-                            diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
                         );
                         self.error_at_node(
                             prop.name,
                             &message,
-                            diagnostic_codes::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                         );
                     }
 
@@ -1536,13 +1536,13 @@ impl<'a> CheckerState<'a> {
                         && value_type == TypeId::ANY
                     {
                         let message = format_message(
-                            diagnostic_messages::MEMBER_IMPLICIT_ANY,
+                            diagnostic_messages::MEMBER_IMPLICITLY_HAS_AN_TYPE,
                             &[&name, "any"],
                         );
                         self.error_at_node(
                             elem_idx,
                             &message,
-                            diagnostic_codes::IMPLICIT_ANY_MEMBER,
+                            diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
                         );
                     }
 
@@ -1551,13 +1551,13 @@ impl<'a> CheckerState<'a> {
                     // Check for duplicate property (skip in destructuring targets)
                     if !skip_duplicate_check && properties.contains_key(&name_atom) {
                         let message = format_message(
-                            diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
                         );
                         self.error_at_node(
                             elem_idx,
                             &message,
-                            diagnostic_codes::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                         );
                     }
 
@@ -1596,13 +1596,13 @@ impl<'a> CheckerState<'a> {
                     // Check for duplicate property (skip in destructuring targets)
                     if !skip_duplicate_check && properties.contains_key(&name_atom) {
                         let message = format_message(
-                            diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
                         );
                         self.error_at_node(
                             method.name,
                             &message,
-                            diagnostic_codes::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                         );
                     }
 
@@ -1632,12 +1632,7 @@ impl<'a> CheckerState<'a> {
                     use crate::types::diagnostics::diagnostic_codes;
                     // Report at accessor.end - 1 (pointing to the closing paren)
                     let end_pos = elem_node.end.saturating_sub(1);
-                    self.error_at_position(
-                        end_pos,
-                        1,
-                        "'{' expected.",
-                        diagnostic_codes::TOKEN_EXPECTED,
-                    );
+                    self.error_at_position(end_pos, 1, "'{' expected.", diagnostic_codes::EXPECTED);
                 }
 
                 // For setters, check implicit any on parameters (error 7006)
@@ -1683,7 +1678,7 @@ impl<'a> CheckerState<'a> {
                             self.error_at_node(
                                 accessor.name,
                                 "A 'get' accessor must return a value.",
-                                diagnostic_codes::GET_ACCESSOR_MUST_RETURN_VALUE,
+                                diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
                             );
                         }
                     }
@@ -1702,13 +1697,13 @@ impl<'a> CheckerState<'a> {
                         && !is_complementary_pair
                     {
                         let message = format_message(
-                            diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
                         );
                         self.error_at_node(
                             accessor.name,
                             &message,
-                            diagnostic_codes::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                         );
                     }
 

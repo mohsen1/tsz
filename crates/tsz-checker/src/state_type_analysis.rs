@@ -636,7 +636,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         data.constraint,
                         &format!("Type parameter '{}' has a circular constraint.", name),
-                        crate::types::diagnostics::diagnostic_codes::CONSTRAINT_OF_TYPE_PARAMETER,
+                        crate::types::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                     );
                     Some(TypeId::UNKNOWN)
                 } else {
@@ -660,7 +660,7 @@ impl<'a> CheckerState<'a> {
                     let constraint_str = self.format_type(constraint_type);
                     self.error_at_node_msg(
                         data.default,
-                        crate::types::diagnostics::diagnostic_codes::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED,
+                        crate::types::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                         &[&type_str, &constraint_str],
                     );
                 }

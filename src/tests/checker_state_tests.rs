@@ -180,7 +180,7 @@ async enum E { Value }
     let parser_1042_count = parser
         .get_diagnostics()
         .iter()
-        .filter(|d| d.code == diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE)
+        .filter(|d| d.code == diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE)
         .count();
     assert_eq!(
         parser_1042_count,
@@ -208,7 +208,7 @@ async enum E { Value }
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let async_modifier_count = codes
         .iter()
-        .filter(|&&code| code == diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE)
+        .filter(|&&code| code == diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE)
         .count();
     assert_eq!(
         async_modifier_count, 2,
@@ -1811,7 +1811,7 @@ f(true);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&diagnostic_codes::NO_OVERLOAD_MATCHES_CALL),
+        codes.contains(&diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
         "Expected error 2769 for overload call mismatch, got: {:?}",
         codes
     );
@@ -2122,7 +2122,7 @@ c.foo("ok");
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let count_2769 = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::NO_OVERLOAD_MATCHES_CALL)
+        .filter(|&&c| c == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL)
         .count();
     assert_eq!(
         count_2769, 1,
@@ -2626,7 +2626,7 @@ new Foo(true);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&diagnostic_codes::NO_OVERLOAD_MATCHES_CALL),
+        codes.contains(&diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
         "Expected error 2769 for constructor overload mismatch, got: {:?}",
         codes
     );
@@ -3153,7 +3153,9 @@ value;
     // the binder registers "dep" in declared_modules when it sees `declare module "dep"`.
     // So we only get TS2664 for the invalid augmentation.
     assert!(
-        codes.contains(&diagnostic_codes::INVALID_MODULE_NAME_IN_AUGMENTATION),
+        codes.contains(
+            &diagnostic_codes::INVALID_MODULE_NAME_IN_AUGMENTATION_MODULE_CANNOT_BE_FOUND
+        ),
         "Expected TS2664 for invalid module augmentation, got: {:?}",
         codes
     );
@@ -3227,7 +3229,8 @@ import { foo } from "./non-existent-module";
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&diagnostic_codes::CANNOT_FIND_MODULE),
+        codes
+            .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
         "Expected TS2307 for relative import that cannot be resolved, got: {:?}",
         codes
     );
@@ -3269,7 +3272,8 @@ import { something } from "nonexistent-npm-package";
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&diagnostic_codes::CANNOT_FIND_MODULE),
+        codes
+            .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
         "Expected TS2307 for bare specifier that cannot be resolved, got: {:?}",
         codes
     );
@@ -3320,7 +3324,8 @@ declare module "my-external-lib" {
     // No TS2307 should be emitted since the module is declared
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&diagnostic_codes::CANNOT_FIND_MODULE),
+        !codes
+            .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
         "Should not emit TS2307 when module is declared via 'declare module', got: {:?}",
         codes
     );
@@ -3409,7 +3414,8 @@ import { Component } from "@angular/core";
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&diagnostic_codes::CANNOT_FIND_MODULE),
+        codes
+            .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
         "Expected TS2307 for scoped package that cannot be resolved, got: {:?}",
         codes
     );
@@ -3455,7 +3461,9 @@ import * as pkg from "nonexistent-pkg";
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_MODULE)
+        .filter(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
         .count();
 
     assert_eq!(
@@ -3494,11 +3502,9 @@ import { foo } from "./specific-missing-module";
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    let ts2307_diag = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .find(|d| d.code == diagnostic_codes::CANNOT_FIND_MODULE);
+    let ts2307_diag = checker.ctx.diagnostics.iter().find(|d| {
+        d.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+    });
 
     assert!(ts2307_diag.is_some(), "Expected TS2307 diagnostic");
     let diag = ts2307_diag.unwrap();
@@ -3541,11 +3547,9 @@ async function loadModule() {
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    let ts2307_diag = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .find(|d| d.code == diagnostic_codes::CANNOT_FIND_MODULE);
+    let ts2307_diag = checker.ctx.diagnostics.iter().find(|d| {
+        d.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+    });
 
     assert!(
         ts2307_diag.is_some(),
@@ -3602,7 +3606,9 @@ async function loadModule(modulePath: string) {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_MODULE)
+        .filter(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
         .count();
 
     assert_eq!(
@@ -4163,12 +4169,12 @@ f.y;
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&diagnostic_codes::PROPERTY_IS_PRIVATE),
+        codes.contains(&diagnostic_codes::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS),
         "Expected error 2341 for private property access, got: {:?}",
         codes
     );
     assert!(
-        codes.contains(&diagnostic_codes::PROPERTY_IS_PROTECTED),
+        codes.contains(&diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES),
         "Expected error 2445 for protected property access, got: {:?}",
         codes
     );
@@ -4268,7 +4274,7 @@ class Derived extends Base {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let protected_errors = codes
         .iter()
-        .filter(|&&code| code == diagnostic_codes::PROPERTY_IS_PROTECTED)
+        .filter(|&&code| code == diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES)
         .count();
     assert_eq!(
         protected_errors, 1,
@@ -4320,7 +4326,7 @@ class Derived extends Base {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let protected_errors = codes
         .iter()
-        .filter(|&&code| code == diagnostic_codes::PROPERTY_IS_PROTECTED)
+        .filter(|&&code| code == diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES)
         .count();
     assert_eq!(
         protected_errors, 1,
@@ -11586,12 +11592,12 @@ declare class AmbientClass {
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let error_count = codes.iter().filter(|&&c| c == 2819).count();
+    let error_count = codes.iter().filter(|&&c| c == 18019).count();
 
     // Should report error for all 5 private identifiers
     assert!(
         error_count >= 4,
-        "Expected at least 4 errors with code 2819 for private identifiers in ambient class, got {} errors: {:?}",
+        "Expected at least 4 errors with code 18019 for private identifiers in ambient class, got {} errors: {:?}",
         error_count,
         codes
     );
@@ -20829,7 +20835,7 @@ function qux() {
         .ctx
         .diagnostics
         .iter()
-        .filter(|diag| diag.code == diagnostic_codes::VARIABLE_USED_BEFORE_ASSIGNED)
+        .filter(|diag| diag.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED)
         .count();
     assert_eq!(
         count, 2,
@@ -20882,7 +20888,7 @@ function foo() {
         .ctx
         .diagnostics
         .iter()
-        .filter(|diag| diag.code == diagnostic_codes::VARIABLE_USED_BEFORE_ASSIGNED)
+        .filter(|diag| diag.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED)
         .count();
     assert_eq!(
         count, 1,
@@ -20933,7 +20939,7 @@ function foo(items: number[]) {
         .ctx
         .diagnostics
         .iter()
-        .filter(|diag| diag.code == diagnostic_codes::VARIABLE_USED_BEFORE_ASSIGNED)
+        .filter(|diag| diag.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED)
         .count();
     assert_eq!(
         count, 0,
@@ -21889,7 +21895,7 @@ fn test_unterminated_template_expression_reports_missing_name() {
 
     let parse_codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
-        parse_codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        parse_codes.contains(&diagnostic_codes::EXPECTED),
         "Expected TS1005 for unterminated template expression, got: {:?}",
         parse_codes
     );
@@ -22843,7 +22849,7 @@ class D3 extends getBase() <string, number> {
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE),
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Unexpected TS2322 for extends instantiation expression, got: {:?}",
         codes
     );
@@ -22891,7 +22897,7 @@ const r: Base[] = [d1, d2];
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE),
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Unexpected TS2322 for contextual array literal, got: {:?}",
         codes
     );
@@ -22937,7 +22943,7 @@ class C {
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE),
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Unexpected TS2322 for indexed access property type, got: {:?}",
         codes
     );
@@ -22982,7 +22988,7 @@ const willErrorSomeDay: typeof A = class {};
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE),
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Unexpected TS2322 for typeof class assignment, got: {:?}",
         codes
     );
@@ -23027,7 +23033,7 @@ if ((o = fn()).done) {
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE),
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Unexpected TS2322 for assignment expression narrowing, got: {:?}",
         codes
     );
@@ -23075,7 +23081,7 @@ const bb: 0 = b;
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE),
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Unexpected TS2322 for destructuring assignment, got: {:?}",
         codes
     );
@@ -23121,7 +23127,7 @@ if (a in c) {
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE),
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Unexpected TS2322 for in-operator narrowing, got: {:?}",
         codes
     );
@@ -23167,7 +23173,7 @@ function f<T>(x: T) {
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE),
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Unexpected TS2322 for instanceof narrowing, got: {:?}",
         codes
     );
@@ -23210,7 +23216,7 @@ if (o?.x === 1) {
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE),
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Unexpected TS2322 for optional-chain discriminant narrowing, got: {:?}",
         codes
     );
@@ -25683,8 +25689,9 @@ var instance = MyClass();
     // Verify the message contains helpful text
     let first_error_msg = &ts2348_errors[0].message_text;
     assert!(
-        first_error_msg.contains("lacks a call signature"),
-        "TS2348 message should mention 'lacks a call signature', got: {}",
+        first_error_msg.contains("is not callable")
+            || first_error_msg.contains("Did you mean to include 'new'"),
+        "TS2348 message should mention 'is not callable' or 'Did you mean to include new', got: {}",
         first_error_msg
     );
 }
@@ -29048,18 +29055,21 @@ fn test_tier_2_type_checker_accuracy_fixes() {
     // Test 3: Verify diagnostic codes are defined
     assert_eq!(
         2683,
-        crate::checker::types::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY
+        crate::checker::types::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION
     );
     assert_eq!(
         2322,
-        crate::checker::types::diagnostics::diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+        crate::checker::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     );
     assert_eq!(
         2571,
         crate::checker::types::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN
     );
     assert_eq!(2507, crate::checker::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE);
-    assert_eq!(2348, crate::checker::types::diagnostics::diagnostic_codes::CANNOT_INVOKE_EXPRESSION_WHOSE_TYPE_LACKS_CALL_SIGNATURE);
+    assert_eq!(
+        2349,
+        crate::checker::types::diagnostics::diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE
+    );
 
     println!("✅ Tier 2 Type Checker Accuracy infrastructure verified:");
     println!("- TS2683 'this' implicit any detection: Infrastructure ✓");
@@ -29314,7 +29324,9 @@ function process(node: ts.Node): void {}
         .count();
     let ts2307_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::CANNOT_FIND_MODULE)
+        .filter(|&&c| {
+            c == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
         .count();
 
     // Should have exactly 1 TS2307 for the unresolved module
@@ -29394,7 +29406,9 @@ function createProgram(
         .count();
     let ts2307_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::CANNOT_FIND_MODULE)
+        .filter(|&&c| {
+            c == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
         .count();
     let ts7006_count = codes.iter().filter(|&&c| c == 7006).count();
 
@@ -29467,7 +29481,7 @@ const result = str - 1;  // TS2362: left-hand side must be number/bigint/enum
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2362_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
 
     assert_eq!(
@@ -29514,7 +29528,7 @@ const result = num - str;  // TS2363: right-hand side must be number/bigint/enum
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2363_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
 
     assert_eq!(
@@ -29561,11 +29575,11 @@ const result = a * b;  // TS2362 and TS2363: both operands invalid
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2362_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
     let ts2363_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
 
     assert_eq!(
@@ -29620,11 +29634,11 @@ const result4 = a % b;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2362_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
     let ts2363_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
 
     assert_eq!(
@@ -29677,11 +29691,11 @@ const result3 = anyVal / anyVal;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2362_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
     let ts2363_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
 
     assert_eq!(
@@ -29736,11 +29750,11 @@ const result4 = a % b;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2362_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
     let ts2363_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
 
     assert_eq!(
@@ -29805,11 +29819,11 @@ const result = a - b;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2362_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
     let ts2363_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
 
     assert_eq!(
@@ -29860,7 +29874,7 @@ const result = flag - 1;  // TS2362: boolean is not a valid arithmetic operand
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2362_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
 
     assert_eq!(
@@ -29906,7 +29920,7 @@ const result = 10 / obj;  // TS2363: object is not a valid arithmetic operand
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2363_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
 
     assert_eq!(
@@ -29956,7 +29970,7 @@ const r4 = str % num;  // TS2362
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2362_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .filter(|&&c| c == diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT)
         .count();
 
     assert_eq!(
@@ -30007,7 +30021,9 @@ for (const x of num) {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30054,7 +30070,9 @@ for (const x of arr) {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30101,7 +30119,9 @@ for (const ch of str) {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30146,7 +30166,9 @@ const arr = [...num];
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30191,7 +30213,9 @@ const arr2 = [...arr1];
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30237,7 +30261,9 @@ foo(...obj);
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30284,7 +30310,9 @@ for (const x of b) {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30331,7 +30359,9 @@ for (const x of tuple) {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30377,7 +30407,9 @@ const [a, b] = num;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30422,7 +30454,9 @@ const [a, b] = arr;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30472,7 +30506,9 @@ const [a, b] = num;  // TS2488: number is not iterable
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30518,7 +30554,9 @@ const [x] = flag;  // TS2488: boolean is not iterable
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30564,7 +30602,9 @@ const [x, y] = obj;  // TS2488: object is not iterable
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30609,7 +30649,9 @@ const [a, b, c] = arr;  // OK: array is iterable
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30654,7 +30696,9 @@ const [a, b, c] = str;  // OK: string is iterable
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30700,7 +30744,9 @@ const [a] = val;  // TS2488: union with non-iterable member is not iterable
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30745,7 +30791,9 @@ const [a, b] = tuple;  // OK: tuple is iterable
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30790,7 +30838,9 @@ const [[a]] = [num];  // TS2488: inner array contains non-iterable number
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2488_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .filter(|&&c| {
+            c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR
+        })
         .count();
 
     assert_eq!(
@@ -30843,7 +30893,7 @@ async function test() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2504_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR)
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR)
         .count();
 
     assert_eq!(
@@ -30892,7 +30942,7 @@ async function test() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2504_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR)
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR)
         .count();
 
     assert_eq!(
@@ -30941,7 +30991,7 @@ async function test() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2504_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR)
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR)
         .count();
 
     assert_eq!(
@@ -30990,7 +31040,7 @@ async function test() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let ts2504_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR)
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR)
         .count();
 
     assert_eq!(
@@ -31046,7 +31096,9 @@ function foo(a?: number, b: string) {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .filter(|d| {
+            d.code == diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER
+        })
         .count();
 
     assert_eq!(
@@ -31096,7 +31148,9 @@ const fn = (a?: number, b: string) => a;
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .filter(|d| {
+            d.code == diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER
+        })
         .count();
 
     assert_eq!(
@@ -31150,7 +31204,9 @@ class Foo {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .filter(|d| {
+            d.code == diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER
+        })
         .count();
 
     assert_eq!(
@@ -31202,7 +31258,9 @@ class Foo {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .filter(|d| {
+            d.code == diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER
+        })
         .count();
 
     assert_eq!(
@@ -31254,7 +31312,9 @@ function foo(a: number, b?: string, c?: boolean) {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .filter(|d| {
+            d.code == diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER
+        })
         .count();
 
     assert_eq!(
@@ -31306,7 +31366,9 @@ function foo(a?: number, b: string = "default") {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .filter(|d| {
+            d.code == diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER
+        })
         .count();
 
     assert_eq!(
@@ -31358,7 +31420,9 @@ function foo(a?: number, ...rest: string[]) {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .filter(|d| {
+            d.code == diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER
+        })
         .count();
 
     assert_eq!(
@@ -31410,7 +31474,9 @@ function foo(a?: number, b: string, c: boolean) {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .filter(|d| {
+            d.code == diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER
+        })
         .count();
 
     assert_eq!(
@@ -31576,7 +31642,7 @@ let z: boolean = null;
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
     // Should have at least 2 errors (x and y - z may or may not depending on strictNullChecks)
@@ -31634,7 +31700,7 @@ function getBoolean(): boolean {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
     assert!(
@@ -31684,7 +31750,7 @@ class Example {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
     assert!(
@@ -31739,7 +31805,7 @@ const p: Person = {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
     // Object literal with mismatched property types should trigger TS2322
@@ -31787,7 +31853,7 @@ const arr2: string[] = ["a", "b", 3, "d"];
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
     // Array literals with wrong element types should trigger TS2322
@@ -31852,7 +31918,7 @@ class Valid {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
     assert!(
@@ -31904,7 +31970,7 @@ function compute(value: number = "hello") {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
     assert!(
@@ -31952,7 +32018,7 @@ const y: number = "hello";
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
     assert!(
@@ -32000,7 +32066,7 @@ let y: "a" | "b" = "c";
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
     assert!(
@@ -32047,7 +32113,7 @@ let tuple: [string, number] = [1, "hello"];
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
     // Tuple with swapped types should trigger TS2322
@@ -32099,7 +32165,7 @@ const numberBox: Box<number> = { value: "hello" };
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
     assert!(

@@ -85,7 +85,6 @@ struct TsServerResponse {
     body: Option<serde_json::Value>,
 }
 
-
 /// TsServer client for communicating with tsserver
 struct TsServerClient {
     child: Child,

@@ -437,7 +437,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 async_mod_idx,
                 "'async' modifier cannot be used here.",
-                diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE,
+                diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
             );
         }
     }
@@ -927,7 +927,7 @@ impl<'a> CheckerState<'a> {
                     use crate::types::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
                         sig.name,
-                        diagnostic_codes::IMPLICIT_ANY_RETURN,
+                        diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
                         &[&name, "any"],
                     );
                 }
@@ -948,7 +948,7 @@ impl<'a> CheckerState<'a> {
                     use crate::types::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
                         sig.name,
-                        diagnostic_codes::IMPLICIT_ANY_MEMBER,
+                        diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
                         &[&member_name, "any"],
                     );
                 }
@@ -966,7 +966,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     accessor.body,
                     "An implementation cannot be declared in ambient contexts.",
-                    diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
+                    diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
                 );
             }
         }
@@ -994,7 +994,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             member_idx,
                             "'async' modifier cannot be used here.",
-                            diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE,
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
                         );
                     }
                 }
@@ -1005,7 +1005,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             member_idx,
                             "'async' modifier cannot be used here.",
-                            diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE,
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
                         );
                     }
                 }
@@ -1019,7 +1019,7 @@ impl<'a> CheckerState<'a> {
                             self.error_at_node(
                                 member_idx,
                                 "Constructor implementation is missing.",
-                                diagnostic_codes::CONSTRUCTOR_IMPLEMENTATION_MISSING,
+                                diagnostic_codes::CONSTRUCTOR_IMPLEMENTATION_IS_MISSING,
                             );
                         }
                     }
@@ -1038,7 +1038,7 @@ impl<'a> CheckerState<'a> {
                                     self.error_at_node(
                                         member_idx,
                                         "Function implementation is missing or not immediately following the declaration.",
-                                        diagnostic_codes::FUNCTION_IMPLEMENTATION_MISSING
+                                        diagnostic_codes::FUNCTION_IMPLEMENTATION_IS_MISSING_OR_NOT_IMMEDIATELY_FOLLOWING_THE_DECLARATION
                                     );
                                 } else if let Some(actual_name) = impl_name
                                     && actual_name != name
@@ -1124,7 +1124,7 @@ impl<'a> CheckerState<'a> {
         };
         self.error_at_node_msg(
             param.name,
-            diagnostic_codes::IMPLICIT_ANY_PARAMETER,
+            diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
             &[&param_name, implicit_type],
         );
     }
@@ -1173,7 +1173,7 @@ impl<'a> CheckerState<'a> {
                                 let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
                                 self.error_at_node_msg(
                                     binding_elem.name,
-                                    diagnostic_codes::IMPLICIT_ANY_PARAMETER,
+                                    diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
                                     &[&binding_name, implicit_type],
                                 );
                             }
@@ -1218,7 +1218,7 @@ impl<'a> CheckerState<'a> {
                             let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
                             self.error_at_node_msg(
                                 binding_elem.name,
-                                diagnostic_codes::IMPLICIT_ANY_PARAMETER,
+                                diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
                                 &[&binding_name, implicit_type],
                             );
                         }
@@ -1326,7 +1326,7 @@ impl<'a> CheckerState<'a> {
                                 self.error_at_node(
                                     type_idx,
                                     "Static members cannot reference class type parameters.",
-                                    diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_TYPE_PARAMETERS,
+                                    diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
                                 );
                             }
                         }
@@ -1616,7 +1616,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     member_idx,
                     "Properties with the 'accessor' modifier are only available when targeting ECMAScript 2015 and higher.",
-                    diagnostic_codes::ACCESSOR_MODIFIER_ONLY_ES2015_PLUS,
+                    diagnostic_codes::PROPERTIES_WITH_THE_ACCESSOR_MODIFIER_ARE_ONLY_AVAILABLE_WHEN_TARGETING_ECMASCRI,
                 );
             }
         }
@@ -1626,7 +1626,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 const_mod,
                 "A class member cannot have the 'const' keyword.",
-                diagnostic_codes::CONST_MODIFIER_CANNOT_APPEAR_ON_A_CLASS_ELEMENT,
+                diagnostic_codes::A_CLASS_MEMBER_CANNOT_HAVE_THE_KEYWORD,
             );
         }
 
@@ -1672,7 +1672,7 @@ impl<'a> CheckerState<'a> {
             use crate::types::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 prop.name,
-                diagnostic_codes::IMPLICIT_ANY_MEMBER,
+                diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
                 &[&member_name, "any"],
             );
         }
@@ -1712,7 +1712,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 const_mod,
                 "A class member cannot have the 'const' keyword.",
-                diagnostic_codes::CONST_MODIFIER_CANNOT_APPEAR_ON_A_CLASS_ELEMENT,
+                diagnostic_codes::A_CLASS_MEMBER_CANNOT_HAVE_THE_KEYWORD,
             );
         }
 
@@ -1725,7 +1725,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 member_idx,
                 "An implementation cannot be declared in ambient contexts.",
-                diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
+                diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
             );
         }
 
@@ -1873,14 +1873,14 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         method.type_annotation,
                         "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
-                        diagnostic_codes::FUNCTION_LACKS_RETURN_TYPE,
+                        diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                     );
                 } else {
                     use crate::types::diagnostics::diagnostic_messages;
                     self.error_at_node(
                         method.type_annotation,
-                        diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT,
-                        diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
+                        diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
+                        diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                     );
                 }
             } else if self.ctx.no_implicit_returns() && has_return && falls_through {
@@ -1893,8 +1893,8 @@ impl<'a> CheckerState<'a> {
                 };
                 self.error_at_node(
                     error_node,
-                    diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN,
-                    diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN,
+                    diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+                    diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
                 );
             }
 
@@ -1942,7 +1942,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 member_idx,
                 "'abstract' modifier can only appear on a class, method, or property declaration.",
-                diagnostic_codes::ABSTRACT_MODIFIER_ONLY_ON_CLASS_METHOD_OR_PROPERTY,
+                diagnostic_codes::ABSTRACT_METHODS_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
             );
         }
 
@@ -1955,7 +1955,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 member_idx,
                 "An implementation cannot be declared in ambient contexts.",
-                diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
+                diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
             );
         }
 
@@ -2048,7 +2048,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 member_idx,
                 "An implementation cannot be declared in ambient contexts.",
-                diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
+                diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
             );
         }
 
@@ -2058,7 +2058,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 member_idx,
                 "An abstract accessor cannot have an implementation.",
-                diagnostic_codes::ABSTRACT_ACCESSOR_CANNOT_HAVE_IMPLEMENTATION,
+                diagnostic_codes::METHOD_CANNOT_HAVE_AN_IMPLEMENTATION_BECAUSE_IT_IS_MARKED_ABSTRACT,
             );
         }
 
@@ -2155,7 +2155,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         accessor.name,
                         "A 'get' accessor must return a value.",
-                        diagnostic_codes::GET_ACCESSOR_MUST_RETURN_VALUE,
+                        diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
                     );
                 } else if has_type_annotation && requires_return && falls_through {
                     // TS2355: For getters with type annotation that requires return, but have
@@ -2163,8 +2163,8 @@ impl<'a> CheckerState<'a> {
                     use crate::types::diagnostics::diagnostic_messages;
                     self.error_at_node(
                         accessor.type_annotation,
-                        diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT,
-                        diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
+                        diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
+                        diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                     );
                 } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                     // TS7030: noImplicitReturns - not all code paths return a value
@@ -2176,8 +2176,8 @@ impl<'a> CheckerState<'a> {
                     };
                     self.error_at_node(
                         error_node,
-                        diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN,
-                        diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN,
+                        diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+                        diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
                     );
                 }
             }
@@ -2241,13 +2241,13 @@ impl<'a> CheckerState<'a> {
         if let Some(name) = name {
             self.error_at_node_msg(
                 name_node.unwrap_or(fallback_node),
-                diagnostic_codes::IMPLICIT_ANY_RETURN,
+                diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
                 &[&name, &return_text],
             );
         } else {
             self.error_at_node_msg(
                 fallback_node,
-                diagnostic_codes::IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION,
+                diagnostic_codes::FUNCTION_EXPRESSION_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN,
                 &[&return_text],
             );
         }
@@ -2375,8 +2375,8 @@ impl<'a> CheckerState<'a> {
             if !self.is_implementation_compatible_with_overload(impl_type, overload_type) {
                 self.error_at_node(
                     decl_idx,
-                    diagnostic_messages::OVERLOAD_NOT_COMPATIBLE_WITH_IMPLEMENTATION,
-                    diagnostic_codes::OVERLOAD_SIGNATURE_NOT_COMPATIBLE,
+                    diagnostic_messages::INDIVIDUAL_DECLARATIONS_IN_MERGED_DECLARATION_MUST_BE_ALL_EXPORTED_OR_ALL_LOCAL,
+                    diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                 );
             }
         }
@@ -2618,7 +2618,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         declare_mod,
                         "A 'declare' modifier cannot be used in an already ambient context.",
-                        diagnostic_codes::DECLARE_MODIFIER_IN_AMBIENT_CONTEXT,
+                        diagnostic_codes::A_DECLARE_MODIFIER_CANNOT_BE_USED_IN_AN_ALREADY_AMBIENT_CONTEXT,
                     );
                 }
             }
@@ -2665,7 +2665,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     stmt_idx,
                     "A 'break' statement can only jump to a label of an enclosing statement.",
-                    diagnostic_codes::BREAK_STATEMENT_CAN_ONLY_JUMP_TO_LABEL_OF_ENCLOSING_STATEMENT,
+                    diagnostic_codes::A_BREAK_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_STATEMENT,
                 );
             }
         } else {
@@ -2683,7 +2683,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         stmt_idx,
                         "A 'break' statement can only be used within an enclosing iteration or switch statement.",
-                        diagnostic_codes::BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
+                        diagnostic_codes::A_BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_AN_ENCLOSING_ITERATION_OR_SWITCH_STATE,
                     );
                 }
             }
@@ -2726,7 +2726,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         stmt_idx,
                         "A 'continue' statement can only target a label of an enclosing iteration statement.",
-                        diagnostic_codes::CONTINUE_CAN_ONLY_TARGET_LABEL_OF_ENCLOSING_ITERATION,
+                        diagnostic_codes::A_CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_ITERATION_STATEMEN,
                     );
                 }
                 // Otherwise, labeled continue to iteration label is valid
@@ -2735,7 +2735,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     stmt_idx,
                     "A 'continue' statement can only target a label of an enclosing iteration statement.",
-                    diagnostic_codes::CONTINUE_CAN_ONLY_TARGET_LABEL_OF_ENCLOSING_ITERATION,
+                    diagnostic_codes::A_CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_ITERATION_STATEMEN,
                 );
             }
         } else {
@@ -2753,7 +2753,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         stmt_idx,
                         "A 'continue' statement can only be used within an enclosing iteration statement.",
-                        diagnostic_codes::CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_ENCLOSING_ITERATION,
+                        diagnostic_codes::A_CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_AN_ENCLOSING_ITERATION_STATEMENT,
                     );
                 }
             }
@@ -2837,7 +2837,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.error_at_node(
                 func.body,
                 "An implementation cannot be declared in ambient contexts.",
-                diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
+                diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
             );
         }
 
@@ -2989,14 +2989,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     if is_es5_or_lower {
                         self.error_at_node_msg(
                             func.type_annotation,
-                            diagnostic_codes::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5,
+                            diagnostic_codes::TYPE_IS_NOT_A_VALID_ASYNC_FUNCTION_RETURN_TYPE_IN_ES5_BECAUSE_IT_DOES_NOT_REFER,
                             &[&type_name],
                         );
                     } else {
                         // TS1064: For ES6+ targets, the return type must be Promise<T>
                         self.error_at_node_msg(
                             func.type_annotation,
-                            diagnostic_codes::ASYNC_RETURN_TYPE_MUST_BE_PROMISE,
+                            diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
                             &[&type_name],
                         );
                     }
@@ -3062,14 +3062,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     self.error_at_node(
                         func.type_annotation,
                         "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
-                        diagnostic_codes::FUNCTION_LACKS_RETURN_TYPE,
+                        diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                     );
                 } else {
                     use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         func.type_annotation,
-                        diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT,
-                        diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
+                        diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
+                        diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                     );
                 }
             } else if self.ctx.no_implicit_returns() && has_return && falls_through {
@@ -3082,8 +3082,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 };
                 self.error_at_node(
                     error_node,
-                    diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN,
-                    diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN,
+                    diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+                    diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
                 );
             }
 
@@ -3109,7 +3109,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 };
                 self.error_at_node_msg(
                     name_node.unwrap_or(func_idx),
-                    diagnostic_codes::IMPLICIT_ANY_RETURN,
+                    diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
                     &[&func_name, "any"],
                 );
             }
@@ -3182,7 +3182,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     self.error_at_node(
                         type_alias.name,
                         "Type alias name cannot be 'undefined'.",
-                        diagnostic_codes::TYPE_ALIAS_NAME_CANNOT_BE_UNDEFINED,
+                        diagnostic_codes::TYPE_ALIAS_NAME_CANNOT_BE,
                     );
                 }
                 let (_params, updates) = self.push_type_parameters(&type_alias.type_parameters);
@@ -3396,7 +3396,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.error_at_node(
                 stmt_idx,
                 &msg,
-                crate::types::diagnostics::diagnostic_codes::USING_DECLARATION_ONLY_IN_BLOCK,
+                crate::types::diagnostics::diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
             );
         }
     }

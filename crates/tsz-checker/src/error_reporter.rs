@@ -139,7 +139,7 @@ impl<'a> CheckerState<'a> {
             let source_type = self.format_type(source);
             let target_type = self.format_type(target);
             let message = format_message(
-                diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&source_type, &target_type],
             );
 
@@ -148,7 +148,7 @@ impl<'a> CheckerState<'a> {
                 loc.0,
                 loc.1 - loc.0,
                 message,
-                diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             )
             .with_related(self.ctx.file_name.clone(), loc.0, loc.1 - loc.0, detail);
 
@@ -248,7 +248,7 @@ impl<'a> CheckerState<'a> {
                 let src_str = self.format_type(*source_type);
                 let tgt_str = self.format_type(*target_type);
                 let message = format_message(
-                    diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
+                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     &[&prop_name, &src_str, &tgt_str],
                 );
                 Diagnostic::error(
@@ -256,7 +256,7 @@ impl<'a> CheckerState<'a> {
                     start,
                     length,
                     message,
-                    diagnostic_codes::PROPERTY_MISSING_IN_TYPE,
+                    diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 )
             }
 
@@ -283,7 +283,7 @@ impl<'a> CheckerState<'a> {
                     prop_list.join(", ")
                 };
                 let message = format_message(
-                    diagnostic_messages::TYPE_MISSING_PROPERTIES,
+                    diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
                     &[&src_str, &tgt_str, &props_str],
                 );
                 Diagnostic::error(
@@ -291,7 +291,7 @@ impl<'a> CheckerState<'a> {
                     start,
                     length,
                     message,
-                    diagnostic_codes::TYPE_MISSING_PROPERTIES,
+                    diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
                 )
             }
 
@@ -307,7 +307,7 @@ impl<'a> CheckerState<'a> {
                     let source_str = self.format_type(source);
                     let target_str = self.format_type(target);
                     let message = format_message(
-                        diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     );
                     let mut diag = Diagnostic::error(
@@ -315,13 +315,13 @@ impl<'a> CheckerState<'a> {
                         start,
                         length,
                         message,
-                        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
 
                     // Add property incompatibility as related info
                     let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                     let prop_message = format_message(
-                        diagnostic_messages::TYPES_OF_PROPERTY_INCOMPATIBLE,
+                        diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
                         &[&prop_name],
                     );
                     diag.related_information.push(DiagnosticRelatedInformation {
@@ -330,7 +330,7 @@ impl<'a> CheckerState<'a> {
                         length,
                         message_text: prop_message,
                         category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::TYPES_OF_PROPERTY_INCOMPATIBLE,
+                        code: diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
                     });
 
                     if let Some(nested) = nested_reason {
@@ -355,7 +355,7 @@ impl<'a> CheckerState<'a> {
 
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 let message = format_message(
-                    diagnostic_messages::TYPES_OF_PROPERTY_INCOMPATIBLE,
+                    diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
                     &[&prop_name],
                 );
                 let mut diag = Diagnostic::error(
@@ -394,12 +394,12 @@ impl<'a> CheckerState<'a> {
                     let source_str = self.format_type(source);
                     let target_str = self.format_type(target);
                     let message = format_message(
-                        diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     );
                     let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                     let detail = format_message(
-                        diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
+                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[&prop_name, &source_str, &target_str],
                     );
                     Diagnostic::error(
@@ -407,7 +407,7 @@ impl<'a> CheckerState<'a> {
                         start,
                         length,
                         message,
-                        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     )
                     .with_related(file_name, start, length, detail)
                 } else {
@@ -415,7 +415,7 @@ impl<'a> CheckerState<'a> {
                     let source_str = self.format_type(source);
                     let target_str = self.format_type(target);
                     let message = format_message(
-                        diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
+                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[&prop_name, &source_str, &target_str],
                     );
                     Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
@@ -424,8 +424,10 @@ impl<'a> CheckerState<'a> {
 
             SubtypeFailureReason::ReadonlyPropertyMismatch { property_name } => {
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                let message =
-                    format_message(diagnostic_messages::CANNOT_ASSIGN_READONLY, &[&prop_name]);
+                let message = format_message(
+                    diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY,
+                    &[&prop_name],
+                );
                 Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
 
@@ -436,7 +438,7 @@ impl<'a> CheckerState<'a> {
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 let target_str = self.format_type(*target_type);
                 let message = format_message(
-                    diagnostic_messages::EXCESS_PROPERTY,
+                    diagnostic_messages::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
                     &[&prop_name, &target_str],
                 );
                 Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
@@ -488,7 +490,7 @@ impl<'a> CheckerState<'a> {
                 target_count,
             } => {
                 let message = format_message(
-                    diagnostic_messages::EXPECTED_ARGUMENTS,
+                    diagnostic_messages::EXPECTED_ARGUMENTS_BUT_GOT,
                     &[&target_count.to_string(), &source_count.to_string()],
                 );
                 Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
@@ -553,7 +555,7 @@ impl<'a> CheckerState<'a> {
                 let source_str = self.format_type(*source_type);
                 let target_str = self.format_type(target);
                 let message = format_message(
-                    diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
                 Diagnostic::error(
@@ -561,7 +563,7 @@ impl<'a> CheckerState<'a> {
                     start,
                     length,
                     message,
-                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 )
             }
 
@@ -572,7 +574,7 @@ impl<'a> CheckerState<'a> {
                 let source_str = self.format_type(source);
                 let target_str = self.format_type(target);
                 let message = format_message(
-                    diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
                 Diagnostic::error(
@@ -580,7 +582,7 @@ impl<'a> CheckerState<'a> {
                     start,
                     length,
                     message,
-                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 )
             }
 
@@ -593,7 +595,7 @@ impl<'a> CheckerState<'a> {
                 let source_str = self.format_type(source);
                 let target_str = self.format_type(target);
                 let message = format_message(
-                    diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
                 Diagnostic::error(
@@ -601,7 +603,7 @@ impl<'a> CheckerState<'a> {
                     start,
                     length,
                     message,
-                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 )
             }
         }
@@ -641,7 +643,7 @@ impl<'a> CheckerState<'a> {
         let source_type = self.format_type(source);
         let target_type = self.format_type(target);
         let message = format_message(
-            diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_type, &target_type],
         );
         let detail = format!(
@@ -655,7 +657,7 @@ impl<'a> CheckerState<'a> {
             loc.start,
             loc.length(),
             message,
-            diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         )
         .with_related(self.ctx.file_name.clone(), loc.start, loc.length(), detail);
         self.ctx.diagnostics.push(diag);
@@ -772,7 +774,7 @@ impl<'a> CheckerState<'a> {
     pub fn error_private_method_not_writable(&mut self, prop_name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
             let message = format_message(
-                diagnostic_messages::CANNOT_ASSIGN_PRIVATE_METHOD,
+                diagnostic_messages::CANNOT_ASSIGN_TO_PRIVATE_METHOD_PRIVATE_METHODS_ARE_NOT_WRITABLE,
                 &[prop_name],
             );
             let diag = Diagnostic::error(
@@ -780,7 +782,7 @@ impl<'a> CheckerState<'a> {
                 loc.start,
                 loc.length(),
                 message,
-                diagnostic_codes::CANNOT_ASSIGN_TO_PRIVATE_METHOD,
+                diagnostic_codes::CANNOT_ASSIGN_TO_PRIVATE_METHOD_PRIVATE_METHODS_ARE_NOT_WRITABLE,
             );
             self.ctx.diagnostics.push(diag);
         }
@@ -817,7 +819,7 @@ impl<'a> CheckerState<'a> {
             index_str, object_str
         );
 
-        self.error_at_node(idx, &message, diagnostic_codes::NO_INDEX_SIGNATURE);
+        self.error_at_node(idx, &message, diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE);
     }
 
     // =========================================================================
@@ -947,9 +949,12 @@ impl<'a> CheckerState<'a> {
     /// It provides a helpful suggestion to change the lib compiler option.
     pub fn error_cannot_find_name_change_lib(&mut self, name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(diagnostic_messages::CANNOT_FIND_NAME_CHANGE_LIB, &[name]);
+            let message = format_message(
+                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB,
+                &[name],
+            );
             self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_CHANGE_LIB,
+                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),
@@ -967,11 +972,11 @@ impl<'a> CheckerState<'a> {
     pub fn error_cannot_find_name_change_target_lib(&mut self, name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
             let message = format_message(
-                diagnostic_messages::CANNOT_FIND_NAME_CHANGE_TARGET_LIB,
+                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2,
                 &[name],
             );
             self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_CHANGE_TARGET_LIB,
+                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),
@@ -1099,7 +1104,7 @@ impl<'a> CheckerState<'a> {
                 name, class_name, name
             );
             self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_STATIC,
+                code: diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_STATIC_MEMBER,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),
@@ -1293,9 +1298,9 @@ impl<'a> CheckerState<'a> {
     pub fn error_spread_must_be_tuple_or_rest_at(&mut self, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::SPREAD_MUST_BE_TUPLE_OR_REST,
+                code: diagnostic_codes::A_SPREAD_ARGUMENT_MUST_EITHER_HAVE_A_TUPLE_TYPE_OR_BE_PASSED_TO_A_REST_PARAMETER,
                 category: DiagnosticCategory::Error,
-                message_text: diagnostic_messages::SPREAD_MUST_BE_TUPLE_OR_REST.to_string(),
+                message_text: diagnostic_messages::A_SPREAD_ARGUMENT_MUST_EITHER_HAVE_A_TUPLE_TYPE_OR_BE_PASSED_TO_A_REST_PARAMETER.to_string(),
                 file: self.ctx.file_name.clone(),
                 start: loc.start,
                 length: loc.length(),
@@ -1318,7 +1323,7 @@ impl<'a> CheckerState<'a> {
                 expected_min, got
             );
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS,
+                code: diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),
@@ -1365,9 +1370,9 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.diagnostics.push(Diagnostic {
-            code: diagnostic_codes::NO_OVERLOAD_MATCHES_CALL,
+            code: diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
             category: DiagnosticCategory::Error,
-            message_text: diagnostic_messages::NO_OVERLOAD_MATCHES.to_string(),
+            message_text: diagnostic_messages::NO_OVERLOAD_MATCHES_THIS_CALL.to_string(),
             file: self.ctx.file_name.clone(),
             start: loc.start,
             length: loc.length(),
@@ -1407,13 +1412,13 @@ impl<'a> CheckerState<'a> {
                     loc.start,
                     loc.length(),
                     "This expression is not callable because it is a 'get' accessor. Did you mean to access it without '()'?".to_string(),
-                    diagnostic_codes::GET_ACCESSOR_NOT_CALLABLE,
+                    diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE,
                 ),
             );
         }
     }
 
-    /// Report TS2348: "Cannot invoke an expression whose type lacks a call signature"
+    /// Report TS2348: "Value of type '{0}' is not callable. Did you mean to include 'new'?"
     /// This is specifically for class constructors called without 'new'.
     pub fn error_class_constructor_without_new_at(&mut self, type_id: TypeId, idx: NodeIndex) {
         // Suppress cascade errors from unresolved types
@@ -1428,11 +1433,12 @@ impl<'a> CheckerState<'a> {
         let mut formatter = self.ctx.create_type_formatter();
         let type_str = formatter.format(type_id);
 
-        let message = diagnostic_messages::CANNOT_INVOKE_EXPRESSION_LACKING_CALL_SIGNATURE
-            .replace("{0}", &type_str);
+        let message =
+            diagnostic_messages::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW
+                .replace("{0}", &type_str);
 
         self.ctx.diagnostics.push(Diagnostic {
-            code: diagnostic_codes::CANNOT_INVOKE_EXPRESSION_WHOSE_TYPE_LACKS_CALL_SIGNATURE,
+            code: diagnostic_codes::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW,
             category: DiagnosticCategory::Error,
             message_text: message,
             file: self.ctx.file_name.clone(),
@@ -1468,10 +1474,13 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let message = format_message(diagnostic_messages::CIRCULAR_BASE_REFERENCE, &[&name]);
+        let message = format_message(
+            diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
+            &[&name],
+        );
 
         self.ctx.diagnostics.push(Diagnostic {
-            code: diagnostic_codes::CIRCULAR_BASE_REFERENCE,
+            code: diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
             category: DiagnosticCategory::Error,
             message_text: message,
             file: self.ctx.file_name.clone(),
@@ -1581,11 +1590,11 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(loc) = self.get_source_location(left_idx) {
                 let message = format_message(
-                    diagnostic_messages::VALUE_CANNOT_BE_USED_HERE,
+                    diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
                     &[value_name],
                 );
                 self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                    code: diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
                     category: DiagnosticCategory::Error,
                     message_text: message,
                     file: self.ctx.file_name.clone(),
@@ -1605,11 +1614,11 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(loc) = self.get_source_location(right_idx) {
                 let message = format_message(
-                    diagnostic_messages::VALUE_CANNOT_BE_USED_HERE,
+                    diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
                     &[value_name],
                 );
                 self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                    code: diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
                     category: DiagnosticCategory::Error,
                     message_text: message,
                     file: self.ctx.file_name.clone(),
@@ -1736,7 +1745,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(loc) = self.get_source_location(left_idx) {
                         let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                         self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                             category: DiagnosticCategory::Error,
                             message_text: message,
                             file: self.ctx.file_name.clone(),
@@ -1751,7 +1760,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(loc) = self.get_source_location(right_idx) {
                         let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                         self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                             category: DiagnosticCategory::Error,
                             message_text: message,
                             file: self.ctx.file_name.clone(),
@@ -1771,7 +1780,7 @@ impl<'a> CheckerState<'a> {
                             op, left_str, right_str
                         );
                         self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
+                            code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
                             category: DiagnosticCategory::Error,
                             message_text: message,
                             file: self.ctx.file_name.clone(),
@@ -1791,7 +1800,7 @@ impl<'a> CheckerState<'a> {
                     op, left_str, right_str
                 );
                 self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
+                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
                     category: DiagnosticCategory::Error,
                     message_text: message,
                     file: self.ctx.file_name.clone(),
@@ -1811,7 +1820,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(loc) = self.get_source_location(left_idx) {
                     let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                     self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                        code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                         category: DiagnosticCategory::Error,
                         message_text: message,
                         file: self.ctx.file_name.clone(),
@@ -1826,7 +1835,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(loc) = self.get_source_location(right_idx) {
                     let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                     self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                        code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                         category: DiagnosticCategory::Error,
                         message_text: message,
                         file: self.ctx.file_name.clone(),
@@ -1846,7 +1855,7 @@ impl<'a> CheckerState<'a> {
                         op, left_str, right_str
                     );
                     self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
+                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
                         category: DiagnosticCategory::Error,
                         message_text: message,
                         file: self.ctx.file_name.clone(),
@@ -1881,7 +1890,7 @@ impl<'a> CheckerState<'a> {
                         op, suggestion
                     );
                     self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::OPERATOR_NOT_ALLOWED_FOR_BOOLEAN,
+                        code: diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
                         category: DiagnosticCategory::Error,
                         message_text: message,
                         file: self.ctx.file_name.clone(),
@@ -1897,7 +1906,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(loc) = self.get_source_location(left_idx) {
                         let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                         self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                             category: DiagnosticCategory::Error,
                             message_text: message,
                             file: self.ctx.file_name.clone(),
@@ -1912,7 +1921,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(loc) = self.get_source_location(right_idx) {
                         let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                         self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                             category: DiagnosticCategory::Error,
                             message_text: message,
                             file: self.ctx.file_name.clone(),
@@ -1930,7 +1939,7 @@ impl<'a> CheckerState<'a> {
                             op, left_str, right_str
                         );
                         self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
+                            code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
                             category: DiagnosticCategory::Error,
                             message_text: message,
                             file: self.ctx.file_name.clone(),
@@ -1974,7 +1983,7 @@ impl<'a> CheckerState<'a> {
                 name, prev_type_str, current_type_str
             );
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_SAME_TYPE,
+                code: diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),
@@ -1988,10 +1997,12 @@ impl<'a> CheckerState<'a> {
     /// Report TS2454: Variable is used before being assigned.
     pub fn error_variable_used_before_assigned_at(&mut self, name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
-            let message =
-                format_message(diagnostic_messages::VARIABLE_USED_BEFORE_ASSIGNED, &[name]);
+            let message = format_message(
+                diagnostic_messages::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED,
+                &[name],
+            );
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::VARIABLE_USED_BEFORE_ASSIGNED,
+                code: diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,
@@ -2019,7 +2030,7 @@ impl<'a> CheckerState<'a> {
                 prop_name, class_name
             );
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::ABSTRACT_PROPERTY_IN_CONSTRUCTOR,
+                code: diagnostic_codes::ABSTRACT_PROPERTY_IN_CLASS_CANNOT_BE_ACCESSED_IN_THE_CONSTRUCTOR,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),
@@ -2076,9 +2087,9 @@ impl<'a> CheckerState<'a> {
             let (code, message) = if is_es2015_type {
                 // TS2585: Type only refers to a type, suggest changing lib
                 (
-                    diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
+                    diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DID_YOU_MEAN_TO_USE_IN,
                     format_message(
-                        diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
+                        diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DID_YOU_MEAN_TO_USE_IN,
                         &[name],
                     ),
                 )
@@ -2115,11 +2126,11 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(loc) = self.get_source_location(idx) {
             let message = format_message(
-                diagnostic_messages::ONLY_REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE,
+                diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
                 &[name],
             );
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::ONLY_REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE,
+                code: diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,
@@ -2134,9 +2145,10 @@ impl<'a> CheckerState<'a> {
     /// Emitted when a value (like a variable or literal) is used where it's not permitted.
     pub fn error_value_cannot_be_used_here_at(&mut self, name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &[name]);
+            let message =
+                format_message(diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE, &[name]);
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                code: diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,
@@ -2160,12 +2172,12 @@ impl<'a> CheckerState<'a> {
     ) {
         if let Some(loc) = self.get_source_location(idx) {
             let message = format_message(
-                diagnostic_messages::GENERIC_TYPE_REQUIRES_ARGS,
+                diagnostic_messages::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
                 &[name, &required_count.to_string()],
             );
             // Use push_diagnostic for deduplication - same type may be resolved multiple times
             self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENTS,
+                code: diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,
@@ -2198,11 +2210,11 @@ impl<'a> CheckerState<'a> {
             let type_str = self.format_type(type_arg);
             let constraint_str = self.format_type(constraint);
             let message = format_message(
-                diagnostic_messages::TYPE_NOT_SATISFY_CONSTRAINT,
+                diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                 &[&type_str, &constraint_str],
             );
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED,
+                code: diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,
@@ -2241,11 +2253,11 @@ impl<'a> CheckerState<'a> {
             let right_str = self.format_type(right_type);
             let result = if is_equality { "false" } else { "true" };
             let message = format_message(
-                diagnostic_messages::TYPES_HAVE_NO_OVERLAP,
+                diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
                 &[result, &left_str, &right_str],
             );
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::TYPES_HAVE_NO_OVERLAP,
+                code: diagnostic_codes::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,
@@ -2411,7 +2423,7 @@ impl<'a> CheckerState<'a> {
             let type_str = self.format_type(type_arg);
             let constraint_str = self.format_type(constraint);
             let message = format_message(
-                diagnostic_messages::TYPE_NOT_SATISFY_CONSTRAINT,
+                diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                 &[&type_str, &constraint_str],
             );
             self.ctx.diagnostics.push(Diagnostic {
@@ -2420,7 +2432,7 @@ impl<'a> CheckerState<'a> {
                 length,
                 message_text: message,
                 category: DiagnosticCategory::Error,
-                code: diagnostic_codes::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED,
+                code: diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                 related_information: Vec::new(),
             });
         }
@@ -2602,7 +2614,7 @@ impl<'a> CheckerState<'a> {
         if let Some((start, end)) = self.get_node_span(idx) {
             let length = end.saturating_sub(start);
             let message = format_message(
-                diagnostic_messages::PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT,
+                diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
                 &[prop_name],
             );
             self.ctx.diagnostics.push(Diagnostic {
@@ -2611,7 +2623,7 @@ impl<'a> CheckerState<'a> {
                 length,
                 message_text: message,
                 category: DiagnosticCategory::Error,
-                code: diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_NOT_DEFINITELY_ASSIGNED,
+                code: diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
                 related_information: Vec::new(),
             });
         }

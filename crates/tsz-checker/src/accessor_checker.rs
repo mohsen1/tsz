@@ -79,12 +79,12 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     getter_idx,
                     "Accessors must both be abstract or non-abstract.",
-                    diagnostic_codes::ACCESSORS_MUST_BOTH_BE_ABSTRACT_OR_NOT,
+                    diagnostic_codes::ACCESSORS_MUST_BOTH_BE_ABSTRACT_OR_NON_ABSTRACT,
                 );
                 self.error_at_node(
                     setter_idx,
                     "Accessors must both be abstract or non-abstract.",
-                    diagnostic_codes::ACCESSORS_MUST_BOTH_BE_ABSTRACT_OR_NOT,
+                    diagnostic_codes::ACCESSORS_MUST_BOTH_BE_ABSTRACT_OR_NON_ABSTRACT,
                 );
             }
         }
@@ -118,7 +118,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     param.name,
                     "A 'set' accessor parameter cannot have an initializer.",
-                    diagnostic_codes::SETTER_PARAMETER_CANNOT_HAVE_INITIALIZER,
+                    diagnostic_codes::A_SET_ACCESSOR_PARAMETER_CANNOT_HAVE_AN_INITIALIZER,
                 );
             }
 
@@ -127,7 +127,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     param_idx,
                     "A 'set' accessor cannot have rest parameter.",
-                    diagnostic_codes::SETTER_CANNOT_HAVE_REST_PARAMETER,
+                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_REST_PARAMETER,
                 );
             }
 

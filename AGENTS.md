@@ -8,6 +8,11 @@ Important documents:
 
 ---
 
+## Project Status
+
+- This is an unreleased work in progress
+- Never worry about backward compatiblity
+
 ## Debugging
 - **NEVER use `eprintln!`** — use the `tsz-tracing` skill instead.
 

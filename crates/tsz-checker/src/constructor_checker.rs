@@ -879,14 +879,14 @@ impl<'a> CheckerState<'a> {
                 "Constructor of class '{}' is private and only accessible within the class declaration.",
                 class_name
             );
-            self.error_at_node(idx, &message, diagnostic_codes::PRIVATE_CONSTRUCTOR);
+            self.error_at_node(idx, &message, diagnostic_codes::CONSTRUCTOR_OF_CLASS_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_THE_CLASS_DECLARATION);
         } else {
             // TS2674: Constructor of class 'X' is protected
             let message = format!(
                 "Constructor of class '{}' is protected and only accessible within the class declaration.",
                 class_name
             );
-            self.error_at_node(idx, &message, diagnostic_codes::PROTECTED_CONSTRUCTOR);
+            self.error_at_node(idx, &message, diagnostic_codes::CONSTRUCTOR_OF_CLASS_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_THE_CLASS_DECLARATI);
         }
     }
 

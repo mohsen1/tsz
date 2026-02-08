@@ -214,7 +214,7 @@ impl<'a> CheckerState<'a> {
             let length = end.saturating_sub(start);
             let (code, message) = if is_private {
                 (
-                    diagnostic_codes::PROPERTY_IS_PRIVATE,
+                    diagnostic_codes::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS,
                     format!(
                         "Property '{}' is private and only accessible within class '{}'.",
                         property_name, declaring_class_name
@@ -222,7 +222,7 @@ impl<'a> CheckerState<'a> {
                 )
             } else {
                 (
-                    diagnostic_codes::PROPERTY_IS_PROTECTED,
+                    diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES,
                     format!(
                         "Property '{}' is protected and only accessible within class '{}' and its subclasses.",
                         property_name, declaring_class_name

@@ -1124,10 +1124,10 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             expr_idx,
                             &format_message(
-                                crate::types::diagnostics::diagnostic_messages::PROPERTY_USED_BEFORE_BEING_ASSIGNED,
+                                crate::types::diagnostics::diagnostic_messages::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
                                 &[&property_name],
                             ),
-                            crate::types::diagnostics::diagnostic_codes::PROPERTY_USED_BEFORE_BEING_ASSIGNED,
+                            crate::types::diagnostics::diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
                         );
                     }
                 }

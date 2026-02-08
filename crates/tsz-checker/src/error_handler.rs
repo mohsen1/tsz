@@ -517,9 +517,10 @@ impl<'a> ErrorHandler for CheckerState<'a> {
                     file: file.clone(),
                     start,
                     length,
-                    message_text: diagnostic_messages::GET_ACCESSOR_MUST_RETURN_VALUE.to_string(),
+                    message_text: diagnostic_messages::A_GET_ACCESSOR_MUST_RETURN_A_VALUE
+                        .to_string(),
                     category: crate::types::diagnostics::DiagnosticCategory::Error,
-                    code: diagnostic_codes::GET_ACCESSOR_MUST_RETURN_VALUE,
+                    code: diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
                     related_information: Vec::new(),
                 });
             }

@@ -334,7 +334,7 @@ impl ParserState {
             if self.in_static_block_context() {
                 self.parse_error_at_current_token(
                     "Identifier expected. 'await' is a reserved word that cannot be used here.",
-                    diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
                 );
                 return true;
             }
@@ -343,7 +343,7 @@ impl ParserState {
             if self.in_async_context() {
                 self.parse_error_at_current_token(
                     "Identifier expected. 'await' is a reserved word that cannot be used here.",
-                    diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
                 );
                 return true;
             }
@@ -358,7 +358,7 @@ impl ParserState {
         if is_yield && self.in_generator_context() {
             self.parse_error_at_current_token(
                 "Identifier expected. 'yield' is a reserved word that cannot be used here.",
-                diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL, // Same code as await (TS1359)
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE, // Same code as await (TS1359)
             );
             return true;
         }
@@ -446,7 +446,7 @@ impl ParserState {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             &format!("'{}' expected", Self::token_to_string(kind)),
-                            diagnostic_codes::TOKEN_EXPECTED,
+                            diagnostic_codes::EXPECTED,
                         );
                     } else {
                         self.error_token_expected(Self::token_to_string(kind));
@@ -609,7 +609,7 @@ impl ParserState {
                     "Identifier expected. '{}' is a reserved word that cannot be used here.",
                     word
                 ),
-                diagnostic_codes::RESERVED_WORD_IDENTIFIER,
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
             );
             // Consume the reserved word token to prevent cascading errors
             self.next_token();
@@ -625,7 +625,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 &format!("'{}' expected", token),
-                diagnostic_codes::TOKEN_EXPECTED,
+                diagnostic_codes::EXPECTED,
             );
         }
     }
@@ -697,8 +697,8 @@ impl ParserState {
                     self.parse_error_at(
                         node.pos,
                         node.end.saturating_sub(node.pos).max(1),
-                        diagnostic_messages::USING_DECLARATION_ONLY_IN_BLOCK,
-                        diagnostic_codes::USING_DECLARATION_ONLY_IN_BLOCK,
+                        diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
+                        diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
                     );
                 }
             }
@@ -785,7 +785,7 @@ impl ParserState {
                     pos,
                     len,
                     "Variable declaration not allowed at this location.",
-                    diagnostic_codes::VAR_DECLARATION_NOT_ALLOWED,
+                    diagnostic_codes::VARIABLE_DECLARATION_NOT_ALLOWED_AT_THIS_LOCATION,
                 );
                 return;
             }
@@ -802,13 +802,13 @@ impl ParserState {
                     let name = self.scanner.get_token_value_ref().to_string();
                     self.parse_error_at_current_token(
                         &format!("Interface name cannot be '{name}'."),
-                        diagnostic_codes::TOKEN_EXPECTED,
+                        diagnostic_codes::EXPECTED,
                     );
                 }
                 return;
             }
             "type" => {
-                self.parse_error_at_current_token("'=' expected", diagnostic_codes::TOKEN_EXPECTED);
+                self.parse_error_at_current_token("'=' expected", diagnostic_codes::EXPECTED);
                 return;
             }
             _ => {}

@@ -349,7 +349,7 @@ impl<'a> CheckerState<'a> {
                             "Property '{}' in type '{}' is not assignable to the same property in base type '{}'.",
                             member_name, derived_class_name, base_class_name
                         ),
-                        diagnostic_codes::PROPERTY_NOT_ASSIGNABLE_TO_SAME_IN_BASE,
+                        diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
 
                     // Add secondary error with type details
@@ -361,7 +361,7 @@ impl<'a> CheckerState<'a> {
                                 "Type '{}' is not assignable to type '{}'.",
                                 member_type_str, base_type_str
                             ),
-                            diagnostic_codes::PROPERTY_NOT_ASSIGNABLE_TO_SAME_IN_BASE,
+                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                         );
                     }
                 }
@@ -762,7 +762,7 @@ impl<'a> CheckerState<'a> {
                         "Non-abstract class '{}' does not implement inherited abstract member '{}' from class '{}'.",
                         derived_class_name, missing_members[0], base_class_name
                     ),
-                    diagnostic_codes::ABSTRACT_MEMBER_IN_NON_ABSTRACT_CLASS, // TS2515
+                    diagnostic_codes::NON_ABSTRACT_CLASS_DOES_NOT_IMPLEMENT_INHERITED_ABSTRACT_MEMBER_FROM_CLASS, // TS2515
                 );
             } else {
                 // TS2654: Multiple missing members
@@ -778,7 +778,7 @@ impl<'a> CheckerState<'a> {
                         "Non-abstract class '{}' is missing implementations for the following members of '{}': {}.",
                         derived_class_name, base_class_name, missing_list
                     ),
-                    diagnostic_codes::NON_ABSTRACT_CLASS_MISSING_IMPLEMENTATIONS,
+                    diagnostic_codes::NON_ABSTRACT_CLASS_IS_MISSING_IMPLEMENTATIONS_FOR_THE_FOLLOWING_MEMBERS_OF,
                 );
             }
         }

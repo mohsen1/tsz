@@ -77,7 +77,8 @@ impl Runner {
             return Ok(TestStats::default());
         }
 
-        info!("Found {} test files", test_files.len());
+        let total_tests = test_files.len();
+        info!("Found {} test files", total_tests);
 
         // Set up concurrency control
         let concurrency_limit = self.args.workers;
@@ -92,6 +93,9 @@ impl Runner {
         let error_code_filter = self.args.error_code;
         let timeout_secs = self.args.timeout;
 
+        // Progress counter: log every N tests to stderr so users see activity
+        let progress_interval = std::cmp::max(total_tests / 20, 100);
+
         stream::iter(test_files)
             .for_each_concurrent(Some(concurrency_limit), |path| {
                 let permit = semaphore.clone();
@@ -104,6 +108,7 @@ impl Runner {
                 let print_test = self.args.print_test;
                 let print_test_files = self.args.print_test_files;
                 let base = base_path.clone();
+                let start_time = start;
 
                 async move {
                     let _permit = permit.acquire().await.unwrap();
@@ -121,7 +126,18 @@ impl Runner {
                     {
                         Ok(result) => {
                             // Update stats
-                            stats.total.fetch_add(1, Ordering::SeqCst);
+                            let completed = stats.total.fetch_add(1, Ordering::SeqCst) + 1;
+
+                            // Log progress to stderr periodically
+                            if completed % progress_interval == 0 || completed == total_tests {
+                                let elapsed = start_time.elapsed().as_secs_f64();
+                                let passed = stats.passed.load(Ordering::SeqCst);
+                                let failed = stats.failed.load(Ordering::SeqCst);
+                                eprintln!(
+                                    "  [{}/{}] {:.0}s elapsed — {} passed, {} failed",
+                                    completed, total_tests, elapsed, passed, failed,
+                                );
+                            }
 
                             match result {
                                 TestResult::Pass => {

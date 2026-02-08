@@ -245,7 +245,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 continue;
             }
 
-            let message = diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER.replace("{0}", &name);
+            let message = diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR.replace("{0}", &name);
 
             // Get the span for the property name
             if let Some((pos, end)) = self.ctx.get_node_span(name_node) {
@@ -253,7 +253,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     pos,
                     end - pos,
                     message,
-                    diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER,
+                    diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
                 );
             }
         }
@@ -810,7 +810,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         name_node.end - name_node.pos,
                         "Ambient modules cannot be nested in other modules or namespaces."
                             .to_string(),
-                        diagnostic_codes::AMBIENT_MODULES_CANNOT_BE_NESTED,
+                        diagnostic_codes::AMBIENT_MODULES_CANNOT_BE_NESTED_IN_OTHER_MODULES_OR_NAMESPACES,
                     );
                     return; // Don't emit other errors for nested ambient modules
                 }
@@ -851,14 +851,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     && !self.is_relative_module_name(&lit.text)
                 {
                     let message = format_message(
-                        diagnostic_messages::INVALID_MODULE_NAME_IN_AUGMENTATION,
+                        diagnostic_messages::INVALID_MODULE_NAME_IN_AUGMENTATION_MODULE_CANNOT_BE_FOUND,
                         &[&lit.text],
                     );
                     self.ctx.error(
                         name_node.pos,
                         name_node.end - name_node.pos,
                         message,
-                        diagnostic_codes::INVALID_MODULE_NAME_IN_AUGMENTATION,
+                        diagnostic_codes::INVALID_MODULE_NAME_IN_AUGMENTATION_MODULE_CANNOT_BE_FOUND,
                     );
                 }
             }
@@ -1001,7 +1001,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         end - pos,
                         "A parameter property is only allowed in a constructor implementation."
                             .to_string(),
-                        diagnostic_codes::PARAMETER_PROPERTY_NOT_ALLOWED,
+                        diagnostic_codes::A_PARAMETER_PROPERTY_IS_ONLY_ALLOWED_IN_A_CONSTRUCTOR_IMPLEMENTATION,
                     );
                 }
             }

@@ -209,9 +209,9 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         if let Some((start, end)) = self.ctx.get_node_span(error_node_idx) {
             let length = end.saturating_sub(start);
             let message =
-                format_message(diagnostic_messages::CIRCULAR_BASE_REFERENCE, &[&class_name]);
+                format_message(diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION, &[&class_name]);
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::CIRCULAR_BASE_REFERENCE,
+                code: diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),

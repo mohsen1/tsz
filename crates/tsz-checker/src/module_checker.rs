@@ -124,7 +124,7 @@ impl<'a> CheckerState<'a> {
                 .insert(module_key.clone());
             self.error_at_node_msg(
                 arg_idx,
-                diagnostic_codes::CANNOT_FIND_MODULE,
+                diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
                 &[module_name],
             );
         }
@@ -192,7 +192,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     export_decl.module_specifier,
                     &message,
-                    diagnostic_codes::CANNOT_FIND_MODULE,
+                    diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
                 );
             }
             return;
@@ -258,7 +258,7 @@ impl<'a> CheckerState<'a> {
                 .insert(module_key.clone());
             self.error_at_node_msg(
                 export_decl.module_specifier,
-                diagnostic_codes::CANNOT_FIND_MODULE,
+                diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
                 &[module_name],
             );
         }

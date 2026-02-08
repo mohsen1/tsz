@@ -11,8 +11,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_DIR="$REPO_ROOT/TypeScript/tests/cases"
 CACHE_FILE="$REPO_ROOT/tsc-cache-full.json"
 TSZ_BIN="$REPO_ROOT/.target/release/tsz"
-CACHE_GEN_BIN="$REPO_ROOT/.target-conformance/release/generate-tsc-cache"
-RUNNER_BIN="$REPO_ROOT/.target-conformance/release/tsz-conformance"
+CACHE_GEN_BIN="$REPO_ROOT/.target/release/generate-tsc-cache"
+RUNNER_BIN="$REPO_ROOT/.target/release/tsz-conformance"
 WORKERS=16
 
 # Colors
@@ -67,15 +67,9 @@ EOF
 
 # Build binaries (always rebuilds to pick up code changes; cargo no-ops if unchanged)
 ensure_binaries() {
-    echo -e "${YELLOW}Building tsz...${NC}"
+    echo -e "${YELLOW}Building tsz and conformance runner...${NC}"
     cd "$REPO_ROOT"
-    cargo build --release -p tsz-cli --bin tsz
-    echo ""
-
-    echo -e "${YELLOW}Building conformance runner...${NC}"
-    cd "$REPO_ROOT/crates/conformance"
-    CARGO_TARGET_DIR="$REPO_ROOT/.target-conformance" cargo build --release
-    cd "$REPO_ROOT"
+    cargo build --release -p tsz-cli --bin tsz -p tsz-conformance
     echo ""
 }
 
@@ -219,15 +213,11 @@ run_tests() {
         extra_args+=("$arg")
     done
 
-    # Always add --print-test to get expected/actual/config values for failing tests
-    # But only show per-test summary lines when --verbose, --error-code, or --max is used
+    # Always add --print-test so expected/actual/config is captured for the last 10 failing tests
     extra_args+=(--print-test)
 
-    # Show per-test summary lines when --error-code, --max, or --verbose is used
-    local show_per_test=false
-    if [ "$has_error_code" = true ] || [ "$has_max" = true ] || [ "$verbose" = true ]; then
-        show_per_test=true
-    fi
+    # Only show per-test expected/actual/config lines when --verbose is specified
+    local show_per_test=$verbose
 
     # Always capture output to extract failing tests and their details
     local tmpfile
@@ -240,7 +230,7 @@ run_tests() {
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
         --workers $WORKERS \
-        "${extra_args[@]}" > "$tmpfile" 2>&1 || runner_exit=$?
+        "${extra_args[@]}" > "$tmpfile" || runner_exit=$?
 
     local output
     output=$(cat "$tmpfile")

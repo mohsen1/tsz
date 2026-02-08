@@ -406,10 +406,10 @@ impl<'a> CheckerState<'a> {
                             self.error_at_node(
                                 type_annotation,
                                 &format_message(
-                                    diagnostic_messages::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5,
+                                    diagnostic_messages::TYPE_IS_NOT_A_VALID_ASYNC_FUNCTION_RETURN_TYPE_IN_ES5_BECAUSE_IT_DOES_NOT_REFER,
                                     &[&type_name],
                                 ),
-                                diagnostic_codes::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5,
+                                diagnostic_codes::TYPE_IS_NOT_A_VALID_ASYNC_FUNCTION_RETURN_TYPE_IN_ES5_BECAUSE_IT_DOES_NOT_REFER,
                             );
                         } else {
                             // TS1064: For ES6+ targets, the return type must be Promise<T>
@@ -417,10 +417,10 @@ impl<'a> CheckerState<'a> {
                             self.error_at_node(
                                 type_annotation,
                                 &format_message(
-                                    diagnostic_messages::ASYNC_RETURN_TYPE_MUST_BE_PROMISE,
+                                    diagnostic_messages::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
                                     &[&type_name],
                                 ),
-                                diagnostic_codes::ASYNC_RETURN_TYPE_MUST_BE_PROMISE,
+                                diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
                             );
                         }
                     }
@@ -457,13 +457,13 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             type_annotation,
                             "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
-                            diagnostic_codes::FUNCTION_LACKS_RETURN_TYPE,
+                            diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                         );
                     } else {
                         self.error_at_node(
                             type_annotation,
-                            diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT,
-                            diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
+                            diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
+                            diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                         );
                     }
                 } else if self.ctx.no_implicit_returns() && has_return && falls_through {
@@ -472,8 +472,8 @@ impl<'a> CheckerState<'a> {
                     let error_node = if let Some(nn) = name_node { nn } else { body };
                     self.error_at_node(
                         error_node,
-                        diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN,
-                        diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN,
+                        diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+                        diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
                     );
                 }
             }
@@ -850,7 +850,7 @@ impl<'a> CheckerState<'a> {
             use crate::types::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 access.expression,
-                diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
                 &["never"],
             );
             return TypeId::NEVER;
@@ -946,7 +946,7 @@ impl<'a> CheckerState<'a> {
                                 "Property '{}' comes from an index signature, so it must be accessed with ['{}'].",
                                 property_name, property_name
                             ),
-                            diagnostic_codes::PROPERTY_ACCESS_FROM_INDEX_SIGNATURE,
+                            diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
                         );
                     }
                     self.apply_flow_narrowing(idx, prop_type)
@@ -1046,7 +1046,7 @@ impl<'a> CheckerState<'a> {
                         };
                         self.error_at_node_msg(
                             access.expression,
-                            diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                            diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
                             &[value_name],
                         );
                         return self
@@ -1074,17 +1074,17 @@ impl<'a> CheckerState<'a> {
                         // Use specific error codes with the variable name
                         if cause == TypeId::NULL {
                             (
-                                diagnostic_codes::NAME_IS_POSSIBLY_NULL,
+                                diagnostic_codes::IS_POSSIBLY_NULL,
                                 format!("'{}' is possibly 'null'.", name),
                             )
                         } else if cause == TypeId::UNDEFINED {
                             (
-                                diagnostic_codes::NAME_IS_POSSIBLY_UNDEFINED,
+                                diagnostic_codes::IS_POSSIBLY_UNDEFINED,
                                 format!("'{}' is possibly 'undefined'.", name),
                             )
                         } else {
                             (
-                                diagnostic_codes::NAME_IS_POSSIBLY_NULL_OR_UNDEFINED,
+                                diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED,
                                 format!("'{}' is possibly 'null' or 'undefined'.", name),
                             )
                         }

@@ -182,7 +182,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 idx,
                 "Cannot create an instance of an abstract class.",
-                diagnostic_codes::CANNOT_CREATE_INSTANCE_OF_ABSTRACT_CLASS,
+                diagnostic_codes::CANNOT_CREATE_AN_INSTANCE_OF_AN_ABSTRACT_CLASS,
             );
             return TypeId::ERROR;
         }
@@ -203,7 +203,7 @@ impl<'a> CheckerState<'a> {
             use crate::types::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 new_expr.expression,
-                diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
                 &["never"],
             );
             return TypeId::NEVER;
@@ -351,7 +351,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 new_idx,
                 "Cannot create an instance of an abstract class.",
-                diagnostic_codes::CANNOT_CREATE_INSTANCE_OF_ABSTRACT_CLASS,
+                diagnostic_codes::CANNOT_CREATE_AN_INSTANCE_OF_AN_ABSTRACT_CLASS,
             );
             return Some(TypeId::ERROR);
         }
@@ -995,7 +995,7 @@ impl<'a> CheckerState<'a> {
             use crate::types::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 call.expression,
-                diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
                 &["never"],
             );
             return TypeId::NEVER;
@@ -1784,8 +1784,8 @@ impl<'a> CheckerState<'a> {
             use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 idx,
-                diagnostic_messages::AWAIT_IN_PARAMETER_DEFAULT,
-                diagnostic_codes::AWAIT_IN_PARAMETER_DEFAULT,
+                diagnostic_messages::AWAIT_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
+                diagnostic_codes::AWAIT_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
             );
             return TypeId::ERROR;
         }
@@ -1817,13 +1817,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes, diagnostic_messages, format_message,
             };
             let message = format_message(
-                diagnostic_messages::BLOCK_SCOPED_VARIABLE_USED_BEFORE_DECLARATION,
+                diagnostic_messages::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION,
                 &[name],
             );
             self.error_at_node(
                 idx,
                 &message,
-                diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_DECLARATION,
+                diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION,
             );
         }
         is_tdz

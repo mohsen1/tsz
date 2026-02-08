@@ -41,15 +41,18 @@ impl<'a> CheckerState<'a> {
         if use_2792 {
             (
                 format_message(
-                    diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN,
+                    diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
                     &[module_name],
                 ),
-                diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN,
+                diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
             )
         } else {
             (
-                format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]),
-                diagnostic_codes::CANNOT_FIND_MODULE,
+                format_message(
+                    diagnostic_messages::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
+                    &[module_name],
+                ),
+                diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
             )
         }
     }
@@ -238,7 +241,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 export_idx,
                 "An export assignment cannot be used in a module with other exported elements.",
-                diagnostic_codes::EXPORT_ASSIGNMENT_WITH_OTHER_EXPORTS,
+                diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_MODULE_WITH_OTHER_EXPORTED_ELEMENTS,
             );
         }
     }
@@ -351,13 +354,13 @@ impl<'a> CheckerState<'a> {
 
                     if is_value && has_local_declaration {
                         let message = format_message(
-                            diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL,
+                            diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                             &[name],
                         );
                         self.error_at_node(
                             stmt_idx,
                             &message,
-                            diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL,
+                            diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                         );
                         return; // Don't emit further errors for this import
                     }
@@ -382,7 +385,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 stmt_idx,
                 "Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from \"mod\"', 'import {a} from \"mod\"', 'import d from \"mod\"', or another module format instead.",
-                diagnostic_codes::IMPORT_ASSIGNMENT_CANNOT_BE_USED_WITH_ESM,
+                diagnostic_codes::IMPORT_ASSIGNMENT_CANNOT_BE_USED_WHEN_TARGETING_ECMASCRIPT_MODULES_CONSIDER_USIN,
             );
         }
 
@@ -579,7 +582,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     import.module_specifier,
                     &message,
-                    diagnostic_codes::CANNOT_FIND_MODULE,
+                    diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
                 );
             }
             return;
@@ -676,13 +679,22 @@ impl<'a> CheckerState<'a> {
                 .chain(std::iter::once(module_name))
                 .collect();
             let cycle_str = cycle_path.join(" -> ");
-            let message = format!("{}: {}", diagnostic_messages::CANNOT_FIND_MODULE, cycle_str);
+            let message = format!(
+                "{}: {}",
+                diagnostic_messages::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
+                cycle_str
+            );
 
             // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
             let module_key = module_name.to_string();
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                 self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                self.error(0, 0, message, diagnostic_codes::CANNOT_FIND_MODULE);
+                self.error(
+                    0,
+                    0,
+                    message,
+                    diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
+                );
             }
             return;
         }

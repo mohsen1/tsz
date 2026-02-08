@@ -679,8 +679,8 @@ impl<'a> CheckerState<'a> {
 
         if depth_exceeded.1 {
             self.error_at_current_node(
-                diagnostic_messages::TYPE_INSTANTIATION_EXCESSIVELY_DEEP,
-                diagnostic_codes::TYPE_INSTANTIATION_EXCESSIVELY_DEEP,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
             );
         }
 
@@ -747,8 +747,8 @@ impl<'a> CheckerState<'a> {
 
         if depth_exceeded {
             self.error_at_current_node(
-                diagnostic_messages::TYPE_INSTANTIATION_EXCESSIVELY_DEEP,
-                diagnostic_codes::TYPE_INSTANTIATION_EXCESSIVELY_DEEP,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
             );
         }
 

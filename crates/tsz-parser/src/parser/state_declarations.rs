@@ -147,7 +147,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Modifiers cannot appear here.",
-                diagnostic_codes::MODIFIERS_NOT_ALLOWED_HERE,
+                diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
             );
             self.next_token();
             if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_index_signature() {
@@ -163,7 +163,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "'async' modifier cannot appear on a type member.",
-                diagnostic_codes::ASYNC_MODIFIER_CANNOT_APPEAR_ON_TYPE_MEMBER,
+                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_MEMBER,
             );
             // Consume the async keyword and continue parsing
             self.next_token();
@@ -673,7 +673,7 @@ impl ParserState {
                 // Handle computed property name - emit TS1164 and recover
                 self.parse_error_at_current_token(
                     "Computed property names are not allowed in enums.",
-                    diagnostic_codes::COMPUTED_PROPERTY_NAME_IN_ENUM,
+                    diagnostic_codes::COMPUTED_PROPERTY_NAMES_ARE_NOT_ALLOWED_IN_ENUMS,
                 );
                 self.parse_property_name()
             } else if self.is_token(SyntaxKind::StringLiteral) {
@@ -693,7 +693,7 @@ impl ParserState {
             {
                 self.parse_error_at_current_token(
                     "An enum member name must be followed by a ',', '=', or '}'.",
-                    diagnostic_codes::ENUM_MEMBER_NAME_MUST_BE_FOLLOWED_BY,
+                    diagnostic_codes::AN_ENUM_MEMBER_NAME_MUST_BE_FOLLOWED_BY_A_OR,
                 );
                 // Skip to next comma, closing brace, or EOF to recover
                 while !self.is_token(SyntaxKind::CommaToken)
@@ -734,10 +734,7 @@ impl ParserState {
                     || self.is_token(SyntaxKind::PrivateIdentifier)
                     || self.is_token(SyntaxKind::OpenBracketToken)
                 {
-                    self.parse_error_at_current_token(
-                        "',' expected",
-                        diagnostic_codes::TOKEN_EXPECTED,
-                    );
+                    self.parse_error_at_current_token("',' expected", diagnostic_codes::EXPECTED);
                     // Continue to next iteration to parse the next member
                     continue;
                 }
@@ -1847,7 +1844,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "String literal expected",
-                diagnostic_codes::TOKEN_EXPECTED,
+                diagnostic_codes::EXPECTED,
             );
             return NodeIndex::NONE;
         }
@@ -2012,10 +2009,7 @@ impl ParserState {
             // TS1005: for-await can only be used with 'of', not 'in'
             if await_modifier {
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    "'of' expected.",
-                    diagnostic_codes::TOKEN_EXPECTED,
-                );
+                self.parse_error_at_current_token("'of' expected.", diagnostic_codes::EXPECTED);
             }
             return self.parse_for_in_statement_rest(start_pos, initializer);
         }
@@ -2240,7 +2234,7 @@ impl ParserState {
                                     second_node.pos,
                                     second_node.end - second_node.pos,
                                     "Only a single variable declaration is allowed in a 'for...in' statement.",
-                                    diagnostic_codes::ONLY_SINGLE_VARIABLE_IN_FOR_IN,
+                                    diagnostic_codes::ONLY_A_SINGLE_VARIABLE_DECLARATION_IS_ALLOWED_IN_A_FOR_IN_STATEMENT,
                                 );
                             }
                         }
@@ -2289,7 +2283,7 @@ impl ParserState {
                                     second_node.pos,
                                     second_node.end - second_node.pos,
                                     "Only a single variable declaration is allowed in a 'for...of' statement.",
-                                    diagnostic_codes::ONLY_SINGLE_VARIABLE_IN_FOR_OF,
+                                    diagnostic_codes::ONLY_A_SINGLE_VARIABLE_DECLARATION_IS_ALLOWED_IN_A_FOR_OF_STATEMENT,
                                 );
                             }
                         }
@@ -2557,7 +2551,7 @@ impl ParserState {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "case or default expected.",
-                        diagnostic_codes::TOKEN_EXPECTED,
+                        diagnostic_codes::EXPECTED,
                     );
                 }
                 // Skip unexpected token and continue

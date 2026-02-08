@@ -176,8 +176,8 @@ impl<'a> CheckerState<'a> {
                 if !has_initializer {
                     self.error_at_node(
                         param.name,
-                        diagnostic_messages::REQUIRED_PARAMETER_AFTER_OPTIONAL,
-                        diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL,
+                        diagnostic_messages::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER,
+                        diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER,
                     );
                 }
             }
@@ -213,7 +213,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     param_idx,
                     "A parameter property is only allowed in a constructor implementation.",
-                    diagnostic_codes::PARAMETER_PROPERTY_NOT_ALLOWED,
+                    diagnostic_codes::A_PARAMETER_PROPERTY_IS_ONLY_ALLOWED_IN_A_CONSTRUCTOR_IMPLEMENTATION,
                 );
             }
         }
