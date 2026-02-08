@@ -325,14 +325,23 @@ impl<'a> BinaryOpEvaluator<'a> {
 
     /// Evaluate the + operator (can be string concatenation or addition).
     fn evaluate_plus(&self, left: TypeId, right: TypeId) -> BinaryOpResult {
-        // Don't emit errors for error/unknown types - prevents cascading errors
-        if left == TypeId::ERROR
-            || right == TypeId::ERROR
-            || left == TypeId::UNKNOWN
-            || right == TypeId::UNKNOWN
-        {
+        // Don't emit errors for unknown types - prevents cascading errors
+        if left == TypeId::UNKNOWN || right == TypeId::UNKNOWN {
             return BinaryOpResult::Success(TypeId::UNKNOWN);
         }
+
+        // Error types act like `any` in tsc - prevents cascading errors
+        // while still inferring the correct result type (e.g., string + error = string)
+        let left = if left == TypeId::ERROR {
+            TypeId::ANY
+        } else {
+            left
+        };
+        let right = if right == TypeId::ERROR {
+            TypeId::ANY
+        } else {
+            right
+        };
 
         // TS2469: Symbol cannot be used in arithmetic
         if self.is_symbol_like(left) || self.is_symbol_like(right) {
@@ -386,14 +395,22 @@ impl<'a> BinaryOpEvaluator<'a> {
 
     /// Evaluate arithmetic operators (-, *, /, %, **).
     fn evaluate_arithmetic(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
-        // Don't emit errors for error/unknown types - prevents cascading errors
-        if left == TypeId::ERROR
-            || right == TypeId::ERROR
-            || left == TypeId::UNKNOWN
-            || right == TypeId::UNKNOWN
-        {
+        // Don't emit errors for unknown types - prevents cascading errors
+        if left == TypeId::UNKNOWN || right == TypeId::UNKNOWN {
             return BinaryOpResult::Success(TypeId::UNKNOWN);
         }
+
+        // Error types act like `any` in tsc - prevents cascading errors
+        let left = if left == TypeId::ERROR {
+            TypeId::ANY
+        } else {
+            left
+        };
+        let right = if right == TypeId::ERROR {
+            TypeId::ANY
+        } else {
+            right
+        };
 
         // TS2469: Symbol cannot be used in arithmetic
         if self.is_symbol_like(left) || self.is_symbol_like(right) {
@@ -420,14 +437,22 @@ impl<'a> BinaryOpEvaluator<'a> {
 
     /// Evaluate comparison operators (<, >, <=, >=).
     fn evaluate_comparison(&self, left: TypeId, right: TypeId) -> BinaryOpResult {
-        // Don't emit errors for error/unknown types - prevents cascading errors
-        if left == TypeId::ERROR
-            || right == TypeId::ERROR
-            || left == TypeId::UNKNOWN
-            || right == TypeId::UNKNOWN
-        {
+        // Don't emit errors for unknown types - prevents cascading errors
+        if left == TypeId::UNKNOWN || right == TypeId::UNKNOWN {
             return BinaryOpResult::Success(TypeId::BOOLEAN);
         }
+
+        // Error types act like `any` in tsc - prevents cascading errors
+        let left = if left == TypeId::ERROR {
+            TypeId::ANY
+        } else {
+            left
+        };
+        let right = if right == TypeId::ERROR {
+            TypeId::ANY
+        } else {
+            right
+        };
 
         // TS2469: Symbol cannot be used in comparison operators
         if self.is_symbol_like(left) || self.is_symbol_like(right) {
