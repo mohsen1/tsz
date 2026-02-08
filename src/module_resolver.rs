@@ -59,6 +59,8 @@ pub const JSON_MODULE_WITHOUT_RESOLVE_JSON_MODULE: u32 = 2732;
 /// resolution mode does not include an explicit file extension. ESM requires explicit extensions.
 /// Example: `import { foo } from './utils'` should be `import { foo } from './utils.js'`
 pub const IMPORT_PATH_NEEDS_EXTENSION: u32 = 2834;
+pub const IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION: u32 = 2835;
+pub const IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED: u32 = 5097;
 
 /// Result of module resolution
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +185,21 @@ impl ModuleExtension {
     }
 }
 
+fn explicit_ts_extension(specifier: &str) -> Option<String> {
+    if specifier.ends_with(".d.ts")
+        || specifier.ends_with(".d.mts")
+        || specifier.ends_with(".d.cts")
+    {
+        return None;
+    }
+    for ext in [".ts", ".tsx", ".mts", ".cts"] {
+        if specifier.ends_with(ext) {
+            return Some(ext.to_string());
+        }
+    }
+    None
+}
+
 /// Reason why module resolution failed
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolutionFailure {
@@ -238,6 +255,15 @@ pub enum ResolutionFailure {
         specifier: String,
         /// Suggested extension to add (e.g., ".js")
         suggested_extension: String,
+        /// File containing the import
+        containing_file: String,
+        /// Span of the module specifier in source
+        span: Span,
+    },
+    /// TS5097: Import path ends with a TypeScript extension without allowImportingTsExtensions.
+    ImportingTsExtensionNotAllowed {
+        /// Extension that was used (e.g., ".ts")
+        extension: String,
         /// File containing the import
         containing_file: String,
         /// Span of the module specifier in source
@@ -352,7 +378,20 @@ impl ResolutionFailure {
                     "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean '{}{}'?",
                     specifier, suggested_extension
                 ),
-                IMPORT_PATH_NEEDS_EXTENSION,
+                IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
+            ),
+            ResolutionFailure::ImportingTsExtensionNotAllowed {
+                extension,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!(
+                    "An import path can only end with a '{}' extension when 'allowImportingTsExtensions' is enabled.",
+                    extension
+                ),
+                IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED,
             ),
             ResolutionFailure::ModuleResolutionModeMismatch {
                 specifier,
@@ -404,6 +443,9 @@ impl ResolutionFailure {
             | ResolutionFailure::ImportPathNeedsExtension {
                 containing_file, ..
             }
+            | ResolutionFailure::ImportingTsExtensionNotAllowed {
+                containing_file, ..
+            }
             | ResolutionFailure::ModuleResolutionModeMismatch {
                 containing_file, ..
             }
@@ -422,6 +464,7 @@ impl ResolutionFailure {
             | ResolutionFailure::CircularResolution { span, .. }
             | ResolutionFailure::PathMappingFailed { span, .. }
             | ResolutionFailure::ImportPathNeedsExtension { span, .. }
+            | ResolutionFailure::ImportingTsExtensionNotAllowed { span, .. }
             | ResolutionFailure::ModuleResolutionModeMismatch { span, .. }
             | ResolutionFailure::JsonModuleWithoutResolveJsonModule { span, .. } => *span,
         }
@@ -444,6 +487,15 @@ pub struct ModuleResolver {
     path_mappings: Vec<PathMapping>,
     /// Type roots for @types packages
     type_roots: Vec<PathBuf>,
+    types_versions_compiler_version: Option<String>,
+    resolve_package_json_exports: bool,
+    resolve_package_json_imports: bool,
+    module_suffixes: Vec<String>,
+    resolve_json_module: bool,
+    allow_arbitrary_extensions: bool,
+    allow_importing_ts_extensions: bool,
+    #[allow(dead_code)] // Used by CLI validation before emit stages
+    rewrite_relative_import_extensions: bool,
     /// Cache of resolved modules
     resolution_cache: FxHashMap<(PathBuf, String), Result<ResolvedModule, ResolutionFailure>>,
     /// Extensions to try for TypeScript resolution
@@ -481,6 +533,14 @@ impl ModuleResolver {
             base_url: options.base_url.clone(),
             path_mappings: options.paths.clone().unwrap_or_default(),
             type_roots: options.type_roots.clone().unwrap_or_default(),
+            types_versions_compiler_version: options.types_versions_compiler_version.clone(),
+            resolve_package_json_exports: options.resolve_package_json_exports,
+            resolve_package_json_imports: options.resolve_package_json_imports,
+            module_suffixes: options.module_suffixes.clone(),
+            resolve_json_module: options.resolve_json_module,
+            allow_arbitrary_extensions: options.allow_arbitrary_extensions,
+            allow_importing_ts_extensions: options.allow_importing_ts_extensions,
+            rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
             resolution_cache: FxHashMap::default(),
             ts_extensions: vec![".ts", ".tsx", ".d.ts"],
             js_extensions: vec![".js", ".jsx"],
@@ -499,6 +559,14 @@ impl ModuleResolver {
             base_url: None,
             path_mappings: Vec::new(),
             type_roots: Vec::new(),
+            types_versions_compiler_version: None,
+            resolve_package_json_exports: false,
+            resolve_package_json_imports: false,
+            module_suffixes: vec![String::new()],
+            resolve_json_module: false,
+            allow_arbitrary_extensions: false,
+            allow_importing_ts_extensions: false,
+            rewrite_relative_import_extensions: false,
             resolution_cache: FxHashMap::default(),
             ts_extensions: vec![".ts", ".tsx", ".d.ts"],
             js_extensions: vec![".js", ".jsx"],
@@ -523,6 +591,16 @@ impl ModuleResolver {
             .to_path_buf();
         let containing_file_str = containing_file.display().to_string();
 
+        if let Some(extension) = explicit_ts_extension(specifier) {
+            if !self.allow_importing_ts_extensions {
+                return Err(ResolutionFailure::ImportingTsExtensionNotAllowed {
+                    extension,
+                    containing_file: containing_file_str.clone(),
+                    span: specifier_span,
+                });
+            }
+        }
+
         self.current_package_type = match self.resolution_kind {
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
                 self.get_package_type_for_dir(&containing_dir)
@@ -539,13 +617,22 @@ impl ModuleResolver {
         // Determine the module kind of the importing file
         let importing_module_kind = self.get_importing_module_kind(containing_file);
 
-        let result = self.resolve_uncached(
+        let mut result = self.resolve_uncached(
             specifier,
             &containing_dir,
             &containing_file_str,
             specifier_span,
             importing_module_kind,
         );
+        if let Ok(resolved) = &result {
+            if resolved.extension == ModuleExtension::Json && !self.resolve_json_module {
+                result = Err(ResolutionFailure::JsonModuleWithoutResolveJsonModule {
+                    specifier: specifier.to_string(),
+                    containing_file: containing_file_str.clone(),
+                    span: specifier_span,
+                });
+            }
+        }
 
         // Cache the result
         self.resolution_cache.insert(cache_key, result.clone());
@@ -644,13 +731,7 @@ impl ModuleResolver {
         // Step 1: Handle #-prefixed imports (package.json imports field)
         // This is a Node16/NodeNext feature for subpath imports
         if specifier.starts_with('#') {
-            if !matches!(
-                self.resolution_kind,
-                ModuleResolutionKind::Node
-                    | ModuleResolutionKind::Node16
-                    | ModuleResolutionKind::NodeNext
-                    | ModuleResolutionKind::Bundler
-            ) {
+            if !self.resolve_package_json_imports {
                 return Err(ResolutionFailure::NotFound {
                     specifier: specifier.to_string(),
                     containing_file: containing_file.to_string(),
@@ -1148,12 +1229,7 @@ impl ModuleResolver {
                         Ok(resolved) => return Ok(resolved),
                         Err(_) => {
                             // Check if package has exports field - relevant for TS2792
-                            if !matches!(
-                                self.resolution_kind,
-                                ModuleResolutionKind::Node16
-                                    | ModuleResolutionKind::NodeNext
-                                    | ModuleResolutionKind::Bundler
-                            ) {
+                            if !self.resolve_package_json_exports {
                                 let package_json_path = package_dir.join("package.json");
                                 if let Ok(pj) = self.read_package_json(&package_json_path) {
                                     if pj.exports.is_some() {
@@ -1177,6 +1253,23 @@ impl ModuleResolver {
                             original_specifier: specifier.to_string(),
                             extension: ModuleExtension::from_path(&resolved),
                         });
+                    }
+                }
+            }
+
+            if !package_name.starts_with("@types/") {
+                let types_package = format!("@types/{}", package_name.replace('/', "__"));
+                let types_dir = node_modules.join(&types_package);
+                if types_dir.is_dir() {
+                    if let Ok(resolved) = self.resolve_package(
+                        &types_dir,
+                        subpath.as_deref(),
+                        specifier,
+                        containing_file,
+                        specifier_span,
+                        &conditions,
+                    ) {
+                        return Ok(resolved);
                     }
                 }
             }
@@ -1253,7 +1346,9 @@ impl ModuleResolver {
                     // Check if the package name matches
                     if package_json.name.as_deref() == Some(package_name) {
                         // This is a self-reference!
-                        if let Some(exports) = &package_json.exports {
+                        if self.resolve_package_json_exports
+                            && let Some(exports) = &package_json.exports
+                        {
                             let subpath_key = match subpath {
                                 Some(sp) => format!("./{}", sp),
                                 None => ".".to_string(),
@@ -1319,12 +1414,8 @@ impl ModuleResolver {
             let subpath_key = format!("./{}", subpath);
 
             // Try exports field first (Node16+)
-            if matches!(
-                self.resolution_kind,
-                ModuleResolutionKind::Node16
-                    | ModuleResolutionKind::NodeNext
-                    | ModuleResolutionKind::Bundler
-            ) && let Some(exports) = &package_json.exports
+            if self.resolve_package_json_exports
+                && let Some(exports) = &package_json.exports
                 && let Some(resolved) = self.resolve_package_exports_with_conditions(
                     package_dir,
                     exports,
@@ -1377,12 +1468,8 @@ impl ModuleResolver {
         // No subpath - resolve package entry point
 
         // Try exports "." field first (Node16+)
-        if matches!(
-            self.resolution_kind,
-            ModuleResolutionKind::Node16
-                | ModuleResolutionKind::NodeNext
-                | ModuleResolutionKind::Bundler
-        ) && let Some(exports) = &package_json.exports
+        if self.resolve_package_json_exports
+            && let Some(exports) = &package_json.exports
             && let Some(resolved) =
                 self.resolve_package_exports_with_conditions(package_dir, exports, ".", conditions)
         {
@@ -1426,6 +1513,17 @@ impl ModuleResolver {
         // Try main field
         if let Some(main) = &package_json.main {
             let main_path = package_dir.join(main);
+            if let Some(declaration) = declaration_substitution_for_main(&main_path) {
+                if declaration.is_file() {
+                    return Ok(ResolvedModule {
+                        resolved_path: declaration.clone(),
+                        is_external: true,
+                        package_name: Some(package_json.name.clone().unwrap_or_default()),
+                        original_specifier: original_specifier.to_string(),
+                        extension: ModuleExtension::from_path(&declaration),
+                    });
+                }
+            }
             if let Some(resolved) = self.try_file_or_directory(&main_path) {
                 return Ok(ResolvedModule {
                     resolved_path: resolved.clone(),
@@ -1574,57 +1672,64 @@ impl ModuleResolver {
         subpath: &str,
         types_versions: &serde_json::Value,
     ) -> Option<PathBuf> {
-        // For now, use a simple approach: select the first matching version range
-        // A more complete implementation would consider TypeScript version compatibility
-        let map = types_versions.as_object()?;
-
-        // Find a matching version (using "*" as fallback)
-        let mut best_paths: Option<&serde_json::Map<String, serde_json::Value>> = None;
-
-        for (version_range, value) in map {
-            let paths = value.as_object()?;
-            // Use "*" as a wildcard match, or ">=" ranges
-            // For simplicity, we'll match "*" or any range that would match TS 5.x
-            if version_range == "*"
-                || version_range.starts_with(">=")
-                || version_range.starts_with(">")
-            {
-                best_paths = Some(paths);
-                break;
-            }
-        }
-
-        let paths = best_paths?;
-
-        // Find matching pattern
-        let mut best_target: Option<String> = None;
+        let compiler_version =
+            types_versions_compiler_version(self.types_versions_compiler_version.as_deref());
+        let paths = select_types_versions_paths(types_versions, compiler_version)?;
+        let mut best_pattern: Option<&String> = None;
+        let mut best_value: Option<&serde_json::Value> = None;
+        let mut best_wildcard = String::new();
         let mut best_specificity = 0usize;
+        let mut best_len = 0usize;
 
         for (pattern, value) in paths {
-            if let Some(wildcard) = match_types_versions_pattern(pattern, subpath) {
-                let specificity = pattern.len();
-                if specificity > best_specificity {
-                    best_specificity = specificity;
-
-                    // Get target path(s)
-                    let target = match value {
-                        serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Array(arr) => arr
-                            .first()
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        _ => continue,
-                    };
-
-                    best_target = Some(apply_wildcard_substitution(&target, &wildcard));
+            let Some(wildcard) = match_types_versions_pattern(pattern, subpath) else {
+                continue;
+            };
+            let specificity = types_versions_specificity(pattern);
+            let pattern_len = pattern.len();
+            let is_better = match best_pattern {
+                None => true,
+                Some(current) => {
+                    specificity > best_specificity
+                        || (specificity == best_specificity && pattern_len > best_len)
+                        || (specificity == best_specificity
+                            && pattern_len == best_len
+                            && pattern < current)
                 }
+            };
+
+            if is_better {
+                best_specificity = specificity;
+                best_len = pattern_len;
+                best_pattern = Some(pattern);
+                best_value = Some(value);
+                best_wildcard = wildcard;
             }
         }
 
-        if let Some(target) = best_target {
-            let resolved = package_dir.join(target.trim_start_matches("./"));
-            return self.try_file_or_directory(&resolved);
+        let Some(value) = best_value else {
+            return None;
+        };
+
+        let mut targets = Vec::new();
+        match value {
+            serde_json::Value::String(value) => targets.push(value.as_str()),
+            serde_json::Value::Array(list) => {
+                for entry in list {
+                    if let Some(value) = entry.as_str() {
+                        targets.push(value);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        for target in targets {
+            let substituted = apply_wildcard_substitution(target, &best_wildcard);
+            let resolved = package_dir.join(substituted.trim_start_matches("./"));
+            if let Some(resolved) = self.try_file_or_directory(&resolved) {
+                return Some(resolved);
+            }
         }
 
         None
@@ -1632,36 +1737,60 @@ impl ModuleResolver {
 
     /// Try to resolve a file with various extensions
     fn try_file(&self, path: &Path) -> Option<PathBuf> {
+        let suffixes = &self.module_suffixes;
         if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            if split_path_extension(path).is_none() {
+                if self.allow_arbitrary_extensions {
+                    if let Some(resolved) = try_arbitrary_extension_declaration(path, extension) {
+                        return Some(resolved);
+                    }
+                }
+                return None;
+            }
+        }
+        if let Some((base, extension)) = split_path_extension(path) {
             if matches!(
                 self.resolution_kind,
                 ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
             ) && let Some(rewritten) = node16_extension_substitution(path, extension)
             {
                 for candidate in rewritten {
-                    if candidate.is_file() {
-                        return Some(candidate);
+                    if let Some(resolved) = try_file_with_suffixes(&candidate, suffixes) {
+                        return Some(resolved);
                     }
                 }
                 return None;
             }
-            if path.is_file() {
-                return Some(path.to_path_buf());
+
+            if let Some(resolved) = try_file_with_suffixes_and_extension(&base, extension, suffixes)
+            {
+                return Some(resolved);
             }
+
             return None;
         }
 
         let extensions = self.extension_candidates_for_resolution();
         for ext in extensions {
-            let with_ext = path.with_extension(ext);
-            if with_ext.is_file() {
-                return Some(with_ext);
+            if let Some(resolved) = try_file_with_suffixes_and_extension(path, ext, suffixes) {
+                return Some(resolved);
             }
         }
+        if self.resolve_json_module {
+            if let Some(resolved) = try_file_with_suffixes_and_extension(path, "json", suffixes) {
+                return Some(resolved);
+            }
+        }
+
+        let index = path.join("index");
         for ext in extensions {
-            let with_ext = path.join("index").with_extension(ext);
-            if with_ext.is_file() {
-                return Some(with_ext);
+            if let Some(resolved) = try_file_with_suffixes_and_extension(&index, ext, suffixes) {
+                return Some(resolved);
+            }
+        }
+        if self.resolve_json_module {
+            if let Some(resolved) = try_file_with_suffixes_and_extension(&index, "json", suffixes) {
+                return Some(resolved);
             }
         }
 
@@ -1882,6 +2011,215 @@ fn match_types_versions_pattern(pattern: &str, subpath: &str) -> Option<String> 
     Some(subpath[start..end].to_string())
 }
 
+fn types_versions_compiler_version(value: Option<&str>) -> SemVer {
+    value
+        .and_then(parse_semver)
+        .unwrap_or_else(default_types_versions_compiler_version)
+}
+
+fn default_types_versions_compiler_version() -> SemVer {
+    TYPES_VERSIONS_COMPILER_VERSION_FALLBACK
+}
+
+fn select_types_versions_paths(
+    types_versions: &serde_json::Value,
+    compiler_version: SemVer,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    select_types_versions_paths_for_version(types_versions, compiler_version)
+}
+
+fn select_types_versions_paths_for_version(
+    types_versions: &serde_json::Value,
+    compiler_version: SemVer,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    let map = types_versions.as_object()?;
+    let mut best_score: Option<RangeScore> = None;
+    let mut best_key: Option<&str> = None;
+    let mut best_value: Option<&serde_json::Map<String, serde_json::Value>> = None;
+
+    for (key, value) in map {
+        let Some(value_map) = value.as_object() else {
+            continue;
+        };
+        let Some(score) = match_types_versions_range(key, compiler_version) else {
+            continue;
+        };
+        let is_better = match best_score {
+            None => true,
+            Some(best) => {
+                score > best
+                    || (score == best && best_key.is_none_or(|best_key| key.as_str() < best_key))
+            }
+        };
+
+        if is_better {
+            best_score = Some(score);
+            best_key = Some(key);
+            best_value = Some(value_map);
+        }
+    }
+
+    best_value
+}
+
+fn types_versions_specificity(pattern: &str) -> usize {
+    if let Some(star) = pattern.find('*') {
+        star + (pattern.len() - star - 1)
+    } else {
+        pattern.len()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct RangeScore {
+    constraints: usize,
+    min_version: SemVer,
+    key_len: usize,
+}
+
+fn match_types_versions_range(range: &str, compiler_version: SemVer) -> Option<RangeScore> {
+    let range = range.trim();
+    if range.is_empty() || range == "*" {
+        return Some(RangeScore {
+            constraints: 0,
+            min_version: SemVer::ZERO,
+            key_len: range.len(),
+        });
+    }
+
+    let mut best: Option<RangeScore> = None;
+    for segment in range.split("||") {
+        let segment = segment.trim();
+        let Some(score) =
+            match_types_versions_range_segment(segment, compiler_version, range.len())
+        else {
+            continue;
+        };
+        if best.is_none_or(|current| score > current) {
+            best = Some(score);
+        }
+    }
+
+    best
+}
+
+fn match_types_versions_range_segment(
+    segment: &str,
+    compiler_version: SemVer,
+    key_len: usize,
+) -> Option<RangeScore> {
+    if segment.is_empty() {
+        return None;
+    }
+    if segment == "*" {
+        return Some(RangeScore {
+            constraints: 0,
+            min_version: SemVer::ZERO,
+            key_len,
+        });
+    }
+
+    let mut min_version = SemVer::ZERO;
+    let mut constraints = 0usize;
+
+    for token in segment.split_whitespace() {
+        if token.is_empty() || token == "*" {
+            continue;
+        }
+        let (op, version) = parse_range_token(token)?;
+        if !compare_range(compiler_version, op, version) {
+            return None;
+        }
+        constraints += 1;
+        if matches!(op, RangeOp::Gt | RangeOp::Gte | RangeOp::Eq) && version > min_version {
+            min_version = version;
+        }
+    }
+
+    Some(RangeScore {
+        constraints,
+        min_version,
+        key_len,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RangeOp {
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Eq,
+}
+
+fn parse_range_token(token: &str) -> Option<(RangeOp, SemVer)> {
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    let (op, rest) = if let Some(rest) = token.strip_prefix(">=") {
+        (RangeOp::Gte, rest)
+    } else if let Some(rest) = token.strip_prefix("<=") {
+        (RangeOp::Lte, rest)
+    } else if let Some(rest) = token.strip_prefix('>') {
+        (RangeOp::Gt, rest)
+    } else if let Some(rest) = token.strip_prefix('<') {
+        (RangeOp::Lt, rest)
+    } else {
+        (RangeOp::Eq, token)
+    };
+
+    parse_semver(rest).map(|version| (op, version))
+}
+
+fn compare_range(version: SemVer, op: RangeOp, other: SemVer) -> bool {
+    match op {
+        RangeOp::Gt => version > other,
+        RangeOp::Gte => version >= other,
+        RangeOp::Lt => version < other,
+        RangeOp::Lte => version <= other,
+        RangeOp::Eq => version == other,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct SemVer {
+    major: u32,
+    minor: u32,
+    patch: u32,
+}
+
+impl SemVer {
+    const ZERO: SemVer = SemVer {
+        major: 0,
+        minor: 0,
+        patch: 0,
+    };
+}
+
+// NOTE: Keep this in sync with the TypeScript version this compiler targets.
+const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer = SemVer {
+    major: 6,
+    minor: 0,
+    patch: 0,
+};
+
+fn parse_semver(value: &str) -> Option<SemVer> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let mut parts = value.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some(SemVer {
+        major,
+        minor,
+        patch,
+    })
+}
+
 /// Apply wildcard substitution to a target path
 fn apply_wildcard_substitution(target: &str, wildcard: &str) -> String {
     if target.contains('*') {
@@ -1891,6 +2229,65 @@ fn apply_wildcard_substitution(target: &str, wildcard: &str) -> String {
     }
 }
 
+fn split_path_extension(path: &Path) -> Option<(PathBuf, &'static str)> {
+    let path_str = path.to_string_lossy();
+    for ext in KNOWN_EXTENSIONS {
+        if path_str.ends_with(ext) {
+            let base = &path_str[..path_str.len().saturating_sub(ext.len())];
+            if base.is_empty() {
+                return None;
+            }
+            return Some((PathBuf::from(base), ext.trim_start_matches('.')));
+        }
+    }
+    None
+}
+
+fn try_file_with_suffixes(path: &Path, suffixes: &[String]) -> Option<PathBuf> {
+    let (base, extension) = split_path_extension(path)?;
+    try_file_with_suffixes_and_extension(&base, extension, suffixes)
+}
+
+fn try_file_with_suffixes_and_extension(
+    base: &Path,
+    extension: &str,
+    suffixes: &[String],
+) -> Option<PathBuf> {
+    for suffix in suffixes {
+        let Some(candidate) = path_with_suffix_and_extension(base, suffix, extension) else {
+            continue;
+        };
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn path_with_suffix_and_extension(base: &Path, suffix: &str, extension: &str) -> Option<PathBuf> {
+    let file_name = base.file_name()?.to_string_lossy();
+    let mut candidate = base.to_path_buf();
+    let mut new_name = String::with_capacity(file_name.len() + suffix.len() + extension.len() + 1);
+    new_name.push_str(&file_name);
+    new_name.push_str(suffix);
+    new_name.push('.');
+    new_name.push_str(extension);
+    candidate.set_file_name(new_name);
+    Some(candidate)
+}
+
+fn try_arbitrary_extension_declaration(path: &Path, extension: &str) -> Option<PathBuf> {
+    let declaration = path.with_extension(format!("d.{extension}.ts"));
+    if declaration.is_file() {
+        return Some(declaration);
+    }
+    None
+}
+
+const KNOWN_EXTENSIONS: [&str; 12] = [
+    ".d.mts", ".d.cts", ".d.ts", ".mts", ".cts", ".tsx", ".ts", ".mjs", ".cjs", ".jsx", ".js",
+    ".json",
+];
 const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
 const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
     ["mts", "d.mts", "ts", "tsx", "d.ts", "cts", "d.cts"];
@@ -1919,6 +2316,16 @@ fn node16_extension_substitution(path: &Path, extension: &str) -> Option<Vec<Pat
             .map(|ext| path.with_extension(ext))
             .collect(),
     )
+}
+
+fn declaration_substitution_for_main(path: &Path) -> Option<PathBuf> {
+    let extension = path.extension().and_then(|ext| ext.to_str())?;
+    match extension {
+        "js" | "jsx" => Some(path.with_extension("d.ts")),
+        "mjs" => Some(path.with_extension("d.mts")),
+        "cjs" => Some(path.with_extension("d.cts")),
+        _ => None,
+    }
 }
 
 /// Simplified package.json structure for resolution
@@ -2463,7 +2870,7 @@ mod tests {
     }
 
     // =========================================================================
-    // TS2834 (Import Path Needs Extension) Tests
+    // TS2835 (Import Path Needs Extension Suggestion) Tests
     // =========================================================================
 
     #[test]
@@ -2472,7 +2879,7 @@ mod tests {
     }
 
     #[test]
-    fn test_import_path_needs_extension_produces_ts2834() {
+    fn test_import_path_needs_extension_produces_ts2835() {
         let failure = ResolutionFailure::ImportPathNeedsExtension {
             specifier: "./utils".to_string(),
             suggested_extension: ".js".to_string(),
@@ -2481,7 +2888,7 @@ mod tests {
         };
 
         let diagnostic = failure.to_diagnostic();
-        assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION);
+        assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
         assert_eq!(diagnostic.file_name, "/src/index.mts");
         assert!(
             diagnostic
@@ -2503,7 +2910,7 @@ mod tests {
         };
 
         let diagnostic = failure.to_diagnostic();
-        assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION);
+        assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
         assert!(diagnostic.message.contains("./esm-module.mjs"));
     }
 
@@ -2517,7 +2924,7 @@ mod tests {
         };
 
         let diagnostic = failure.to_diagnostic();
-        assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION);
+        assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
         assert!(diagnostic.message.contains("./cjs-module.cjs"));
     }
 
@@ -2583,14 +2990,14 @@ mod tests {
         let mut diagnostics = DiagnosticBag::new();
         let resolver = ModuleResolver::node_resolver();
 
-        // Test TS2834
-        let failure_2834 = ResolutionFailure::ImportPathNeedsExtension {
+        // Test TS2835
+        let failure_2835 = ResolutionFailure::ImportPathNeedsExtension {
             specifier: "./utils".to_string(),
             suggested_extension: ".js".to_string(),
             containing_file: "/src/app.mts".to_string(),
             span: Span::new(0, 10),
         };
-        resolver.emit_resolution_error(&mut diagnostics, &failure_2834);
+        resolver.emit_resolution_error(&mut diagnostics, &failure_2835);
 
         // Test TS2792
         let failure_2792 = ResolutionFailure::ModuleResolutionModeMismatch {
@@ -2603,7 +3010,7 @@ mod tests {
         assert_eq!(diagnostics.len(), 2);
 
         let errors: Vec<_> = diagnostics.errors().collect();
-        assert_eq!(errors[0].code, IMPORT_PATH_NEEDS_EXTENSION);
+        assert_eq!(errors[0].code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
         assert_eq!(errors[1].code, MODULE_RESOLUTION_MODE_MISMATCH);
     }
 
@@ -2882,7 +3289,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolution_failure_to_diagnostic_ts2834() {
+    fn test_resolution_failure_to_diagnostic_ts2835() {
         let failure = ResolutionFailure::ImportPathNeedsExtension {
             specifier: "./utils".to_string(),
             suggested_extension: ".js".to_string(),
@@ -2890,7 +3297,7 @@ mod tests {
             span: Span::new(0, 15),
         };
         let diag = failure.to_diagnostic();
-        assert_eq!(diag.code, IMPORT_PATH_NEEDS_EXTENSION);
+        assert_eq!(diag.code, IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION);
     }
 
     #[test]
