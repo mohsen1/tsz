@@ -65,7 +65,7 @@ pub struct Args {
     pub cache_file: String,
 
     /// Path to tsz binary for compilation
-    #[arg(long, default_value = "../target/release/tsz")]
+    #[arg(long, default_value = "tsz")]
     pub tsz_binary: String,
 
     /// Timeout per test in seconds (0 = no timeout)
