@@ -9,9 +9,9 @@ use regex::Regex;
 use std::collections::HashMap;
 
 /// Compiled regex for parsing @ directives
-/// Matches: // @key: value
+/// Matches: // @key: value (captures entire rest of line as value)
 static DIRECTIVE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*//\s*@(\w+)\s*:\s*(\S+)").unwrap());
+    Lazy::new(|| Regex::new(r"^\s*//\s*@(\w+)\s*:\s*([^\r\n]*)").unwrap());
 
 /// Parsed test directives
 #[derive(Debug, Default, Clone)]
@@ -56,9 +56,12 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
     for line in &lines {
         if let Some(cap) = DIRECTIVE_RE.captures(line) {
             let key = cap.get(1).unwrap().as_str();
-            let value = cap.get(2).unwrap().as_str();
+            let value = cap.get(2).unwrap().as_str().trim();
 
-            if key.to_lowercase() == "filename" {
+            // Normalize key to lowercase for case-insensitive matching
+            let key_lower = key.to_lowercase();
+
+            if key_lower == "filename" {
                 // Save previous file if exists
                 if let Some(filename) = current_filename.take() {
                     filenames.push((filename, current_content.join("\n")));
@@ -67,13 +70,9 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
                 current_filename = Some(value.to_string());
                 current_content = Vec::new();
             } else {
-                // Strip trailing comma from value — multi-target directives like
-                // `// @target: esnext, es2022, es2015` produce `esnext,` because
-                // the regex captures only the first non-whitespace token.
-                let clean_value = value.trim_end_matches(',');
                 directives
                     .options
-                    .insert(key.to_string(), clean_value.to_string());
+                    .insert(key_lower, value.to_string());
             }
         } else {
             // Non-directive line - add to current file content
@@ -93,22 +92,17 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
 
 /// Check if test should be skipped based on directives
 pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
-    // Check @skip
+    // Check @skip (keys are already lowercase)
     if directives.options.contains_key("skip") {
         return Some("@skip");
     }
 
-    // Check @noCheck / @nocheck
+    // Check @noCheck (keys are already lowercase → "nocheck")
     if directives
         .options
-        .get("noCheck")
+        .get("nocheck")
         .map(|v| v == "true")
         .unwrap_or(false)
-        || directives
-            .options
-            .get("nocheck")
-            .map(|v| v == "true")
-            .unwrap_or(false)
     {
         return Some("@noCheck");
     }
@@ -136,6 +130,33 @@ function foo() {}
             parsed.directives.options.get("target"),
             Some(&"es5".to_string())
         );
+    }
+
+    #[test]
+    fn test_parse_multi_value_directive() {
+        let content = "// @lib: es6, dom\nfunction foo() {}";
+        let parsed = parse_test_file(content).unwrap();
+        assert_eq!(
+            parsed.directives.options.get("lib"),
+            Some(&"es6, dom".to_string())
+        );
+    }
+
+    #[test]
+    fn test_directive_keys_are_lowercased() {
+        let content = "// @Target: ES6\n// @Strict: true\nfunction foo() {}";
+        let parsed = parse_test_file(content).unwrap();
+        assert_eq!(
+            parsed.directives.options.get("target"),
+            Some(&"ES6".to_string())
+        );
+        assert_eq!(
+            parsed.directives.options.get("strict"),
+            Some(&"true".to_string())
+        );
+        // Original casing keys should NOT exist
+        assert!(parsed.directives.options.get("Target").is_none());
+        assert!(parsed.directives.options.get("Strict").is_none());
     }
 
     #[test]

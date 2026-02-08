@@ -376,10 +376,11 @@ fn process_test_file(
 
 /// Convert test directive options to tsconfig compiler options JSON
 fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json::Value {
+    // Delegate to the shared implementation in tsz_wrapper
+    // Keys are already lowercase from the parser
     let mut opts = serde_json::Map::new();
 
     for (key, value) in options {
-        // Skip test harness-specific directives
         let key_lower = key.to_lowercase();
         if HARNESS_ONLY_DIRECTIVES
             .iter()
@@ -396,19 +397,22 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
             .iter()
             .any(|&opt| opt.to_lowercase() == key_lower)
         {
-            // Parse comma-separated list
             let items: Vec<serde_json::Value> = value
                 .split(',')
                 .map(|s| serde_json::Value::String(s.trim().to_string()))
                 .collect();
             serde_json::Value::Array(items)
-        } else if let Ok(num) = value.parse::<i64>() {
-            serde_json::Value::Number(num.into())
         } else {
-            serde_json::Value::String(value.clone())
+            // For non-list options, take only the first comma-separated value
+            let effective_value = value.split(',').next().unwrap_or(value).trim();
+            if let Ok(num) = effective_value.parse::<i64>() {
+                serde_json::Value::Number(num.into())
+            } else {
+                serde_json::Value::String(effective_value.to_string())
+            }
         };
 
-        opts.insert(key.clone(), json_value);
+        opts.insert(key_lower, json_value);
     }
 
     serde_json::Value::Object(opts)
@@ -416,35 +420,34 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
 
 /// Parse error codes from tsc output
 fn parse_error_codes(text: &str) -> Vec<u32> {
-    let mut codes = Vec::new();
+    use regex::Regex;
+    use once_cell::sync::Lazy;
 
+    static DIAG_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"error TS(\d+):").unwrap());
+
+    let mut codes = Vec::new();
     for line in text.lines() {
-        // Look for pattern: "error TS1234:" or "TS1234:"
-        if let Some(start) = line.find("TS") {
-            let rest = &line[start + 2..];
-            if let Some(end) = rest.find(':') {
-                if let Ok(code) = rest[..end].parse::<u32>() {
-                    codes.push(code);
-                }
-            } else if let Some(end) = rest.find(|c: char| !c.is_ascii_digit()) {
-                if let Ok(code) = rest[..end].parse::<u32>() {
-                    codes.push(code);
-                }
+        if let Some(caps) = DIAG_RE.captures(line) {
+            if let Ok(code) = caps[1].parse::<u32>() {
+                codes.push(code);
             }
         }
     }
-
     codes
 }
 
 /// Strip @ directive comments from test file content
 fn strip_directive_comments(content: &str) -> String {
+    use regex::Regex;
+    use once_cell::sync::Lazy;
+
+    static DIRECTIVE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^\s*//\s*@\w+\s*:").unwrap());
+
     content
         .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !(trimmed.starts_with("//") && trimmed.contains("@") && trimmed.contains(":"))
-        })
+        .filter(|line| !DIRECTIVE_RE.is_match(line))
         .collect::<Vec<_>>()
         .join("\n")
 }

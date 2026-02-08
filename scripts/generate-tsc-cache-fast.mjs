@@ -24,7 +24,7 @@ const __filename = fileURLToPath(import.meta.url);
 // ---------------------------------------------------------------------------
 // Shared constants
 // ---------------------------------------------------------------------------
-const DIRECTIVE_RE = /^\s*\/\/\s*@(\w+)\s*:\s*(\S+)/;
+const DIRECTIVE_RE = /^\s*\/\/\s*@(\w+)\s*:\s*([^\r\n]*)/;
 
 const HARNESS_ONLY_DIRECTIVES = new Set([
   'filename', 'allowNonTsExtensions', 'useCaseSensitiveFileNames',
@@ -51,18 +51,16 @@ function parseDirectives(content) {
     const m = line.match(DIRECTIVE_RE);
     if (m) {
       const key = m[1];
-      const value = m[2];
-      if (key.toLowerCase() === 'filename') {
+      const value = m[2].trim();
+      const keyLower = key.toLowerCase();
+      if (keyLower === 'filename') {
         if (currentFilename !== null) {
           filenames.push({ name: currentFilename, content: currentLines.join('\n') });
         }
         currentFilename = value;
         currentLines = [];
       } else {
-        // Strip trailing comma — multi-target directives like
-        // `// @target: esnext, es2022, es2015` produce `esnext,`
-        // because the regex captures only the first non-whitespace token.
-        options[key] = value.replace(/,$/, '');
+        options[keyLower] = value;
       }
     } else {
       currentLines.push(line);
@@ -78,16 +76,14 @@ function parseDirectives(content) {
 
 function shouldSkip(options) {
   if ('skip' in options) return true;
-  if (options.noCheck === 'true' || options.nocheck === 'true') return true;
+  if (options.nocheck === 'true') return true;
   return false;
 }
 
 function stripDirectiveComments(content) {
+  const directiveRe = /^\s*\/\/\s*@\w+\s*:/;
   return content.split('\n')
-    .filter(line => {
-      const trimmed = line.trim();
-      return !(trimmed.startsWith('//') && trimmed.includes('@') && trimmed.includes(':'));
-    })
+    .filter(line => !directiveRe.test(line))
     .join('\n');
 }
 
@@ -135,10 +131,14 @@ function convertOptionsToJson(options) {
       result[key] = false;
     } else if (LIST_OPTIONS.has(key.toLowerCase()) || LIST_OPTIONS.has(key)) {
       result[key] = value.split(',').map(s => s.trim());
-    } else if (/^\d+$/.test(value)) {
-      result[key] = parseInt(value, 10);
     } else {
-      result[key] = value;
+      // For non-list options, take only the first comma-separated value
+      const effectiveValue = value.split(',')[0].trim();
+      if (/^\d+$/.test(effectiveValue)) {
+        result[key] = parseInt(effectiveValue, 10);
+      } else {
+        result[key] = effectiveValue;
+      }
     }
   }
   return result;

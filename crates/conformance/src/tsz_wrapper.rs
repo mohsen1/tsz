@@ -96,7 +96,7 @@ pub fn compile_test(
             || lower.ends_with(".cjs")
     });
     // Only infer allowJs from JS file extensions when not explicitly set
-    let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
+    let explicit_allow_js = options.get("allowjs");
     let allow_js = match explicit_allow_js {
         Some(v) => v == "true",
         None => has_js_files,
@@ -225,7 +225,7 @@ pub fn prepare_test_dir(
             || lower.ends_with(".cjs")
     });
     // Only infer allowJs from JS file extensions when not explicitly set
-    let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
+    let explicit_allow_js = options.get("allowjs");
     let allow_js = match explicit_allow_js {
         Some(v) => v == "true",
         None => has_js_files,
@@ -341,11 +341,12 @@ const LIST_OPTIONS: &[&str] = &[
 /// - List options (comma-separated values like @lib: es6,dom)
 /// - String/enum options (target, module, etc.)
 /// - Filters out test harness-specific directives
+/// - Normalizes lowercase directive keys to proper camelCase for tsconfig.json
 fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json::Value {
     let mut opts = serde_json::Map::new();
 
     for (key, value) in options {
-        // Skip test harness-specific directives
+        // Skip test harness-specific directives (keys are already lowercase)
         let key_lower = key.to_lowercase();
         if HARNESS_ONLY_DIRECTIVES
             .iter()
@@ -368,17 +369,120 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
                 .map(|s| serde_json::Value::String(s.trim().to_string()))
                 .collect();
             serde_json::Value::Array(items)
-        } else if let Ok(num) = value.parse::<i64>() {
-            // Handle numeric options (e.g., maxNodeModuleJsDepth)
-            serde_json::Value::Number(num.into())
         } else {
-            serde_json::Value::String(value.clone())
+            // For non-list options, take only the first comma-separated value.
+            // TSC runs multi-value directives like `@target: esnext, es2022` as
+            // separate test runs; our harness runs once with the first value.
+            let effective_value = value.split(',').next().unwrap_or(value).trim();
+            if let Ok(num) = effective_value.parse::<i64>() {
+                // Handle numeric options (e.g., maxNodeModuleJsDepth)
+                serde_json::Value::Number(num.into())
+            } else {
+                serde_json::Value::String(effective_value.to_string())
+            }
         };
 
-        opts.insert(key.clone(), json_value);
+        // Convert lowercase key to proper camelCase for tsconfig.json
+        let tsconfig_key = lowercase_to_camel_case(&key_lower);
+        opts.insert(tsconfig_key, json_value);
     }
 
     serde_json::Value::Object(opts)
+}
+
+/// Map lowercase directive keys to proper camelCase tsconfig.json keys.
+///
+/// TypeScript compiler options use camelCase (e.g., `noImplicitAny`), but our
+/// directive parser normalizes keys to lowercase. This function maps them back.
+fn lowercase_to_camel_case(key: &str) -> String {
+    // Exhaustive map of known compiler options (lowercase → camelCase)
+    match key {
+        // Simple single-word options (no change needed)
+        "strict" | "target" | "module" | "jsx" | "lib" | "declaration" | "incremental"
+        | "types" | "paths" => key.to_string(),
+
+        // Strict family
+        "noimplicitany" => "noImplicitAny".to_string(),
+        "noimplicitreturns" => "noImplicitReturns".to_string(),
+        "noimplicitthis" => "noImplicitThis".to_string(),
+        "strictnullchecks" => "strictNullChecks".to_string(),
+        "strictfunctiontypes" => "strictFunctionTypes".to_string(),
+        "strictpropertyinitialization" => "strictPropertyInitialization".to_string(),
+        "strictbindcallapply" => "strictBindCallApply".to_string(),
+        "strictbuiltiniteratorreturn" => "strictBuiltinIteratorReturn".to_string(),
+        "useunknownincatchvariables" => "useUnknownInCatchVariables".to_string(),
+        "alwaysstrict" => "alwaysStrict".to_string(),
+        "exactoptionalpropertytypes" => "exactOptionalPropertyTypes".to_string(),
+
+        // Module resolution
+        "moduleresolution" => "moduleResolution".to_string(),
+        "modulesuffixes" => "moduleSuffixes".to_string(),
+        "moduledetection" => "moduleDetection".to_string(),
+        "resolvepackagejsonexports" => "resolvePackageJsonExports".to_string(),
+        "resolvepackagejsonimports" => "resolvePackageJsonImports".to_string(),
+        "resolvejsonmodule" => "resolveJsonModule".to_string(),
+        "customconditions" => "customConditions".to_string(),
+        "typeroots" => "typeRoots".to_string(),
+        "baseurl" => "baseUrl".to_string(),
+        "rootdir" => "rootDir".to_string(),
+        "rootdirs" => "rootDirs".to_string(),
+
+        // Emit
+        "outdir" => "outDir".to_string(),
+        "outfile" => "outFile".to_string(),
+        "sourcemap" => "sourceMap".to_string(),
+        "declarationmap" => "declarationMap".to_string(),
+        "declarationdir" => "declarationDir".to_string(),
+        "noemit" => "noEmit".to_string(),
+        "noemitonerror" => "noEmitOnError".to_string(),
+        "tsbuildinfofile" => "tsBuildInfoFile".to_string(),
+
+        // Interop
+        "esmoduleinterop" => "esModuleInterop".to_string(),
+        "allowsyntheticdefaultimports" => "allowSyntheticDefaultImports".to_string(),
+        "isolatedmodules" => "isolatedModules".to_string(),
+        "experimentaldecorators" => "experimentalDecorators".to_string(),
+
+        // JavaScript
+        "allowjs" => "allowJs".to_string(),
+        "checkjs" => "checkJs".to_string(),
+        "maxnodemodulejsdepth" => "maxNodeModuleJsDepth".to_string(),
+
+        // Checking
+        "nolib" => "noLib".to_string(),
+        "nounusedlocals" => "noUnusedLocals".to_string(),
+        "nounusedparameters" => "noUnusedParameters".to_string(),
+        "allowunreachablecode" => "allowUnreachableCode".to_string(),
+        "nofallthrough casesinswitch" => "noFallthroughCasesInSwitch".to_string(),
+        "nouncheckedindexedaccess" => "noUncheckedIndexedAccess".to_string(),
+        "nopropertyaccessfromindexsignature" => "noPropertyAccessFromIndexSignature".to_string(),
+        "skiplibrarycheck" | "skiplibcheck" => "skipLibCheck".to_string(),
+        "skipdefaultlibcheck" => "skipDefaultLibCheck".to_string(),
+        "suppressexcesspropertyerrors" => "suppressExcessPropertyErrors".to_string(),
+        "suppressimplicitanyindexerrors" => "suppressImplicitAnyIndexErrors".to_string(),
+        "noerrortruncation" => "noErrorTruncation".to_string(),
+        "forceconsitentnaminginfilenames" | "forceconsistentcasinginfilenames" => {
+            "forceConsistentCasingInFileNames".to_string()
+        }
+
+        // JSX
+        "jsxfactory" => "jsxFactory".to_string(),
+        "jsxfragmentfactory" => "jsxFragmentFactory".to_string(),
+        "jsximportsource" => "jsxImportSource".to_string(),
+
+        // Other
+        "downleveliteration" => "downlevelIteration".to_string(),
+        "importhelpers" => "importHelpers".to_string(),
+        "preserveconstenums" => "preserveConstEnums".to_string(),
+        "verbatimmodulesyntax" => "verbatimModuleSyntax".to_string(),
+        "usedefineforclassfields" => "useDefineForClassFields".to_string(),
+        "emitdecoratormetadata" => "emitDecoratorMetadata".to_string(),
+        "allowimportingtsextensions" => "allowImportingTsExtensions".to_string(),
+        "allowarbitraryextensions" => "allowArbitraryExtensions".to_string(),
+
+        // Fallback: return as-is (already single word or unknown)
+        other => other.to_string(),
+    }
 }
 
 /// Compile with tsz binary (used by compile_test for tests only)
@@ -416,26 +520,27 @@ fn compile_tsz_with_binary(
 
 /// Simple parser to extract error codes from tsz output
 fn parse_diagnostics_from_text(text: &str) -> Vec<Diagnostic> {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    // Match: "error TS1234:" pattern in diagnostic output
+    static DIAG_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"error TS(\d+):").unwrap());
+
     let mut diagnostics = Vec::new();
 
     for line in text.lines() {
-        // Look for error pattern: "TSXXXX:"
-        if let Some(start) = line.find("TS") {
-            if let Some(end) = line[start..].find(':') {
-                let code_str = &line[start + 2..start + end];
-                if let Ok(code) = code_str.parse::<u32>() {
-                    // Create a simple diagnostic placeholder
-                    // Real implementation would parse the full diagnostic
-                    diagnostics.push(Diagnostic {
-                        file_name: "test.ts".to_string(),
-                        span: Span::new(0, 0),
-                        message: line.to_string(),
-                        severity: DiagnosticSeverity::Error,
-                        code,
-                        related: Vec::new(),
-                        source: Some("typescript".to_string()),
-                    });
-                }
+        if let Some(caps) = DIAG_RE.captures(line) {
+            if let Ok(code) = caps[1].parse::<u32>() {
+                diagnostics.push(Diagnostic {
+                    file_name: "test.ts".to_string(),
+                    span: Span::new(0, 0),
+                    message: line.to_string(),
+                    severity: DiagnosticSeverity::Error,
+                    code,
+                    related: Vec::new(),
+                    source: Some("typescript".to_string()),
+                });
             }
         }
     }
@@ -462,15 +567,18 @@ fn extract_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
 
 /// Strip @ directive comments from test file content
 /// Removes lines like `// @strict: true` from the code
+/// Uses the same regex as the test parser for precise matching
 fn strip_directive_comments(content: &str) -> String {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    // Must match exactly the directive pattern: // @word: ...
+    static DIRECTIVE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^\s*//\s*@\w+\s*:").unwrap());
+
     content
         .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            // Keep lines that are not @ directives
-            // Directives start with // @key: value
-            !(trimmed.starts_with("//") && trimmed.contains("@") && trimmed.contains(":"))
-        })
+        .filter(|line| !DIRECTIVE_RE.is_match(line))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -493,19 +601,24 @@ fn rewrite_absolute_imports(content: &str) -> String {
 
     // Match: from '/...' or from "/..."
     static FROM_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r#"(from\s+)(['"])/((?:[^'"])*)\2"#).unwrap());
+        Lazy::new(|| Regex::new(r#"(from\s+)(['"])/((?:[^'"])*)['"]"#).unwrap());
 
     // Match: import '/...' or import "/..." (side-effect imports)
     static IMPORT_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r#"(import\s+)(['"])/((?:[^'"])*)\2"#).unwrap());
+        Lazy::new(|| Regex::new(r#"(import\s+)(['"])/((?:[^'"])*)['"]"#).unwrap());
 
     // Match: require('/...') or require("/...")
     static REQUIRE_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r#"(require\()(['"])/((?:[^'"])*)\2(\))"#).unwrap());
+        Lazy::new(|| Regex::new(r#"(require\()(['"])/((?:[^'"])*)['"]([)])"#).unwrap());
+
+    // Match: import('/...')
+    static DYNAMIC_IMPORT_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"(import\()(['"])/((?:[^'"\)])*?)['"]"#).unwrap());
 
     let result = FROM_RE.replace_all(content, "${1}${2}./${3}${2}");
     let result = IMPORT_RE.replace_all(&result, "${1}${2}./${3}${2}");
     let result = REQUIRE_RE.replace_all(&result, "${1}${2}./${3}${2}${4}");
+    let result = DYNAMIC_IMPORT_RE.replace_all(&result, "${1}${2}./${3}${2}");
     result.into_owned()
 }
 
@@ -525,7 +638,7 @@ fn resolve_lib_references(
 
     // Match: /// <reference path="/.lib/react16.d.ts" />
     static LIB_REF_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"(///\s*<reference\s+path\s*=\s*)(['"])/.lib/((?:[^'"])*)\2"#).unwrap()
+        Regex::new(r#"(///\s*<reference\s+path\s*=\s*)(['"])/.lib/((?:[^'"])*)(?:'|")"#).unwrap()
     });
 
     let mut result = content.to_string();
@@ -559,13 +672,23 @@ fn rewrite_absolute_reference_paths(content: &str) -> String {
     use once_cell::sync::Lazy;
     use regex::Regex;
 
-    // Match: /// <reference path="/..." /> but NOT /.lib/ (handled separately)
+    // Match: /// <reference path="/..." /> (any absolute path)
     static ABS_REF_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"(///\s*<reference\s+path\s*=\s*)(['"])/((?!\.lib/)(?:[^'"])*)\2"#).unwrap()
+        Regex::new(r#"(///\s*<reference\s+path\s*=\s*)(['"])/((?:[^'"])*)(?:'|")"#)
+            .unwrap()
     });
 
+    // Replace all absolute reference paths EXCEPT /.lib/ (handled separately)
     ABS_REF_RE
-        .replace_all(content, "${1}${2}./${3}${2}")
+        .replace_all(content, |caps: &regex::Captures| {
+            let path = &caps[3];
+            if path.starts_with(".lib/") {
+                // Don't rewrite /.lib/ references — handled by resolve_lib_references
+                caps[0].to_string()
+            } else {
+                format!("{}{}./{}{}", &caps[1], &caps[2], path, &caps[2])
+            }
+        })
         .into_owned()
 }
 
