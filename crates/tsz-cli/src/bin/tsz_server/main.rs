@@ -4494,6 +4494,7 @@ impl Server {
             no_unused_locals: options.no_unused_locals,
             no_unused_parameters: options.no_unused_parameters,
             always_strict: options.always_strict.unwrap_or(options.strict),
+            resolve_json_module: options.resolve_json_module,
         }
     }
 }
