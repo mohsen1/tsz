@@ -2792,6 +2792,24 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> TypeId {
         let operator = bin.operator_token;
 
+        // Unwrap assignment expressions: if (flag = (x instanceof Foo)) should narrow based on RHS
+        // The assignment itself doesn't provide narrowing, but its RHS might
+        if operator == SyntaxKind::EqualsToken as u16 {
+            if self.arena.get(bin.right).is_some() {
+                // Recursively narrow based on the RHS expression
+                let mut visited = Vec::new();
+                return self.narrow_type_by_condition_inner(
+                    type_id,
+                    bin.right,
+                    target,
+                    is_true_branch,
+                    antecedent_id,
+                    &mut visited,
+                );
+            }
+            return type_id;
+        }
+
         if operator == SyntaxKind::InstanceOfKeyword as u16 {
             return self.narrow_by_instanceof(type_id, bin, target, is_true_branch);
         }
