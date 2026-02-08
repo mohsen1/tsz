@@ -1577,6 +1577,11 @@ impl<'a> NarrowingContext<'a> {
                 })
                 .collect();
 
+            tracing::trace!(
+                remaining_count = remaining.len(),
+                remaining = ?remaining.iter().map(|t| t.0).collect::<Vec<_>>(),
+                "narrow_excluding_type: union filter result"
+            );
             if remaining.is_empty() {
                 return TypeId::NEVER;
             } else if remaining.len() == 1 {
@@ -2037,6 +2042,17 @@ impl<'a> NarrowingContext<'a> {
 
         if target == TypeId::STRING && template_literal_id(self.db, source).is_some() {
             return true;
+        }
+
+        // Check if source is assignable to any member of a union target
+        if let Some(members) = union_list_id(self.db, target) {
+            let members = self.db.type_list(members);
+            if members
+                .iter()
+                .any(|&member| self.is_assignable_to(source, member))
+            {
+                return true;
+            }
         }
 
         false
