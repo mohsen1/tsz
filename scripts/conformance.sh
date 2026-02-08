@@ -49,7 +49,7 @@ Options:
   --error-code N    Only show tests with this error code (e.g., 2304)
   --no-cache        Force cache regeneration even if cache exists
   --no-download     Skip trying to download cache from GitHub
-  --profile NAME    Use specific cargo profile (default: release, available: dist, release, dev)
+  --profile NAME    Use specific cargo profile (default: release)
 
 Analyze options:
   --category CAT    Filter by category: false-positive, all-missing, wrong-code, close
