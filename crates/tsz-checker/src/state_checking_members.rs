@@ -63,8 +63,9 @@ impl<'a> CheckerState<'a> {
         self.check_duplicate_interface_members(&iface.members.nodes);
 
         // Check that properties are assignable to index signatures (TS2411)
-        // Pass members directly - we'll extract index signatures from AST
-        self.check_index_signature_compatibility(&iface.members.nodes);
+        // Get the interface type to access resolved index signatures
+        let iface_type = self.get_type_of_node(stmt_idx);
+        self.check_index_signature_compatibility(&iface.members.nodes, iface_type);
 
         // Check that interface correctly extends base interfaces (error 2430)
         self.check_interface_extension_compatibility(stmt_idx, iface);
@@ -137,71 +138,23 @@ impl<'a> CheckerState<'a> {
     ///     "": string;           // Error TS2411: string is not assignable to number
     /// }
     /// ```
-    pub(crate) fn check_index_signature_compatibility(&mut self, members: &[NodeIndex]) {
+    pub(crate) fn check_index_signature_compatibility(
+        &mut self,
+        members: &[NodeIndex],
+        iface_type: TypeId,
+    ) {
         use crate::types::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext;
 
-        // First pass: collect index signatures from AST
-        let mut string_index_type: Option<TypeId> = None;
-        let mut number_index_type: Option<TypeId> = None;
-
-        for &member_idx in members {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-
-            if member_node.kind != syntax_kind_ext::INDEX_SIGNATURE {
-                continue;
-            }
-
-            let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
-                continue;
-            };
-
-            // Get the index parameter type (string or number)
-            let param_idx = index_sig
-                .parameters
-                .nodes
-                .first()
-                .copied()
-                .unwrap_or(NodeIndex::NONE);
-
-            if param_idx.is_none() {
-                continue;
-            }
-
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param_data) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-
-            let key_type = if !param_data.type_annotation.is_none() {
-                self.get_type_of_node(param_data.type_annotation)
-            } else {
-                TypeId::STRING
-            };
-
-            let value_type = if !index_sig.type_annotation.is_none() {
-                self.get_type_of_node(index_sig.type_annotation)
-            } else {
-                TypeId::ANY
-            };
-
-            if key_type == TypeId::NUMBER {
-                number_index_type = Some(value_type);
-            } else {
-                string_index_type = Some(value_type);
-            }
-        }
+        // Get resolved index signatures from the Solver
+        let index_info = self.ctx.types.get_index_signatures(iface_type);
 
         // If no index signatures, nothing to check
-        if string_index_type.is_none() && number_index_type.is_none() {
+        if index_info.string_index.is_none() && index_info.number_index.is_none() {
             return;
         }
 
-        // Second pass: check each property/method against applicable index signatures
+        // Check each property/method against applicable index signatures
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -222,10 +175,14 @@ impl<'a> CheckerState<'a> {
             let prop_type = self.get_type_of_node(member_idx);
 
             // Check against string index signature
-            if let Some(string_idx_type) = string_index_type {
-                if !self.ctx.types.is_assignable_to(prop_type, string_idx_type) {
+            if let Some(ref string_idx) = index_info.string_index {
+                if !self
+                    .ctx
+                    .types
+                    .is_assignable_to(prop_type, string_idx.value_type)
+                {
                     let prop_type_str = self.format_type(prop_type);
-                    let index_type_str = self.format_type(string_idx_type);
+                    let index_type_str = self.format_type(string_idx.value_type);
 
                     self.error_at_node_msg(
                         sig.name,
@@ -236,11 +193,16 @@ impl<'a> CheckerState<'a> {
             }
 
             // Check against number index signature if property name is numeric
-            if let Some(number_idx_type) = number_index_type {
+            if let Some(ref number_idx) = index_info.number_index {
                 let is_numeric = prop_name.parse::<f64>().is_ok();
-                if is_numeric && !self.ctx.types.is_assignable_to(prop_type, number_idx_type) {
+                if is_numeric
+                    && !self
+                        .ctx
+                        .types
+                        .is_assignable_to(prop_type, number_idx.value_type)
+                {
                     let prop_type_str = self.format_type(prop_type);
-                    let index_type_str = self.format_type(number_idx_type);
+                    let index_type_str = self.format_type(number_idx.value_type);
 
                     self.error_at_node_msg(
                         sig.name,
