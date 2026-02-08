@@ -266,10 +266,12 @@ impl<'a> CheckerState<'a> {
     /// Assign the inferred loop-variable type for `for-in` / `for-of` initializers.
     ///
     /// The initializer is a `VariableDeclarationList` in the Thin AST.
+    /// `is_for_in` should be true for for-in loops (to emit TS2404 on type annotations).
     pub(crate) fn assign_for_in_of_initializer_types(
         &mut self,
         decl_list_idx: NodeIndex,
         element_type: TypeId,
+        is_for_in: bool,
     ) {
         let Some(list_node) = self.ctx.arena.get(decl_list_idx) else {
             return;
@@ -288,6 +290,16 @@ impl<'a> CheckerState<'a> {
 
             // If there's a type annotation, check that the element type is assignable to it
             if !var_decl.type_annotation.is_none() {
+                // TS2404: The left-hand side of a 'for...in' statement cannot use a type annotation
+                if is_for_in {
+                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        var_decl.type_annotation,
+                        diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
+                        diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
+                    );
+                }
+
                 let declared = self.get_type_from_type_node(var_decl.type_annotation);
 
                 // TS2322: Check that element type is assignable to declared type

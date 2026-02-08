@@ -3598,8 +3598,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         &mut self,
         decl_list_idx: NodeIndex,
         loop_var_type: TypeId,
+        is_for_in: bool,
     ) {
-        CheckerState::assign_for_in_of_initializer_types(self, decl_list_idx, loop_var_type)
+        CheckerState::assign_for_in_of_initializer_types(
+            self,
+            decl_list_idx,
+            loop_var_type,
+            is_for_in,
+        )
     }
 
     fn for_of_element_type(&mut self, expr_type: TypeId) -> TypeId {

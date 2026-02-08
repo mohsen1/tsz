@@ -68,10 +68,12 @@ pub trait StatementCheckCallbacks {
     fn check_await_expression(&mut self, expr_idx: NodeIndex);
 
     /// Assign types for for-in/for-of initializers.
+    /// `is_for_in` should be true for for-in loops (to emit TS2404 on type annotations).
     fn assign_for_in_of_initializer_types(
         &mut self,
         decl_list_idx: NodeIndex,
         loop_var_type: TypeId,
+        is_for_in: bool,
     );
 
     /// Get element type for for-of loop.
@@ -352,7 +354,11 @@ impl StatementChecker {
                             .unwrap_or(false)
                     };
                     if is_var_decl_list {
-                        state.assign_for_in_of_initializer_types(initializer, loop_var_type);
+                        state.assign_for_in_of_initializer_types(
+                            initializer,
+                            loop_var_type,
+                            !is_for_of,
+                        );
                         state.check_variable_declaration_list(initializer);
                     } else {
                         state.get_type_of_node(initializer);
