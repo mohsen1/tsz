@@ -770,14 +770,12 @@ impl<'a> CheckerState<'a> {
             let right_type = type_stack.pop().unwrap_or(TypeId::UNKNOWN);
             let left_type = type_stack.pop().unwrap_or(TypeId::UNKNOWN);
             if op_kind == SyntaxKind::CommaToken as u16 {
-                // TS2695: Only emit when neither side is ERROR/ANY/UNKNOWN (cascade prevention)
+                // TS2695: Emit when left side has no side effects
                 // TypeScript suppresses this diagnostic when allowUnreachableCode is enabled
                 // or when the file has parse errors (e.g., JSON files parsed as TypeScript)
+                // TypeScript DOES emit this even when left operand has type errors or is typed as any
                 if !self.ctx.compiler_options.allow_unreachable_code
                     && !self.has_parse_errors()
-                    && left_type != TypeId::ERROR
-                    && left_type != TypeId::ANY
-                    && left_type != TypeId::UNKNOWN
                     && self.is_side_effect_free(left_idx)
                     && !self.is_indirect_call(node_idx, left_idx, right_idx)
                 {
