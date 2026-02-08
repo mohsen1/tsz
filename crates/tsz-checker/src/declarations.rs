@@ -879,6 +879,34 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         };
 
         if let Some(module) = self.ctx.arena.get_module(node) {
+            // TS2668: 'export' modifier cannot be applied to ambient modules
+            // Check this FIRST before early returns so we can emit multiple errors
+            let has_declare = self
+                .ctx
+                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword as u16);
+            let has_export = self
+                .ctx
+                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword as u16);
+
+            if has_declare && has_export {
+                // Find the export modifier position to report error there
+                if let Some(ref mods) = module.modifiers {
+                    for &mod_idx in &mods.nodes {
+                        if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                            if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
+                                self.ctx.error(
+                                    mod_node.pos,
+                                    mod_node.end - mod_node.pos,
+                                    "'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.".to_string(),
+                                    2668, // TS2668
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
             // TS2435: Ambient modules cannot be nested in other modules or namespaces
             // Check if this is an ambient external module (declare module "string")
             // inside another namespace/module
