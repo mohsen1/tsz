@@ -87,6 +87,7 @@ mod type_checking_utilities;
 pub mod type_computation;
 mod type_computation_complex;
 // pub mod type_computing_visitor; // TODO: module not found
+pub mod triple_slash_validator;
 pub mod type_literal_checker;
 pub mod type_node;
 pub mod type_parameter;

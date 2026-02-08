@@ -4,6 +4,7 @@
 //! statements, and class/interface validation. Also includes StatementCheckCallbacks.
 
 use crate::EnclosingClassInfo;
+use crate::error_handler::ErrorHandler;
 use crate::flow_analysis::{ComputedKey, PropertyKey};
 use crate::state::CheckerState;
 use crate::statements::StatementChecker;
@@ -134,6 +135,9 @@ impl<'a> CheckerState<'a> {
             // Check for missing global types (2318)
             // Emits errors at file start for essential types when libs are not loaded
             self.check_missing_global_types();
+
+            // Check triple-slash reference directives (TS6053)
+            self.check_triple_slash_references(&sf.file_name, &sf.text);
 
             // Check for unused declarations (TS6133/TS6196)
             if self.ctx.no_unused_locals() || self.ctx.no_unused_parameters() {
@@ -2623,5 +2627,55 @@ impl<'a> CheckerState<'a> {
         let diag = emit_error_global_type_missing(type_name, self.ctx.file_name.clone(), 0, 0);
         self.ctx.push_diagnostic(diag.clone());
         self.ctx.push_diagnostic(diag);
+    }
+
+    /// Check triple-slash reference directives and emit TS6053 for missing files.
+    ///
+    /// Validates `/// <reference path="..." />` directives in TypeScript source files.
+    /// If a referenced file doesn't exist, emits error 6053.
+    fn check_triple_slash_references(&mut self, file_name: &str, source_text: &str) {
+        use crate::triple_slash_validator::{extract_reference_paths, validate_reference_path};
+        use std::path::Path;
+
+        let references = extract_reference_paths(source_text);
+        if references.is_empty() {
+            return;
+        }
+
+        let source_path = Path::new(file_name);
+
+        for (reference_path, line_num) in references {
+            if !validate_reference_path(source_path, &reference_path) {
+                // Calculate the position of the error (start of the line)
+                let mut pos = 0u32;
+                for (idx, _) in source_text.lines().enumerate() {
+                    if idx == line_num {
+                        break;
+                    }
+                    pos += source_text
+                        .lines()
+                        .nth(idx)
+                        .map(|l| l.len() + 1)
+                        .unwrap_or(0) as u32;
+                }
+
+                // Find the actual directive on the line to get accurate position
+                if let Some(line) = source_text.lines().nth(line_num) {
+                    if let Some(directive_start) = line.find("///") {
+                        pos += directive_start as u32;
+                    }
+                }
+
+                let length = source_text
+                    .lines()
+                    .nth(line_num)
+                    .map(|l| l.len() as u32)
+                    .unwrap_or(0);
+
+                use crate::types::diagnostics::{diagnostic_codes, format_message};
+                let message = format_message("File '{0}' not found.", &[&reference_path]);
+                self.emit_error_at(pos, length, &message, diagnostic_codes::FILE_NOT_FOUND);
+            }
+        }
     }
 }
