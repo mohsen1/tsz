@@ -226,6 +226,44 @@ pub struct BindResult {
 pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> {
     maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
+            // Skip parsing .json files - they should not be parsed as TypeScript.
+            // JSON module imports should be resolved during module resolution and
+            // emit TS2732 if resolveJsonModule is false.
+            if file_name.ends_with(".json") {
+                // Create empty result for JSON files
+                let arena = NodeArena::new();
+                let source_file = NodeIndex::NONE;
+                let parse_diagnostics = Vec::new();
+
+                let binder = BinderState::new();
+
+                return BindResult {
+                    file_name,
+                    source_file,
+                    arena: Arc::new(arena),
+                    symbols: binder.symbols,
+                    file_locals: binder.file_locals,
+                    declared_modules: binder.declared_modules,
+                    node_symbols: binder.node_symbols,
+                    symbol_arenas: binder.symbol_arenas,
+                    declaration_arenas: binder.declaration_arenas,
+                    scopes: binder.scopes,
+                    node_scope_ids: binder.node_scope_ids,
+                    parse_diagnostics,
+                    shorthand_ambient_modules: binder.shorthand_ambient_modules,
+                    global_augmentations: binder.global_augmentations,
+                    module_augmentations: binder.module_augmentations,
+                    reexports: binder.reexports,
+                    wildcard_reexports: binder.wildcard_reexports,
+                    lib_binders: Vec::new(),
+                    lib_symbol_ids: binder.lib_symbol_ids,
+                    flow_nodes: binder.flow_nodes,
+                    node_flow: binder.node_flow,
+                    switch_clause_to_switch: binder.switch_clause_to_switch,
+                    is_external_module: false,
+                };
+            }
+
             // Parse
             let mut parser = ParserState::new(file_name.clone(), source_text);
             let source_file = parser.parse_source_file();
@@ -481,6 +519,45 @@ pub fn parse_and_bind_parallel_with_libs(
 ) -> Vec<BindResult> {
     maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
+            // Skip parsing .json files - they should not be parsed as TypeScript.
+            // JSON module imports should be resolved during module resolution and
+            // emit TS2732 if resolveJsonModule is false.
+            if file_name.ends_with(".json") {
+                // Create empty result for JSON files
+                let arena = NodeArena::new();
+                let source_file = NodeIndex::NONE;
+                let parse_diagnostics = Vec::new();
+
+                let binder = BinderState::new();
+                let lib_binders = binder.lib_binders.clone();
+
+                return BindResult {
+                    file_name,
+                    source_file,
+                    arena: Arc::new(arena),
+                    symbols: binder.symbols,
+                    file_locals: binder.file_locals,
+                    declared_modules: binder.declared_modules,
+                    node_symbols: binder.node_symbols,
+                    symbol_arenas: binder.symbol_arenas,
+                    declaration_arenas: binder.declaration_arenas,
+                    scopes: binder.scopes,
+                    node_scope_ids: binder.node_scope_ids,
+                    parse_diagnostics,
+                    shorthand_ambient_modules: binder.shorthand_ambient_modules,
+                    global_augmentations: binder.global_augmentations,
+                    module_augmentations: binder.module_augmentations,
+                    reexports: binder.reexports,
+                    wildcard_reexports: binder.wildcard_reexports,
+                    lib_binders,
+                    lib_symbol_ids: binder.lib_symbol_ids,
+                    flow_nodes: binder.flow_nodes,
+                    node_flow: binder.node_flow,
+                    switch_clause_to_switch: binder.switch_clause_to_switch,
+                    is_external_module: false,
+                };
+            }
+
             // Parse
             let mut parser = ParserState::new(file_name.clone(), source_text);
             let source_file = parser.parse_source_file();
