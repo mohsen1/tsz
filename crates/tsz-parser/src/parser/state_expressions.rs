@@ -348,6 +348,8 @@ impl ParserState {
         // and remains set for body parsing
 
         // Parse body (block or expression)
+        // Push a new label scope for arrow function bodies
+        self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
@@ -358,6 +360,7 @@ impl ParserState {
             }
             self.parse_assignment_expression()
         };
+        self.pop_label_scope();
 
         // Restore context flags
         self.context_flags = saved_flags;
@@ -2892,11 +2895,14 @@ impl ParserState {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
 
+        // Push a new label scope for the method body
+        self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
             NodeIndex::NONE
         };
+        self.pop_label_scope();
 
         // Restore context flags after parsing body.
         self.context_flags = saved_flags;
