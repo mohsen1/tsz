@@ -471,19 +471,13 @@ pub(crate) fn resolve_module_specifier(
         return None;
     }
     let specifier = specifier.replace('\\', "/");
-    let resolution = options.effective_module_resolution();
     if specifier.starts_with('#') {
-        if matches!(
-            resolution,
-            ModuleResolutionKind::Node
-                | ModuleResolutionKind::Node16
-                | ModuleResolutionKind::NodeNext
-                | ModuleResolutionKind::Bundler
-        ) {
+        if options.resolve_package_json_imports {
             return resolve_package_imports_specifier(from_file, &specifier, base_dir, options);
         }
         return None;
     }
+    let resolution = options.effective_module_resolution();
     let mut candidates = Vec::new();
 
     let from_dir = from_file.parent().unwrap_or(base_dir);
@@ -645,27 +639,92 @@ fn expand_module_path_candidates(
     package_type: Option<PackageType>,
 ) -> Vec<PathBuf> {
     let base = normalize_path(path);
-    if let Some(extension) = base.extension().and_then(|ext| ext.to_str()) {
+    let suffixes = &options.module_suffixes;
+    if let Some((base_no_ext, extension)) = split_path_extension(&base) {
         let resolution = options.effective_module_resolution();
         if matches!(
             resolution,
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
         ) && let Some(rewritten) = node16_extension_substitution(&base, extension)
         {
-            return rewritten;
+            let mut candidates = Vec::new();
+            for candidate in rewritten {
+                candidates.extend(candidates_with_suffixes(&candidate, suffixes));
+            }
+            return candidates;
         }
-        return vec![base];
+        return candidates_with_suffixes_and_extension(&base_no_ext, extension, suffixes);
     }
 
     let extensions = extension_candidates_for_resolution(options, package_type);
     let mut candidates = Vec::new();
     for ext in extensions {
-        candidates.push(base.with_extension(ext));
+        candidates.extend(candidates_with_suffixes_and_extension(&base, ext, suffixes));
     }
+    if options.resolve_json_module {
+        candidates.extend(candidates_with_suffixes_and_extension(
+            &base, "json", suffixes,
+        ));
+    }
+    let index = base.join("index");
     for ext in extensions {
-        candidates.push(base.join("index").with_extension(ext));
+        candidates.extend(candidates_with_suffixes_and_extension(
+            &index, ext, suffixes,
+        ));
+    }
+    if options.resolve_json_module {
+        candidates.extend(candidates_with_suffixes_and_extension(
+            &index, "json", suffixes,
+        ));
     }
     candidates
+}
+
+fn split_path_extension(path: &Path) -> Option<(PathBuf, &'static str)> {
+    let path_str = path.to_string_lossy();
+    for ext in KNOWN_EXTENSIONS {
+        if path_str.ends_with(ext) {
+            let base = &path_str[..path_str.len().saturating_sub(ext.len())];
+            if base.is_empty() {
+                return None;
+            }
+            return Some((PathBuf::from(base), ext.trim_start_matches('.')));
+        }
+    }
+    None
+}
+
+fn candidates_with_suffixes(path: &Path, suffixes: &[String]) -> Vec<PathBuf> {
+    let Some((base, extension)) = split_path_extension(path) else {
+        return Vec::new();
+    };
+    candidates_with_suffixes_and_extension(&base, extension, suffixes)
+}
+
+fn candidates_with_suffixes_and_extension(
+    base: &Path,
+    extension: &str,
+    suffixes: &[String],
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for suffix in suffixes {
+        if let Some(candidate) = path_with_suffix_and_extension(base, suffix, extension) {
+            candidates.push(candidate);
+        }
+    }
+    candidates
+}
+
+fn path_with_suffix_and_extension(base: &Path, suffix: &str, extension: &str) -> Option<PathBuf> {
+    let file_name = base.file_name()?.to_string_lossy();
+    let mut candidate = base.to_path_buf();
+    let mut new_name = String::with_capacity(file_name.len() + suffix.len() + extension.len() + 1);
+    new_name.push_str(&file_name);
+    new_name.push_str(suffix);
+    new_name.push('.');
+    new_name.push_str(extension);
+    candidate.set_file_name(new_name);
+    Some(candidate)
 }
 
 fn node16_extension_substitution(path: &Path, extension: &str) -> Option<Vec<PathBuf>> {
@@ -719,6 +778,10 @@ fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
+const KNOWN_EXTENSIONS: [&str; 12] = [
+    ".d.mts", ".d.cts", ".d.ts", ".mts", ".cts", ".tsx", ".ts", ".mjs", ".cjs", ".jsx", ".js",
+    ".json",
+];
 const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
 const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
     ["mts", "d.mts", "ts", "tsx", "d.ts", "cts", "d.cts"];
@@ -960,7 +1023,9 @@ fn resolve_package_specifier(
 ) -> Option<PathBuf> {
     let package_type = package_type_from_json(package_json);
     if let Some(package_json) = package_json {
-        if let Some(exports) = package_json.exports.as_ref() {
+        if options.resolve_package_json_exports
+            && let Some(exports) = package_json.exports.as_ref()
+        {
             let subpath_key = match subpath {
                 Some(value) => format!("./{}", value),
                 None => ".".to_string(),

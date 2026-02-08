@@ -2880,6 +2880,30 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(module_resolution) = args.module_resolution {
         options.module_resolution = Some(module_resolution.to_module_resolution_kind());
     }
+    if let Some(resolve_package_json_exports) = args.resolve_package_json_exports {
+        options.resolve_package_json_exports = resolve_package_json_exports;
+    }
+    if let Some(resolve_package_json_imports) = args.resolve_package_json_imports {
+        options.resolve_package_json_imports = resolve_package_json_imports;
+    }
+    if let Some(module_suffixes) = args.module_suffixes.as_ref() {
+        options.module_suffixes = module_suffixes.clone();
+    }
+    if args.resolve_json_module {
+        options.resolve_json_module = true;
+    }
+    if args.allow_arbitrary_extensions {
+        options.allow_arbitrary_extensions = true;
+    }
+    if args.allow_importing_ts_extensions {
+        options.allow_importing_ts_extensions = true;
+    }
+    if args.rewrite_relative_import_extensions {
+        options.rewrite_relative_import_extensions = true;
+    }
+    if let Some(custom_conditions) = args.custom_conditions.as_ref() {
+        options.custom_conditions = custom_conditions.clone();
+    }
     if let Some(out_dir) = args.out_dir.as_ref() {
         options.out_dir = Some(out_dir.clone());
     }

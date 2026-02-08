@@ -70,6 +70,27 @@ pub struct CompilerOptions {
     pub module: Option<String>,
     #[serde(default)]
     pub module_resolution: Option<String>,
+    /// Use the package.json 'exports' field when resolving package imports.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub resolve_package_json_exports: Option<bool>,
+    /// Use the package.json 'imports' field when resolving imports.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub resolve_package_json_imports: Option<bool>,
+    /// List of file name suffixes to search when resolving a module.
+    #[serde(default)]
+    pub module_suffixes: Option<Vec<String>>,
+    /// Enable importing .json files.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub resolve_json_module: Option<bool>,
+    /// Enable importing files with any extension, provided a declaration file is present.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub allow_arbitrary_extensions: Option<bool>,
+    /// Allow imports to include TypeScript file extensions.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub allow_importing_ts_extensions: Option<bool>,
+    /// Rewrite '.ts', '.tsx', '.mts', and '.cts' file extensions in relative import paths.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub rewrite_relative_import_extensions: Option<bool>,
     #[serde(default)]
     pub types_versions_compiler_version: Option<String>,
     #[serde(default)]
@@ -193,9 +214,6 @@ pub struct CompilerOptions {
     /// Do not report errors on unreachable code
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub allow_unreachable_code: Option<bool>,
-    /// Enable importing .json files
-    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
-    pub resolve_json_module: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -209,6 +227,13 @@ pub struct ResolvedCompilerOptions {
     pub lib_files: Vec<PathBuf>,
     pub lib_is_default: bool,
     pub module_resolution: Option<ModuleResolutionKind>,
+    pub resolve_package_json_exports: bool,
+    pub resolve_package_json_imports: bool,
+    pub module_suffixes: Vec<String>,
+    pub resolve_json_module: bool,
+    pub allow_arbitrary_extensions: bool,
+    pub allow_importing_ts_extensions: bool,
+    pub rewrite_relative_import_extensions: bool,
     pub types_versions_compiler_version: Option<String>,
     pub types: Option<Vec<String>>,
     pub type_roots: Option<Vec<PathBuf>>,
@@ -237,8 +262,6 @@ pub struct ResolvedCompilerOptions {
     pub allow_js: bool,
     /// Enable error reporting in type-checked JavaScript files
     pub check_js: bool,
-    /// Enable importing .json files
-    pub resolve_json_module: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,6 +345,15 @@ pub fn resolve_compiler_options(
         resolved.checker.target = checker_target_from_emitter(resolved.printer.target);
         resolved.lib_files = resolve_default_lib_files(resolved.printer.target)?;
         resolved.lib_is_default = true;
+        resolved.module_suffixes = vec![String::new()];
+        let default_resolution = resolved.effective_module_resolution();
+        resolved.resolve_package_json_exports = matches!(
+            default_resolution,
+            ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        );
+        resolved.resolve_package_json_imports = resolved.resolve_package_json_exports;
         return Ok(resolved);
     };
 
@@ -347,6 +379,42 @@ pub fn resolve_compiler_options(
         if !value.is_empty() {
             resolved.module_resolution = Some(parse_module_resolution(value)?);
         }
+    }
+    let effective_resolution = resolved.effective_module_resolution();
+    resolved.resolve_package_json_exports =
+        options.resolve_package_json_exports.unwrap_or_else(|| {
+            matches!(
+                effective_resolution,
+                ModuleResolutionKind::Node16
+                    | ModuleResolutionKind::NodeNext
+                    | ModuleResolutionKind::Bundler
+            )
+        });
+    resolved.resolve_package_json_imports =
+        options.resolve_package_json_imports.unwrap_or_else(|| {
+            matches!(
+                effective_resolution,
+                ModuleResolutionKind::Node16
+                    | ModuleResolutionKind::NodeNext
+                    | ModuleResolutionKind::Bundler
+            )
+        });
+    if let Some(module_suffixes) = options.module_suffixes.as_ref() {
+        resolved.module_suffixes = module_suffixes.clone();
+    } else {
+        resolved.module_suffixes = vec![String::new()];
+    }
+    if let Some(resolve_json_module) = options.resolve_json_module {
+        resolved.resolve_json_module = resolve_json_module;
+    }
+    if let Some(allow_arbitrary_extensions) = options.allow_arbitrary_extensions {
+        resolved.allow_arbitrary_extensions = allow_arbitrary_extensions;
+    }
+    if let Some(allow_importing_ts_extensions) = options.allow_importing_ts_extensions {
+        resolved.allow_importing_ts_extensions = allow_importing_ts_extensions;
+    }
+    if let Some(rewrite_relative_import_extensions) = options.rewrite_relative_import_extensions {
+        resolved.rewrite_relative_import_extensions = rewrite_relative_import_extensions;
     }
 
     if let Some(types_versions_compiler_version) =
@@ -582,10 +650,6 @@ pub fn resolve_compiler_options(
         resolved.check_js = check_js;
     }
 
-    if let Some(resolve_json_module) = options.resolve_json_module {
-        resolved.resolve_json_module = resolve_json_module;
-    }
-
     Ok(resolved)
 }
 
@@ -672,6 +736,13 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             target,
             module,
             module_resolution,
+            resolve_package_json_exports,
+            resolve_package_json_imports,
+            module_suffixes,
+            resolve_json_module,
+            allow_arbitrary_extensions,
+            allow_importing_ts_extensions,
+            rewrite_relative_import_extensions,
             types_versions_compiler_version,
             types,
             type_roots,
@@ -711,7 +782,6 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_unused_locals,
             no_unused_parameters,
             allow_unreachable_code,
-            resolve_json_module,
         }
     )
 }
