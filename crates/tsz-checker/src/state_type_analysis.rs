@@ -2166,6 +2166,19 @@ impl<'a> CheckerState<'a> {
         // This preserves nominal identity (e.g., D<string>) in error messages
         let original_object_type = object_type;
         let object_type = self.evaluate_application_type(object_type);
+
+        // Check for never type - emit TS18050 "The value 'never' cannot be used here"
+        if object_type == TypeId::NEVER {
+            if !access.question_dot_token {
+                self.report_never_type_usage(access.expression);
+            }
+            return if access.question_dot_token {
+                TypeId::UNDEFINED
+            } else {
+                TypeId::ERROR
+            };
+        }
+
         let (object_type_for_check, nullish_cause) = self.split_nullish_type(object_type);
         let Some(object_type_for_check) = object_type_for_check else {
             if access.question_dot_token {
