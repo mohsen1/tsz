@@ -80,8 +80,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.checker.error_at_node(
                         idx,
-                        diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY,
-                        diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY,
+                        diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                        diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
                     );
                     TypeId::ANY
                 } else {
@@ -200,8 +200,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                         self.checker.error_at_node(
                             unary.expression,
-                            diagnostic_messages::ARITHMETIC_OPERAND_MUST_BE_NUMBER,
-                            diagnostic_codes::ARITHMETIC_OPERAND_MUST_BE_NUMBER,
+                            diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
+                            diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
                         );
                     }
                 }

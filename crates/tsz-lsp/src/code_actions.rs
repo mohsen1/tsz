@@ -209,7 +209,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn unused_import_quickfix(&self, diag: &LspDiagnostic) -> Option<CodeAction> {
         let code = diag.code?;
-        if code != tsz_checker::types::diagnostics::diagnostic_codes::UNUSED_IMPORT {
+        if code != tsz_checker::types::diagnostics::diagnostic_codes::ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED {
             return None;
         }
 
@@ -237,7 +237,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn unused_declaration_quickfix(&self, diag: &LspDiagnostic) -> Option<CodeAction> {
         let code = diag.code?;
-        if code != tsz_checker::types::diagnostics::diagnostic_codes::UNUSED_VARIABLE {
+        if code != tsz_checker::types::diagnostics::diagnostic_codes::ALL_VARIABLES_ARE_UNUSED {
             return None;
         }
 

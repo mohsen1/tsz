@@ -264,14 +264,14 @@ impl<'a> CheckerState<'a> {
             if let Some((start, end)) = self.get_node_span(expr_idx) {
                 let type_str = self.format_type(expr_type);
                 let message = format_message(
-                    diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR,
+                    diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR,
                     &[&type_str],
                 );
                 self.error(
                     start,
                     end.saturating_sub(start),
                     message,
-                    diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR,
+                    diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR,
                 );
             }
             return false;
@@ -287,14 +287,14 @@ impl<'a> CheckerState<'a> {
         if let Some((start, end)) = self.get_node_span(expr_idx) {
             let type_str = self.format_type(expr_type);
             let message = format_message(
-                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                 &[&type_str],
             );
             self.error(
                 start,
                 end.saturating_sub(start),
                 message,
-                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
             );
         }
         false
@@ -325,14 +325,14 @@ impl<'a> CheckerState<'a> {
         if let Some((start, end)) = self.get_node_span(expr_idx) {
             let type_str = self.format_type(spread_type);
             let message = format_message(
-                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                 &[&type_str],
             );
             self.error(
                 start,
                 end.saturating_sub(start),
                 message,
-                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
             );
         }
         false
@@ -392,14 +392,14 @@ impl<'a> CheckerState<'a> {
         if let Some((start, end)) = self.get_node_span(error_idx) {
             let type_str = self.format_type(pattern_type);
             let message = format_message(
-                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                 &[&type_str],
             );
             self.error(
                 start,
                 end.saturating_sub(start),
                 message,
-                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
             );
         }
         false

@@ -375,15 +375,15 @@ impl<'a> CheckerState<'a> {
                     use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         var_decl.name,
-                        diagnostic_messages::INVALID_USE_OF_ARGUMENTS_IN_STRICT_MODE,
-                        diagnostic_codes::INVALID_USE_OF_ARGUMENTS_IN_STRICT_MODE,
+                        diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                        diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
                     );
                 } else if name == "eval" {
                     use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         var_decl.name,
-                        diagnostic_messages::INVALID_USE_OF_EVAL_IN_STRICT_MODE,
-                        diagnostic_codes::INVALID_USE_OF_EVAL_IN_STRICT_MODE,
+                        diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                        diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
                     );
                 }
             }
@@ -396,8 +396,8 @@ impl<'a> CheckerState<'a> {
             use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 var_decl.initializer,
-                diagnostic_messages::INITIALIZERS_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                diagnostic_codes::INITIALIZERS_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
             );
         }
 
@@ -416,7 +416,7 @@ impl<'a> CheckerState<'a> {
                     checker.error_at_node(
                         var_decl.type_annotation,
                         "Catch clause variable type annotation must be 'any' or 'unknown' if specified.",
-                        diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION,
+                        diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION_MUST_BE_ANY_OR_UNKNOWN_IF_SPECIFIED,
                     );
                 }
 
@@ -606,7 +606,7 @@ impl<'a> CheckerState<'a> {
                     use crate::types::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
                         var_decl.name,
-                        diagnostic_codes::IMPLICIT_ANY,
+                        diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
                         &[name, "any"],
                     );
                 }
@@ -1609,13 +1609,13 @@ impl<'a> CheckerState<'a> {
                                             diagnostic_codes, diagnostic_messages, format_message,
                                         };
                                         let message = format_message(
-                                            diagnostic_messages::CANNOT_EXTEND_CLASS_WITH_PRIVATE_CONSTRUCTOR,
+                                            diagnostic_messages::CANNOT_EXTEND_A_CLASS_CLASS_CONSTRUCTOR_IS_MARKED_AS_PRIVATE,
                                             &[&name],
                                         );
                                         self.error_at_node(
                                             expr_idx,
                                             &message,
-                                            diagnostic_codes::CANNOT_EXTEND_CLASS_WITH_PRIVATE_CONSTRUCTOR,
+                                            diagnostic_codes::CANNOT_EXTEND_A_CLASS_CLASS_CONSTRUCTOR_IS_MARKED_AS_PRIVATE,
                                         );
                                     }
                                     // Continue to next type - no need to check further for this symbol
@@ -1652,13 +1652,13 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes, diagnostic_messages, format_message,
                                 };
                                 let message = format_message(
-                                    diagnostic_messages::CANNOT_EXTEND_AN_INTERFACE,
+                                    diagnostic_messages::CANNOT_EXTEND_AN_INTERFACE_DID_YOU_MEAN_IMPLEMENTS,
                                     &[&name],
                                 );
                                 self.error_at_node(
                                     expr_idx,
                                     &message,
-                                    diagnostic_codes::CANNOT_EXTEND_AN_INTERFACE,
+                                    diagnostic_codes::CANNOT_EXTEND_AN_INTERFACE_DID_YOU_MEAN_IMPLEMENTS,
                                 );
                             }
                         } else if !is_interface_only
@@ -1855,7 +1855,7 @@ impl<'a> CheckerState<'a> {
                                 self.error_at_node(
                                     expr_idx,
                                     "A class may only implement another class or interface.",
-                                    diagnostic_codes::INTERFACE_CAN_ONLY_EXTEND_INTERFACE,
+                                    diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
                                 );
                                 continue;
                             }
@@ -1900,7 +1900,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 class.name,
                 "Class name cannot be 'any'.",
-                diagnostic_codes::CLASS_NAME_CANNOT_BE_ANY,
+                diagnostic_codes::CLASS_NAME_CANNOT_BE,
             );
         }
 
@@ -1971,17 +1971,17 @@ impl<'a> CheckerState<'a> {
                     if is_es5_or_lower {
                         self.error_at_node(
                             member_name_idx.unwrap(),
-                            diagnostic_messages::PRIVATE_IDENTIFIER_ES2015_REQUIRED,
-                            diagnostic_codes::PRIVATE_IDENTIFIER_ES2015_REQUIRED,
+                            diagnostic_messages::PRIVATE_IDENTIFIERS_ARE_ONLY_AVAILABLE_WHEN_TARGETING_ECMASCRIPT_2015_AND_HIGHER,
+                            diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_ONLY_AVAILABLE_WHEN_TARGETING_ECMASCRIPT_2015_AND_HIGHER,
                         );
                     }
 
-                    // TS2819: Check for private identifiers in ambient classes
+                    // TS18019: Check for private identifiers in ambient classes
                     if is_declared {
                         self.error_at_node(
                             member_name_idx.unwrap(),
-                            diagnostic_messages::PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT,
-                            diagnostic_codes::PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT,
+                            diagnostic_messages::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
                         );
                     }
                 }
@@ -2018,7 +2018,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             member_idx,
                             "Abstract properties can only appear within an abstract class.",
-                            diagnostic_codes::ABSTRACT_ONLY_IN_ABSTRACT_CLASS,
+                            diagnostic_codes::ABSTRACT_PROPERTIES_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
                         );
                     }
                 }
@@ -2269,13 +2269,13 @@ impl<'a> CheckerState<'a> {
             // Use TS2564 if no constructor (just missing initializer)
             let (message, code) = if constructor_body.is_some() {
                 (
-                    diagnostic_messages::PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT,
-                    diagnostic_codes::PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT,
+                    diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+                    diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
                 )
             } else {
                 (
-                    diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER,
-                    diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER,
+                    diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+                    diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
                 )
             };
 

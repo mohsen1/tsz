@@ -359,8 +359,8 @@ impl<'a> CheckerState<'a> {
             None => {
                 self.error_at_node(
                     idx,
-                    diagnostic_messages::SUPER_ONLY_IN_DERIVED_CLASS,
-                    diagnostic_codes::SUPER_ONLY_IN_DERIVED_CLASS,
+                    diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
+                    diagnostic_codes::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
                 );
                 return;
             }
@@ -410,8 +410,8 @@ impl<'a> CheckerState<'a> {
         if !has_base_class {
             self.error_at_node(
                 idx,
-                diagnostic_messages::SUPER_ONLY_IN_DERIVED_CLASS,
-                diagnostic_codes::SUPER_ONLY_IN_DERIVED_CLASS,
+                diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
+                diagnostic_codes::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
             );
             return;
         }
@@ -423,16 +423,16 @@ impl<'a> CheckerState<'a> {
             if self.is_in_static_property_initializer(idx) {
                 self.error_at_node(
                     idx,
-                    diagnostic_messages::SUPER_IN_STATIC_PROPERTY_INITIALIZER,
-                    diagnostic_codes::SUPER_IN_STATIC_PROPERTY_INITIALIZER,
+                    diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                    diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
                 );
                 return;
             }
             if !self.is_in_constructor(idx) {
                 self.error_at_node(
                     idx,
-                    diagnostic_messages::SUPER_CALL_NOT_IN_CONSTRUCTOR,
-                    diagnostic_codes::SUPER_CALL_NOT_IN_CONSTRUCTOR,
+                    diagnostic_messages::SUPER_CALLS_ARE_NOT_PERMITTED_OUTSIDE_CONSTRUCTORS_OR_IN_NESTED_FUNCTIONS_INSIDE,
+                    diagnostic_codes::SUPER_CALLS_ARE_NOT_PERMITTED_OUTSIDE_CONSTRUCTORS_OR_IN_NESTED_FUNCTIONS_INSIDE,
                 );
                 return;
             }
@@ -441,8 +441,8 @@ impl<'a> CheckerState<'a> {
             if self.is_super_in_nested_function(idx) {
                 self.error_at_node(
                     idx,
-                    diagnostic_messages::SUPER_CALL_NOT_IN_CONSTRUCTOR,
-                    diagnostic_codes::SUPER_CALL_NOT_IN_CONSTRUCTOR,
+                    diagnostic_messages::SUPER_CALLS_ARE_NOT_PERMITTED_OUTSIDE_CONSTRUCTORS_OR_IN_NESTED_FUNCTIONS_INSIDE,
+                    diagnostic_codes::SUPER_CALLS_ARE_NOT_PERMITTED_OUTSIDE_CONSTRUCTORS_OR_IN_NESTED_FUNCTIONS_INSIDE,
                 );
                 return;
             }
@@ -461,8 +461,8 @@ impl<'a> CheckerState<'a> {
             if !in_valid_context {
                 self.error_at_node(
                     idx,
-                    diagnostic_messages::SUPER_PROPERTY_ACCESS_INVALID_CONTEXT,
-                    diagnostic_codes::SUPER_PROPERTY_ACCESS_INVALID_CONTEXT,
+                    diagnostic_messages::SUPER_PROPERTY_ACCESS_IS_PERMITTED_ONLY_IN_A_CONSTRUCTOR_MEMBER_FUNCTION_OR_MEMB,
+                    diagnostic_codes::SUPER_PROPERTY_ACCESS_IS_PERMITTED_ONLY_IN_A_CONSTRUCTOR_MEMBER_FUNCTION_OR_MEMB,
                 );
             }
         }

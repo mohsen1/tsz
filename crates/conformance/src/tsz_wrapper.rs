@@ -77,9 +77,7 @@ pub fn compile_test(
             || lower.ends_with(".cjs")
     });
     // Only infer allowJs from JS file extensions when not explicitly set
-    let explicit_allow_js = options
-        .get("allowJs")
-        .or_else(|| options.get("allowjs"));
+    let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
     let allow_js = match explicit_allow_js {
         Some(v) => v == "true",
         None => has_js_files,
@@ -87,11 +85,13 @@ pub fn compile_test(
     // Include .cts/.mts (TypeScript CJS/ESM) alongside .ts/.tsx
     let include = if allow_js {
         serde_json::json!([
-            "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs",
-            "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+            "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs", "**/*.ts",
+            "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
         ])
     } else {
-        serde_json::json!(["*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"])
+        serde_json::json!([
+            "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
+        ])
     };
     let mut compiler_options = convert_options_to_tsconfig(options);
     if allow_js {
@@ -182,9 +182,7 @@ pub fn prepare_test_dir(
             || lower.ends_with(".cjs")
     });
     // Only infer allowJs from JS file extensions when not explicitly set
-    let explicit_allow_js = options
-        .get("allowJs")
-        .or_else(|| options.get("allowjs"));
+    let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
     let allow_js = match explicit_allow_js {
         Some(v) => v == "true",
         None => has_js_files,
@@ -192,11 +190,13 @@ pub fn prepare_test_dir(
     // Include .cts/.mts (TypeScript CJS/ESM) alongside .ts/.tsx
     let include = if allow_js {
         serde_json::json!([
-            "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs",
-            "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+            "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs", "**/*.ts",
+            "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
         ])
     } else {
-        serde_json::json!(["*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"])
+        serde_json::json!([
+            "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
+        ])
     };
     let mut compiler_options = convert_options_to_tsconfig(options);
     if allow_js {

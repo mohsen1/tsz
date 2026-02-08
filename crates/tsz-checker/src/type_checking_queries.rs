@@ -1064,7 +1064,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 idx,
                 &format!("The value '{}' cannot be used here.", value_name),
-                diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
             );
             return;
         }
@@ -1089,17 +1089,17 @@ impl<'a> CheckerState<'a> {
             // Use specific error codes with the variable name
             if cause == TypeId::NULL {
                 (
-                    diagnostic_codes::NAME_IS_POSSIBLY_NULL,
+                    diagnostic_codes::IS_POSSIBLY_NULL,
                     format!("'{}' is possibly 'null'.", name),
                 )
             } else if cause == TypeId::UNDEFINED {
                 (
-                    diagnostic_codes::NAME_IS_POSSIBLY_UNDEFINED,
+                    diagnostic_codes::IS_POSSIBLY_UNDEFINED,
                     format!("'{}' is possibly 'undefined'.", name),
                 )
             } else {
                 (
-                    diagnostic_codes::NAME_IS_POSSIBLY_NULL_OR_UNDEFINED,
+                    diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED,
                     format!("'{}' is possibly 'null' or 'undefined'.", name),
                 )
             }
@@ -1628,7 +1628,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         stmt_idx,
                         "'async' modifier cannot be used in an ambient context.",
-                        diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
                     );
                     i += 1;
                     continue;
@@ -1646,7 +1646,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                                     stmt_idx,
                                     "Function implementation is missing or not immediately following the declaration.",
-                                    diagnostic_codes::FUNCTION_IMPLEMENTATION_MISSING
+                                    diagnostic_codes::FUNCTION_IMPLEMENTATION_IS_MISSING_OR_NOT_IMMEDIATELY_FOLLOWING_THE_DECLARATION
                                 );
                     } else if let Some(actual_name) = impl_name
                         && actual_name != name
@@ -1901,7 +1901,7 @@ impl<'a> CheckerState<'a> {
                             "Type '{}' is not assignable to type '{}'.",
                             getter_type_str, setter_type_str
                         ),
-                        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                 }
             }

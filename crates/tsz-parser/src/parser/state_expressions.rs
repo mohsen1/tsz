@@ -336,7 +336,7 @@ impl ParserState {
         // If we see { immediately after parameters/return type, the user forgot =>
         if self.is_token(SyntaxKind::OpenBraceToken) {
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token("'=>' expected.", diagnostic_codes::TOKEN_EXPECTED);
+            self.parse_error_at_current_token("'=>' expected.", diagnostic_codes::EXPECTED);
             // Don't consume the {, just continue to body parsing
             // The arrow is logically present but missing
         } else {
@@ -770,7 +770,7 @@ impl ParserState {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'await' expression cannot be used inside a class static block.",
-                        diagnostic_codes::AWAIT_IN_STATIC_BLOCK,
+                        diagnostic_codes::AWAIT_EXPRESSION_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
                     );
                     // Fall through to parse as await expression
                 } else if !self.in_async_context()
@@ -787,7 +787,7 @@ impl ParserState {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'await' expressions cannot be used in a parameter initializer.",
-                        diagnostic_codes::AWAIT_IN_PARAMETER_DEFAULT,
+                        diagnostic_codes::AWAIT_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
                     );
                     // Fall through to parse as await expression for error recovery
                 } else if !self.in_async_context() {
@@ -830,7 +830,7 @@ impl ParserState {
                             use tsz_common::diagnostics::diagnostic_codes;
                             self.parse_error_at_current_token(
                                 "Identifier expected. 'await' is a reserved word that cannot be used here.",
-                                diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+                                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
                             );
                         } else {
                             self.error_expression_expected();
@@ -901,7 +901,7 @@ impl ParserState {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "A 'yield' expression is only allowed in a generator body.",
-                        diagnostic_codes::YIELD_EXPRESSION_ONLY_IN_GENERATOR,
+                        diagnostic_codes::A_YIELD_EXPRESSION_IS_ONLY_ALLOWED_IN_A_GENERATOR_BODY,
                     );
                     // Fall through to parse as yield expression
                 } else if !self.in_generator_context() {
@@ -934,7 +934,7 @@ impl ParserState {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'yield' expressions cannot be used in a parameter initializer.",
-                        diagnostic_codes::YIELD_IN_PARAMETER_DEFAULT,
+                        diagnostic_codes::YIELD_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
                     );
                     // Fall through to parse as yield expression
                 }
@@ -1788,7 +1788,7 @@ impl ParserState {
                     start_pos,
                     end_pos - start_pos,
                     "Decimals with leading zeros are not allowed.",
-                    diagnostic_codes::DECIMALS_WITH_LEADING_ZEROS_NOT_ALLOWED,
+                    diagnostic_codes::DECIMALS_WITH_LEADING_ZEROS_ARE_NOT_ALLOWED,
                 );
             } else if integer_part.len() > 1 {
                 // TS1121: Legacy octal literal (e.g., 01, 0777)
@@ -1803,7 +1803,7 @@ impl ParserState {
                     start_pos,
                     end_pos - start_pos,
                     &message,
-                    diagnostic_codes::OCTAL_LITERALS_NOT_ALLOWED,
+                    diagnostic_codes::OCTAL_LITERALS_ARE_NOT_ALLOWED_USE_THE_SYNTAX,
                 );
             }
         }
@@ -1908,7 +1908,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An identifier or keyword cannot immediately follow a numeric literal.",
-                diagnostic_codes::IDENTIFIER_AFTER_NUMERIC_LITERAL,
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
             );
             // Skip the identifier to prevent cascading TS2304 errors
             self.next_token();
@@ -1955,13 +1955,13 @@ impl ParserState {
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
         let (message, code) = if self.scanner.invalid_separator_is_consecutive() {
             (
-                diagnostic_messages::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_NOT_PERMITTED,
-                diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_NOT_PERMITTED,
+                diagnostic_messages::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED,
+                diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED,
             )
         } else {
             (
-                diagnostic_messages::NUMERIC_SEPARATORS_NOT_ALLOWED_HERE,
-                diagnostic_codes::NUMERIC_SEPARATORS_NOT_ALLOWED_HERE,
+                diagnostic_messages::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
+                diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
             )
         };
 
@@ -2537,7 +2537,7 @@ impl ParserState {
                 };
                 self.parse_error_at_current_token(
                     &format!("{} modifier cannot be used here.", modifier_name),
-                    diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE, // TS1042
+                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE, // TS1042
                 );
                 self.next_token(); // consume the modifier
                 // Continue parsing - the next token should be get/set/async
@@ -2615,7 +2615,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An object member cannot be declared optional.",
-                diagnostic_codes::OBJECT_MEMBER_CANNOT_BE_OPTIONAL,
+                diagnostic_codes::AN_OBJECT_MEMBER_CANNOT_BE_DECLARED_OPTIONAL,
             );
             self.next_token(); // Skip the '?' for error recovery
         }
@@ -2633,10 +2633,7 @@ impl ParserState {
             // Shorthand property - but certain property names require `:` syntax
             if requires_colon {
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    "':' expected.",
-                    diagnostic_codes::TOKEN_EXPECTED,
-                );
+                self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
             }
             name
         };
@@ -2693,7 +2690,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
-                diagnostic_codes::ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
+                diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
             );
             Some(self.parse_type_parameters())
         } else {
@@ -2707,7 +2704,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'get' accessor cannot have parameters.",
-                diagnostic_codes::GETTER_MUST_NOT_HAVE_PARAMETERS,
+                diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
             );
             self.parse_parameter_list()
         };
@@ -2765,7 +2762,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
-                diagnostic_codes::ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
+                diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
             );
             Some(self.parse_type_parameters())
         } else {
@@ -2786,7 +2783,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'set' accessor must have exactly one parameter.",
-                diagnostic_codes::SETTER_MUST_HAVE_EXACTLY_ONE_PARAMETER,
+                diagnostic_codes::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER,
             );
         }
 
@@ -2794,7 +2791,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'set' accessor cannot have a return type annotation.",
-                diagnostic_codes::SETTER_CANNOT_HAVE_RETURN_TYPE,
+                diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
             );
             let _ = self.parse_type();
         }

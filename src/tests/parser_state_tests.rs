@@ -75,7 +75,7 @@ fn test_parser_numeric_separator_invalid_diagnostic() {
     let diagnostics = parser.get_diagnostics();
     let diag = diagnostics
         .iter()
-        .find(|diag| diag.code == diagnostic_codes::NUMERIC_SEPARATORS_NOT_ALLOWED_HERE)
+        .find(|diag| diag.code == diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE)
         .unwrap_or_else(|| {
             panic!(
                 "Expected numeric separator diagnostic, got: {:?}",
@@ -97,7 +97,7 @@ fn test_parser_numeric_separator_consecutive_diagnostic() {
     let diag = diagnostics
         .iter()
         .find(|diag| {
-            diag.code == diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_NOT_PERMITTED
+            diag.code == diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED
         })
         .unwrap_or_else(|| {
             panic!(
@@ -253,12 +253,12 @@ fn test_parser_get_accessor_type_parameters_report_ts1094() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        codes.contains(&diagnostic_codes::ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS),
+        codes.contains(&diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS),
         "Expected TS1094 diagnostics: {:?}",
         parser.get_diagnostics()
     );
     assert!(
-        !codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        !codes.contains(&diagnostic_codes::EXPECTED),
         "Unexpected TS1005 diagnostics: {:?}",
         parser.get_diagnostics()
     );
@@ -276,12 +276,12 @@ fn test_parser_set_accessor_return_type_report_ts1095() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        codes.contains(&diagnostic_codes::SETTER_CANNOT_HAVE_RETURN_TYPE),
+        codes.contains(&diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION),
         "Expected TS1095 diagnostics: {:?}",
         parser.get_diagnostics()
     );
     assert!(
-        !codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        !codes.contains(&diagnostic_codes::EXPECTED),
         "Unexpected TS1005 diagnostics: {:?}",
         parser.get_diagnostics()
     );
@@ -299,12 +299,12 @@ fn test_parser_object_get_accessor_parameters_report_ts1054() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        codes.contains(&diagnostic_codes::GETTER_MUST_NOT_HAVE_PARAMETERS),
+        codes.contains(&diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS),
         "Expected TS1054 diagnostics: {:?}",
         parser.get_diagnostics()
     );
     assert!(
-        !codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        !codes.contains(&diagnostic_codes::EXPECTED),
         "Unexpected TS1005 diagnostics: {:?}",
         parser.get_diagnostics()
     );
@@ -327,7 +327,7 @@ fn test_parser_duplicate_extends_reports_ts1172() {
         parser.get_diagnostics()
     );
     assert!(
-        !codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        !codes.contains(&diagnostic_codes::EXPECTED),
         "Unexpected TS1005 diagnostics: {:?}",
         parser.get_diagnostics()
     );
@@ -345,7 +345,7 @@ fn test_parser_async_function_expression_keyword_name() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        !codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        !codes.contains(&diagnostic_codes::EXPECTED),
         "Unexpected TS1005 diagnostics: {:?}",
         parser.get_diagnostics()
     );
@@ -373,7 +373,7 @@ fn test_parser_static_block_with_modifiers() {
         parser.get_diagnostics()
     );
     assert!(
-        codes.contains(&diagnostic_codes::MODIFIERS_NOT_ALLOWED_HERE),
+        codes.contains(&diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE),
         "Expected TS1184 diagnostics: {:?}",
         parser.get_diagnostics()
     );
@@ -391,12 +391,12 @@ fn test_parser_enum_computed_property_reports_ts1164() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        codes.contains(&diagnostic_codes::COMPUTED_PROPERTY_NAME_IN_ENUM),
+        codes.contains(&diagnostic_codes::COMPUTED_PROPERTY_NAMES_ARE_NOT_ALLOWED_IN_ENUMS),
         "Expected TS1164 diagnostics: {:?}",
         parser.get_diagnostics()
     );
     assert!(
-        !codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        !codes.contains(&diagnostic_codes::EXPECTED),
         "Unexpected TS1005 diagnostics: {:?}",
         parser.get_diagnostics()
     );
@@ -419,7 +419,7 @@ fn test_parser_type_assertion_in_new_expression_reports_ts1109() {
         parser.get_diagnostics()
     );
     assert!(
-        !codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        !codes.contains(&diagnostic_codes::EXPECTED),
         "Unexpected TS1005 diagnostics: {:?}",
         parser.get_diagnostics()
     );
@@ -498,7 +498,7 @@ fn test_parser_generic_default_missing_type_reports_ts1110() {
         parser.get_diagnostics()
     );
     assert!(
-        !codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        !codes.contains(&diagnostic_codes::EXPECTED),
         "Unexpected TS1005 diagnostics: {:?}",
         parser.get_diagnostics()
     );
@@ -516,7 +516,7 @@ fn test_parser_jsx_like_syntax_in_ts_recovers() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        codes.contains(&diagnostic_codes::EXPECTED),
         "Expected TS1005 diagnostics: {:?}",
         parser.get_diagnostics()
     );
@@ -639,7 +639,7 @@ fn test_parser_unterminated_template_expression_no_crash() {
         parser
             .get_diagnostics()
             .iter()
-            .any(|diag| diag.code == diagnostic_codes::TOKEN_EXPECTED),
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED),
         "Expected a token expected diagnostic, got: {:?}",
         parser.get_diagnostics()
     );
@@ -3648,7 +3648,7 @@ fn test_parser_arrow_function_missing_param_type() {
     );
     // Should not emit generic "identifier expected" TS1005
     assert!(
-        !codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        !codes.contains(&diagnostic_codes::EXPECTED),
         "Should not emit TS1005 for missing type, got: {:?}",
         parser.get_diagnostics()
     );
@@ -3690,13 +3690,13 @@ fn test_parser_enum_computed_property_name() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        codes.contains(&diagnostic_codes::COMPUTED_PROPERTY_NAME_IN_ENUM),
+        codes.contains(&diagnostic_codes::COMPUTED_PROPERTY_NAMES_ARE_NOT_ALLOWED_IN_ENUMS),
         "Expected TS1164 for computed property name in enum: {:?}",
         parser.get_diagnostics()
     );
     // Should not emit generic "identifier expected" TS1005
     assert!(
-        !codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        !codes.contains(&diagnostic_codes::EXPECTED),
         "Should not emit TS1005 for computed enum member, got: {:?}",
         parser.get_diagnostics()
     );
@@ -3721,7 +3721,7 @@ fn test_parser_type_alias_missing_equals() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        codes.contains(&diagnostic_codes::TOKEN_EXPECTED),
+        codes.contains(&diagnostic_codes::EXPECTED),
         "Expected TS1005 for missing equals token: {:?}",
         parser.get_diagnostics()
     );
@@ -3743,9 +3743,7 @@ fn test_parser_type_alias_missing_equals_recovers_with_object_type() {
     // Should emit TS1005 for missing '='
     let diags = parser.get_diagnostics();
     assert!(
-        diags
-            .iter()
-            .any(|d| d.code == diagnostic_codes::TOKEN_EXPECTED),
+        diags.iter().any(|d| d.code == diagnostic_codes::EXPECTED),
         "Expected TS1005 diagnostic: {:?}",
         diags
     );
@@ -3776,7 +3774,7 @@ fn test_parser_function_keyword_in_class_recovers() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        !codes.contains(&diagnostic_codes::UNEXPECTED_TOKEN_CLASS_MEMBER),
+        !codes.contains(&diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED),
         "Should not emit TS1068 for function keyword in class, got: {:?}",
         parser.get_diagnostics()
     );

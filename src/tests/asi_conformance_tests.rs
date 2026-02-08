@@ -265,7 +265,7 @@ fn test_async_function_await_computed_property() {
         .count();
     let ts1005_count = diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED)
+        .filter(|d| d.code == diagnostic_codes::EXPECTED)
         .count();
 
     assert_eq!(ts1109_count, 1, "Should emit exactly 1 TS1109 error");
@@ -294,7 +294,7 @@ fn test_async_arrow_await_computed_property() {
         .count();
     let ts1005_count = diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED)
+        .filter(|d| d.code == diagnostic_codes::EXPECTED)
         .count();
 
     assert_eq!(ts1109_count, 1, "Should emit exactly 1 TS1109 error");
@@ -504,7 +504,7 @@ var foo = async (): Promise<void> => {
         .count();
     let ts1005_count = diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED)
+        .filter(|d| d.code == diagnostic_codes::EXPECTED)
         .count();
 
     eprintln!("TS1109 count: {}", ts1109_count);

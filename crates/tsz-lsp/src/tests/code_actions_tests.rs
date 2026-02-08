@@ -1,7 +1,8 @@
 use super::*;
 use tsz_binder::BinderState;
 use tsz_checker::types::diagnostics::diagnostic_codes::{
-    CANNOT_FIND_NAME, PROPERTY_DOES_NOT_EXIST_ON_TYPE, UNUSED_IMPORT, UNUSED_VARIABLE,
+    ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED, ALL_VARIABLES_ARE_UNUSED, CANNOT_FIND_NAME,
+    PROPERTY_DOES_NOT_EXIST_ON_TYPE,
 };
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
@@ -677,7 +678,7 @@ fn test_quickfix_remove_unused_named_import() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Warning),
-        code: Some(UNUSED_IMPORT),
+        code: Some(ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED),
         source: None,
         message: "unused import".to_string(),
         related_information: None,
@@ -721,7 +722,7 @@ fn test_quickfix_remove_unused_named_import_entire_decl() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Warning),
-        code: Some(UNUSED_IMPORT),
+        code: Some(ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED),
         source: None,
         message: "unused import".to_string(),
         related_information: None,
@@ -765,7 +766,7 @@ fn test_quickfix_remove_unused_default_import() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Warning),
-        code: Some(UNUSED_IMPORT),
+        code: Some(ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED),
         source: None,
         message: "unused import".to_string(),
         related_information: None,
@@ -809,7 +810,7 @@ fn test_quickfix_preserves_type_only_named_import() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Warning),
-        code: Some(UNUSED_IMPORT),
+        code: Some(ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED),
         source: None,
         message: "unused import".to_string(),
         related_information: None,
@@ -1839,7 +1840,7 @@ fn test_quickfix_remove_unused_variable_let() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Warning),
-        code: Some(UNUSED_VARIABLE),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
         source: None,
         message: "'x' is declared but its value is never read.".to_string(),
         related_information: None,
@@ -1883,7 +1884,7 @@ fn test_quickfix_remove_unused_variable_const() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Warning),
-        code: Some(UNUSED_VARIABLE),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
         source: None,
         message: "'unused' is declared but its value is never read.".to_string(),
         related_information: None,
@@ -1927,7 +1928,7 @@ fn test_quickfix_remove_unused_function() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Warning),
-        code: Some(UNUSED_VARIABLE),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
         source: None,
         message: "'unused' is declared but its value is never read.".to_string(),
         related_information: None,
@@ -1972,7 +1973,7 @@ fn test_quickfix_remove_unused_class() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Warning),
-        code: Some(UNUSED_VARIABLE),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
         source: None,
         message: "'Unused' is declared but its value is never read.".to_string(),
         related_information: None,

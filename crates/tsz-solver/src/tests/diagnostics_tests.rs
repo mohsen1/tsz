@@ -128,7 +128,7 @@ fn test_type_not_assignable_diagnostic() {
     let mut builder = DiagnosticBuilder::new(&interner);
 
     let diag = builder.type_not_assignable(TypeId::STRING, TypeId::NUMBER);
-    assert_eq!(diag.code, codes::TYPE_NOT_ASSIGNABLE);
+    assert_eq!(diag.code, codes::TYPE_NOT_ASSIGNABLE); // This uses the alias from codes module
     assert!(diag.message.contains("string"));
     assert!(diag.message.contains("number"));
     assert!(diag.message.contains("not assignable"));
@@ -437,7 +437,7 @@ fn test_implicit_any_member_diagnostic() {
     let mut builder = DiagnosticBuilder::new(&interner);
 
     let diag = builder.implicit_any_member("myProperty");
-    assert_eq!(diag.code, codes::IMPLICIT_ANY_MEMBER);
+    assert_eq!(diag.code, codes::IMPLICIT_ANY_MEMBER); // Uses alias from codes module
     assert!(diag.message.contains("Member 'myProperty'"));
     assert!(diag.message.contains("implicitly has an 'any' type"));
 }
@@ -474,7 +474,7 @@ fn test_implicit_any_message_templates() {
         "Parameter '{0}' implicitly has an '{1}' type."
     );
     assert_eq!(
-        get_message_template(codes::IMPLICIT_ANY_MEMBER),
+        get_message_template(codes::IMPLICIT_ANY_MEMBER), // Uses alias from codes module
         "Member '{0}' implicitly has an '{1}' type."
     );
     assert_eq!(

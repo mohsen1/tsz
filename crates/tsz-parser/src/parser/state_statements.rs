@@ -299,7 +299,7 @@ impl ParserState {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Modifiers cannot appear here.",
-                        diagnostic_codes::MODIFIERS_NOT_ALLOWED_HERE,
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
                     );
                     self.next_token();
                     match self.token() {
@@ -323,7 +323,7 @@ impl ParserState {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Modifiers cannot appear here.",
-                        diagnostic_codes::MODIFIERS_NOT_ALLOWED_HERE,
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
                     );
                     self.next_token();
                     self.parse_statement()
@@ -680,7 +680,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "'async' modifier cannot be used in an ambient context.",
-                diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
+                diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
             );
         }
         self.parse_expected(SyntaxKind::AsyncKeyword);
@@ -901,8 +901,8 @@ impl ParserState {
                 || self.is_token(SyntaxKind::OpenBracketToken)
             {
                 self.parse_error_at_current_token(
-                    diagnostic_messages::USING_DECLARATIONS_DO_NOT_SUPPORT_DESTRUCTURING,
-                    diagnostic_codes::USING_DECLARATIONS_DO_NOT_SUPPORT_DESTRUCTURING,
+                    diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
+                    diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
                 );
             }
         }
@@ -1001,7 +1001,7 @@ impl ParserState {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "'async' modifier cannot be used in an ambient context.",
-                    diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
+                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
                 );
             }
             self.next_token(); // consume async
@@ -1036,7 +1036,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Identifier expected. 'await' is a reserved word that cannot be used here.",
-                diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
             );
         }
 
@@ -1222,7 +1222,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Identifier expected. 'await' is a reserved word that cannot be used here.",
-                diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
             );
         }
 
@@ -1348,7 +1348,7 @@ impl ParserState {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "A rest parameter must be last in a parameter list.",
-                    diagnostic_codes::REST_PARAMETER_MUST_BE_LAST,
+                    diagnostic_codes::A_REST_PARAMETER_MUST_BE_LAST_IN_A_PARAMETER_LIST,
                 );
                 emitted_rest_error = true;
             }
@@ -1471,7 +1471,7 @@ impl ParserState {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "A parameter cannot have question mark and initializer.",
-                    diagnostic_codes::PARAMETER_CANNOT_HAVE_INITIALIZER,
+                    diagnostic_codes::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
                 );
             }
 
@@ -1791,7 +1791,7 @@ impl ParserState {
                     start_pos,
                     0,
                     "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
                 );
                 self.parse_function_declaration()
             }
@@ -1802,7 +1802,7 @@ impl ParserState {
                     start_pos,
                     0,
                     "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
                 );
                 self.parse_enum_declaration_with_modifiers(start_pos, decorators)
             }
@@ -1813,7 +1813,7 @@ impl ParserState {
                     start_pos,
                     0,
                     "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
                 );
                 self.parse_interface_declaration_with_modifiers(start_pos, decorators)
             }
@@ -1824,7 +1824,7 @@ impl ParserState {
                     start_pos,
                     0,
                     "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
                 );
                 self.parse_type_alias_declaration_with_modifiers(start_pos, decorators)
             }
@@ -1835,7 +1835,7 @@ impl ParserState {
                     start_pos,
                     0,
                     "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
                 );
                 self.parse_module_declaration_with_modifiers(start_pos, decorators)
             }
@@ -1846,7 +1846,7 @@ impl ParserState {
                     start_pos,
                     0,
                     "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
                 );
                 self.parse_variable_statement_with_modifiers(Some(start_pos), decorators)
             }
@@ -1857,7 +1857,7 @@ impl ParserState {
                     start_pos,
                     0,
                     "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
                 );
                 // Check if this is import equals (import X = ...) or regular import
                 if self.look_ahead_is_import_equals() {
@@ -2063,7 +2063,7 @@ impl ParserState {
                 {
                     self.parse_error_at_current_token(
                         "'extends' list cannot be empty.",
-                        diagnostic_codes::EXTENDS_LIST_CANNOT_BE_EMPTY,
+                        diagnostic_codes::LIST_CANNOT_BE_EMPTY,
                     );
                     // Don't add an empty clause
                     continue;
@@ -2508,7 +2508,7 @@ impl ParserState {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             "'async' modifier cannot be used in an ambient context.",
-                            diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
                         );
                     }
                     self.next_token();
@@ -2615,12 +2615,12 @@ impl ParserState {
                     if is_followed_by_constructor {
                         self.parse_error_at_current_token(
                             "Unexpected token. A constructor, method, accessor, or property was expected.",
-                            diagnostic_codes::UNEXPECTED_TOKEN_CLASS_MEMBER,
+                            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
                         );
                     } else {
                         self.parse_error_at_current_token(
                             "Variable declaration not allowed at this location.",
-                            diagnostic_codes::VAR_DECLARATION_NOT_ALLOWED,
+                            diagnostic_codes::VARIABLE_DECLARATION_NOT_ALLOWED_AT_THIS_LOCATION,
                         );
                     }
                     // Consume var/let and add to modifiers list
@@ -2706,7 +2706,7 @@ impl ParserState {
             // Report TS1092: Type parameters cannot appear on a constructor declaration
             self.parse_error_at_current_token(
                 "Type parameters cannot appear on a constructor declaration.",
-                diagnostic_codes::TYPE_PARAMETERS_CANNOT_APPEAR_ON_CONSTRUCTOR,
+                diagnostic_codes::TYPE_PARAMETERS_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
             );
             // Parse the type parameters for error recovery (will be validated later)
             Some(self.parse_type_parameters())
@@ -2722,7 +2722,7 @@ impl ParserState {
         if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_error_at_current_token(
                 "Constructor cannot have a return type annotation.",
-                diagnostic_codes::CONSTRUCTOR_CANNOT_HAVE_RETURN_TYPE,
+                diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
             );
             // Consume the type annotation for recovery
             let _ = self.parse_type();
@@ -2762,7 +2762,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
-                diagnostic_codes::ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
+                diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
             );
             Some(self.parse_type_parameters())
         } else {
@@ -2776,7 +2776,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'get' accessor cannot have parameters.",
-                diagnostic_codes::GETTER_MUST_NOT_HAVE_PARAMETERS,
+                diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
             );
             self.parse_parameter_list()
         };
@@ -2840,7 +2840,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
-                diagnostic_codes::ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
+                diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
             );
             Some(self.parse_type_parameters())
         } else {
@@ -2859,7 +2859,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'set' accessor must have exactly one parameter.",
-                diagnostic_codes::SETTER_MUST_HAVE_EXACTLY_ONE_PARAMETER,
+                diagnostic_codes::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER,
             );
         }
 
@@ -2867,7 +2867,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'set' accessor cannot have a return type annotation.",
-                diagnostic_codes::SETTER_CANNOT_HAVE_RETURN_TYPE,
+                diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
             );
             let _ = self.parse_type();
         }
@@ -2983,7 +2983,7 @@ impl ParserState {
         {
             self.parse_error_at_current_token(
                 "Decorators are not valid here.",
-                diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
             );
             return self.parse_static_block();
         }
@@ -3020,7 +3020,7 @@ impl ParserState {
             if modifiers.is_some() {
                 self.parse_error_at_current_token(
                     "Modifiers cannot appear on a static block.",
-                    diagnostic_codes::MODIFIERS_NOT_ALLOWED_HERE,
+                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
                 );
             }
             return self.parse_static_block();
@@ -3044,7 +3044,7 @@ impl ParserState {
                     start_pos,
                     0,
                     "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_NOT_VALID_HERE,
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
                 );
             }
             return self.parse_constructor_with_modifiers(modifiers);
@@ -3107,7 +3107,7 @@ impl ParserState {
                 // This is likely being used as a modifier, emit error and recover
                 self.parse_error_at_current_token(
                     "A class member cannot have the 'const', 'let', or 'var' keyword.",
-                    diagnostic_codes::UNEXPECTED_TOKEN_CLASS_MEMBER,
+                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
                 );
                 // Consume the invalid keyword and continue parsing
                 // The next identifier will be treated as the property/method name
@@ -3129,7 +3129,7 @@ impl ParserState {
             } else {
                 self.parse_error_at_current_token(
                     "Unexpected token. A constructor, method, accessor, or property was expected.",
-                    diagnostic_codes::UNEXPECTED_TOKEN_CLASS_MEMBER,
+                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
                 );
             }
             self.next_token();
@@ -3223,10 +3223,7 @@ impl ParserState {
 
             // Emit error for '('
             if self.is_token(SyntaxKind::OpenParenToken) {
-                self.parse_error_at_current_token(
-                    "',' expected.",
-                    diagnostic_codes::TOKEN_EXPECTED,
-                );
+                self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
                 // Consume '(' for recovery
                 self.next_token();
 
@@ -3247,10 +3244,7 @@ impl ParserState {
 
             // Emit error for '{' - "'=>' expected"
             if self.is_token(SyntaxKind::OpenBraceToken) {
-                self.parse_error_at_current_token(
-                    "'=>' expected.",
-                    diagnostic_codes::TOKEN_EXPECTED,
-                );
+                self.parse_error_at_current_token("'=>' expected.", diagnostic_codes::EXPECTED);
                 self.next_token(); // Consume '{'
             }
 

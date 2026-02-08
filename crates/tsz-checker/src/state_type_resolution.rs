@@ -1277,19 +1277,26 @@ impl<'a> CheckerState<'a> {
 
         if use_2792 {
             let message = format_message(
-                diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN,
+                diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
                 &[module_specifier],
             );
             self.error(
                 start,
                 length,
                 message,
-                diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN,
+                diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
             );
         } else {
-            let message =
-                format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_specifier]);
-            self.error(start, length, message, diagnostic_codes::CANNOT_FIND_MODULE);
+            let message = format_message(
+                diagnostic_messages::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
+                &[module_specifier],
+            );
+            self.error(
+                start,
+                length,
+                message,
+                diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
+            );
         }
     }
 

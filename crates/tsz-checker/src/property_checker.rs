@@ -93,7 +93,11 @@ impl<'a> CheckerState<'a> {
                     "Property '{}' is private and only accessible within class '{}'.",
                     property_name, access_info.declaring_class_name
                 );
-                self.error_at_node(error_node, &message, diagnostic_codes::PROPERTY_IS_PRIVATE);
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS,
+                );
             }
             MemberAccessLevel::Protected => {
                 let message = format!(
@@ -103,7 +107,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     error_node,
                     &message,
-                    diagnostic_codes::PROPERTY_IS_PROTECTED,
+                    diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES,
                 );
             }
         }
@@ -147,8 +151,8 @@ impl<'a> CheckerState<'a> {
             use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 name_idx,
-                diagnostic_messages::COMPUTED_PROPERTY_NAME_MUST_BE_STRING_NUMBER_SYMBOL_OR_ANY,
-                diagnostic_codes::COMPUTED_PROPERTY_NAME_MUST_BE_STRING_NUMBER_SYMBOL_OR_ANY,
+                diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
+                diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
             );
         }
     }

@@ -850,13 +850,13 @@ impl<'a> CheckerState<'a> {
         if !self.is_iterable_type(source_type) && !self.has_numeric_index_signature(source_type) {
             let type_str = self.format_type(source_type);
             let message = format_message(
-                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                 &[&type_str],
             );
             self.error_at_node(
                 pattern_idx,
                 &message,
-                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
             );
             return;
         }
@@ -919,7 +919,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 stmt_idx,
                 "A 'return' statement can only be used within a function body.",
-                diagnostic_codes::RETURN_OUTSIDE_FUNCTION,
+                diagnostic_codes::A_RETURN_STATEMENT_CAN_ONLY_BE_USED_WITHIN_A_FUNCTION_BODY,
             );
             return;
         }
@@ -1046,8 +1046,8 @@ impl<'a> CheckerState<'a> {
                         use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                         self.error_at_node(
                             current_idx,
-                            diagnostic_messages::AWAIT_OUTSIDE_ASYNC,
-                            diagnostic_codes::AWAIT_OUTSIDE_ASYNC,
+                            diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                            diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
                         );
                     }
                     if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node) {
@@ -1194,11 +1194,11 @@ impl<'a> CheckerState<'a> {
         if !self.type_has_disposable_method(init_type, is_await_using) {
             self.error_at_node(
                 var_decl.initializer,
-                diagnostic_messages::USING_INITIALIZER_MUST_HAVE_DISPOSE,
+                diagnostic_messages::THE_INITIALIZER_OF_A_USING_DECLARATION_MUST_BE_EITHER_AN_OBJECT_WITH_A_SYMBOL_DI,
                 if is_await_using {
-                    diagnostic_codes::AWAIT_USING_INITIALIZER_MUST_HAVE_DISPOSE
+                    diagnostic_codes::THE_INITIALIZER_OF_AN_AWAIT_USING_DECLARATION_MUST_BE_EITHER_AN_OBJECT_WITH_A_SY
                 } else {
-                    diagnostic_codes::USING_INITIALIZER_MUST_HAVE_DISPOSE
+                    diagnostic_codes::THE_INITIALIZER_OF_A_USING_DECLARATION_MUST_BE_EITHER_AN_OBJECT_WITH_A_SYMBOL_DI
                 },
             );
         }
@@ -1335,7 +1335,7 @@ impl<'a> CheckerState<'a> {
                             self.error_at_node(
                                 access_node_idx,
                                 &format!("Property '{}' is used before its initialization.", name),
-                                diagnostic_codes::PROPERTY_USED_BEFORE_INITIALIZATION,
+                                diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
                             );
                         }
                     }
@@ -3056,12 +3056,13 @@ impl<'a> CheckerState<'a> {
 
                 // Report TS2392 for multiple constructor implementations (not overloads)
                 if implementations.len() > 1 {
-                    let message = diagnostic_messages::MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS;
+                    let message =
+                        diagnostic_messages::MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS_ARE_NOT_ALLOWED;
                     for &decl_idx in &implementations {
                         self.error_at_node(
                             decl_idx,
                             message,
-                            diagnostic_codes::MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS,
+                            diagnostic_codes::MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS_ARE_NOT_ALLOWED,
                         );
                     }
                 }
@@ -3275,9 +3276,9 @@ impl<'a> CheckerState<'a> {
             let (message, code) = if has_enum_conflict && has_non_block_scoped {
                 // Enum merging conflict: TS2567
                 (
-                    diagnostic_messages::ENUM_DECLARATIONS_MUST_MERGE_WITH_NAMESPACE_OR_ENUM
+                    diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W
                         .to_string(),
-                    diagnostic_codes::ENUM_DECLARATIONS_MUST_MERGE_WITH_NAMESPACE_OR_ENUM,
+                    diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W,
                 )
             } else if !has_non_block_scoped {
                 // Pure block-scoped duplicates (let/const/import conflicts) emit TS2451

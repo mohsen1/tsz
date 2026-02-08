@@ -587,7 +587,7 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
         if let Some((start, end)) = self.ctx.get_node_span(expr_idx) {
             let type_str = self.format_type(type_id);
             let message = format_message(
-                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                 &[&type_str],
             );
             self.ctx.push_diagnostic(Diagnostic::error(
@@ -595,7 +595,7 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
                 start,
                 end.saturating_sub(start),
                 message,
-                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
             ));
         }
     }
@@ -611,7 +611,7 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
         if let Some((start, end)) = self.ctx.get_node_span(expr_idx) {
             let type_str = self.format_type(type_id);
             let message = format_message(
-                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR,
+                diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR,
                 &[&type_str],
             );
             self.ctx.push_diagnostic(Diagnostic::error(
@@ -619,7 +619,7 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
                 start,
                 end.saturating_sub(start),
                 message,
-                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR,
+                diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR,
             ));
         }
     }

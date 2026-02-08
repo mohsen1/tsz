@@ -153,10 +153,10 @@ pub fn category_to_severity(category: DiagnosticCategory) -> DiagnosticSeverity 
 pub fn is_unnecessary_code(code: u32) -> bool {
     matches!(
         code,
-        diagnostic_codes::UNUSED_VARIABLE
+        diagnostic_codes::ALL_VARIABLES_ARE_UNUSED
             | diagnostic_codes::UNREACHABLE_CODE_DETECTED
             | diagnostic_codes::LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS
-            | diagnostic_codes::ASYNC_FUNCTION_WITHOUT_AWAIT
+            | diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS
             | 6196
             | 6138
     )
@@ -460,7 +460,7 @@ mod tests {
             1,
             "Type 'number' is not assignable to type 'string'.",
             DiagnosticCategory::Error,
-            diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
         let ts_diag = convert_to_ts_diagnostic(&diag, &line_map, source);
         assert_eq!(ts_diag.start.line, 1);
@@ -477,7 +477,9 @@ mod tests {
 
     #[test]
     fn test_is_unnecessary_code_detection() {
-        assert!(is_unnecessary_code(diagnostic_codes::UNUSED_VARIABLE));
+        assert!(is_unnecessary_code(
+            diagnostic_codes::ALL_VARIABLES_ARE_UNUSED
+        ));
         assert!(is_unnecessary_code(
             diagnostic_codes::UNREACHABLE_CODE_DETECTED
         ));
@@ -485,10 +487,10 @@ mod tests {
             diagnostic_codes::LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS
         ));
         assert!(is_unnecessary_code(
-            diagnostic_codes::ASYNC_FUNCTION_WITHOUT_AWAIT
+            diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS
         ));
         assert!(!is_unnecessary_code(
-            diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
         ));
         assert!(!is_unnecessary_code(diagnostic_codes::CANNOT_FIND_NAME));
     }
@@ -498,9 +500,11 @@ mod tests {
         assert!(is_deprecated_code(6385));
         assert!(is_deprecated_code(6387));
         assert!(!is_deprecated_code(
-            diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
         ));
-        assert!(!is_deprecated_code(diagnostic_codes::UNUSED_VARIABLE));
+        assert!(!is_deprecated_code(
+            diagnostic_codes::ALL_VARIABLES_ARE_UNUSED
+        ));
     }
 
     #[test]
@@ -513,7 +517,7 @@ mod tests {
             1,
             "'x' is declared but its value is never read.",
             DiagnosticCategory::Warning,
-            diagnostic_codes::UNUSED_VARIABLE,
+            diagnostic_codes::ALL_VARIABLES_ARE_UNUSED,
         );
         let lsp_diag = convert_diagnostic(&diag, &line_map, source);
         assert_eq!(lsp_diag.reports_unnecessary, Some(true));
@@ -550,7 +554,7 @@ mod tests {
             1,
             "Type 'number' is not assignable to type 'string'.",
             DiagnosticCategory::Error,
-            diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
         let lsp_diag = convert_diagnostic(&diag, &line_map, source);
         assert_eq!(lsp_diag.reports_unnecessary, None);

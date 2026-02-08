@@ -99,7 +99,7 @@ fn test_ts2322_return_wrong_primitive() {
 
     assert!(has_error_with_code(
         source,
-        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     ));
 }
 
@@ -113,7 +113,7 @@ fn test_ts2322_return_wrong_object_property() {
 
     assert!(has_error_with_code(
         source,
-        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     ));
 }
 
@@ -127,7 +127,7 @@ fn test_ts2322_return_wrong_array_element() {
 
     assert!(has_error_with_code(
         source,
-        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     ));
 }
 
@@ -143,7 +143,7 @@ fn test_ts2322_variable_declaration_wrong_type() {
 
     assert!(has_error_with_code(
         source,
-        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     ));
 }
 
@@ -155,7 +155,7 @@ fn test_ts2322_variable_declaration_wrong_object_property() {
 
     assert!(has_error_with_code(
         source,
-        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     ));
 }
 
@@ -167,7 +167,7 @@ fn test_ts2322_variable_declaration_wrong_array_element() {
 
     assert!(has_error_with_code(
         source,
-        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     ));
 }
 
@@ -184,7 +184,7 @@ fn test_ts2322_assignment_wrong_primitive() {
 
     assert!(has_error_with_code(
         source,
-        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     ));
 }
 
@@ -197,7 +197,7 @@ fn test_ts2322_assignment_wrong_object_property() {
 
     assert!(has_error_with_code(
         source,
-        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     ));
 }
 
@@ -218,7 +218,7 @@ fn test_ts2322_multiple_errors() {
         let y: string = 123;
     "#;
 
-    let count = count_errors_with_code(source, diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE);
+    let count = count_errors_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         count >= 4,
         "Expected at least 4 TS2322 errors, got {}",
@@ -245,7 +245,7 @@ fn test_ts2322_no_error_correct_types() {
 
     assert!(!has_error_with_code(
         source,
-        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     ));
 }
 
@@ -265,7 +265,7 @@ fn test_ts2322_no_false_positive_simple_generic_identity() {
     let errors = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = errors
         .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
     assert!(
         ts2322_errors.is_empty(),
@@ -285,7 +285,7 @@ fn test_ts2322_no_false_positive_generic_object_wrapper() {
     let errors = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = errors
         .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
     assert!(
         ts2322_errors.is_empty(),
@@ -305,7 +305,7 @@ fn test_ts2322_no_false_positive_conditional_type_true_branch() {
     let errors = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = errors
         .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
     assert!(
         ts2322_errors.is_empty(),
@@ -325,7 +325,7 @@ fn test_ts2322_no_false_positive_conditional_type_false_branch() {
     let errors = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = errors
         .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
     assert!(
         ts2322_errors.is_empty(),
@@ -347,7 +347,7 @@ fn test_ts2322_no_false_positive_user_defined_mapped_type() {
     let errors = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = errors
         .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
     assert!(
         ts2322_errors.is_empty(),
@@ -367,7 +367,7 @@ fn test_ts2322_no_false_positive_conditional_infer() {
     let errors = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = errors
         .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
     assert!(
         ts2322_errors.is_empty(),

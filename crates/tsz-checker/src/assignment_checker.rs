@@ -112,7 +112,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 left_idx,
                 "The left-hand side of an assignment expression must be a variable or a property access.",
-                diagnostic_codes::INVALID_LEFT_HAND_SIDE_OF_ASSIGNMENT,
+                diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MUST_BE_A_VARIABLE_OR_A_PROPERTY,
             );
         }
 
@@ -227,7 +227,7 @@ impl<'a> CheckerState<'a> {
         if !left_is_valid {
             if let Some(loc) = self.get_source_location(left_idx) {
                 self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                    code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                     category: DiagnosticCategory::Error,
                     message_text: "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
                     file: self.ctx.file_name.clone(),
@@ -241,7 +241,7 @@ impl<'a> CheckerState<'a> {
         if !right_is_valid {
             if let Some(loc) = self.get_source_location(right_idx) {
                 self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                    code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                     category: DiagnosticCategory::Error,
                     message_text: "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
                     file: self.ctx.file_name.clone(),
@@ -261,7 +261,7 @@ impl<'a> CheckerState<'a> {
                 op_str, suggestion
             );
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::OPERATOR_NOT_ALLOWED_FOR_BOOLEAN,
+                code: diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),
@@ -298,7 +298,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 left_idx,
                 "The left-hand side of an assignment expression must be a variable or a property access.",
-                diagnostic_codes::INVALID_LEFT_HAND_SIDE_OF_ASSIGNMENT,
+                diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MUST_BE_A_VARIABLE_OR_A_PROPERTY,
             );
         }
 
