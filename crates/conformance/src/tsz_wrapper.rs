@@ -524,8 +524,9 @@ fn resolve_lib_references(
     use regex::Regex;
 
     // Match: /// <reference path="/.lib/react16.d.ts" />
+    // Note: Rust regex doesn't support backreferences, so we match any quote at the end
     static LIB_REF_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"(///\s*<reference\s+path\s*=\s*)(['"])/.lib/((?:[^'"])*)\2"#).unwrap()
+        Regex::new(r#"(///\s*<reference\s+path\s*=\s*)(['"])/.lib/((?:[^'"]*))['"]"#).unwrap()
     });
 
     let mut result = content.to_string();
@@ -559,13 +560,22 @@ fn rewrite_absolute_reference_paths(content: &str) -> String {
     use once_cell::sync::Lazy;
     use regex::Regex;
 
-    // Match: /// <reference path="/..." /> but NOT /.lib/ (handled separately)
+    // Match: /// <reference path="/..." />
+    // Note: Rust regex doesn't support backreferences or lookahead, so we match all and filter
     static ABS_REF_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"(///\s*<reference\s+path\s*=\s*)(['"])/((?!\.lib/)(?:[^'"])*)\2"#).unwrap()
+        Regex::new(r#"(///\s*<reference\s+path\s*=\s*)(['"])/([^'"]*?)['"]"#).unwrap()
     });
 
     ABS_REF_RE
-        .replace_all(content, "${1}${2}./${3}${2}")
+        .replace_all(content, |caps: &regex::Captures| {
+            let path = &caps[3];
+            // Skip .lib/ paths - they're handled by resolve_lib_references
+            if path.starts_with(".lib/") {
+                caps[0].to_string()
+            } else {
+                format!("{}{}./{}{}", &caps[1], &caps[2], path, &caps[2])
+            }
+        })
         .into_owned()
 }
 
