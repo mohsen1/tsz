@@ -11,13 +11,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_DIR="$REPO_ROOT/TypeScript/tests/cases"
 CACHE_FILE="$REPO_ROOT/tsc-cache-full.json"
 
-# Build profile (release or dist)
-BUILD_PROFILE="release"
+# Build profile (dist-fast = fast build + good runtime perf)
+BUILD_PROFILE="dist-fast"
 
 # Binary paths (will be updated based on profile)
-TSZ_BIN="$REPO_ROOT/.target/release/tsz"
-CACHE_GEN_BIN="$REPO_ROOT/.target/release/generate-tsc-cache"
-RUNNER_BIN="$REPO_ROOT/.target/release/tsz-conformance"
+TSZ_BIN="$REPO_ROOT/.target/dist-fast/tsz"
+CACHE_GEN_BIN="$REPO_ROOT/.target/dist-fast/generate-tsc-cache"
+RUNNER_BIN="$REPO_ROOT/.target/dist-fast/tsz-conformance"
 
 WORKERS=16
 
@@ -49,7 +49,7 @@ Options:
   --error-code N    Only show tests with this error code (e.g., 2304)
   --no-cache        Force cache regeneration even if cache exists
   --no-download     Skip trying to download cache from GitHub
-  --profile NAME    Use specific cargo profile (default: release)
+  --profile NAME    Use specific cargo profile (default: dist-fast, available: dist-fast, dist, release, dev)
 
 Analyze options:
   --category CAT    Filter by category: false-positive, all-missing, wrong-code, close
