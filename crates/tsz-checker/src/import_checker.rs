@@ -325,10 +325,32 @@ impl<'a> CheckerState<'a> {
                     // Check if this symbol has value semantics
                     let is_value = (sym.flags & symbol_flags::VALUE) != 0;
                     let is_alias = (sym.flags & symbol_flags::ALIAS) != 0;
+                    let is_namespace = (sym.flags & symbol_flags::NAMESPACE_MODULE) != 0;
 
                     // Skip if this is also an import/alias
                     if is_alias {
                         continue;
+                    }
+
+                    // Special case: If this is a namespace module, check if it's the enclosing scope
+                    // itself. In TypeScript, `namespace A.M { import M = Z.M; }` is allowed - the
+                    // import alias `M` shadows the namespace container name `M`.
+                    if is_namespace {
+                        if let Some(import_scope_id) = import_scope {
+                            // Get the scope that contains the import
+                            if let Some(scope) =
+                                self.ctx.binder.scopes.get(import_scope_id.0 as usize)
+                            {
+                                // Check if any of this namespace's declarations match the container node
+                                // of the import's enclosing scope
+                                let is_enclosing_namespace = sym
+                                    .declarations.contains(&scope.container_node);
+                                if is_enclosing_namespace {
+                                    // This namespace is the enclosing context, not a conflicting declaration
+                                    continue;
+                                }
+                            }
+                        }
                     }
 
                     // Only check for conflicts within the same scope.
