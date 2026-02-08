@@ -195,3 +195,41 @@ class C {
         ts2393_errors
     );
 }
+
+/// Test that multiple export assignments emit TS2300 on ALL occurrences.
+#[test]
+fn test_duplicate_export_assignments() {
+    let source = r#"
+const server = {};
+const connectExport = {};
+
+export = server;
+export = connectExport;
+"#;
+    let diagnostics = check(source);
+
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+    assert_eq!(
+        ts2300_errors.len(),
+        2,
+        "Should have exactly 2 TS2300 errors for both export assignments, got: {:?}",
+        ts2300_errors
+    );
+}
+
+/// Test that a single export assignment does not emit TS2300.
+#[test]
+fn test_single_export_assignment() {
+    let source = r#"
+const server = {};
+export = server;
+"#;
+    let diagnostics = check(source);
+
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+    assert!(
+        ts2300_errors.is_empty(),
+        "Should NOT have TS2300 for single export assignment, got: {:?}",
+        ts2300_errors
+    );
+}

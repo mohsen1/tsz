@@ -203,12 +203,13 @@ impl<'a> CheckerState<'a> {
 
     /// Check for export assignment conflicts with other exported elements.
     ///
-    /// Validates that `export = X` is not used when there are also other
-    /// exported elements (TS2309).
+    /// Validates that:
+    /// - `export = X` is not used when there are also other exported elements (TS2309)
+    /// - There are not multiple `export = X` statements (TS2300)
     pub(crate) fn check_export_assignment(&mut self, statements: &[NodeIndex]) {
         use crate::types::diagnostics::diagnostic_codes;
 
-        let mut export_assignment_idx: Option<NodeIndex> = None;
+        let mut export_assignment_indices: Vec<NodeIndex> = Vec::new();
         let mut has_other_exports = false;
 
         for &stmt_idx in statements {
@@ -218,7 +219,7 @@ impl<'a> CheckerState<'a> {
 
             match node.kind {
                 syntax_kind_ext::EXPORT_ASSIGNMENT => {
-                    export_assignment_idx = Some(stmt_idx);
+                    export_assignment_indices.push(stmt_idx);
 
                     if let Some(export_data) = self.ctx.arena.get_export_assignment(node) {
                         self.get_type_of_node(export_data.expression);
@@ -235,8 +236,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(export_idx) = export_assignment_idx
+        // TS2300: Check for duplicate export assignments
+        // TypeScript emits TS2300 on ALL export assignments if there are 2+
+        if export_assignment_indices.len() > 1 {
+            for &export_idx in &export_assignment_indices {
+                self.error_at_node(
+                    export_idx,
+                    "Duplicate identifier 'export='.",
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                );
+            }
+        }
+
+        // TS2309: Check for export assignment with other exports
+        if let Some(&export_idx) = export_assignment_indices.first()
             && has_other_exports
+            && export_assignment_indices.len() == 1
+        // Only emit TS2309 if not already emitting TS2300
         {
             self.error_at_node(
                 export_idx,
