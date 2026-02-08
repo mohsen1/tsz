@@ -542,6 +542,10 @@ fn rewrite_bare_specifiers(content: &str, filenames: &[(String, String)]) -> Str
     // Build a set of available file basenames (without extension)
     let mut available_files = std::collections::HashSet::new();
     for (filename, _) in filenames {
+        let normalized = filename.replace('\\', "/");
+        if normalized.contains("/node_modules/") || normalized.starts_with("node_modules/") {
+            continue;
+        }
         // Extract basename without extension
         // Handle .d.ts specially since file_stem() on "a.d.ts" returns "a.d", not "a"
         let basename = if filename.ends_with(".d.ts") {
@@ -814,5 +818,20 @@ const x: number = 42;
         let content = r#"import { T } from "types";"#;
         let result = rewrite_bare_specifiers(content, &filenames);
         assert_eq!(result, r#"import { T } from "./types";"#);
+    }
+
+    #[test]
+    fn test_rewrite_bare_specifiers_skips_node_modules_packages() {
+        let filenames = vec![
+            (
+                "/node_modules/foo/foo.js".to_string(),
+                "module.exports = {}".to_string(),
+            ),
+            ("/a.ts".to_string(), "import \"foo\";".to_string()),
+        ];
+
+        let content = r#"import "foo";"#;
+        let result = rewrite_bare_specifiers(content, &filenames);
+        assert_eq!(result, r#"import "foo";"#);
     }
 }

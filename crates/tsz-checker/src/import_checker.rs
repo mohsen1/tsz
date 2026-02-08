@@ -766,14 +766,50 @@ impl<'a> CheckerState<'a> {
                     .insert(module_key.clone());
                 self.error_at_node(import.module_specifier, &error_message, error_code);
             }
-            self.ctx.import_resolution_stack.pop();
-            return;
+            if error_code
+                != crate::types::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
+            {
+                self.ctx.import_resolution_stack.pop();
+                return;
+            }
         }
 
         // Check if module was successfully resolved
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
+            if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+                if let Some(binder) = self.ctx.get_binder_for_file(target_idx) {
+                    if !binder.is_external_module {
+                        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                        if let Some(source_file) = arena.source_files.first()
+                            && !source_file.is_declaration_file
+                        {
+                            let file_name = source_file.file_name.as_str();
+                            let is_js_like = file_name.ends_with(".js")
+                                || file_name.ends_with(".jsx")
+                                || file_name.ends_with(".mjs")
+                                || file_name.ends_with(".cjs");
+                            if !is_js_like {
+                                use crate::types::diagnostics::{
+                                    diagnostic_codes, diagnostic_messages, format_message,
+                                };
+                                let message = format_message(
+                                    diagnostic_messages::FILE_IS_NOT_A_MODULE,
+                                    &[&source_file.file_name],
+                                );
+                                self.error_at_node(
+                                    import.module_specifier,
+                                    &message,
+                                    diagnostic_codes::FILE_IS_NOT_A_MODULE,
+                                );
+                                self.ctx.import_resolution_stack.pop();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
             self.check_imported_members(import, module_name);
 
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {

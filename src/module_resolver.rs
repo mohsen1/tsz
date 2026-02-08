@@ -3608,6 +3608,35 @@ mod tests {
     }
 
     #[test]
+    fn test_resolver_package_types_js_without_allow_js_resolves() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_resolver_types_js");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules").join("foo")).unwrap();
+
+        fs::write(dir.join("app.ts"), "import 'foo';").unwrap();
+        fs::write(
+            dir.join("node_modules").join("foo").join("foo.js"),
+            "module.exports = {};",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("node_modules").join("foo").join("package.json"),
+            r#"{ "types": "foo.js" }"#,
+        )
+        .unwrap();
+
+        let mut resolver = ModuleResolver::node_resolver();
+        let result = resolver.resolve("foo", &dir.join("app.ts"), Span::new(0, 10));
+        assert!(
+            result.is_ok(),
+            "Expected types .js to resolve even without allowJs"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_resolver_missing_file() {
         use std::fs;
         let dir = std::env::temp_dir().join("tsz_test_resolver_missing");

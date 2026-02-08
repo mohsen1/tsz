@@ -1816,6 +1816,7 @@ fn collect_diagnostics(
     // Build resolved_module_paths map: (source_file_idx, specifier) -> target_file_idx
     // Also build resolved_module_errors map for specific error codes
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    let mut resolved_module_specifiers: FxHashSet<(usize, String)> = FxHashSet::default();
     let mut resolved_module_errors: FxHashMap<
         (usize, String),
         tsz::checker::context::ResolutionError,
@@ -1838,12 +1839,21 @@ fn collect_diagnostics(
                 // Always try ModuleResolver first to get specific error types (TS2834/TS2835/TS2792)
                 match module_resolver.resolve(specifier, file_path, span) {
                     Ok(resolved_module) => {
+                        resolved_module_specifiers.insert((file_idx, specifier.clone()));
                         let canonical = canonicalize_or_owned(&resolved_module.resolved_path);
                         if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                             resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                         }
                     }
                     Err(failure) => {
+                        let mut resolved_override: Option<PathBuf> = None;
+                        if let tsz::module_resolver::ResolutionFailure::JsxNotEnabled {
+                            resolved_path,
+                            ..
+                        } = &failure
+                        {
+                            resolved_override = Some(resolved_path.clone());
+                        }
                         // Check if this is NotFound and the old resolver would find it (virtual test files)
                         // In that case, validate Node16 rules before accepting the fallback
                         if failure.is_not_found() {
@@ -1936,6 +1946,15 @@ fn collect_diagnostics(
                                 message: diagnostic.message,
                             },
                         );
+
+                        if let Some(resolved_path) = resolved_override {
+                            resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                            let canonical = canonicalize_or_owned(&resolved_path);
+                            if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                                resolved_module_paths
+                                    .insert((file_idx, specifier.clone()), target_idx);
+                            }
+                        }
                     }
                 }
             }
@@ -1943,6 +1962,7 @@ fn collect_diagnostics(
     }
 
     let resolved_module_paths = Arc::new(resolved_module_paths);
+    let resolved_module_specifiers = Arc::new(resolved_module_specifiers);
     let resolved_module_errors = Arc::new(resolved_module_errors);
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
@@ -2039,6 +2059,7 @@ fn collect_diagnostics(
                         &all_arenas,
                         &all_binders,
                         &resolved_module_paths,
+                        &resolved_module_specifiers,
                         &resolved_module_errors,
                         &is_external_module_by_file,
                         no_check,
@@ -2062,6 +2083,7 @@ fn collect_diagnostics(
                     &all_arenas,
                     &all_binders,
                     &resolved_module_paths,
+                    &resolved_module_specifiers,
                     &resolved_module_errors,
                     &is_external_module_by_file,
                     no_check,
@@ -2142,7 +2164,9 @@ fn collect_diagnostics(
             // Build resolved_modules set for backward compatibility
             let mut resolved_modules = rustc_hash::FxHashSet::default();
             for (specifier, _) in &module_specifiers {
-                if resolved_module_paths.contains_key(&(file_idx, specifier.clone())) {
+                if resolved_module_specifiers.contains(&(file_idx, specifier.clone())) {
+                    resolved_modules.insert(specifier.clone());
+                } else if resolved_module_paths.contains_key(&(file_idx, specifier.clone())) {
                     resolved_modules.insert(specifier.clone());
                 } else if !resolved_module_errors.contains_key(&(file_idx, specifier.clone())) {
                     if let Some(resolved) = resolve_module_specifier(
@@ -2242,6 +2266,7 @@ fn check_file_for_parallel(
     all_arenas: &Arc<Vec<Arc<tsz::parser::node::NodeArena>>>,
     all_binders: &Arc<Vec<Arc<BinderState>>>,
     resolved_module_paths: &Arc<FxHashMap<(usize, String), usize>>,
+    resolved_module_specifiers: &Arc<FxHashSet<(usize, String)>>,
     resolved_module_errors: &Arc<
         FxHashMap<(usize, String), tsz::checker::context::ResolutionError>,
     >,
@@ -2251,10 +2276,13 @@ fn check_file_for_parallel(
     let file = &program.files[file_idx];
     let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
 
-    // Build resolved_modules from the pre-computed resolved_module_paths map
+    // Build resolved_modules from the pre-computed resolved module maps
     let resolved_modules: FxHashSet<String> = module_specifiers
         .iter()
-        .filter(|(specifier, _)| resolved_module_paths.contains_key(&(file_idx, specifier.clone())))
+        .filter(|(specifier, _)| {
+            resolved_module_paths.contains_key(&(file_idx, specifier.clone()))
+                || resolved_module_specifiers.contains(&(file_idx, specifier.clone()))
+        })
         .map(|(specifier, _)| specifier.clone())
         .collect();
 

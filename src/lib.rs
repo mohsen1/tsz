@@ -2698,5 +2698,11 @@ mod ts2300_tests;
 #[path = "../crates/tsz-checker/src/tests/ts2304_tests.rs"]
 mod ts2304_tests;
 #[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/ts2305_tests.rs"]
+mod ts2305_tests;
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/ts2306_tests.rs"]
+mod ts2306_tests;
+#[cfg(test)]
 #[path = "../crates/tsz-checker/src/tests/widening_integration_tests.rs"]
 mod widening_integration_tests;
