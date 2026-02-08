@@ -16,7 +16,9 @@ pub mod lib_loader;
 pub mod module_resolution_debug;
 pub mod state;
 mod state_binding;
-pub use state::{BinderOptions, BinderState, LibContext, ModuleAugmentation, ValidationError};
+pub use state::{
+    BinderOptions, BinderState, FileFeatures, LibContext, ModuleAugmentation, ValidationError,
+};
 
 // =============================================================================
 // Symbol Flags

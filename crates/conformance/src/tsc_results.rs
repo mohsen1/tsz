@@ -52,21 +52,25 @@ pub enum TestResult {
 }
 
 impl TestResult {
+    #[allow(dead_code)]
     /// Check if test passed
     pub fn is_pass(&self) -> bool {
         matches!(self, TestResult::Pass)
     }
 
+    #[allow(dead_code)]
     /// Check if test was skipped
     pub fn is_skipped(&self) -> bool {
         matches!(self, TestResult::Skipped(_))
     }
 
+    #[allow(dead_code)]
     /// Check if test crashed
     pub fn is_crashed(&self) -> bool {
         matches!(self, TestResult::Crashed)
     }
 
+    #[allow(dead_code)]
     /// Check if test timed out
     pub fn is_timeout(&self) -> bool {
         matches!(self, TestResult::Timeout)

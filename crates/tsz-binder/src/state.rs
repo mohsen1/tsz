@@ -25,6 +25,38 @@ use tsz_scanner::SyntaxKind;
 
 const MAX_SCOPE_WALK_ITERATIONS: usize = 10_000;
 
+/// Bitflags tracking which language features are used in a source file.
+///
+/// Populated by the binder during its AST walk (zero-cost at check time).
+/// The checker queries these to decide whether to emit TS2318 diagnostics
+/// for missing global types like `IterableIterator`, `TypedPropertyDescriptor`, etc.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FileFeatures(u8);
+
+impl FileFeatures {
+    pub const NONE: Self = Self(0);
+    /// Source file contains generator functions (`function*`)
+    pub const GENERATORS: Self = Self(1 << 0);
+    /// Source file contains async generator functions (`async function*`)
+    pub const ASYNC_GENERATORS: Self = Self(1 << 1);
+    /// Source file contains decorator syntax (`@decorator`)
+    pub const DECORATORS: Self = Self(1 << 2);
+    /// Source file contains `using` declarations
+    pub const USING: Self = Self(1 << 3);
+    /// Source file contains `await using` declarations
+    pub const AWAIT_USING: Self = Self(1 << 4);
+
+    #[inline]
+    pub fn has(self, flag: Self) -> bool {
+        (self.0 & flag.0) != 0
+    }
+
+    #[inline]
+    pub fn set(&mut self, flag: Self) {
+        self.0 |= flag.0;
+    }
+}
+
 /// Configuration options for the binder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BinderOptions {
@@ -235,6 +267,10 @@ pub struct BinderState {
     /// Break targets for control flow analysis.
     /// When we enter a loop or switch, we push a merge label that break statements jump to.
     pub(crate) break_targets: Vec<FlowNodeId>,
+
+    /// Language features detected during binding (generators, decorators, using, etc.).
+    /// Populated during `bind_source_file` with zero overhead since the binder already walks every node.
+    pub file_features: FileFeatures,
 }
 
 /// Validation result describing issues found in the symbol table
@@ -312,6 +348,7 @@ impl BinderState {
             shorthand_ambient_modules: FxHashSet::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),
+            file_features: FileFeatures::NONE,
         }
     }
 
@@ -466,6 +503,7 @@ impl BinderState {
             shorthand_ambient_modules: FxHashSet::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),
+            file_features: FileFeatures::NONE,
         }
     }
 
@@ -570,6 +608,7 @@ impl BinderState {
             shorthand_ambient_modules,
             lib_symbols_merged: false,
             break_targets: Vec::new(),
+            file_features: FileFeatures::NONE,
         }
     }
 
@@ -2015,8 +2054,18 @@ impl BinderState {
             // Variable declarations
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = arena.get_variable(node) {
-                    // VariableStatement stores declaration_list as first element
+                    // Track using/await-using features for TS2318 diagnostics
                     if let Some(&decl_list_idx) = var_stmt.declarations.nodes.first() {
+                        if let Some(list_node) = arena.get(decl_list_idx) {
+                            let flags = list_node.flags as u32;
+                            if (flags & node_flags::AWAIT_USING as u32)
+                                == node_flags::AWAIT_USING as u32
+                            {
+                                self.file_features.set(FileFeatures::AWAIT_USING);
+                            } else if (flags & node_flags::USING as u32) != 0 {
+                                self.file_features.set(FileFeatures::USING);
+                            }
+                        }
                         self.bind_node(arena, decl_list_idx);
                     }
                 }
@@ -2040,6 +2089,9 @@ impl BinderState {
             // Method declarations (in object literals)
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 if let Some(method) = arena.get_method_decl(node) {
+                    if method.asterisk_token {
+                        self.file_features.set(FileFeatures::GENERATORS);
+                    }
                     self.bind_callable_body(arena, &method.parameters, method.body, idx);
                 }
             }
@@ -2537,6 +2589,7 @@ impl BinderState {
 
             // Decorators
             k if k == syntax_kind_ext::DECORATOR => {
+                self.file_features.set(FileFeatures::DECORATORS);
                 if let Some(decorator) = arena.get_decorator(node) {
                     self.bind_node(arena, decorator.expression);
                 }
