@@ -855,16 +855,6 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
         }
-        // TS18050: Cannot access properties on 'never' type (impossible union after narrowing)
-        if object_type == TypeId::NEVER {
-            use crate::types::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                access.expression,
-                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                &["never"],
-            );
-            return TypeId::NEVER;
-        }
 
         // Check for merged class/enum/function + namespace symbols
         // When a class/enum/function merges with a namespace (same name), the symbol has both

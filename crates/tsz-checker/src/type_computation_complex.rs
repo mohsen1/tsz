@@ -198,16 +198,6 @@ impl<'a> CheckerState<'a> {
         if constructor_type == TypeId::ERROR {
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
-        // TS18050: Cannot construct 'never' type (impossible union after narrowing)
-        if constructor_type == TypeId::NEVER {
-            use crate::types::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                new_expr.expression,
-                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                &["never"],
-            );
-            return TypeId::NEVER;
-        }
 
         // Evaluate application types (e.g., Newable<T>, Constructor<{}>) to get the actual Callable
         let constructor_type = self.evaluate_application_type(constructor_type);
@@ -989,16 +979,6 @@ impl<'a> CheckerState<'a> {
                 None, // No skipping needed
             );
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
-        }
-        // TS18050: Cannot call 'never' type (impossible union after narrowing)
-        if callee_type == TypeId::NEVER {
-            use crate::types::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                call.expression,
-                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                &["never"],
-            );
-            return TypeId::NEVER;
         }
 
         let mut nullish_cause = None;
