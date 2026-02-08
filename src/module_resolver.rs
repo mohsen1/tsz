@@ -423,6 +423,8 @@ pub struct ModuleResolver {
     /// Custom conditions from tsconfig (for customConditions option)
     #[allow(dead_code)] // Infrastructure for customConditions support
     custom_conditions: Vec<String>,
+    /// Whether allowJs is enabled (affects extension candidates)
+    allow_js: bool,
     /// Cache for package.json package type lookups
     package_type_cache: FxHashMap<PathBuf, Option<PackageType>>,
     /// Cached package type for the current resolution
@@ -449,6 +451,7 @@ impl ModuleResolver {
             js_extensions: vec![".js", ".jsx"],
             dts_extensions: vec![".d.ts", ".d.mts", ".d.cts"],
             custom_conditions: options.custom_conditions.clone(),
+            allow_js: options.allow_js,
             package_type_cache: FxHashMap::default(),
             current_package_type: None,
         }
@@ -466,6 +469,7 @@ impl ModuleResolver {
             js_extensions: vec![".js", ".jsx"],
             dts_extensions: vec![".d.ts", ".d.mts", ".d.cts"],
             custom_conditions: Vec::new(),
+            allow_js: false,
             package_type_cache: FxHashMap::default(),
             current_package_type: None,
         }
@@ -672,13 +676,16 @@ impl ModuleResolver {
             }
         }
 
-        // Step 6: Classic resolution does not consult node_modules
+        // Step 6: Classic resolution walks up the directory tree looking for
+        // <specifier>.ts, <specifier>.tsx, <specifier>.d.ts at each level.
+        // It does NOT consult node_modules.
         if matches!(self.resolution_kind, ModuleResolutionKind::Classic) {
-            return Err(ResolutionFailure::NotFound {
-                specifier: specifier.to_string(),
-                containing_file: containing_file.to_string(),
-                span: specifier_span,
-            });
+            return self.resolve_classic_non_relative(
+                specifier,
+                containing_dir,
+                containing_file,
+                specifier_span,
+            );
         }
 
         // Step 7: Handle bare specifiers (npm packages)
@@ -1011,6 +1018,51 @@ impl ModuleResolver {
         })
     }
 
+    /// Resolve a non-relative module specifier using Classic resolution.
+    ///
+    /// TypeScript's Classic algorithm walks up the directory tree from the containing
+    /// file's directory, probing for `<specifier>.ts`, `<specifier>.tsx`,
+    /// `<specifier>.d.ts` at each level. It does NOT consult `node_modules`.
+    ///
+    /// Example: importing `"foo"` from `/a/b/c/app.ts` will try:
+    ///   /a/b/c/foo.ts, /a/b/c/foo.tsx, /a/b/c/foo.d.ts, ...
+    ///   /a/b/foo.ts, /a/b/foo.tsx, /a/b/foo.d.ts, ...
+    ///   /a/foo.ts, /a/foo.tsx, /a/foo.d.ts, ...
+    ///   /foo.ts, /foo.tsx, /foo.d.ts, ...
+    fn resolve_classic_non_relative(
+        &self,
+        specifier: &str,
+        containing_dir: &Path,
+        containing_file: &str,
+        specifier_span: Span,
+    ) -> Result<ResolvedModule, ResolutionFailure> {
+        let mut current = containing_dir.to_path_buf();
+        loop {
+            let candidate = current.join(specifier);
+            if let Some(resolved) = self.try_file_or_directory(&candidate) {
+                return Ok(ResolvedModule {
+                    resolved_path: resolved.clone(),
+                    is_external: false,
+                    package_name: None,
+                    original_specifier: specifier.to_string(),
+                    extension: ModuleExtension::from_path(&resolved),
+                });
+            }
+
+            // Move to parent directory
+            match current.parent() {
+                Some(parent) if parent != current => current = parent.to_path_buf(),
+                _ => break,
+            }
+        }
+
+        Err(ResolutionFailure::NotFound {
+            specifier: specifier.to_string(),
+            containing_file: containing_file.to_string(),
+            span: specifier_span,
+        })
+    }
+
     /// Resolve a bare specifier (npm package)
     fn resolve_bare_specifier(
         &self,
@@ -1074,6 +1126,20 @@ impl ModuleResolver {
                             }
                             // Continue searching in parent directories
                         }
+                    }
+                } else if subpath.is_none() {
+                    // Try resolving as a file directly in node_modules
+                    // e.g., node_modules/foo.d.ts for bare specifier "foo"
+                    if let Some(resolved) =
+                        self.try_file_or_directory(&node_modules.join(&package_name))
+                    {
+                        return Ok(ResolvedModule {
+                            resolved_path: resolved.clone(),
+                            is_external: true,
+                            package_name: Some(package_name.clone()),
+                            original_specifier: specifier.to_string(),
+                            extension: ModuleExtension::from_path(&resolved),
+                        });
                     }
                 }
             }
@@ -1571,11 +1637,29 @@ impl ModuleResolver {
                 match self.current_package_type {
                     Some(PackageType::Module) => &NODE16_MODULE_EXTENSION_CANDIDATES,
                     Some(PackageType::CommonJs) => &NODE16_COMMONJS_EXTENSION_CANDIDATES,
-                    None => &TS_EXTENSION_CANDIDATES,
+                    None => {
+                        if self.allow_js {
+                            &TS_JS_EXTENSION_CANDIDATES
+                        } else {
+                            &TS_EXTENSION_CANDIDATES
+                        }
+                    }
                 }
             }
-            ModuleResolutionKind::Classic => &CLASSIC_EXTENSION_CANDIDATES,
-            _ => &TS_EXTENSION_CANDIDATES,
+            ModuleResolutionKind::Classic => {
+                if self.allow_js {
+                    &CLASSIC_JS_EXTENSION_CANDIDATES
+                } else {
+                    &CLASSIC_EXTENSION_CANDIDATES
+                }
+            }
+            _ => {
+                if self.allow_js {
+                    &TS_JS_EXTENSION_CANDIDATES
+                } else {
+                    &TS_EXTENSION_CANDIDATES
+                }
+            }
         }
     }
 
@@ -1776,6 +1860,12 @@ const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
 const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =
     ["cts", "d.cts", "ts", "tsx", "d.ts", "mts", "d.mts"];
 const CLASSIC_EXTENSION_CANDIDATES: [&str; 7] = TS_EXTENSION_CANDIDATES;
+
+/// Extension candidates when allowJs is enabled (TypeScript + JavaScript)
+const TS_JS_EXTENSION_CANDIDATES: [&str; 11] = [
+    "ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts", "js", "jsx", "mjs", "cjs",
+];
+const CLASSIC_JS_EXTENSION_CANDIDATES: [&str; 11] = TS_JS_EXTENSION_CANDIDATES;
 
 fn node16_extension_substitution(path: &Path, extension: &str) -> Option<Vec<PathBuf>> {
     let replacements: &[&str] = match extension {
