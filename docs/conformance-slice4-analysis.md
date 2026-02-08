@@ -210,6 +210,31 @@ Rather than attempting quick fixes that risk regressions:
 | Parser modifications | High | Unknown | Low |
 | Module augmentation | Very High | 200+ | Low |
 
+### Attempted Fix: Static/Instance Overload Checking
+
+**Test:** `mixingStaticAndInstanceOverloads.ts`
+**Expected:** TS2387, TS2388
+**Actual:** No errors emitted
+
+**Attempt:** Added check in `crates/tsz-checker/src/state_checking_members.rs:check_class_member_implementations`
+to detect when overload signatures have different static/instance modifiers than their implementations.
+
+**Result:** Fix compiled successfully but didn't emit errors. Investigation revealed:
+1. The check may not be reached (class might be skipped as "declared")
+2. `find_method_impl` helper doesn't consider static vs instance when matching
+3. Modifier detection or class member iteration may have edge cases
+
+**Learnings:**
+- Even seemingly simple fixes require deep understanding of checker flow
+- Method overload checking interacts with ambient declaration detection
+- Proper fix requires:
+  - Unit tests demonstrating the issue
+  - Tracing to verify code paths are executed
+  - Understanding of how modifiers are stored and checked
+  - Verifying no regressions in existing overload tests
+
+**Recommendation:** Create a dedicated unit test for this case before attempting the fix again.
+
 ## Notes
 
 - **DO NOT** make broad changes to type checking without extensive testing
@@ -219,3 +244,4 @@ Rather than attempting quick fixes that risk regressions:
 - Consider adding targeted unit tests for each fix to prevent regressions
 - **BASELINE:** 2303 passing unit tests, 1 pre-existing failure
 - **Focus on low-risk, high-impact changes** to avoid breaking existing functionality
+- **Write unit tests first** - they clarify the expected behavior and prevent regressions
