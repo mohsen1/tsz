@@ -238,8 +238,10 @@ impl ParserState {
         // Parse the check type (left side of extends)
         let check_type = self.parse_union_type();
 
-        // Check for extends keyword to form conditional
-        if !self.is_token(SyntaxKind::ExtendsKeyword) {
+        // Check for extends keyword to form conditional type.
+        // A line break before `extends` prevents conditional type parsing (ASI).
+        // This matches tsc's behavior: `!scanner.hasPrecedingLineBreak()`.
+        if !self.is_token(SyntaxKind::ExtendsKeyword) || self.scanner.has_preceding_line_break() {
             return check_type;
         }
 

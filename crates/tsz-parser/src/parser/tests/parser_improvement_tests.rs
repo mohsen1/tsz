@@ -475,6 +475,31 @@ const c = 3;"#;
 }
 
 // =============================================================================
+// Conditional Type ASI Tests
+// =============================================================================
+
+#[test]
+fn test_interface_extends_property_with_asi() {
+    // 'extends' as a property name in interface with ASI (no semicolons)
+    // Should NOT parse as conditional type
+    let source = r#"
+interface JSONSchema4 {
+  a?: number
+  extends?: string | string[]
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags.is_empty(),
+        "Expected no parser errors for 'extends' property with ASI, got {:?}",
+        diags
+    );
+}
+
+// =============================================================================
 // Expression Statement Recovery Tests
 // =============================================================================
 
