@@ -57,6 +57,8 @@ impl<'a> CheckerState<'a> {
         for &member_idx in &iface.members.nodes {
             self.check_type_member_for_missing_names(member_idx);
             self.check_type_member_for_parameter_properties(member_idx);
+            // TS1268: Check index signature parameter types
+            self.check_index_signature_parameter_type(member_idx);
         }
 
         // Check for duplicate member names (TS2300)
@@ -71,6 +73,85 @@ impl<'a> CheckerState<'a> {
         self.check_interface_extension_compatibility(stmt_idx, iface);
 
         self.pop_type_parameters(type_param_updates);
+    }
+
+    /// Check index signature parameter type (TS1268).
+    /// An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.
+    fn check_index_signature_parameter_type(&mut self, member_idx: NodeIndex) {
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+
+        if member_node.kind != syntax_kind_ext::INDEX_SIGNATURE {
+            return;
+        }
+
+        let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
+            return;
+        };
+
+        let param_idx = index_sig
+            .parameters
+            .nodes
+            .first()
+            .copied()
+            .unwrap_or(NodeIndex::NONE);
+
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return;
+        };
+
+        let Some(param_data) = self.ctx.arena.get_parameter(param_node) else {
+            return;
+        };
+
+        // No type annotation means implicit any, which is allowed
+        if param_data.type_annotation.is_none() {
+            return;
+        }
+
+        let Some(type_node) = self.ctx.arena.get(param_data.type_annotation) else {
+            return;
+        };
+
+        // Check if the type annotation is a valid index signature parameter type
+        // Valid types: string, number, symbol (keywords), template literal type,
+        // or type references to string/number/symbol
+        let is_valid = match type_node.kind {
+            k if k == SyntaxKind::StringKeyword as u16 => true,
+            k if k == SyntaxKind::NumberKeyword as u16 => true,
+            k if k == SyntaxKind::SymbolKeyword as u16 => true,
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => true,
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                // Type references like "string", "number", "symbol" (referring to built-in types)
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
+                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
+                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                            matches!(ident.escaped_text.as_str(), "string" | "number" | "symbol")
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+
+        if !is_valid {
+            self.error_at_node(
+                param_idx,
+                diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+            );
+        }
     }
 
     /// Check for duplicate property names in interface members (TS2300).

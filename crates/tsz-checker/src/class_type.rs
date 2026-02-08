@@ -29,6 +29,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::types::Visibility;
+use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
     TypeLowering, TypeSubstitution, instantiate_type,
@@ -369,6 +370,22 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.get_type_from_type_node(param.type_annotation)
                     };
+
+                    // TS1268: An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type
+                    let is_valid_index_type = key_type == TypeId::STRING
+                        || key_type == TypeId::NUMBER
+                        || key_type == TypeId::SYMBOL
+                        || is_template_literal_type(self.ctx.types, key_type);
+
+                    if !is_valid_index_type {
+                        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
+                            param_idx,
+                            diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                            diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                        );
+                    }
+
                     let value_type = if index_sig.type_annotation.is_none() {
                         TypeId::ANY
                     } else {
@@ -1183,6 +1200,14 @@ impl<'a> CheckerState<'a> {
                     if !self.has_static_modifier(&index_sig.modifiers) {
                         continue;
                     }
+
+                    let param_idx = index_sig
+                        .parameters
+                        .nodes
+                        .first()
+                        .copied()
+                        .unwrap_or(NodeIndex::NONE);
+
                     let key_type = index_sig
                         .parameters
                         .nodes
@@ -1197,6 +1222,21 @@ impl<'a> CheckerState<'a> {
                             }
                         })
                         .unwrap_or(TypeId::STRING);
+
+                    // TS1268: An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type
+                    let is_valid_index_type = key_type == TypeId::STRING
+                        || key_type == TypeId::NUMBER
+                        || key_type == TypeId::SYMBOL
+                        || is_template_literal_type(self.ctx.types, key_type);
+
+                    if !is_valid_index_type {
+                        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
+                            param_idx,
+                            diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                            diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                        );
+                    }
 
                     let value_type = if !index_sig.type_annotation.is_none() {
                         self.get_type_from_type_node(index_sig.type_annotation)
