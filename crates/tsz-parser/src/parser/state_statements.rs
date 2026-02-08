@@ -1587,11 +1587,19 @@ impl ParserState {
 
         // Parse class name - keywords like 'any', 'string' can be used as class names
         // EXCEPT extends/implements which start heritage clauses
+        // AND reserved words like 'void', 'null' which cannot be identifiers
         let name = if self.is_identifier_or_keyword()
             && !self.is_token(SyntaxKind::ExtendsKeyword)
             && !self.is_token(SyntaxKind::ImplementsKeyword)
         {
-            self.parse_identifier_name()
+            // TS1005: Reserved words cannot be used as class names
+            if self.is_reserved_word() {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+                NodeIndex::NONE
+            } else {
+                self.parse_identifier_name()
+            }
         } else {
             NodeIndex::NONE
         };
@@ -1636,11 +1644,19 @@ impl ParserState {
 
         // Parse class name - keywords like 'any', 'string' can be used as class names
         // EXCEPT extends/implements which start heritage clauses
+        // AND reserved words like 'void', 'null' which cannot be identifiers
         let name = if self.is_identifier_or_keyword()
             && !self.is_token(SyntaxKind::ExtendsKeyword)
             && !self.is_token(SyntaxKind::ImplementsKeyword)
         {
-            self.parse_identifier_name()
+            // TS1005: Reserved words cannot be used as class names
+            if self.is_reserved_word() {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+                NodeIndex::NONE
+            } else {
+                self.parse_identifier_name()
+            }
         } else {
             NodeIndex::NONE
         };
