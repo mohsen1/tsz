@@ -243,6 +243,26 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
+                // TSC emits TS2322 (generic assignability error) instead of TS2741
+                // when the source is a primitive type. Primitives can't have "missing properties".
+                // Example: `x: number = moduleA` → "Type '...' is not assignable to type 'number'"
+                //          NOT "Property 'someClass' is missing in type 'number'..."
+                if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
+                    let src_str = self.format_type(*source_type);
+                    let tgt_str = self.format_type(*target_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
                 // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 let src_str = self.format_type(*source_type);
