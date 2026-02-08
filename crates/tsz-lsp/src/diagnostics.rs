@@ -153,7 +153,8 @@ pub fn category_to_severity(category: DiagnosticCategory) -> DiagnosticSeverity 
 pub fn is_unnecessary_code(code: u32) -> bool {
     matches!(
         code,
-        diagnostic_codes::ALL_VARIABLES_ARE_UNUSED
+        diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ
+            | diagnostic_codes::ALL_VARIABLES_ARE_UNUSED
             | diagnostic_codes::UNREACHABLE_CODE_DETECTED
             | diagnostic_codes::LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS
             | diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS
@@ -517,7 +518,7 @@ mod tests {
             1,
             "'x' is declared but its value is never read.",
             DiagnosticCategory::Warning,
-            diagnostic_codes::ALL_VARIABLES_ARE_UNUSED,
+            diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
         );
         let lsp_diag = convert_diagnostic(&diag, &line_map, source);
         assert_eq!(lsp_diag.reports_unnecessary, Some(true));
