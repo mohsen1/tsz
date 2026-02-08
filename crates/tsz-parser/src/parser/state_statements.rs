@@ -1437,10 +1437,32 @@ impl ParserState {
     /// Parse parameter modifiers (public, private, protected, readonly)
     pub(crate) fn parse_parameter_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
+        let mut seen_readonly = false;
 
         while self.is_parameter_modifier() {
             let mod_start = self.token_pos();
             let mod_kind = self.current_token;
+
+            // Check for modifier ordering violations
+            // Parameter modifiers must be in order: accessibility, readonly
+            if matches!(
+                mod_kind,
+                SyntaxKind::PublicKeyword
+                    | SyntaxKind::PrivateKeyword
+                    | SyntaxKind::ProtectedKeyword
+            ) {
+                // TS1029: Accessibility modifier must come before readonly
+                if seen_readonly {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'accessibility modifier' must come before 'readonly' modifier.",
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+            } else if mod_kind == SyntaxKind::ReadonlyKeyword {
+                seen_readonly = true;
+            }
+
             self.next_token();
             let mod_end = self.token_end();
             modifiers.push(self.arena.add_token(mod_kind as u16, mod_start, mod_end));
