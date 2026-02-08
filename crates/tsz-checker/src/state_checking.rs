@@ -544,7 +544,26 @@ impl<'a> CheckerState<'a> {
             // FIX: Always cache the widened type, overwriting any fresh type that was
             // cached during compute_final_type. This prevents "Zombie Freshness" where
             // get_type_of_symbol returns the stale fresh type instead of the widened type.
-            self.cache_symbol_type(sym_id, final_type);
+            //
+            // EXCEPT: For merged interface+variable symbols (e.g., `interface Ctor { new(): T }` +
+            // `declare var Ctor: Ctor`), the final_type from get_type_from_type_node is a Lazy
+            // wrapper, while get_type_of_symbol already cached the structural Callable type with
+            // construct signatures. Overwriting with Lazy causes false TS2351 ("not constructable")
+            // because the Lazy type can't be resolved back to the Callable by the solver.
+            {
+                let is_merged_interface = self.ctx.binder.get_symbol(sym_id).is_some_and(|s| {
+                    s.flags & tsz_binder::symbol_flags::INTERFACE != 0
+                        && s.flags
+                            & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                                | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+                            != 0
+                });
+                let is_lazy =
+                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, final_type).is_some();
+                if !(is_merged_interface && is_lazy) {
+                    self.cache_symbol_type(sym_id, final_type);
+                }
+            }
 
             // FIX: Update node_types cache with the widened type
             self.ctx.node_types.insert(decl_idx.0, final_type);
