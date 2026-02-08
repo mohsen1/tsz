@@ -1265,6 +1265,16 @@ impl<'a> CheckerState<'a> {
 
         // Note: We use self.error() which already checks emitted_diagnostics for deduplication
         // The key is (start, code), so we won't emit duplicate errors at the same location
+
+        // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
+        // The driver's ModuleResolver may have a more specific error code than TS2307.
+        if let Some(error) = self.ctx.get_resolution_error(module_specifier) {
+            let error_code = error.code;
+            let error_message = error.message.clone();
+            self.error(start, length, error_message, error_code);
+            return;
+        }
+
         // Use TS2792 when module resolution is "classic" (system/amd/umd modules),
         // otherwise TS2307.
         use crate::types::diagnostics::{diagnostic_messages, format_message};
