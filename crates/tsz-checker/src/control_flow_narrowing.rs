@@ -778,6 +778,17 @@ impl<'a> FlowAnalyzer<'a> {
                 idx = paren.expression;
                 continue;
             }
+            // Skip comma expressions - they evaluate to their rightmost operand
+            // This allows narrowing to work through expressions like (a, b).prop
+            // Fast path: check kind first before calling get_binary_expr
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                if let Some(bin) = self.arena.get_binary_expr(node) {
+                    if bin.operator_token == SyntaxKind::CommaToken as u16 {
+                        idx = bin.right;
+                        continue;
+                    }
+                }
+            }
             return idx;
         }
     }
@@ -1030,12 +1041,16 @@ impl<'a> FlowAnalyzer<'a> {
             let access_target = self.skip_parenthesized(access_target);
             let access_target_node = self.arena.get(access_target)?;
 
-            // Unwrap assignment expressions to get the actual target
+            // Unwrap assignment and comma expressions to get the actual target
             let effective_target = if access_target_node.kind == syntax_kind_ext::BINARY_EXPRESSION
             {
                 let binary = self.arena.get_binary_expr(access_target_node)?;
                 if binary.operator_token == SyntaxKind::EqualsToken as u16 {
+                    // (x = y).prop -> unwrap to x.prop
                     binary.left
+                } else if binary.operator_token == SyntaxKind::CommaToken as u16 {
+                    // (a, b).prop -> unwrap to b.prop
+                    binary.right
                 } else {
                     access_target
                 }
@@ -2207,6 +2222,8 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Check if a node is a simple reference (identifier or property access).
     fn is_simple_reference(&self, node: NodeIndex) -> bool {
+        // Skip parentheses and comma expressions to get the actual reference
+        let node = self.skip_parenthesized(node);
         if let Some(node_data) = self.arena.get(node) {
             matches!(
                 node_data.kind,
@@ -2230,6 +2247,8 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
 
-        Some(unary.operand)
+        // Skip parentheses and comma expressions in typeof operand
+        // This handles cases like: typeof (a, b).prop
+        Some(self.skip_parenthesized(unary.operand))
     }
 }
