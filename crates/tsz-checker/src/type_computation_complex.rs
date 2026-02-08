@@ -149,6 +149,7 @@ impl<'a> CheckerState<'a> {
 
         // Get the type of the constructor expression
         let constructor_type = self.get_type_of_node(new_expr.expression);
+        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), "NEW step 1: get_type_of_node");
 
         // Self-referencing class in static initializer: `new C()` inside C's static init
         // produces a Lazy placeholder. Return the cached instance type if available.
@@ -172,6 +173,7 @@ impl<'a> CheckerState<'a> {
             constructor_type,
             new_expr.type_arguments.as_ref(),
         );
+        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), "NEW step 2: apply_type_arguments_to_constructor_type");
 
         // Check if the constructor type contains any abstract classes (for union types)
         // e.g., `new cls()` where `cls: typeof AbstractA | typeof AbstractB`
@@ -211,20 +213,24 @@ impl<'a> CheckerState<'a> {
 
         // Evaluate application types (e.g., Newable<T>, Constructor<{}>) to get the actual Callable
         let constructor_type = self.evaluate_application_type(constructor_type);
+        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), "NEW step 3: evaluate_application_type");
 
         // Resolve Ref types to ensure we get the actual constructor type, not just a symbolic reference
         // This is critical for classes where we need the Callable with construct signatures
         let constructor_type = self.resolve_ref_type(constructor_type);
+        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), "NEW step 4: resolve_ref_type");
 
         // Resolve type parameter constraints: if the constructor type is a type parameter
         // (e.g., T extends Constructable), resolve the constraint's lazy types so the solver
         // can find construct signatures through the constraint chain.
         let constructor_type = self.resolve_type_param_for_construct(constructor_type);
+        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), "NEW step 5: resolve_type_param_for_construct");
 
         // Some constructor interfaces are lowered with a synthetic `"new"` property
         // instead of explicit construct signatures.
         let synthetic_new_constructor = self.constructor_type_from_new_property(constructor_type);
         let constructor_type = synthetic_new_constructor.unwrap_or(constructor_type);
+        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), synthetic = synthetic_new_constructor.is_some(), "NEW step 6: constructor_type_from_new_property");
         // Explicit type arguments on `new` (e.g. `new Promise<number>(...)`) need to
         // apply to synthetic `"new"` member call signatures as well.
         let constructor_type = if synthetic_new_constructor.is_some() {
@@ -263,6 +269,17 @@ impl<'a> CheckerState<'a> {
 
         // Delegate to Solver for constructor resolution
         let result = {
+            // DEBUG: Log what type we're trying to construct
+            if let Some(key) = self.ctx.types.lookup(constructor_type) {
+                let mut formatter = self.ctx.create_type_formatter();
+                let type_str = formatter.format(constructor_type);
+                tracing::debug!(
+                    constructor_type_id = constructor_type.0,
+                    type_key = ?key,
+                    type_str = %type_str,
+                    "resolve_new: constructor type entering solver"
+                );
+            }
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
             self.ctx.configure_compat_checker(&mut checker);
@@ -495,37 +512,19 @@ impl<'a> CheckerState<'a> {
 
         match classify_for_lazy_resolution(self.ctx.types, type_id) {
             LazyTypeKind::Lazy(def_id) => {
-                // New DefId-based case - resolve via DefId
                 if let Some(symbol_id) = self.ctx.def_to_symbol_id(def_id) {
                     let symbol_type = self.get_type_of_symbol(symbol_id);
-                    tracing::debug!(type_id = type_id.0, def_id = ?def_id, sym_id = symbol_id.0, symbol_type_id = symbol_type.0, same = (symbol_type == type_id), "resolve_ref_type: Lazy");
                     if symbol_type == type_id {
-                        // The symbol_types cache was overwritten with the Lazy type
-                        // (e.g., check_variable_declaration caches `declare var X: X`
-                        // as the Lazy annotation type, overwriting the structural type
-                        // that get_type_of_symbol originally computed).
-                        // Fall back to the type environment which preserves the
-                        // structural type computed during initial symbol resolution.
-                        match self.ctx.type_env.try_borrow() {
-                            Ok(env) => {
-                                let env_type = env.get_def(def_id);
-                                tracing::debug!(
-                                    type_id = type_id.0,
-                                    env_type = ?env_type.map(|t| t.0),
-                                    "resolve_ref_type: Lazy - checking type_env"
-                                );
-                                if let Some(env_type) = env_type {
-                                    if env_type != type_id {
-                                        return env_type;
-                                    }
+                        // symbol_types cache contains the Lazy type itself (can happen
+                        // when check_variable_declaration overwrites the structural type
+                        // with the Lazy annotation type for `declare var X: X` patterns).
+                        // Fall back to the type environment which may still have the
+                        // structural type from initial symbol resolution.
+                        if let Ok(env) = self.ctx.type_env.try_borrow() {
+                            if let Some(env_type) = env.get_def(def_id) {
+                                if env_type != type_id {
+                                    return env_type;
                                 }
-                            }
-                            Err(e) => {
-                                tracing::debug!(
-                                    type_id = type_id.0,
-                                    error = %e,
-                                    "resolve_ref_type: Lazy - type_env borrow failed"
-                                );
                             }
                         }
                         type_id
@@ -533,14 +532,10 @@ impl<'a> CheckerState<'a> {
                         symbol_type
                     }
                 } else {
-                    tracing::debug!(type_id = type_id.0, def_id = ?def_id, "resolve_ref_type: Lazy - no symbol for DefId");
                     type_id
                 }
             }
-            LazyTypeKind::NotLazy => {
-                tracing::trace!(type_id = type_id.0, "resolve_ref_type: NotLazy");
-                type_id
-            }
+            LazyTypeKind::NotLazy => type_id,
             _ => type_id, // Handle deprecated variants for compatibility
         }
     }
@@ -1552,7 +1547,6 @@ impl<'a> CheckerState<'a> {
             // false TS2339/TS2351 on `Promise.resolve` / `new Promise(...)`.
             if has_type && has_value && (flags & tsz_binder::symbol_flags::INTERFACE) != 0 {
                 let mut value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
-                tracing::debug!(name = %name, sym_id = sym_id.0, value_type_id = value_type.0, "MERGED_IFACE step1: type_of_value_declaration_for_symbol");
                 if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
                     for &decl_idx in &symbol_declarations {
                         let candidate = self.type_of_value_declaration_for_symbol(sym_id, decl_idx);
@@ -1561,11 +1555,9 @@ impl<'a> CheckerState<'a> {
                             break;
                         }
                     }
-                    tracing::debug!(name = %name, value_type_id = value_type.0, "MERGED_IFACE step2: fallback declarations");
                 }
                 if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
                     value_type = self.type_of_value_symbol_by_name(name);
-                    tracing::debug!(name = %name, value_type_id = value_type.0, "MERGED_IFACE step3: by_name");
                 }
                 // Lib globals often model value-side constructors through a sibling
                 // `*Constructor` interface (Promise -> PromiseConstructor).
@@ -1577,7 +1569,6 @@ impl<'a> CheckerState<'a> {
                     let constructor_type = self.get_type_of_symbol(constructor_sym_id);
                     if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR {
                         value_type = constructor_type;
-                        tracing::debug!(name = %name, value_type_id = value_type.0, "MERGED_IFACE step4a: ctor global");
                     }
                 } else if let Some(constructor_type) =
                     self.resolve_lib_type_by_name(&constructor_name)
@@ -1585,7 +1576,6 @@ impl<'a> CheckerState<'a> {
                     && constructor_type != TypeId::ERROR
                 {
                     value_type = constructor_type;
-                    tracing::debug!(name = %name, value_type_id = value_type.0, "MERGED_IFACE step4b: ctor lib");
                 }
                 // For `declare var X: X` pattern (self-referential type annotation),
                 // the type resolved through type_of_value_declaration may be incomplete
@@ -1595,18 +1585,25 @@ impl<'a> CheckerState<'a> {
                 if !self.ctx.lib_contexts.is_empty()
                     && self.is_self_referential_var_type(sym_id, value_decl, name)
                 {
-                    tracing::debug!(name = %name, "MERGED_IFACE step5: self-referential detected");
                     if let Some(lib_type) = self.resolve_lib_type_by_name(name) {
                         if lib_type != TypeId::UNKNOWN && lib_type != TypeId::ERROR {
                             value_type = lib_type;
-                            tracing::debug!(name = %name, value_type_id = value_type.0, "MERGED_IFACE step5: lib_type override!");
                         }
                     }
                 }
-                {
-                    let mut fmt = self.ctx.create_type_formatter();
-                    let vt_str = fmt.format(value_type);
-                    tracing::debug!(name = %name, value_type_id = value_type.0, value_type_str = %vt_str, "MERGED_IFACE final value_type");
+                // Final fallback: if value_type is still a Lazy type (e.g., due to
+                // check_variable_declaration overwriting the symbol_types cache with the
+                // Lazy annotation type for `declare var X: X` patterns, and DefId
+                // collisions corrupting the type_env), force recompute the symbol type.
+                if tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, value_type).is_some() {
+                    self.ctx.symbol_types.remove(&sym_id);
+                    let recomputed = self.get_type_of_symbol(sym_id);
+                    if recomputed != value_type
+                        && recomputed != TypeId::UNKNOWN
+                        && recomputed != TypeId::ERROR
+                    {
+                        value_type = recomputed;
+                    }
                 }
                 if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
                     return self.check_flow_usage(idx, value_type, sym_id);
@@ -1914,13 +1911,7 @@ impl<'a> CheckerState<'a> {
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
             if !var_decl.type_annotation.is_none() {
                 let annotated = self.get_type_from_type_node(var_decl.type_annotation);
-                let resolved = self.resolve_ref_type(annotated);
-                tracing::debug!(
-                    annotated_id = annotated.0,
-                    resolved_id = resolved.0,
-                    "type_of_value_declaration: annotated->resolved"
-                );
-                return resolved;
+                return self.resolve_ref_type(annotated);
             }
             if !var_decl.initializer.is_none() {
                 return self.get_type_of_node(var_decl.initializer);
