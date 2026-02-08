@@ -146,8 +146,9 @@ impl<'a> CheckerState<'a> {
 
         // TS2464: type must be string, number, symbol, or any (including literals).
         // This check ignores strictNullChecks: undefined/null always fail.
+        // Suppress this diagnostic in files with parse errors to avoid noise (e.g., [await] without operand).
         let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
-        if !evaluator.is_valid_computed_property_name_type(expr_type) {
+        if !self.has_parse_errors() && !evaluator.is_valid_computed_property_name_type(expr_type) {
             use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 name_idx,
