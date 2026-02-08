@@ -485,7 +485,6 @@ const result = base ** exp;  // TS2362: base is string, not number
 }
 
 #[test]
-#[ignore = "TODO: Bitwise operator error checking not yet implemented"]
 fn test_bitwise_operations_with_invalid_operands() {
     // Test bitwise operators (&, |, ^, <<, >>, >>>) with non-integer types
     let source = r#"
