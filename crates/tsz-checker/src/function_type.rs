@@ -825,6 +825,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Don't report errors for any/error types - check BEFORE accessibility
+        // to prevent cascading errors when the object type is already invalid
+        if object_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+        if object_type == TypeId::ERROR {
+            return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
+        }
+
         // Enforce private/protected access modifiers when possible
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &ident.escaped_text;
@@ -836,14 +845,6 @@ impl<'a> CheckerState<'a> {
             ) {
                 return TypeId::ERROR;
             }
-        }
-
-        // Don't report errors for any/error types
-        if object_type == TypeId::ANY {
-            return TypeId::ANY;
-        }
-        if object_type == TypeId::ERROR {
-            return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
         // TS18050: Cannot access properties on 'never' type (impossible union after narrowing)
         if object_type == TypeId::NEVER {
