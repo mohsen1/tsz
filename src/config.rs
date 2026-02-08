@@ -478,9 +478,9 @@ pub fn resolve_compiler_options(
         resolved.checker.strict = strict;
         if strict {
             resolved.checker.no_implicit_any = true;
-            resolved.checker.no_implicit_returns = true;
             resolved.checker.strict_null_checks = true;
             resolved.checker.strict_function_types = true;
+            resolved.checker.strict_bind_call_apply = true;
             resolved.checker.strict_property_initialization = true;
             resolved.checker.no_implicit_this = true;
             resolved.checker.use_unknown_in_catch_variables = true;

@@ -455,7 +455,6 @@ fn convert_options_to_tsconfig(
     let mut opts = serde_json::Map::new();
 
     for (key, value) in options {
-        // Skip test harness-specific directives
         let key_lower = key.to_lowercase();
         if HARNESS_ONLY_DIRECTIVES
             .iter()
@@ -472,20 +471,22 @@ fn convert_options_to_tsconfig(
             .iter()
             .any(|&opt| opt.to_lowercase() == key_lower)
         {
-            // Parse comma-separated list
             let items: Vec<serde_json::Value> = value
                 .split(',')
                 .map(|s| serde_json::Value::String(s.trim().to_string()))
                 .collect();
             serde_json::Value::Array(items)
-        } else if let Ok(num) = value.parse::<i64>() {
-            // Handle numeric options (e.g., maxNodeModuleJsDepth)
-            serde_json::Value::Number(num.into())
         } else {
-            serde_json::Value::String(value.clone())
+            // For non-list options, take only the first comma-separated value
+            let effective_value = value.split(',').next().unwrap_or(value).trim();
+            if let Ok(num) = effective_value.parse::<i64>() {
+                serde_json::Value::Number(num.into())
+            } else {
+                serde_json::Value::String(effective_value.to_string())
+            }
         };
 
-        opts.insert(key.clone(), json_value);
+        opts.insert(key_lower, json_value);
     }
 
     serde_json::Value::Object(opts)
