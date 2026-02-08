@@ -831,11 +831,15 @@ impl<'a> CheckerState<'a> {
     /// library change suggestions for ES2015+ types.
     pub fn error_cannot_find_name_at(&mut self, name: &str, idx: NodeIndex) {
         use tsz_binder::lib_loader;
+        use tsz_parser::parser::node_flags;
 
         // Skip TS2304 for identifiers that are clearly not valid names.
-        // These are likely parse errors (e.g., ",", ";", "(") that were
+        // These are likely parse errors (e.g., ",", ";", "(", or empty names) that were
         // added to the AST for error recovery. The parse error should have
-        // already been emitted (e.g., TS1136 "Property assignment expected").
+        // already been emitted (e.g., TS1003 "Identifier expected").
+        if name.is_empty() {
+            return;
+        }
         let is_obviously_invalid = name.len() == 1
             && matches!(
                 name.chars().next(),
@@ -866,6 +870,18 @@ impl<'a> CheckerState<'a> {
             );
         if is_obviously_invalid {
             return;
+        }
+
+        // Skip TS2304 for nodes that have parse errors.
+        // This prevents cascading "Cannot find name" errors on malformed AST nodes.
+        // The parse error itself should already be emitted (e.g., TS1003, TS1005, etc.).
+        if let Some(node) = self.ctx.arena.get(idx) {
+            let flags = node.flags as u32;
+            if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+            {
+                return;
+            }
         }
 
         // Check if this is an ES2015+ type that requires a specific lib
