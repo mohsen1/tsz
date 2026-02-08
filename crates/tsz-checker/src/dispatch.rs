@@ -223,10 +223,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Parenthesized expression - just pass through to inner expression
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.checker.ctx.arena.get_parenthesized(node) {
+                    // Check if expression is missing (parse error: empty parentheses)
+                    if paren.expression.is_none() {
+                        // Parse error - return ERROR to suppress cascading errors
+                        return TypeId::ERROR;
+                    }
                     self.checker.get_type_of_node(paren.expression)
                 } else {
-                    // Return ANY to prevent cascading TS2571 errors
-                    TypeId::ANY
+                    // Missing parenthesized data - propagate error
+                    TypeId::ERROR
                 }
             }
 
