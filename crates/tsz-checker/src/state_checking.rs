@@ -469,6 +469,11 @@ impl<'a> CheckerState<'a> {
                     let prev_context = checker.ctx.contextual_type;
                     if evaluated_type != TypeId::ANY {
                         checker.ctx.contextual_type = Some(evaluated_type);
+                        // Clear cached type to force recomputation with contextual type
+                        // This is necessary because the expression (especially arrow functions)
+                        // might have been previously typed without contextual information
+                        // (e.g., during symbol binding or early AST traversal)
+                        checker.clear_type_cache_recursive(var_decl.initializer);
                     }
                     let init_type = checker.get_type_of_node(var_decl.initializer);
                     checker.ctx.contextual_type = prev_context;
