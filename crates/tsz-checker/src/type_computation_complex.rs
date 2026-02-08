@@ -1613,12 +1613,15 @@ impl<'a> CheckerState<'a> {
                 && declared_type != TypeId::ANY
                 && declared_type != TypeId::ERROR
             {
-                // Check if declared_type has ReadonlyType modifier or ObjectWithIndex - if so, preserve it
+                // Check if declared_type has ReadonlyType modifier or index signatures - if so, preserve it
+                let has_index_sig = {
+                    use tsz_solver::{IndexKind, IndexSignatureResolver};
+                    let resolver = IndexSignatureResolver::new(self.ctx.types);
+                    resolver.has_index_signature(declared_type, IndexKind::String)
+                        || resolver.has_index_signature(declared_type, IndexKind::Number)
+                };
                 if tsz_solver::type_queries::is_readonly_type(self.ctx.types, declared_type)
-                    || tsz_solver::type_queries::is_object_with_index_type(
-                        self.ctx.types,
-                        declared_type,
-                    )
+                    || has_index_sig
                 {
                     declared_type
                 } else {
@@ -1639,11 +1642,17 @@ impl<'a> CheckerState<'a> {
             let is_const = self.is_const_variable_declaration(value_decl);
             let result_type = if !is_const {
                 // Mutable variable (let/var)
-                // If declared type is ObjectWithIndex, always preserve it
-                if tsz_solver::type_queries::is_object_with_index_type(
-                    self.ctx.types,
-                    declared_type,
-                ) {
+                // If declared type has index signatures (either ObjectWithIndex or a resolved
+                // type with index signatures like from a type alias), always preserve it.
+                // This prevents false-positive TS2339 errors when accessing properties via
+                // index signatures.
+                let has_index_sig = {
+                    use tsz_solver::{IndexKind, IndexSignatureResolver};
+                    let resolver = IndexSignatureResolver::new(self.ctx.types);
+                    resolver.has_index_signature(declared_type, IndexKind::String)
+                        || resolver.has_index_signature(declared_type, IndexKind::Number)
+                };
+                if has_index_sig {
                     declared_type
                 } else if flow_type != declared_type && flow_type != TypeId::ERROR {
                     // Flow narrowed the type - but check if this is just the initializer
