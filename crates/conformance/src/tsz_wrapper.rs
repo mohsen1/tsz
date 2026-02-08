@@ -76,10 +76,12 @@ pub fn compile_test(
             let written_content = if has_absolute_filenames {
                 let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
                 let c = rewrite_absolute_reference_paths(&c);
-                rewrite_absolute_imports(&c)
+                let c = rewrite_absolute_imports(&c);
+                rewrite_bare_specifiers(&c, filenames)
             } else {
                 let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
-                rewrite_absolute_reference_paths(&c)
+                let c = rewrite_absolute_reference_paths(&c);
+                rewrite_bare_specifiers(&c, filenames)
             };
 
             std::fs::write(&file_path, written_content)?;
@@ -205,11 +207,13 @@ pub fn prepare_test_dir(
             let written_content = if has_absolute_filenames {
                 let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
                 let c = rewrite_absolute_reference_paths(&c);
-                rewrite_absolute_imports(&c)
+                let c = rewrite_absolute_imports(&c);
+                rewrite_bare_specifiers(&c, filenames)
             } else {
-                // Even without absolute filenames, handle /.lib/ references
+                // Even without absolute filenames, handle /.lib/ references and bare specifiers
                 let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
-                rewrite_absolute_reference_paths(&c)
+                let c = rewrite_absolute_reference_paths(&c);
+                rewrite_bare_specifiers(&c, filenames)
             };
 
             std::fs::write(&file_path, written_content)?;
@@ -510,6 +514,140 @@ fn rewrite_absolute_imports(content: &str) -> String {
     result.into_owned()
 }
 
+/// Rewrite bare module specifiers to relative paths for multi-file tests.
+///
+/// TSC conformance tests often use bare specifiers like `from "server"` to reference
+/// sibling files defined via `@filename` directives. These should resolve to `"./server"`
+/// when the files are in the same directory.
+///
+/// Transforms:
+/// - `from "foo"` → `from "./foo"` (if foo.ts/.tsx/.d.ts exists in filenames)
+/// - `import "foo"` → `import "./foo"`
+/// - `require("foo")` → `require("./foo")`
+///
+/// Does NOT rewrite:
+/// - Relative paths (already start with `.` or `..`)
+/// - Absolute paths (start with `/`)
+/// - Scoped packages (start with `@`)
+/// - Node built-ins or known npm packages (we check if file exists in filenames)
+fn rewrite_bare_specifiers(content: &str, filenames: &[(String, String)]) -> String {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    // If no multi-file test, nothing to rewrite
+    if filenames.is_empty() {
+        return content.to_string();
+    }
+
+    // Build a set of available file basenames (without extension)
+    let mut available_files = std::collections::HashSet::new();
+    for (filename, _) in filenames {
+        // Extract basename without extension
+        // Handle .d.ts specially since file_stem() on "a.d.ts" returns "a.d", not "a"
+        let basename = if filename.ends_with(".d.ts") {
+            filename.trim_end_matches(".d.ts")
+        } else if filename.ends_with(".d.cts") {
+            filename.trim_end_matches(".d.cts")
+        } else if filename.ends_with(".d.mts") {
+            filename.trim_end_matches(".d.mts")
+        } else {
+            std::path::Path::new(filename)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(filename)
+        };
+        available_files.insert(basename.to_string());
+    }
+
+    // Match: from "module" or from 'module'
+    // Captures: (from )(quote)(module)(quote)
+    static FROM_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"(from\s+)(['"])([^'"\./][^'"]*)['"]"#).unwrap());
+
+    // Match: import "module" or import 'module' (side-effect imports)
+    static IMPORT_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"(import\s+)(['"])([^'"\./][^'"]*)['"]"#).unwrap());
+
+    // Match: require("module") or require('module')
+    static REQUIRE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"(require\()(['"])([^'"\./][^'"]*)['"](\))"#).unwrap());
+
+    // Match: export * from "module"
+    static EXPORT_FROM_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"(export\s+\*\s+from\s+)(['"])([^'"\./][^'"]*)['"]"#).unwrap());
+
+    let mut result = content.to_string();
+
+    // Helper to check if a specifier should be rewritten
+    let should_rewrite = |specifier: &str| -> bool {
+        // Don't rewrite if it starts with @, ., /, or contains @/ (scoped package)
+        if specifier.starts_with('@')
+            || specifier.starts_with('.')
+            || specifier.starts_with('/')
+            || specifier.contains("@/")
+        {
+            return false;
+        }
+
+        // Check if this matches one of our test files (with or without extension)
+        available_files.contains(specifier)
+            || available_files.contains(&specifier.trim_end_matches(".js").to_string())
+            || available_files.contains(&specifier.trim_end_matches(".ts").to_string())
+            || available_files.contains(&specifier.trim_end_matches(".tsx").to_string())
+            || available_files.contains(&specifier.trim_end_matches(".d.ts").to_string())
+    };
+
+    // Rewrite each pattern
+    result = FROM_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let specifier = &caps[3];
+            if should_rewrite(specifier) {
+                format!("{}{}./{}{}", &caps[1], &caps[2], specifier, &caps[2])
+            } else {
+                caps[0].to_string()
+            }
+        })
+        .into_owned();
+
+    result = IMPORT_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let specifier = &caps[3];
+            if should_rewrite(specifier) {
+                format!("{}{}./{}{}", &caps[1], &caps[2], specifier, &caps[2])
+            } else {
+                caps[0].to_string()
+            }
+        })
+        .into_owned();
+
+    result = REQUIRE_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let specifier = &caps[3];
+            if should_rewrite(specifier) {
+                format!(
+                    "{}{}./{}{}{}",
+                    &caps[1], &caps[2], specifier, &caps[2], &caps[4]
+                )
+            } else {
+                caps[0].to_string()
+            }
+        })
+        .into_owned();
+
+    result = EXPORT_FROM_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let specifier = &caps[3];
+            if should_rewrite(specifier) {
+                format!("{}{}./{}{}", &caps[1], &caps[2], specifier, &caps[2])
+            } else {
+                caps[0].to_string()
+            }
+        })
+        .into_owned();
+
+    result
+}
+
 /// Rewrite `/// <reference path="/.lib/...">` directives to point to a local copy
 /// of the test harness library, and copy the referenced file into the tmpdir.
 ///
@@ -604,5 +742,77 @@ const x: number = 42;
         let result = compile_test(content, &[], &HashMap::new(), "../target/release/tsz").unwrap();
         // Should have no errors
         assert!(result.error_codes.is_empty());
+    }
+
+    #[test]
+    fn test_rewrite_bare_specifiers() {
+        let filenames = vec![
+            ("server.ts".to_string(), "export class c {}".to_string()),
+            ("client.ts".to_string(), "".to_string()),
+        ];
+
+        // Test export * from
+        let content = r#"export * from "server";"#;
+        let result = rewrite_bare_specifiers(content, &filenames);
+        assert_eq!(result, r#"export * from "./server";"#);
+
+        // Test import from
+        let content = r#"import { x } from "server";"#;
+        let result = rewrite_bare_specifiers(content, &filenames);
+        assert_eq!(result, r#"import { x } from "./server";"#);
+
+        // Test side-effect import
+        let content = r#"import "server";"#;
+        let result = rewrite_bare_specifiers(content, &filenames);
+        assert_eq!(result, r#"import "./server";"#);
+
+        // Test require
+        let content = r#"const x = require("server");"#;
+        let result = rewrite_bare_specifiers(content, &filenames);
+        assert_eq!(result, r#"const x = require("./server");"#);
+
+        // Should NOT rewrite npm packages
+        let content = r#"import { x } from "lodash";"#;
+        let result = rewrite_bare_specifiers(content, &filenames);
+        assert_eq!(result, r#"import { x } from "lodash";"#);
+
+        // Should NOT rewrite relative paths
+        let content = r#"import { x } from "./server";"#;
+        let result = rewrite_bare_specifiers(content, &filenames);
+        assert_eq!(result, r#"import { x } from "./server";"#);
+
+        // Should NOT rewrite absolute paths
+        let content = r#"import { x } from "/server";"#;
+        let result = rewrite_bare_specifiers(content, &filenames);
+        assert_eq!(result, r#"import { x } from "/server";"#);
+
+        // Should NOT rewrite scoped packages
+        let content = r#"import { x } from "@scope/package";"#;
+        let result = rewrite_bare_specifiers(content, &filenames);
+        assert_eq!(result, r#"import { x } from "@scope/package";"#);
+    }
+
+    #[test]
+    fn test_rewrite_bare_specifiers_with_d_ts() {
+        // Test .d.ts file handling
+        let filenames = vec![
+            ("a.d.ts".to_string(), "export = {};".to_string()),
+            ("b.ts".to_string(), "".to_string()),
+        ];
+
+        // Should rewrite bare specifier for .d.ts file
+        let content = r#"import * as a from "a";"#;
+        let result = rewrite_bare_specifiers(content, &filenames);
+        assert_eq!(result, r#"import * as a from "./a";"#);
+
+        // Test with .d.cts
+        let filenames = vec![
+            ("types.d.cts".to_string(), "export {};".to_string()),
+            ("index.cts".to_string(), "".to_string()),
+        ];
+
+        let content = r#"import { T } from "types";"#;
+        let result = rewrite_bare_specifiers(content, &filenames);
+        assert_eq!(result, r#"import { T } from "./types";"#);
     }
 }
