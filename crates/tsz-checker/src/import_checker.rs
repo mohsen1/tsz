@@ -295,6 +295,68 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
+    // Import Alias Duplicate Checking
+    // =========================================================================
+
+    /// Check for duplicate import alias declarations within a scope.
+    ///
+    /// TS2300: Emitted when multiple `import X = ...` declarations have the same name
+    /// within the same scope (namespace, module, or file).
+    pub(crate) fn check_import_alias_duplicates(&mut self, statements: &[NodeIndex]) {
+        use crate::types::diagnostics::diagnostic_codes;
+        use std::collections::HashMap;
+
+        // Map from import alias name to list of declaration indices
+        let mut alias_map: HashMap<String, Vec<NodeIndex>> = HashMap::new();
+
+        for &stmt_idx in statements {
+            let Some(node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                continue;
+            }
+
+            let Some(import_decl) = self.ctx.arena.get_import_decl(node) else {
+                continue;
+            };
+
+            // Get the import alias name from import_clause (e.g., 'M' in 'import M = Z.I')
+            let Some(alias_node) = self.ctx.arena.get(import_decl.import_clause) else {
+                continue;
+            };
+            let Some(alias_id) = self.ctx.arena.get_identifier(alias_node) else {
+                continue;
+            };
+            let alias_name = alias_id.escaped_text.to_string();
+
+            alias_map.entry(alias_name).or_default().push(stmt_idx);
+        }
+
+        // TS2300: Emit for all declarations with duplicate names
+        for (alias_name, indices) in alias_map {
+            if indices.len() > 1 {
+                for &import_idx in &indices {
+                    let Some(import_node) = self.ctx.arena.get(import_idx) else {
+                        continue;
+                    };
+                    let Some(import_decl) = self.ctx.arena.get_import_decl(import_node) else {
+                        continue;
+                    };
+
+                    // Report error on the alias name (import_clause)
+                    self.error_at_node(
+                        import_decl.import_clause,
+                        &format!("Duplicate identifier '{}'.", alias_name),
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
+                }
+            }
+        }
+    }
+
+    // =========================================================================
     // Import Equals Declaration Validation
     // =========================================================================
 
