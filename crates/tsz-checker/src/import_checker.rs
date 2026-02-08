@@ -238,6 +238,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS1203: Check for export assignment when targeting ES modules
+        // This must be checked first before TS2300/TS2309
+        if self.ctx.compiler_options.module.is_es_module() {
+            for &export_idx in &export_assignment_indices {
+                self.error_at_node(
+                    export_idx,
+                    "Export assignment cannot be used when targeting ECMAScript modules. Consider using 'export default' or another module format instead.",
+                    diagnostic_codes::EXPORT_ASSIGNMENT_CANNOT_BE_USED_WHEN_TARGETING_ECMASCRIPT_MODULES_CONSIDER_USIN,
+                );
+            }
+        }
+
         // TS2300: Check for duplicate export assignments
         // TypeScript emits TS2300 on ALL export assignments if there are 2+
         if export_assignment_indices.len() > 1 {
