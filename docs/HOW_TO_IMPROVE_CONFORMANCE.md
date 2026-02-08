@@ -1,5 +1,8 @@
 # How to Improve Conformance
 
+> **Important**: Read `conformance-reality-check.md` first for realistic expectations.
+> Conformance improvements require deep architectural understanding, not quick fixes.
+
 ## Quick Start
 
 ```bash
@@ -12,6 +15,17 @@
 # Run a quick conformance check
 ./scripts/conformance.sh run --max 100
 ```
+
+## Related Documentation
+
+Before diving in, review these documents:
+
+- **`conformance-reality-check.md`** - Honest assessment of complexity (READ THIS FIRST)
+- **`conformance-analysis-slice3.md`** - Baseline metrics and failure patterns
+- **`conformance-fix-guide.md`** - Step-by-step implementation workflow
+- **`conformance-work-session-summary.md`** - Detailed investigation examples
+
+**Key takeaway**: Budget 1-2 days per test fix. There are no "quick wins."
 
 ## Finding Low-Hanging Fruits
 
@@ -126,17 +140,23 @@ QUARTER=$((($TOTAL + 3) / 4))  # 3101
 ./scripts/conformance.sh analyze --offset $((QUARTER*3)) --max $QUARTER  # Slice 4
 ```
 
-## Fix Complexity Guide
+## Fix Complexity Guide (Updated Based on Real Investigation)
 
-| Error Range | Type | Typical Complexity |
-|-------------|------|-------------------|
-| **TS1xxx** | Parser/syntax | Often simple (1-line fixes like ASI) |
-| **TS2300** | Duplicate identifier | Medium (declaration merging rules) |
-| **TS2304** | Symbol resolution | Medium (imports, namespaces) |
-| **TS2339** | Property access | Medium-Hard (type narrowing, generics) |
-| **TS2322/2345** | Type compatibility | Hard (Solver subtype rules) |
-| **TS7006** | Implicit any | Medium (contextual typing) |
-| **TS2567** | Enum merging | Simple (diagnostic code selection) |
+⚠️ **These ratings are based on actual investigation** (see `conformance-reality-check.md`).
+
+| Error Range | Type | Actual Complexity | Estimated Time |
+|-------------|------|-------------------|----------------|
+| **TS1xxx** | Parser/syntax | MEDIUM-HIGH (parser recovery) | 2-5 days |
+| **TS2300** | Duplicate identifier | MEDIUM (declaration merging) | 1-3 days |
+| **TS2304** | Symbol resolution | MEDIUM (imports, namespaces) | 1-3 days |
+| **TS2339** | Property access | HIGH (type narrowing, private names) | 3-7 days |
+| **TS2322/2345** | Type compatibility | HIGH (Solver subtype, flow analysis) | 3-7 days |
+| **TS2454** | Used before assigned | HIGH (definite assignment, CFA) | 5-10 days |
+| **TS18047/18048** | Possibly null/undefined | HIGH (flow analysis) | 5-10 days |
+| **TS7006** | Implicit any | MEDIUM (contextual typing) | 1-3 days |
+
+**Reality**: Even "simple" fixes require understanding multiple interacting systems.
+See `conformance-fix-guide.md` for detailed workflow and examples.
 
 ## Cache Management
 
