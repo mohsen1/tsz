@@ -2877,21 +2877,49 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // Get the actual variable statement - it might be wrapped in an export declaration
+            // For example: export var x = 1; is parsed as EXPORT_DECLARATION with export_clause pointing to VARIABLE_STATEMENT
+            let var_stmt_node = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                if let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) {
+                    if export_decl.export_clause.is_none() {
+                        continue;
+                    }
+                    let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) else {
+                        continue;
+                    };
+                    clause_node
+                } else {
+                    continue;
+                }
+            } else if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                stmt_node
+            } else {
+                continue;
+            };
+
             // Check variable statements for initializers
-            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                if let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node) {
-                    for &decl_idx in &var_stmt.declarations.nodes {
-                        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                            && let Some(var_decl) =
-                                self.ctx.arena.get_variable_declaration(decl_node)
-                            && !var_decl.initializer.is_none()
+            if var_stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                if let Some(var_stmt) = self.ctx.arena.get_variable(var_stmt_node) {
+                    // var_stmt.declarations.nodes contains VariableDeclarationList nodes
+                    // We need to get each list and then iterate its declarations
+                    for &list_idx in &var_stmt.declarations.nodes {
+                        if let Some(list_node) = self.ctx.arena.get(list_idx)
+                            && let Some(decl_list) = self.ctx.arena.get_variable(list_node)
                         {
-                            // TS1039: Initializers are not allowed in ambient contexts
-                            self.error_at_node(
-                                var_decl.initializer,
-                                diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                                diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                            );
+                            for &decl_idx in &decl_list.declarations.nodes {
+                                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                                    && let Some(var_decl) =
+                                        self.ctx.arena.get_variable_declaration(decl_node)
+                                    && !var_decl.initializer.is_none()
+                                {
+                                    // TS1039: Initializers are not allowed in ambient contexts
+                                    self.error_at_node(
+                                        var_decl.initializer,
+                                        diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                                        diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                                    );
+                                }
+                            }
                         }
                     }
                 }
