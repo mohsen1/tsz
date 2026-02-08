@@ -843,6 +843,18 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
 
+        // Check for never type - emit TS18050 "The value 'never' cannot be used here"
+        if object_type == TypeId::NEVER {
+            if !access.question_dot_token {
+                self.report_never_type_usage(access.expression);
+            }
+            return if access.question_dot_token {
+                TypeId::UNDEFINED
+            } else {
+                TypeId::ERROR
+            };
+        }
+
         // Enforce private/protected access modifiers when possible
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &ident.escaped_text;

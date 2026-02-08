@@ -1150,6 +1150,22 @@ impl<'a> CheckerState<'a> {
         self.report_nullish_object(idx, cause, is_definitely_nullish);
     }
 
+    /// Report TS18050 for operations on never type.
+    /// The `never` type represents values that never occur and cannot be used
+    /// in property access, calls, or other operations.
+    ///
+    /// # Arguments
+    /// * `idx` - The node index of the expression
+    pub(crate) fn report_never_type_usage(&mut self, idx: NodeIndex) {
+        use crate::types::diagnostics::diagnostic_codes;
+
+        self.error_at_node(
+            idx,
+            "The value 'never' cannot be used here.",
+            diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+        );
+    }
+
     // =========================================================================
     // Section 38: Index Signature Utilities
     // =========================================================================
