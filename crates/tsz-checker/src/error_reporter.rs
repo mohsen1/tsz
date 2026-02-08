@@ -1643,11 +1643,14 @@ impl<'a> CheckerState<'a> {
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
         let mut emitted_nullish_error = false;
 
-        // TS18050 is only emitted for arithmetic operators with null/undefined operands
+        // TS18050 is only emitted for arithmetic and bitwise operators with null/undefined operands
         // Comparison operators (==, !=, ===, !==, <, >, <=, >=) are allowed to have null/undefined operands
-        let is_arithmetic = matches!(op, "+" | "-" | "*" | "/" | "%" | "**");
+        let is_arithmetic_or_bitwise = matches!(
+            op,
+            "+" | "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
+        );
         let should_emit_nullish_error =
-            is_arithmetic && self.ctx.compiler_options.strict_null_checks;
+            is_arithmetic_or_bitwise && self.ctx.compiler_options.strict_null_checks;
 
         // Emit TS18050 for null/undefined operands in arithmetic operations
         if left_is_nullish && should_emit_nullish_error {
@@ -1777,9 +1780,12 @@ impl<'a> CheckerState<'a> {
         let left_str = formatter.format(left_type);
         let right_str = formatter.format(right_type);
 
-        // Check if this is an arithmetic operator (-, *, /, %, **)
+        // Check if this is an arithmetic or bitwise operator
+        // These operators require integer operands and emit TS2362/TS2363
         // Note: + is handled separately - it can be string concatenation or arithmetic
         let is_arithmetic = matches!(op, "-" | "*" | "/" | "%" | "**");
+        let is_bitwise = matches!(op, "&" | "|" | "^" | "<<" | ">>" | ">>>");
+        let requires_numeric_operands = is_arithmetic || is_bitwise;
 
         // Check if operands have valid arithmetic types using BinaryOpEvaluator
         // This properly handles number, bigint, any, and enum types (unions of number literals)
@@ -1880,8 +1886,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if is_arithmetic {
-            // For arithmetic operators, emit specific left/right errors (TS2362, TS2363)
+        if requires_numeric_operands {
+            // For arithmetic and bitwise operators, emit specific left/right errors (TS2362, TS2363)
             // Skip operands that already got TS18050 (null/undefined with strictNullChecks)
             let mut emitted_specific_error = emitted_nullish_error;
             if !left_is_valid_arithmetic && (!left_is_nullish || !emitted_nullish_error) {
