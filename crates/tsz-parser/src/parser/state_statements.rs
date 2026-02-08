@@ -2479,6 +2479,14 @@ impl ParserState {
                 }
                 seen_accessibility = true;
             } else if current_kind == SyntaxKind::StaticKeyword {
+                // Check for duplicate static modifier
+                if seen_static {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                }
                 // TS1029: static must come after accessibility, before certain others
                 if seen_abstract || seen_readonly || seen_override || seen_accessor || seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
@@ -2489,6 +2497,14 @@ impl ParserState {
                 }
                 seen_static = true;
             } else if current_kind == SyntaxKind::AbstractKeyword {
+                // Check for duplicate abstract modifier
+                if seen_abstract {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                }
                 if seen_readonly || seen_override || seen_accessor || seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
@@ -2498,6 +2514,14 @@ impl ParserState {
                 }
                 seen_abstract = true;
             } else if current_kind == SyntaxKind::ReadonlyKeyword {
+                // Check for duplicate readonly modifier
+                if seen_readonly {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                }
                 if seen_override || seen_accessor || seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
@@ -2507,6 +2531,14 @@ impl ParserState {
                 }
                 seen_readonly = true;
             } else if current_kind == SyntaxKind::OverrideKeyword {
+                // Check for duplicate override modifier
+                if seen_override {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                }
                 if seen_accessor || seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
@@ -2516,6 +2548,14 @@ impl ParserState {
                 }
                 seen_override = true;
             } else if current_kind == SyntaxKind::AccessorKeyword {
+                // Check for duplicate accessor modifier
+                if seen_accessor {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                }
                 if seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
@@ -2525,6 +2565,14 @@ impl ParserState {
                 }
                 seen_accessor = true;
             } else if current_kind == SyntaxKind::AsyncKeyword {
+                // Check for duplicate async modifier
+                if seen_async {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                }
                 seen_async = true;
             }
 
