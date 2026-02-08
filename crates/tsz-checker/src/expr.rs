@@ -161,6 +161,11 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
             // Parenthesized expression - pass through context to inner expression
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    // Check if expression is missing (parse error: empty parentheses)
+                    if paren.expression.is_none() {
+                        // Parse error - return ERROR to suppress cascading errors
+                        return TypeId::ERROR;
+                    }
                     // Recursively check inner expression with same context
                     self.compute_type_impl(paren.expression, context_type)
                 } else {
