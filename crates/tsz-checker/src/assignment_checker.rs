@@ -180,7 +180,10 @@ impl<'a> CheckerState<'a> {
                 && !self.is_assignable_to(right_type, left_type)
                 && !self.should_skip_weak_union_error(right_type, left_type, right_idx)
             {
-                self.error_type_not_assignable_with_reason_at(right_type, left_type, right_idx);
+                // Don't emit errors if either side is ERROR - prevents cascading errors
+                if right_type != TypeId::ERROR && left_type != TypeId::ERROR {
+                    self.error_type_not_assignable_with_reason_at(right_type, left_type, right_idx);
+                }
             }
 
             if left_type != TypeId::UNKNOWN
@@ -345,7 +348,10 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
         );
         if is_arithmetic_compound {
-            self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+            // Don't emit arithmetic errors if either operand is ERROR - prevents cascading errors
+            if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
+                self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+            }
         }
 
         // Check bitwise compound assignments: &=, |=, ^=, <<=, >>=, >>>=
@@ -373,10 +379,10 @@ impl<'a> CheckerState<'a> {
                     _ => ("^=", "!=="),
                 };
                 self.emit_boolean_operator_error(left_idx, op_str, suggestion);
-            } else {
+            } else if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
                 self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
             }
-        } else if is_shift_compound {
+        } else if is_shift_compound && left_type != TypeId::ERROR && right_type != TypeId::ERROR {
             self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
         }
 

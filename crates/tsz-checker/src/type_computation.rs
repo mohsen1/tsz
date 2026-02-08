@@ -892,10 +892,13 @@ impl<'a> CheckerState<'a> {
                     let result_type = match result {
                         BinaryOpResult::Success(result_type) => result_type,
                         BinaryOpResult::TypeError { .. } => {
-                            // Emit appropriate error for arithmetic type mismatch
-                            self.emit_binary_operator_error(
-                                node_idx, left_idx, right_idx, left_type, right_type, op_str,
-                            );
+                            // Don't emit errors if either operand is ERROR - prevents cascading errors
+                            if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
+                                // Emit appropriate error for arithmetic type mismatch
+                                self.emit_binary_operator_error(
+                                    node_idx, left_idx, right_idx, left_type, right_type, op_str,
+                                );
+                            }
                             TypeId::UNKNOWN
                         }
                     };
@@ -937,10 +940,13 @@ impl<'a> CheckerState<'a> {
                         // Number op enum => number
                         TypeId::NUMBER
                     } else {
-                        // Emit appropriate error for arithmetic type mismatch
-                        self.emit_binary_operator_error(
-                            node_idx, left_idx, right_idx, left, right, op,
-                        );
+                        // Don't emit errors if either operand is ERROR - prevents cascading errors
+                        if left != TypeId::ERROR && right != TypeId::ERROR {
+                            // Emit appropriate error for arithmetic type mismatch
+                            self.emit_binary_operator_error(
+                                node_idx, left_idx, right_idx, left, right, op,
+                            );
+                        }
                         TypeId::UNKNOWN
                     }
                 }
