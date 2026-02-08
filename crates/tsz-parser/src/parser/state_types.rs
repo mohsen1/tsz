@@ -1245,11 +1245,22 @@ impl ParserState {
 
         let mut args = Vec::new();
 
-        while !self.is_greater_than_or_compound() && !self.is_token(SyntaxKind::EndOfFileToken) {
-            args.push(self.parse_type());
+        // Check for empty type argument list: <>
+        // TypeScript reports TS1099: "Type argument list cannot be empty"
+        if self.is_greater_than_or_compound() {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Type argument list cannot be empty.",
+                diagnostic_codes::TYPE_ARGUMENT_LIST_CANNOT_BE_EMPTY,
+            );
+        } else {
+            while !self.is_greater_than_or_compound() && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                args.push(self.parse_type());
 
-            if !self.parse_optional(SyntaxKind::CommaToken) {
-                break;
+                if !self.parse_optional(SyntaxKind::CommaToken) {
+                    break;
+                }
             }
         }
 
