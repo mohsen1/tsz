@@ -757,6 +757,13 @@ impl ParserState {
 
     /// Parse ambient declaration: declare function/class/namespace/var/etc.
     pub(crate) fn parse_ambient_declaration(&mut self) -> NodeIndex {
+        self.parse_ambient_declaration_with_modifiers(Vec::new())
+    }
+
+    pub(crate) fn parse_ambient_declaration_with_modifiers(
+        &mut self,
+        prefix_modifiers: Vec<NodeIndex>,
+    ) -> NodeIndex {
         let start_pos = self.token_pos();
 
         // Create declare modifier node
@@ -768,6 +775,10 @@ impl ParserState {
             declare_start,
             declare_end,
         );
+
+        // Combine prefix modifiers (like export) with declare modifier
+        let mut all_modifiers = prefix_modifiers;
+        all_modifiers.push(declare_modifier);
 
         // Parse the inner declaration based on what follows 'declare'
         match self.token() {
@@ -787,9 +798,11 @@ impl ParserState {
                 self.parse_enum_declaration_with_modifiers(start_pos, modifiers)
             }
             SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
-                self.parse_declare_module(start_pos, declare_modifier)
+                self.parse_declare_module_with_modifiers(start_pos, all_modifiers)
             }
-            SyntaxKind::GlobalKeyword => self.parse_declare_module(start_pos, declare_modifier),
+            SyntaxKind::GlobalKeyword => {
+                self.parse_declare_module_with_modifiers(start_pos, all_modifiers)
+            }
             SyntaxKind::VarKeyword | SyntaxKind::LetKeyword => {
                 let modifiers = self.make_node_list(vec![declare_modifier]);
                 self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
@@ -922,15 +935,14 @@ impl ParserState {
         module_idx
     }
 
-    /// Parse declare module: declare module "name" {}
-    pub(crate) fn parse_declare_module(
+    pub(crate) fn parse_declare_module_with_modifiers(
         &mut self,
         start_pos: u32,
-        declare_modifier: NodeIndex,
+        modifiers_vec: Vec<NodeIndex>,
     ) -> NodeIndex {
         // Skip module/namespace/global keyword
         let is_global = self.is_token(SyntaxKind::GlobalKeyword);
-        let modifiers = Some(self.make_node_list(vec![declare_modifier]));
+        let modifiers = Some(self.make_node_list(modifiers_vec));
         let name = if is_global {
             let name_start = self.token_pos();
             let name_end = self.token_end();
@@ -1789,7 +1801,15 @@ impl ParserState {
             }
             SyntaxKind::DeclareKeyword => {
                 // export declare function/class/namespace/var/etc.
-                self.parse_ambient_declaration()
+                // Create an export modifier to pass to the ambient declaration
+                // The export keyword was already consumed in parse_export_declaration
+                // We need to create a token for it at the start_pos
+                let export_modifier = self.arena.add_token(
+                    SyntaxKind::ExportKeyword as u16,
+                    start_pos,
+                    start_pos + 6, // "export" is 6 characters
+                );
+                self.parse_ambient_declaration_with_modifiers(vec![export_modifier])
             }
             SyntaxKind::VarKeyword
             | SyntaxKind::LetKeyword

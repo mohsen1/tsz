@@ -48,7 +48,8 @@ pub fn compile_test(
         // Single-file test: write content to test.ts (strip directive comments)
         let stripped_content = strip_directive_comments(content);
         // Handle /.lib/ references and absolute reference paths in single-file tests
-        let stripped_content = resolve_lib_references(&stripped_content, dir_path, ts_tests_lib_dir);
+        let stripped_content =
+            resolve_lib_references(&stripped_content, dir_path, ts_tests_lib_dir);
         let stripped_content = rewrite_absolute_reference_paths(&stripped_content);
         let main_file = dir_path.join("test.ts");
         std::fs::write(&main_file, stripped_content)?;
@@ -179,7 +180,8 @@ pub fn prepare_test_dir(
     if filenames.is_empty() {
         let stripped_content = strip_directive_comments(content);
         // Handle /.lib/ references and absolute reference paths in single-file tests
-        let stripped_content = resolve_lib_references(&stripped_content, dir_path, ts_tests_lib_dir);
+        let stripped_content =
+            resolve_lib_references(&stripped_content, dir_path, ts_tests_lib_dir);
         let stripped_content = rewrite_absolute_reference_paths(&stripped_content);
         let main_file = dir_path.join("test.ts");
         std::fs::write(&main_file, stripped_content)?;
@@ -490,19 +492,16 @@ fn rewrite_absolute_imports(content: &str) -> String {
     use regex::Regex;
 
     // Match: from '/...' or from "/..."
-    static FROM_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"(from\s+)(['"])/((?:[^'"])*)\2"#).unwrap()
-    });
+    static FROM_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"(from\s+)(['"])/((?:[^'"])*)\2"#).unwrap());
 
     // Match: import '/...' or import "/..." (side-effect imports)
-    static IMPORT_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"(import\s+)(['"])/((?:[^'"])*)\2"#).unwrap()
-    });
+    static IMPORT_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"(import\s+)(['"])/((?:[^'"])*)\2"#).unwrap());
 
     // Match: require('/...') or require("/...")
-    static REQUIRE_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"(require\()(['"])/((?:[^'"])*)\2(\))"#).unwrap()
-    });
+    static REQUIRE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"(require\()(['"])/((?:[^'"])*)\2(\))"#).unwrap());
 
     let result = FROM_RE.replace_all(content, "${1}${2}./${3}${2}");
     let result = IMPORT_RE.replace_all(&result, "${1}${2}./${3}${2}");
@@ -545,9 +544,7 @@ fn resolve_lib_references(
 
         // Rewrite the reference path to be relative (whether or not file exists)
         let old = caps.get(0).unwrap().as_str();
-        let new = format!("{}{}/.lib/{}{}",
-            &caps[1], &caps[2], lib_file, &caps[2]
-        );
+        let new = format!("{}{}/.lib/{}{}", &caps[1], &caps[2], lib_file, &caps[2]);
         result = result.replace(old, &new);
     }
 
@@ -567,7 +564,9 @@ fn rewrite_absolute_reference_paths(content: &str) -> String {
         Regex::new(r#"(///\s*<reference\s+path\s*=\s*)(['"])/((?!\.lib/)(?:[^'"])*)\2"#).unwrap()
     });
 
-    ABS_REF_RE.replace_all(content, "${1}${2}./${3}${2}").into_owned()
+    ABS_REF_RE
+        .replace_all(content, "${1}${2}./${3}${2}")
+        .into_owned()
 }
 
 #[cfg(test)]
