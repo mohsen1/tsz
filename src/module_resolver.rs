@@ -12,7 +12,7 @@
 //! - Package.json exports/imports fields
 //! - TypeScript-specific extensions (.ts, .tsx, .d.ts)
 
-use crate::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
+use crate::config::{JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
 use crate::diagnostics::{Diagnostic, DiagnosticBag};
 use crate::span::Span;
 use rustc_hash::FxHashMap;
@@ -61,6 +61,7 @@ pub const JSON_MODULE_WITHOUT_RESOLVE_JSON_MODULE: u32 = 2732;
 pub const IMPORT_PATH_NEEDS_EXTENSION: u32 = 2834;
 pub const IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION: u32 = 2835;
 pub const IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED: u32 = 5097;
+pub const MODULE_WAS_RESOLVED_TO_BUT_JSX_NOT_SET: u32 = 6142;
 
 /// Result of module resolution
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -269,6 +270,17 @@ pub enum ResolutionFailure {
         /// Span of the module specifier in source
         span: Span,
     },
+    /// TS6142: Module resolved to JSX/TSX without jsx option enabled.
+    JsxNotEnabled {
+        /// Module specifier that was resolved
+        specifier: String,
+        /// Resolved file path
+        resolved_path: PathBuf,
+        /// File containing the import
+        containing_file: String,
+        /// Span of the module specifier in source
+        span: Span,
+    },
     /// TS2792: Cannot find module. Did you mean to set the 'moduleResolution' option to 'nodenext'?
     /// Emitted when package.json has 'exports' but resolution mode doesn't support it.
     ModuleResolutionModeMismatch {
@@ -393,6 +405,21 @@ impl ResolutionFailure {
                 ),
                 IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED,
             ),
+            ResolutionFailure::JsxNotEnabled {
+                specifier,
+                resolved_path,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!(
+                    "Module '{}' was resolved to '{}', but '--jsx' is not set.",
+                    specifier,
+                    resolved_path.display()
+                ),
+                MODULE_WAS_RESOLVED_TO_BUT_JSX_NOT_SET,
+            ),
             ResolutionFailure::ModuleResolutionModeMismatch {
                 specifier,
                 containing_file,
@@ -446,6 +473,9 @@ impl ResolutionFailure {
             | ResolutionFailure::ImportingTsExtensionNotAllowed {
                 containing_file, ..
             }
+            | ResolutionFailure::JsxNotEnabled {
+                containing_file, ..
+            }
             | ResolutionFailure::ModuleResolutionModeMismatch {
                 containing_file, ..
             }
@@ -465,6 +495,7 @@ impl ResolutionFailure {
             | ResolutionFailure::PathMappingFailed { span, .. }
             | ResolutionFailure::ImportPathNeedsExtension { span, .. }
             | ResolutionFailure::ImportingTsExtensionNotAllowed { span, .. }
+            | ResolutionFailure::JsxNotEnabled { span, .. }
             | ResolutionFailure::ModuleResolutionModeMismatch { span, .. }
             | ResolutionFailure::JsonModuleWithoutResolveJsonModule { span, .. } => *span,
         }
@@ -496,6 +527,7 @@ pub struct ModuleResolver {
     allow_importing_ts_extensions: bool,
     #[allow(dead_code)] // Used by CLI validation before emit stages
     rewrite_relative_import_extensions: bool,
+    jsx: Option<JsxEmit>,
     /// Cache of resolved modules
     resolution_cache: FxHashMap<(PathBuf, String), Result<ResolvedModule, ResolutionFailure>>,
     /// Extensions to try for TypeScript resolution
@@ -528,6 +560,12 @@ impl ModuleResolver {
     pub fn new(options: &ResolvedCompilerOptions) -> Self {
         let resolution_kind = options.effective_module_resolution();
 
+        let module_suffixes = if options.module_suffixes.is_empty() {
+            vec![String::new()]
+        } else {
+            options.module_suffixes.clone()
+        };
+
         ModuleResolver {
             resolution_kind,
             base_url: options.base_url.clone(),
@@ -536,11 +574,12 @@ impl ModuleResolver {
             types_versions_compiler_version: options.types_versions_compiler_version.clone(),
             resolve_package_json_exports: options.resolve_package_json_exports,
             resolve_package_json_imports: options.resolve_package_json_imports,
-            module_suffixes: options.module_suffixes.clone(),
+            module_suffixes,
             resolve_json_module: options.resolve_json_module,
             allow_arbitrary_extensions: options.allow_arbitrary_extensions,
             allow_importing_ts_extensions: options.allow_importing_ts_extensions,
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
+            jsx: options.jsx,
             resolution_cache: FxHashMap::default(),
             ts_extensions: vec![".ts", ".tsx", ".d.ts"],
             js_extensions: vec![".js", ".jsx"],
@@ -567,6 +606,7 @@ impl ModuleResolver {
             allow_arbitrary_extensions: false,
             allow_importing_ts_extensions: false,
             rewrite_relative_import_extensions: false,
+            jsx: None,
             resolution_cache: FxHashMap::default(),
             ts_extensions: vec![".ts", ".tsx", ".d.ts"],
             js_extensions: vec![".js", ".jsx"],
@@ -625,7 +665,18 @@ impl ModuleResolver {
             importing_module_kind,
         );
         if let Ok(resolved) = &result {
-            if resolved.extension == ModuleExtension::Json && !self.resolve_json_module {
+            if matches!(
+                resolved.extension,
+                ModuleExtension::Tsx | ModuleExtension::Jsx
+            ) && self.jsx.is_none()
+            {
+                result = Err(ResolutionFailure::JsxNotEnabled {
+                    specifier: specifier.to_string(),
+                    resolved_path: resolved.resolved_path.clone(),
+                    containing_file: containing_file_str.clone(),
+                    span: specifier_span,
+                });
+            } else if resolved.extension == ModuleExtension::Json && !self.resolve_json_module {
                 result = Err(ResolutionFailure::JsonModuleWithoutResolveJsonModule {
                     specifier: specifier.to_string(),
                     containing_file: containing_file_str.clone(),
@@ -1499,6 +1550,15 @@ impl ModuleResolver {
         // Try types/typings field
         if let Some(types) = package_json.types.clone().or(package_json.typings.clone()) {
             let types_path = package_dir.join(&types);
+            if let Some(resolved) = resolve_explicit_unknown_extension(&types_path) {
+                return Ok(ResolvedModule {
+                    resolved_path: resolved.clone(),
+                    is_external: true,
+                    package_name: Some(package_json.name.clone().unwrap_or_default()),
+                    original_specifier: original_specifier.to_string(),
+                    extension: ModuleExtension::from_path(&resolved),
+                });
+            }
             if let Some(resolved) = self.try_file_or_directory(&types_path) {
                 return Ok(ResolvedModule {
                     resolved_path: resolved.clone(),
@@ -1513,6 +1573,15 @@ impl ModuleResolver {
         // Try main field
         if let Some(main) = &package_json.main {
             let main_path = package_dir.join(main);
+            if let Some(resolved) = resolve_explicit_unknown_extension(&main_path) {
+                return Ok(ResolvedModule {
+                    resolved_path: resolved.clone(),
+                    is_external: true,
+                    package_name: Some(package_json.name.clone().unwrap_or_default()),
+                    original_specifier: original_specifier.to_string(),
+                    extension: ModuleExtension::from_path(&resolved),
+                });
+            }
             if let Some(declaration) = declaration_substitution_for_main(&main_path) {
                 if declaration.is_file() {
                     return Ok(ResolvedModule {
@@ -2280,6 +2349,19 @@ fn try_arbitrary_extension_declaration(path: &Path, extension: &str) -> Option<P
     let declaration = path.with_extension(format!("d.{extension}.ts"));
     if declaration.is_file() {
         return Some(declaration);
+    }
+    None
+}
+
+fn resolve_explicit_unknown_extension(path: &Path) -> Option<PathBuf> {
+    if path.extension().is_none() {
+        return None;
+    }
+    if split_path_extension(path).is_some() {
+        return None;
+    }
+    if path.is_file() {
+        return Some(path.to_path_buf());
     }
     None
 }
@@ -3414,6 +3496,113 @@ mod tests {
             }
             Err(_) => {} // OK in some environments
         }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolver_jsx_without_jsx_option_errors() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_resolver_jsx_no_option");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("app.ts"), "import jsx from './jsx';").unwrap();
+        fs::write(dir.join("jsx.jsx"), "export default 1;").unwrap();
+
+        let mut options = ResolvedCompilerOptions::default();
+        options.allow_js = true;
+        options.jsx = None;
+        let mut resolver = ModuleResolver::new(&options);
+        let result = resolver.resolve("./jsx", &dir.join("app.ts"), Span::new(0, 10));
+
+        let failure = result.expect_err("Expected jsx resolution to fail without jsx option");
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, 6142);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolver_tsx_without_jsx_option_errors() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_resolver_tsx_no_option");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("app.ts"), "import tsx from './tsx';").unwrap();
+        fs::write(dir.join("tsx.tsx"), "export default 1;").unwrap();
+
+        let mut options = ResolvedCompilerOptions::default();
+        options.jsx = None;
+        let mut resolver = ModuleResolver::new(&options);
+        let result = resolver.resolve("./tsx", &dir.join("app.ts"), Span::new(0, 10));
+
+        let failure = result.expect_err("Expected tsx resolution to fail without jsx option");
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, 6142);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolver_package_main_with_unknown_extension() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_resolver_main_unknown");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules").join("normalize.css")).unwrap();
+
+        fs::write(dir.join("app.ts"), "import 'normalize.css';").unwrap();
+        fs::write(
+            dir.join("node_modules")
+                .join("normalize.css")
+                .join("normalize.css"),
+            "body {}",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("node_modules")
+                .join("normalize.css")
+                .join("package.json"),
+            r#"{ "main": "normalize.css" }"#,
+        )
+        .unwrap();
+
+        let mut resolver = ModuleResolver::node_resolver();
+        let result = resolver.resolve("normalize.css", &dir.join("app.ts"), Span::new(0, 10));
+        assert!(
+            result.is_ok(),
+            "Expected package main with unknown extension to resolve"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolver_package_types_with_unknown_extension() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_resolver_types_unknown");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules").join("foo")).unwrap();
+
+        fs::write(dir.join("app.ts"), "import 'foo';").unwrap();
+        fs::write(
+            dir.join("node_modules").join("foo").join("foo.js"),
+            "module.exports = {};",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("node_modules").join("foo").join("package.json"),
+            r#"{ "types": "foo.js" }"#,
+        )
+        .unwrap();
+
+        let mut resolver = ModuleResolver::node_resolver();
+        let result = resolver.resolve("foo", &dir.join("app.ts"), Span::new(0, 10));
+        assert!(
+            result.is_ok(),
+            "Expected package types with unknown extension to resolve"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
