@@ -193,6 +193,9 @@ pub struct CompilerOptions {
     /// Do not report errors on unreachable code
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub allow_unreachable_code: Option<bool>,
+    /// Enable importing .json files
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub resolve_json_module: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -234,6 +237,8 @@ pub struct ResolvedCompilerOptions {
     pub allow_js: bool,
     /// Enable error reporting in type-checked JavaScript files
     pub check_js: bool,
+    /// Enable importing .json files
+    pub resolve_json_module: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -577,6 +582,10 @@ pub fn resolve_compiler_options(
         resolved.check_js = check_js;
     }
 
+    if let Some(resolve_json_module) = options.resolve_json_module {
+        resolved.resolve_json_module = resolve_json_module;
+    }
+
     Ok(resolved)
 }
 
@@ -702,6 +711,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_unused_locals,
             no_unused_parameters,
             allow_unreachable_code,
+            resolve_json_module,
         }
     )
 }
