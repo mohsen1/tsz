@@ -772,7 +772,9 @@ impl<'a> CheckerState<'a> {
             if op_kind == SyntaxKind::CommaToken as u16 {
                 // TS2695: Only emit when neither side is ERROR/ANY/UNKNOWN (cascade prevention)
                 // TypeScript suppresses this diagnostic when allowUnreachableCode is enabled
+                // or when the file has parse errors (e.g., JSON files parsed as TypeScript)
                 if !self.ctx.compiler_options.allow_unreachable_code
+                    && !self.has_parse_errors()
                     && left_type != TypeId::ERROR
                     && left_type != TypeId::ANY
                     && left_type != TypeId::UNKNOWN
