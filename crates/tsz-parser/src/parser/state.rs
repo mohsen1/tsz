@@ -727,6 +727,118 @@ impl ParserState {
         }
     }
 
+    // =========================================================================
+    // Keyword suggestion for misspelled keywords (TS1434/TS1435/TS1438)
+    // =========================================================================
+
+    /// Provides a better error message than the generic "';' expected" for
+    /// known common variants of a missing semicolon, such as misspelled keywords.
+    ///
+    /// Matches TypeScript's `parseErrorForMissingSemicolonAfter`.
+    ///
+    /// `expression` is the node index of the expression that was parsed before
+    /// the missing semicolon.
+    pub(crate) fn parse_error_for_missing_semicolon_after(&mut self, expression: NodeIndex) {
+        use crate::parser::spelling;
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        // Only handle identifier expressions.
+        // Use source text directly — arena identifier data may be empty for
+        // identifiers created during parsing before data is fully populated.
+        let expression_text = if let Some(node) = self.arena.get(expression) {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let source = self.scanner.source_text();
+                let text = &source[node.pos as usize..node.end as usize];
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text.to_string())
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let Some(expression_text) = expression_text else {
+            if self.should_report_error() {
+                self.error_token_expected(";");
+            }
+            return;
+        };
+
+        let (pos, end) = if let Some(node) = self.arena.get(expression) {
+            (node.pos, node.end)
+        } else {
+            (
+                self.scanner.get_token_start() as u32,
+                self.scanner.get_token_end() as u32,
+            )
+        };
+        let len = end - pos;
+
+        // Handle specific known keywords that need special diagnostics.
+        match expression_text.as_str() {
+            "const" | "let" | "var" => {
+                self.parse_error_at(
+                    pos,
+                    len,
+                    "Variable declaration not allowed at this location.",
+                    diagnostic_codes::VAR_DECLARATION_NOT_ALLOWED,
+                );
+                return;
+            }
+            "declare" => {
+                return;
+            }
+            "interface" => {
+                if self.is_token(SyntaxKind::OpenBraceToken) {
+                    self.parse_error_at_current_token(
+                        "Interface must be given a name.",
+                        diagnostic_codes::INTERFACE_MUST_BE_GIVEN_A_NAME,
+                    );
+                } else {
+                    let name = self.scanner.get_token_value_ref().to_string();
+                    self.parse_error_at_current_token(
+                        &format!("Interface name cannot be '{name}'."),
+                        diagnostic_codes::TOKEN_EXPECTED,
+                    );
+                }
+                return;
+            }
+            "type" => {
+                self.parse_error_at_current_token("'=' expected", diagnostic_codes::TOKEN_EXPECTED);
+                return;
+            }
+            _ => {}
+        }
+
+        // Spelling / space suggestion (TS1435).
+        if let Some(suggestion) = spelling::suggest_keyword(&expression_text) {
+            self.parse_error_at(
+                pos,
+                len,
+                &format!("Unknown keyword or identifier. Did you mean '{suggestion}'?"),
+                diagnostic_codes::UNKNOWN_KEYWORD_OR_IDENTIFIER_DID_YOU_MEAN,
+            );
+            return;
+        }
+
+        // Unknown tokens are handled by the scanner.
+        if self.is_token(SyntaxKind::Unknown) {
+            return;
+        }
+
+        // Fallback (TS1434).
+        self.parse_error_at(
+            pos,
+            len,
+            "Unexpected keyword or identifier.",
+            diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+        );
+    }
+
     /// Check if we can parse a semicolon (ASI rules)
     /// Returns true if current token is semicolon or ASI applies
     ///
@@ -1280,3 +1392,7 @@ impl ParserState {
         }
     }
 }
+
+// Integration tests for parse_error_for_missing_semicolon_after live in
+// parser/tests/spelling_integration_tests.rs.  Pure spelling-logic tests
+// live in parser/spelling.rs.
