@@ -1521,8 +1521,9 @@ impl TypeInterner {
             }
         }
 
-        // Merge all object properties
+        // Merge all object properties using HashMap index for O(N) total instead of O(N²)
         let mut merged_props: Vec<PropertyInfo> = Vec::new();
+        let mut prop_index: rustc_hash::FxHashMap<Atom, usize> = rustc_hash::FxHashMap::default();
         let mut merged_string_index: Option<IndexSignature> = None;
         let mut merged_number_index: Option<IndexSignature> = None;
         let mut merged_flags = ObjectFlags::empty();
@@ -1532,8 +1533,9 @@ impl TypeInterner {
             merged_flags |= obj.flags & ObjectFlags::FRESH_LITERAL;
             // Merge properties
             for prop in &obj.properties {
-                // Check if property already exists
-                if let Some(existing) = merged_props.iter_mut().find(|p| p.name == prop.name) {
+                // Check if property already exists using HashMap for O(1) lookup
+                if let Some(&idx) = prop_index.get(&prop.name) {
+                    let existing = &mut merged_props[idx];
                     // Property exists - intersect the types for stricter checking
                     // In TypeScript, if same property has different types, use intersection
                     // Use raw intersection to avoid infinite recursion
@@ -1561,6 +1563,8 @@ impl TypeInterner {
                         (Visibility::Public, Visibility::Public) => Visibility::Public,
                     };
                 } else {
+                    let new_idx = merged_props.len();
+                    prop_index.insert(prop.name, new_idx);
                     merged_props.push(prop.clone());
                 }
             }
@@ -2200,10 +2204,22 @@ impl TypeInterner {
         // 2.5. Disjoint properties check: if source and target have completely different
         // properties, they are not in a subtype relationship. This prevents incorrect
         // reductions like `{b?: number} | {a?: number}` from being reduced to `{a?: number}`.
-        let has_any_property_overlap = s
-            .properties
-            .iter()
-            .any(|sp| t.properties.iter().any(|tp| sp.name == tp.name));
+        // Properties are sorted by Atom, so use merge-scan for O(N+M) instead of O(N*M).
+        let has_any_property_overlap = {
+            let mut si = 0;
+            let mut ti = 0;
+            let sp = &s.properties;
+            let tp = &t.properties;
+            let mut found = false;
+            while si < sp.len() && ti < tp.len() {
+                match sp[si].name.cmp(&tp[ti].name) {
+                    std::cmp::Ordering::Equal => { found = true; break; }
+                    std::cmp::Ordering::Less => si += 1,
+                    std::cmp::Ordering::Greater => ti += 1,
+                }
+            }
+            found
+        };
         if !has_any_property_overlap {
             return false;
         }

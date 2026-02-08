@@ -31,7 +31,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 PropertyLookup::Uncached => {}
             }
         }
-        props.iter().find(|p| p.name == name)
+        // Properties are sorted by Atom (u32), so use binary search for O(log N)
+        // instead of linear scan O(N).
+        props
+            .binary_search_by_key(&name, |p| p.name)
+            .ok()
+            .map(|idx| &props[idx])
     }
 
     /// Check private brand compatibility for object subtyping.
@@ -45,13 +50,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &[PropertyInfo],
         target: &[PropertyInfo],
     ) -> bool {
+        // Fast path: if neither side has non-public properties, there can't be any
+        // private brands. This avoids the expensive resolve_atom + starts_with scan
+        // on every property.
+        let target_has_nonpublic = target
+            .iter()
+            .any(|p| p.visibility != Visibility::Public);
+        if !target_has_nonpublic {
+            // No non-public target properties → no brand to check against
+            return true;
+        }
+
         let source_brand = source.iter().find(|p| {
-            let name = self.interner.resolve_atom(p.name);
-            name.starts_with("__private_brand_")
+            p.visibility != Visibility::Public && {
+                let name = self.interner.resolve_atom(p.name);
+                name.starts_with("__private_brand_")
+            }
         });
         let target_brand = target.iter().find(|p| {
-            let name = self.interner.resolve_atom(p.name);
-            name.starts_with("__private_brand_")
+            p.visibility != Visibility::Public && {
+                let name = self.interner.resolve_atom(p.name);
+                name.starts_with("__private_brand_")
+            }
         });
 
         // Check private brand compatibility

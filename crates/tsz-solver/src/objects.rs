@@ -5,7 +5,8 @@
 
 use crate::subtype::TypeResolver;
 use crate::types::*;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_common::interner::Atom;
 
 // Import TypeDatabase trait
 use crate::db::TypeDatabase;
@@ -71,6 +72,7 @@ where
         interner,
         resolver,
         properties: Vec::new(),
+        prop_index: FxHashMap::default(),
         string_index: None,
         number_index: None,
         seen: FxHashSet::default(),
@@ -134,6 +136,8 @@ struct PropertyCollector<'a, R> {
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
     properties: Vec<PropertyInfo>,
+    /// Maps property name (Atom) to index in `properties` for O(1) lookup during merge
+    prop_index: FxHashMap<Atom, usize>,
     string_index: Option<IndexSignature>,
     number_index: Option<IndexSignature>,
     /// Prevent infinite recursion for circular intersections like: type T = { a: number } & T
@@ -177,9 +181,10 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
     }
 
     fn merge_shape(&mut self, shape: &ObjectShape) {
-        // Merge properties
+        // Merge properties using HashMap index for O(1) lookup
         for prop in &shape.properties {
-            if let Some(existing) = self.properties.iter_mut().find(|p| p.name == prop.name) {
+            if let Some(&idx) = self.prop_index.get(&prop.name) {
+                let existing = &mut self.properties[idx];
                 // TS Rule: Intersect types (using raw to avoid recursion)
                 existing.type_id = self
                     .interner
@@ -196,6 +201,8 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 // is_method: if one is a method, treat as property (more general)
                 existing.is_method = existing.is_method && prop.is_method;
             } else {
+                let new_idx = self.properties.len();
+                self.prop_index.insert(prop.name, new_idx);
                 self.properties.push(prop.clone());
             }
         }
