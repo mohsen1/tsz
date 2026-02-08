@@ -2708,7 +2708,18 @@ impl ParserState {
     /// Parse with statement
     pub(crate) fn parse_with_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+
+        // TS1101: 'with' statements are not allowed in strict mode
+        // TypeScript always treats files as strict mode (implicit or explicit)
+        // Emit this before consuming the token so the error is at the 'with' keyword
+        use tsz_common::diagnostics::diagnostic_codes;
+        self.parse_error_at_current_token(
+            "'with' statements are not allowed in strict mode.",
+            diagnostic_codes::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+        );
+
         self.parse_expected(SyntaxKind::WithKeyword);
+
         self.parse_expected(SyntaxKind::OpenParenToken);
 
         let expression = self.parse_expression();
