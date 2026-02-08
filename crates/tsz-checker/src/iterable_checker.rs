@@ -366,6 +366,17 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // TypeScript allows empty array destructuring patterns on any type (including null/undefined)
+        // Example: let [] = null; // No error
+        // Skip iterability check if the pattern is empty
+        if let Some(pattern_node) = self.ctx.arena.get(pattern_idx) {
+            if let Some(binding_pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
+                if binding_pattern.elements.nodes.is_empty() {
+                    return true;
+                }
+            }
+        }
+
         // Resolve lazy types (type aliases) before checking iterability
         let resolved_type = self.resolve_lazy_type(pattern_type);
 
