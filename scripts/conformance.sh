@@ -213,10 +213,8 @@ run_tests() {
         extra_args+=("$arg")
     done
 
-    # Always add --print-test so expected/actual/config is captured for the last 10 failing tests
+    # Always capture expected/actual/config (needed for last 10 failing tests section)
     extra_args+=(--print-test)
-
-    # Only show per-test expected/actual/config lines when --verbose is specified
     local show_per_test=$verbose
 
     # Always capture output to extract failing tests and their details
@@ -230,15 +228,16 @@ run_tests() {
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
         --workers $WORKERS \
-        "${extra_args[@]}" > "$tmpfile" || runner_exit=$?
+        "${extra_args[@]}" | tee "$tmpfile" | if [ "$show_per_test" = true ]; then
+            # --verbose: show all lines including expected/actual/options
+            grep -E '^(PASS|FAIL|SKIP|CRASH|⏱️) |^  (expected|actual|options):' 2>/dev/null || true
+        else
+            # default: only show FAIL/CRASH/TIMEOUT file names (no expected/actual/options)
+            grep -E '^(FAIL|CRASH|⏱️) ' 2>/dev/null || true
+        fi || runner_exit=$?
 
     local output
     output=$(cat "$tmpfile")
-
-    # Print per-test lines (PASS/FAIL/SKIP) with details (expected/actual/options) only when requested
-    if [ "$show_per_test" = true ]; then
-        grep -E '^(PASS|FAIL|SKIP) |^  (expected|actual|options):' "$tmpfile" 2>/dev/null || true
-    fi
 
     # Extract failing test paths (up to 10) from captured output
     local failing_tests=()
@@ -255,7 +254,7 @@ run_tests() {
         fi
     done <<< "$output"
 
-    # Always print test file contents with expected/actual/config for failing tests
+    # Print test file contents with expected/actual/config for first 10 failing tests
     if [ ${#failing_tests[@]} -gt 0 ]; then
         echo ""
         echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
