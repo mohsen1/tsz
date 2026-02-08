@@ -2433,12 +2433,40 @@ impl BinderState {
                 self.record_flow(idx);
             }
 
-            // Conditional expressions - traverse into branches
+            // Conditional expressions - build flow graph for type narrowing
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
                 if let Some(cond) = arena.get_conditional_expr(node) {
-                    self.bind_node(arena, cond.condition);
+                    // Bind the condition expression
+                    self.bind_expression(arena, cond.condition);
+
+                    // Save pre-condition flow
+                    let pre_condition_flow = self.current_flow;
+
+                    // Create TRUE_CONDITION flow for when_true branch
+                    let true_flow = self.create_flow_condition(
+                        flow_flags::TRUE_CONDITION,
+                        pre_condition_flow,
+                        cond.condition,
+                    );
+                    self.current_flow = true_flow;
                     self.bind_node(arena, cond.when_true);
+                    let after_true_flow = self.current_flow;
+
+                    // Create FALSE_CONDITION flow for when_false branch
+                    let false_flow = self.create_flow_condition(
+                        flow_flags::FALSE_CONDITION,
+                        pre_condition_flow,
+                        cond.condition,
+                    );
+                    self.current_flow = false_flow;
                     self.bind_node(arena, cond.when_false);
+                    let after_false_flow = self.current_flow;
+
+                    // Create merge point for both branches
+                    let merge_label = self.create_branch_label();
+                    self.add_antecedent(merge_label, after_true_flow);
+                    self.add_antecedent(merge_label, after_false_flow);
+                    self.current_flow = merge_label;
                 }
             }
 
