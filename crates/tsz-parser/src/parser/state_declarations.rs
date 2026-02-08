@@ -433,8 +433,14 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ColonToken);
         let param_type = self.parse_type(); // Type of the index parameter (e.g., string, number)
 
-        // Allow trailing comma (invalid syntax but should produce error, not crash)
-        self.parse_optional(SyntaxKind::CommaToken);
+        // Check for trailing comma (TS1025: invalid syntax)
+        if self.parse_optional(SyntaxKind::CommaToken) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "An index signature cannot have a trailing comma.",
+                diagnostic_codes::AN_INDEX_SIGNATURE_CANNOT_HAVE_A_TRAILING_COMMA,
+            );
+        }
 
         self.parse_expected(SyntaxKind::CloseBracketToken);
 
