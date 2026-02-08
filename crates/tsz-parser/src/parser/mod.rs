@@ -21,6 +21,7 @@ pub mod node;
 mod node_access;
 mod node_arena;
 pub mod parse_rules;
+pub(crate) mod spelling;
 pub mod state;
 mod state_declarations;
 mod state_expressions;
@@ -37,6 +38,10 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/trailing_comma_tests.rs"]
 mod trailing_comma_tests;
+
+#[cfg(test)]
+#[path = "tests/spelling_integration_tests.rs"]
+mod spelling_integration_tests;
 
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};

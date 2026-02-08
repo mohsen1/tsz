@@ -2746,7 +2746,14 @@ impl ParserState {
             return NodeIndex::NONE;
         }
 
-        self.parse_semicolon();
+        // Use smart error reporting for missing semicolons (matches TypeScript's
+        // parseExpressionOrLabeledStatement behavior). Instead of generic TS1005 "';' expected",
+        // this checks if the expression is a misspelled keyword and emits TS1435/TS1434.
+        if self.is_token(SyntaxKind::SemicolonToken) {
+            self.next_token();
+        } else if !self.can_parse_semicolon() {
+            self.parse_error_for_missing_semicolon_after(expression);
+        }
         let end_pos = self.token_end();
 
         self.arena.add_expr_statement(
