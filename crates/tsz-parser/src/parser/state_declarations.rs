@@ -438,10 +438,16 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::CloseBracketToken);
 
-        // Value type is optional - [index: any]; is valid (but semantically an error)
+        // Index signatures must have a type annotation (TS1021)
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
         } else {
+            // Emit TS1021: "An index signature must have a type annotation."
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "An index signature must have a type annotation.",
+                diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_A_TYPE_ANNOTATION,
+            );
             NodeIndex::NONE
         };
 
