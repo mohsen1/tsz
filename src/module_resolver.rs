@@ -45,6 +45,14 @@ pub const CANNOT_FIND_MODULE: u32 = 2307;
 /// resolve correctly under Node16/NodeNext/Bundler mode.
 pub const MODULE_RESOLUTION_MODE_MISMATCH: u32 = 2792;
 
+/// TS2732: Cannot find module. Consider using '--resolveJsonModule' to import module with '.json' extension.
+///
+/// This error code is emitted when trying to import a .json file without the resolveJsonModule
+/// compiler option enabled. Unlike TS2307 (generic cannot find module), this error provides
+/// specific guidance to enable JSON module support.
+/// Example: `import data from './config.json'` without resolveJsonModule enabled
+pub const JSON_MODULE_WITHOUT_RESOLVE_JSON_MODULE: u32 = 2732;
+
 /// TS2834: Relative import paths need explicit file extensions in EcmaScript imports
 ///
 /// This error code is emitted when a relative import in an ESM context under Node16/NodeNext
@@ -245,6 +253,16 @@ pub enum ResolutionFailure {
         /// Span of the module specifier in source
         span: Span,
     },
+    /// TS2732: Cannot find module. Consider using '--resolveJsonModule' to import module with '.json' extension.
+    /// Emitted when trying to import a .json file without resolveJsonModule enabled.
+    JsonModuleWithoutResolveJsonModule {
+        /// Module specifier ending in .json
+        specifier: String,
+        /// File containing the import
+        containing_file: String,
+        /// Span of the module specifier in source
+        span: Span,
+    },
 }
 
 impl ResolutionFailure {
@@ -349,6 +367,19 @@ impl ResolutionFailure {
                 ),
                 MODULE_RESOLUTION_MODE_MISMATCH,
             ),
+            ResolutionFailure::JsonModuleWithoutResolveJsonModule {
+                specifier,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!(
+                    "Cannot find module '{}'. Consider using '--resolveJsonModule' to import module with '.json' extension.",
+                    specifier
+                ),
+                JSON_MODULE_WITHOUT_RESOLVE_JSON_MODULE,
+            ),
         }
     }
 
@@ -375,6 +406,9 @@ impl ResolutionFailure {
             }
             | ResolutionFailure::ModuleResolutionModeMismatch {
                 containing_file, ..
+            }
+            | ResolutionFailure::JsonModuleWithoutResolveJsonModule {
+                containing_file, ..
             } => containing_file,
         }
     }
@@ -388,7 +422,8 @@ impl ResolutionFailure {
             | ResolutionFailure::CircularResolution { span, .. }
             | ResolutionFailure::PathMappingFailed { span, .. }
             | ResolutionFailure::ImportPathNeedsExtension { span, .. }
-            | ResolutionFailure::ModuleResolutionModeMismatch { span, .. } => *span,
+            | ResolutionFailure::ModuleResolutionModeMismatch { span, .. }
+            | ResolutionFailure::JsonModuleWithoutResolveJsonModule { span, .. } => *span,
         }
     }
 

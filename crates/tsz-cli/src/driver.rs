@@ -1909,8 +1909,26 @@ fn collect_diagnostics(
                             }
                         }
 
+                        // Check if this is a JSON module import without resolveJsonModule enabled
+                        // If so, emit TS2732 instead of TS2307
+                        let failure_to_use = if matches!(
+                            failure,
+                            tsz::module_resolver::ResolutionFailure::NotFound { .. }
+                        ) && specifier.ends_with(".json")
+                            && !options.resolve_json_module
+                        {
+                            // Create TS2732 error for JSON import without resolveJsonModule
+                            tsz::module_resolver::ResolutionFailure::JsonModuleWithoutResolveJsonModule {
+                                specifier: specifier.clone(),
+                                containing_file: file_path.to_string_lossy().to_string(),
+                                span,
+                            }
+                        } else {
+                            failure
+                        };
+
                         // Convert ResolutionFailure to Diagnostic to get the error code and message
-                        let diagnostic = failure.to_diagnostic();
+                        let diagnostic = failure_to_use.to_diagnostic();
                         resolved_module_errors.insert(
                             (file_idx, specifier.clone()),
                             tsz::checker::context::ResolutionError {
