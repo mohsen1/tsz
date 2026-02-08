@@ -1416,6 +1416,28 @@ impl<'a> CheckerState<'a> {
         });
     }
 
+    /// Report TS2693: type parameter used as value
+    pub fn error_type_parameter_used_as_value(&mut self, name: &str, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            use tsz_common::diagnostics::diagnostic_codes;
+
+            let message = format!(
+                "'{}' only refers to a type, but is being used as a value here.",
+                name
+            );
+
+            self.ctx.push_diagnostic(Diagnostic {
+                code: diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
     /// Report a "type is not callable" error using solver diagnostics with source tracking.
     pub fn error_not_callable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
         // Suppress cascade errors from unresolved types

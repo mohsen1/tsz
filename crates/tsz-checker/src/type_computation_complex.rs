@@ -1405,6 +1405,9 @@ impl<'a> CheckerState<'a> {
         //   class C<U> { method(u: U) {} }  // U should be found in the class body
         //   type Pair<T> = [T, T];  // T should be found in the type alias definition
         if let Some(type_id) = self.lookup_type_parameter(name) {
+            // TS2693: Type parameters cannot be used as values
+            // Example: function f<T>() { return T; }  // Error: T is a type, not a value
+            self.error_type_parameter_used_as_value(name, idx);
             return type_id;
         }
 
