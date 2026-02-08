@@ -331,6 +331,11 @@ pub struct CheckerContext<'a> {
     pub referenced_symbols: std::cell::RefCell<FxHashSet<SymbolId>>,
 
     // --- Diagnostics ---
+    /// Whether the source file has parse errors.
+    /// Set by the driver before type checking to suppress noise-sensitive diagnostics
+    /// (e.g., TS2695 for comma operators in malformed JSON files).
+    pub has_parse_errors: bool,
+
     /// Diagnostics produced during type checking.
     pub diagnostics: Vec<Diagnostic>,
     /// Set of already-emitted diagnostics (start, code) for deduplication.
@@ -606,6 +611,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -712,6 +718,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -821,6 +828,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -929,6 +937,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -1045,6 +1054,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: parent.symbol_dependencies.clone(),
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),

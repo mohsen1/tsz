@@ -285,6 +285,15 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if the source file has any parse errors.
+    ///
+    /// This flag is set by the driver before type checking based on parse diagnostics.
+    /// It's used to suppress certain type-level diagnostics when the file
+    /// has syntax errors (e.g., JSON files parsed as TypeScript).
+    pub(crate) fn has_parse_errors(&self) -> bool {
+        self.ctx.has_parse_errors
+    }
+
     /// Apply `this` type substitution to a method call's return type.
     ///
     /// When a method returns `this`, the return type should be the type of the receiver.
