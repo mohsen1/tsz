@@ -2850,6 +2850,64 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS1039: Check for variable initializers in ambient contexts.
+    /// This is checked even when we skip full type checking of ambient module bodies.
+    fn check_initializers_in_ambient_body(&mut self, body_idx: NodeIndex) {
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+
+        if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+            return;
+        }
+
+        let Some(block) = self.ctx.arena.get_module_block(body_node) else {
+            return;
+        };
+
+        let Some(ref statements) = block.statements else {
+            return;
+        };
+
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            // Check variable statements for initializers
+            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                if let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node) {
+                    for &decl_idx in &var_stmt.declarations.nodes {
+                        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                            && let Some(var_decl) =
+                                self.ctx.arena.get_variable_declaration(decl_node)
+                            && !var_decl.initializer.is_none()
+                        {
+                            // TS1039: Initializers are not allowed in ambient contexts
+                            self.error_at_node(
+                                var_decl.initializer,
+                                diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                                diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Recursively check nested modules/namespaces
+            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                if let Some(module) = self.ctx.arena.get_module(stmt_node) {
+                    if !module.body.is_none() {
+                        self.check_initializers_in_ambient_body(module.body);
+                    }
+                }
+            }
+        }
+    }
+
     // Note: is_derived_property_redeclaration, find_containing_class are in type_checking.rs
 
     /// Check a break statement for validity.
@@ -3458,9 +3516,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 }
 
                 // TS1038: Check for 'declare' modifiers inside ambient module/namespace
-                // Even if we don't fully check the body, we still need to emit TS1038
+                // TS1039: Check for initializers in ambient contexts
+                // Even if we don't fully check the body, we still need to emit these errors
                 if is_ambient && !module.body.is_none() {
                     self.check_declare_modifiers_in_ambient_body(module.body);
+                    self.check_initializers_in_ambient_body(module.body);
 
                     // TS2300/TS2309: Check for duplicate export assignments even in ambient modules
                     // TS2300: Check for duplicate import aliases even in ambient modules
