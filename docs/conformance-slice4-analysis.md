@@ -161,9 +161,61 @@ namespace N {
 3. Add missing comma detection in parser (Issue 2) - specific, testable
 4. Gradually tackle false positives by analyzing specific patterns
 
+## Investigation Results (2026-02-08 Follow-up)
+
+After deeper investigation into potential fixes:
+
+### Why These Issues Are Complex
+
+1. **Module Augmentation** (`moduleAugmentationGlobal1.ts` etc.)
+   - Requires global scope merging logic
+   - Affects how interfaces extend built-in types (Array, etc.)
+   - High risk of breaking valid code
+   - Files: `crates/tsz-binder/`, `crates/tsz-checker/`
+
+2. **Discriminated Unions** (`missingDiscriminants.ts`)
+   - Core type system narrowing logic
+   - Affects object literal checking algorithm
+   - Changes could break many passing tests
+   - Files: `crates/tsz-solver/narrowing.rs`, `crates/tsz-checker/`
+
+3. **Parser Template Literal Handling** (`missingCommaInTemplateStringsArray.ts`)
+   - TS2796 error code exists but is never emitted
+   - Requires detecting tagged template expressions in array context
+   - Parser modifications have cascading effects
+   - Files: `crates/tsz-parser/src/parser/state_expressions.rs`
+
+4. **Module Resolution Error Codes** (`missingMemberErrorHasShortPath.ts`)
+   - Should emit TS2724 instead of TS2307
+   - Interacts with file extension handling (.js vs .ts)
+   - Module resolution is complex and critical
+   - Files: `crates/tsz-checker/` import checking
+
+### Recommendation: Incremental Approach
+
+Rather than attempting quick fixes that risk regressions:
+
+1. **Add targeted unit tests** for each issue category first
+2. **Fix one issue at a time** with comprehensive testing
+3. **Start with the simplest cases** within each category
+4. **Always verify** no existing tests break with `cargo test --lib`
+
+### Risk Assessment for Potential Fixes
+
+| Fix Category | Estimated Risk | Tests Affected | Priority |
+|--------------|---------------|----------------|----------|
+| Error code changes only | Low | 10-20 | Medium |
+| Module visibility checks | Medium | 30-50 | High |
+| Discriminant detection | High | 100+ | Low |
+| Parser modifications | High | Unknown | Low |
+| Module augmentation | Very High | 200+ | Low |
+
 ## Notes
 
 - **DO NOT** make broad changes to type checking without extensive testing
-- **ALWAYS** run `cargo nextest run` before committing
+- **ALWAYS** run `cargo test --lib` before committing
 - **VERIFY** conformance test impact with `./scripts/conformance.sh run --offset 4092 --max 1364`
+- **TEST** changes on multiple slices to ensure general improvement, not just local optimization
 - Consider adding targeted unit tests for each fix to prevent regressions
+- **BASELINE:** 2303 passing unit tests, 1 pre-existing failure
+- **Focus on low-risk, high-impact changes** to avoid breaking existing functionality
