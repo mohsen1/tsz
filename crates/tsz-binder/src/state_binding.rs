@@ -458,7 +458,7 @@ impl BinderState {
                 self.global_augmentations
                     .entry(name.to_string())
                     .or_default()
-                    .push(idx);
+                    .push(crate::state::GlobalAugmentation::new(idx));
             }
 
             // Rule #44: Track module augmentation interfaces
@@ -494,7 +494,7 @@ impl BinderState {
                 self.global_augmentations
                     .entry(name.to_string())
                     .or_default()
-                    .push(idx);
+                    .push(crate::state::GlobalAugmentation::new(idx));
             }
 
             // Rule #44: Track module augmentation type aliases

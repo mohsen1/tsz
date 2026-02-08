@@ -113,6 +113,31 @@ pub struct LibContext {
 ///
 /// The augmentation for "Observable" should include both `filter` from File A's arena
 /// and `map` from File B's arena.
+/// Represents a global augmentation declaration from a `declare global {}` block.
+/// For cross-file merging, the arena tracks which file's AST contains the declaration.
+#[derive(Debug, Clone)]
+pub struct GlobalAugmentation {
+    /// Declaration node for this augmentation (interface/type alias inside `declare global {}`)
+    pub node: NodeIndex,
+    /// The arena containing this declaration (None = current file's arena, Some = cross-file)
+    pub arena: Option<Arc<NodeArena>>,
+}
+
+impl GlobalAugmentation {
+    /// Create a new global augmentation without arena context (during binding).
+    pub fn new(node: NodeIndex) -> Self {
+        Self { node, arena: None }
+    }
+
+    /// Create a new global augmentation with arena context (during merge).
+    pub fn with_arena(node: NodeIndex, arena: Arc<NodeArena>) -> Self {
+        Self {
+            node,
+            arena: Some(arena),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ModuleAugmentation {
     /// Name of the augmented interface/type member (e.g., "map", "filter")
@@ -203,8 +228,8 @@ pub struct BinderState {
 
     // ===== Global Augmentations =====
     /// Tracks interface/type declarations inside `declare global` blocks that should
-    /// merge with lib.d.ts symbols. Maps interface name to declaration NodeIndex values.
-    pub global_augmentations: FxHashMap<String, Vec<NodeIndex>>,
+    /// merge with lib.d.ts symbols. Maps interface name to augmentation declarations.
+    pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
 
     /// Flag indicating we're currently binding inside a `declare global` block
     pub(crate) in_global_augmentation: bool,
@@ -550,7 +575,7 @@ impl BinderState {
         node_symbols: FxHashMap<u32, SymbolId>,
         scopes: Vec<Scope>,
         node_scope_ids: FxHashMap<u32, ScopeId>,
-        global_augmentations: FxHashMap<String, Vec<tsz_parser::NodeIndex>>,
+        global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
         module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
         module_exports: FxHashMap<String, SymbolTable>,
         reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,

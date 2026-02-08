@@ -973,7 +973,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Check if a module exists (for TS2664 check).
-    /// Returns true if the module is in resolved_modules or module_exports.
+    /// Returns true if the module is in resolved_modules, module_exports,
+    /// declared_modules, or shorthand_ambient_modules.
     fn module_exists(&self, module_name: &str) -> bool {
         // Check if the module was resolved by the CLI driver (multi-file mode)
         if let Some(ref resolved) = self.ctx.resolved_modules
@@ -985,6 +986,67 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // Check if the module exists in the module_exports map (cross-file module resolution)
         if self.ctx.binder.module_exports.contains_key(module_name) {
             return true;
+        }
+
+        // Check ambient module declarations (`declare module "X" { ... }`)
+        if self.ctx.binder.declared_modules.contains(module_name) {
+            return true;
+        }
+
+        // Check shorthand ambient modules (`declare module "X";`)
+        if self
+            .ctx
+            .binder
+            .shorthand_ambient_modules
+            .contains(module_name)
+        {
+            return true;
+        }
+
+        // Check wildcard patterns in declared/shorthand ambient modules and module_exports
+        if self.matches_ambient_module_pattern(module_name) {
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if a module name matches any wildcard ambient module pattern.
+    fn matches_ambient_module_pattern(&self, module_name: &str) -> bool {
+        let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
+
+        for patterns in [
+            &self.ctx.binder.declared_modules,
+            &self.ctx.binder.shorthand_ambient_modules,
+        ] {
+            for pattern in patterns {
+                let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
+                if pattern.contains('*') {
+                    if let Ok(glob) = globset::GlobBuilder::new(pattern)
+                        .literal_separator(false)
+                        .build()
+                    {
+                        if glob.compile_matcher().is_match(module_name) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check module_exports keys for wildcard patterns
+        for pattern in self.ctx.binder.module_exports.keys() {
+            let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
+            if pattern.contains('*') {
+                if let Ok(glob) = globset::GlobBuilder::new(pattern)
+                    .literal_separator(false)
+                    .build()
+                {
+                    if glob.compile_matcher().is_match(module_name) {
+                        return true;
+                    }
+                }
+            }
         }
 
         false
