@@ -1568,9 +1568,28 @@ impl<'a> CheckerState<'a> {
             // declaration nodes from other arenas. Lowering those declarations
             // against the current arena produces incomplete interface shapes
             // (e.g. Date without getTime, PromiseConstructor without resolve/race/new).
-            let has_out_of_arena_decl = declarations
-                .iter()
-                .any(|&decl_idx| self.ctx.arena.get(decl_idx).is_none());
+            //
+            // We check two conditions:
+            // 1. arena.get(decl_idx).is_none() - the NodeIndex is out of range
+            // 2. declaration_arenas has an entry pointing to a DIFFERENT arena -
+            //    this catches NodeIndex collisions where a declaration's index
+            //    happens to be valid in the current arena but actually belongs
+            //    to a different lib file's arena.
+            let has_out_of_arena_decl = declarations.iter().any(|&decl_idx| {
+                // Fast path: NodeIndex is beyond the current arena's range
+                if self.ctx.arena.get(decl_idx).is_none() {
+                    return true;
+                }
+                // Slow path: Check if the declaration belongs to a different arena
+                // via the binder's declaration_arenas map (populated during lib merging)
+                if let Some(decl_arena) =
+                    self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                {
+                    // If the pointer differs, the declaration is from another arena
+                    return !std::ptr::eq(decl_arena.as_ref(), self.ctx.arena);
+                }
+                false
+            });
             if has_out_of_arena_decl
                 && !self.ctx.lib_contexts.is_empty()
                 && let Some(lib_type) = self.resolve_lib_type_by_name(&escaped_name)
