@@ -308,6 +308,16 @@ impl<'a> CheckerState<'a> {
                     && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                         || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                 {
+                    // TS2488: For array binding patterns, check if the element type is iterable
+                    // Example: for (const [,] of []) where [] has type never[] with element type never
+                    if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                        use tsz_parser::NodeIndex;
+                        self.check_destructuring_iterability(
+                            var_decl.name,
+                            declared,
+                            NodeIndex::NONE,
+                        );
+                    }
                     self.assign_binding_pattern_symbol_types(var_decl.name, declared);
                 }
 
@@ -329,6 +339,16 @@ impl<'a> CheckerState<'a> {
                     && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                         || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                 {
+                    // TS2488: For array binding patterns, check if the element type is iterable
+                    // Example: for (const [,] of []) where [] has type never[] with element type never
+                    if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                        use tsz_parser::NodeIndex;
+                        self.check_destructuring_iterability(
+                            var_decl.name,
+                            widened_element_type,
+                            NodeIndex::NONE,
+                        );
+                    }
                     self.assign_binding_pattern_symbol_types(var_decl.name, widened_element_type);
                 }
 
