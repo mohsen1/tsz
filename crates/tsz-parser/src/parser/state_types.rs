@@ -1281,6 +1281,29 @@ impl ParserState {
         // Consume <
         self.next_token();
 
+        // Check for empty type argument list: <>
+        // TypeScript reports TS1099: "Type argument list cannot be empty"
+        if self.is_greater_than_or_compound() {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Type argument list cannot be empty.",
+                diagnostic_codes::TYPE_ARGUMENT_LIST_CANNOT_BE_EMPTY,
+            );
+            self.parse_expected_greater_than();
+
+            // Check if followed by ( to confirm this is a call
+            if self.is_token(SyntaxKind::OpenParenToken) {
+                return Some(self.make_node_list(Vec::new()));
+            } else {
+                // Not a call - rollback
+                self.scanner.restore_state(snapshot);
+                self.current_token = saved_token;
+                self.arena.nodes.truncate(saved_arena_len);
+                self.parse_diagnostics.truncate(saved_diagnostics_len);
+                return None;
+            }
+        }
+
         let mut args = Vec::new();
         let mut depth = 1;
 
