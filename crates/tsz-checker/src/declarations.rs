@@ -773,12 +773,100 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Check an enum declaration.
-    pub fn check_enum_declaration(&mut self, _enum_idx: NodeIndex) {
-        // Enum declaration checking is handled by CheckerState for now
-        // Will be migrated incrementally
-        // Key checks:
-        // - Member types (numeric vs string)
-        // - Computed members
+    pub fn check_enum_declaration(&mut self, enum_idx: NodeIndex) {
+        use crate::types::diagnostics::diagnostic_codes;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = self.ctx.arena.get(enum_idx) else {
+            return;
+        };
+
+        let Some(enum_data) = self.ctx.arena.get_enum(node) else {
+            return;
+        };
+
+        // TS1066: In ambient enum declarations, member initializer must be constant expression
+        let is_ambient = self
+            .ctx
+            .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword as u16);
+
+        if is_ambient {
+            // Check each member's initializer
+            for &member_idx in &enum_data.members.nodes {
+                if let Some(member_node) = self.ctx.arena.get(member_idx)
+                    && let Some(member_data) = self.ctx.arena.get_enum_member(member_node)
+                    && !member_data.initializer.is_none()
+                {
+                    // Check if the initializer is a constant expression
+                    if !self.is_constant_expression(member_data.initializer) {
+                        if let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
+                            self.ctx.error(
+                                init_node.pos,
+                                init_node.end - init_node.pos,
+                                "In ambient enum declarations member initializer must be constant expression.".to_string(),
+                                diagnostic_codes::IN_AMBIENT_ENUM_DECLARATIONS_MEMBER_INITIALIZER_MUST_BE_CONSTANT_EXPRESSION,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check if an expression is a constant expression for ambient enum members.
+    ///
+    /// Constant expressions include:
+    /// - Literals (numeric, string, boolean, null)
+    /// - Identifier references (to other enum members or constants)
+    /// - Unary expressions (+, -, ~) on constant expressions
+    /// - Binary expressions on constant expressions
+    /// - Parenthesized constant expressions
+    ///
+    /// Property access expressions like 'foo'.length are NOT constant.
+    fn is_constant_expression(&self, expr_idx: NodeIndex) -> bool {
+        if expr_idx.is_none() {
+            return true;
+        }
+
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+
+        use tsz_scanner::SyntaxKind;
+
+        match node.kind {
+            // Literals are always constant
+            k if k == SyntaxKind::NumericLiteral as u16 => true,
+            k if k == SyntaxKind::StringLiteral as u16 => true,
+            k if k == SyntaxKind::TrueKeyword as u16 => true,
+            k if k == SyntaxKind::FalseKeyword as u16 => true,
+            k if k == SyntaxKind::NullKeyword as u16 => true,
+
+            // Identifiers (enum member references) are constant
+            k if k == SyntaxKind::Identifier as u16 => true,
+
+            // Default case: check using accessor methods
+            _ => {
+                // Unary expressions: +x, -x, ~x
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                    return self.is_constant_expression(unary.operand);
+                }
+
+                // Binary expressions: x + y, x * y, etc.
+                if let Some(binary) = self.ctx.arena.get_binary_expr(node) {
+                    return self.is_constant_expression(binary.left)
+                        && self.is_constant_expression(binary.right);
+                }
+
+                // Parenthesized expressions
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    return self.is_constant_expression(paren.expression);
+                }
+
+                // Everything else (including property access) is not constant
+                false
+            }
+        }
     }
 
     /// Check a module/namespace declaration.
