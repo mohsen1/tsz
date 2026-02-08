@@ -492,16 +492,19 @@ fn rewrite_absolute_imports(content: &str) -> String {
     use regex::Regex;
 
     // Match: from '/...' or from "/..."
+    // Note: Rust regex doesn't support backreferences (\2), so we match any quote at the end
     static FROM_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r#"(from\s+)(['"])/((?:[^'"])*)\2"#).unwrap());
+        Lazy::new(|| Regex::new(r#"(from\s+)(['"])/((?:[^'"]*))['"]"#).unwrap());
 
     // Match: import '/...' or import "/..." (side-effect imports)
+    // Note: Rust regex doesn't support backreferences (\2), so we match any quote at the end
     static IMPORT_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r#"(import\s+)(['"])/((?:[^'"])*)\2"#).unwrap());
+        Lazy::new(|| Regex::new(r#"(import\s+)(['"])/((?:[^'"]*))['"]"#).unwrap());
 
     // Match: require('/...') or require("/...")
+    // Note: Rust regex doesn't support backreferences (\2), so we match any quote at the end
     static REQUIRE_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r#"(require\()(['"])/((?:[^'"])*)\2(\))"#).unwrap());
+        Lazy::new(|| Regex::new(r#"(require\()(['"])/((?:[^'"]*))['"](\))"#).unwrap());
 
     let result = FROM_RE.replace_all(content, "${1}${2}./${3}${2}");
     let result = IMPORT_RE.replace_all(&result, "${1}${2}./${3}${2}");
