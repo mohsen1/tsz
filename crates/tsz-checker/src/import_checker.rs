@@ -378,6 +378,42 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1147: Import declarations in a namespace cannot reference a module
+        // Check if this import = require("module") appears inside a namespace
+        if let Some(ref_node) = self.ctx.arena.get(import.module_specifier) {
+            if ref_node.kind == SyntaxKind::StringLiteral as u16 {
+                // This is an external module reference (require("..."))
+                // Check if we're inside a MODULE_DECLARATION (namespace/module)
+                let mut current = stmt_idx;
+                let mut inside_namespace = false;
+
+                while !current.is_none() {
+                    if let Some(node) = self.ctx.arena.get(current) {
+                        if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                            inside_namespace = true;
+                            break;
+                        }
+                        // Move to parent
+                        if let Some(ext) = self.ctx.arena.get_extended(current) {
+                            current = ext.parent;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                if inside_namespace {
+                    self.error_at_node(
+                        import.module_specifier,
+                        diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
+                        diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
+                    );
+                }
+            }
+        }
+
         // Get the import alias name (e.g., 'a' in 'import a = M')
         let import_name = self
             .ctx
