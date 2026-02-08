@@ -129,15 +129,14 @@ impl ModuleKind {
     }
 
     /// Check if this uses ES modules (import/export)
+    ///
+    /// Returns true only for pure ES module systems where `export =` is forbidden.
+    /// Node16/NodeNext are hybrid systems that support both CommonJS and ESM,
+    /// so they return false here (the checker must use file extension to decide).
     pub fn is_es_module(self) -> bool {
         matches!(
             self,
-            ModuleKind::ES2015
-                | ModuleKind::ES2020
-                | ModuleKind::ES2022
-                | ModuleKind::ESNext
-                | ModuleKind::Node16
-                | ModuleKind::NodeNext
+            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
         )
     }
 }
@@ -186,11 +185,25 @@ mod tests {
 
     #[test]
     fn test_module_kind_detection() {
+        // CommonJS-like systems
         assert!(ModuleKind::CommonJS.is_commonjs());
         assert!(ModuleKind::UMD.is_commonjs());
+        assert!(ModuleKind::Node16.is_commonjs());
+        assert!(ModuleKind::NodeNext.is_commonjs());
+
+        // Pure ES module systems (export = forbidden)
         assert!(ModuleKind::ES2015.is_es_module());
         assert!(ModuleKind::ES2020.is_es_module());
+        assert!(ModuleKind::ES2022.is_es_module());
+        assert!(ModuleKind::ESNext.is_es_module());
+
+        // Hybrid systems or no modules (export = allowed)
+        assert!(!ModuleKind::Node16.is_es_module()); // Hybrid - depends on file extension
+        assert!(!ModuleKind::NodeNext.is_es_module()); // Hybrid - depends on file extension
         assert!(!ModuleKind::None.is_es_module());
+        assert!(!ModuleKind::CommonJS.is_es_module());
+        assert!(!ModuleKind::AMD.is_es_module());
+        assert!(!ModuleKind::UMD.is_es_module());
     }
 
     #[test]
