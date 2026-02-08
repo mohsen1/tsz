@@ -740,6 +740,16 @@ impl ParserState {
     /// Parse empty statement
     pub(crate) fn parse_empty_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+
+        // TS1036: Statements are not allowed in ambient contexts
+        if (self.context_flags & CONTEXT_FLAG_AMBIENT) != 0 {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Statements are not allowed in ambient contexts.",
+                diagnostic_codes::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+            );
+        }
+
         self.parse_expected(SyntaxKind::SemicolonToken);
         let end_pos = self.token_end();
 
