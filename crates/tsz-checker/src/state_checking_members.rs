@@ -3366,6 +3366,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // Even if we don't fully check the body, we still need to emit TS1038
                 if is_ambient && !module.body.is_none() {
                     self.check_declare_modifiers_in_ambient_body(module.body);
+
+                    // TS2300/TS2309: Check for duplicate export assignments even in ambient modules
+                    // Need to extract statements from module body
+                    if let Some(body_node) = self.ctx.arena.get(module.body)
+                        && body_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK
+                        && let Some(block) = self.ctx.arena.get_module_block(body_node)
+                        && let Some(ref statements) = block.statements
+                    {
+                        self.check_export_assignment(&statements.nodes);
+                    }
                 }
             }
         }
