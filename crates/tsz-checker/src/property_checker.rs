@@ -151,8 +151,8 @@ impl<'a> CheckerState<'a> {
             use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 name_idx,
-                diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
-                diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
+                diagnostic_messages::A_COMPUTED_PROPERTY_NAME_MUST_BE_OF_TYPE_STRING_NUMBER_SYMBOL_OR_ANY,
+                diagnostic_codes::A_COMPUTED_PROPERTY_NAME_MUST_BE_OF_TYPE_STRING_NUMBER_SYMBOL_OR_ANY,
             );
         }
     }
