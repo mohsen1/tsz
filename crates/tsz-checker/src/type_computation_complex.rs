@@ -149,7 +149,6 @@ impl<'a> CheckerState<'a> {
 
         // Get the type of the constructor expression
         let constructor_type = self.get_type_of_node(new_expr.expression);
-        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), "NEW step 1: get_type_of_node");
 
         // Self-referencing class in static initializer: `new C()` inside C's static init
         // produces a Lazy placeholder. Return the cached instance type if available.
@@ -173,7 +172,6 @@ impl<'a> CheckerState<'a> {
             constructor_type,
             new_expr.type_arguments.as_ref(),
         );
-        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), "NEW step 2: apply_type_arguments_to_constructor_type");
 
         // Check if the constructor type contains any abstract classes (for union types)
         // e.g., `new cls()` where `cls: typeof AbstractA | typeof AbstractB`
@@ -213,24 +211,20 @@ impl<'a> CheckerState<'a> {
 
         // Evaluate application types (e.g., Newable<T>, Constructor<{}>) to get the actual Callable
         let constructor_type = self.evaluate_application_type(constructor_type);
-        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), "NEW step 3: evaluate_application_type");
 
         // Resolve Ref types to ensure we get the actual constructor type, not just a symbolic reference
         // This is critical for classes where we need the Callable with construct signatures
         let constructor_type = self.resolve_ref_type(constructor_type);
-        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), "NEW step 4: resolve_ref_type");
 
         // Resolve type parameter constraints: if the constructor type is a type parameter
         // (e.g., T extends Constructable), resolve the constraint's lazy types so the solver
         // can find construct signatures through the constraint chain.
         let constructor_type = self.resolve_type_param_for_construct(constructor_type);
-        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), "NEW step 5: resolve_type_param_for_construct");
 
         // Some constructor interfaces are lowered with a synthetic `"new"` property
         // instead of explicit construct signatures.
         let synthetic_new_constructor = self.constructor_type_from_new_property(constructor_type);
         let constructor_type = synthetic_new_constructor.unwrap_or(constructor_type);
-        tracing::debug!(id = constructor_type.0, key = ?self.ctx.types.lookup(constructor_type), synthetic = synthetic_new_constructor.is_some(), "NEW step 6: constructor_type_from_new_property");
         // Explicit type arguments on `new` (e.g. `new Promise<number>(...)`) need to
         // apply to synthetic `"new"` member call signatures as well.
         let constructor_type = if synthetic_new_constructor.is_some() {
@@ -269,22 +263,10 @@ impl<'a> CheckerState<'a> {
 
         // Delegate to Solver for constructor resolution
         let result = {
-            // DEBUG: Log what type we're trying to construct
-            if let Some(key) = self.ctx.types.lookup(constructor_type) {
-                let mut formatter = self.ctx.create_type_formatter();
-                let type_str = formatter.format(constructor_type);
-                tracing::debug!(
-                    constructor_type_id = constructor_type.0,
-                    type_key = ?key,
-                    type_str = %type_str,
-                    "resolve_new: constructor type entering solver"
-                );
-            }
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
             self.ctx.configure_compat_checker(&mut checker);
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
-            // NEW: Call resolve_new instead of resolve_call
             evaluator.resolve_new(constructor_type, &arg_types)
         };
 
