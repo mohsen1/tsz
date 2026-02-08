@@ -3368,6 +3368,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     self.check_declare_modifiers_in_ambient_body(module.body);
 
                     // TS2300/TS2309: Check for duplicate export assignments even in ambient modules
+                    // TS2300: Check for duplicate import aliases even in ambient modules
                     // Need to extract statements from module body
                     if let Some(body_node) = self.ctx.arena.get(module.body)
                         && body_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK
@@ -3375,6 +3376,19 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         && let Some(ref statements) = block.statements
                     {
                         self.check_export_assignment(&statements.nodes);
+                        self.check_import_alias_duplicates(&statements.nodes);
+                    }
+                }
+
+                // TS2300: Check for duplicate import aliases in non-ambient modules too
+                // This handles namespace { import X = ...; import X = ...; }
+                if !is_ambient && !module.body.is_none() {
+                    if let Some(body_node) = self.ctx.arena.get(module.body)
+                        && body_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK
+                        && let Some(block) = self.ctx.arena.get_module_block(body_node)
+                        && let Some(ref statements) = block.statements
+                    {
+                        self.check_import_alias_duplicates(&statements.nodes);
                     }
                 }
             }
