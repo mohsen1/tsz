@@ -3546,6 +3546,30 @@ mod tests {
     }
 
     #[test]
+    fn test_json_import_without_resolve_json_module() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_ts2732");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("app.ts"), "import data from './data.json';").unwrap();
+        fs::write(dir.join("data.json"), "{\"value\": 42}").unwrap();
+
+        let mut options = ResolvedCompilerOptions::default();
+        options.resolve_json_module = false; // JSON modules disabled
+        let mut resolver = ModuleResolver::new(&options);
+
+        let result = resolver.resolve("./data.json", &dir.join("app.ts"), Span::new(0, 10));
+
+        let failure =
+            result.expect_err("Expected JSON resolution to fail without resolveJsonModule");
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, 2732); // TS2732
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_resolver_package_main_with_unknown_extension() {
         use std::fs;
         let dir = std::env::temp_dir().join("tsz_test_resolver_main_unknown");
