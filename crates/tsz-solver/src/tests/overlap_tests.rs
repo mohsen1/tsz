@@ -144,14 +144,20 @@ fn test_void_and_undefined_overlap() {
 fn test_null_undefined_with_strict_null_checks() {
     let interner = TypeInterner::new();
 
-    // With strict null checks ON (default)
+    // With strict null checks ON
     let checker_strict = SubtypeChecker::new(&interner).with_strict_null_checks(true);
 
-    // null/undefined don't overlap with other primitives in strict mode
-    assert!(!checker_strict.are_types_overlapping(TypeId::NULL, TypeId::STRING));
-    assert!(!checker_strict.are_types_overlapping(TypeId::UNDEFINED, TypeId::NUMBER));
+    // IMPORTANT: Even with strict null checks, TypeScript allows null/undefined
+    // comparisons without TS2367. This is because null/undefined comparisons are
+    // common JavaScript patterns and not considered programmer errors.
+    // Examples that TSC allows: `null === "hello"`, `undefined === 5`, etc.
 
-    // But they overlap with themselves
+    // null/undefined overlap with ALL types (for TS2367 purposes)
+    // This prevents false positive TS2367 errors for common patterns
+    assert!(checker_strict.are_types_overlapping(TypeId::NULL, TypeId::STRING));
+    assert!(checker_strict.are_types_overlapping(TypeId::UNDEFINED, TypeId::NUMBER));
+
+    // They also overlap with themselves
     assert!(checker_strict.are_types_overlapping(TypeId::NULL, TypeId::NULL));
     assert!(checker_strict.are_types_overlapping(TypeId::UNDEFINED, TypeId::UNDEFINED));
 }
@@ -177,4 +183,36 @@ fn test_object_keyword_vs_primitives() {
     // object keyword (non-primitive) doesn't overlap with primitives
     assert!(!checker.are_types_overlapping(TypeId::OBJECT, TypeId::STRING));
     assert!(!checker.are_types_overlapping(TypeId::OBJECT, TypeId::NUMBER));
+}
+
+#[test]
+fn test_null_undefined_overlap_with_all_types() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // TypeScript allows null/undefined to be compared with any type without TS2367.
+    // This is true even with strict null checks enabled, because null/undefined
+    // comparisons are common patterns in JavaScript and not considered errors.
+
+    // Null and undefined overlap with each other
+    assert!(checker.are_types_overlapping(TypeId::NULL, TypeId::UNDEFINED));
+    assert!(checker.are_types_overlapping(TypeId::UNDEFINED, TypeId::NULL));
+
+    // Null overlaps with all types (for TS2367 purposes)
+    assert!(checker.are_types_overlapping(TypeId::NULL, TypeId::STRING));
+    assert!(checker.are_types_overlapping(TypeId::NULL, TypeId::NUMBER));
+    assert!(checker.are_types_overlapping(TypeId::NULL, TypeId::BOOLEAN));
+    assert!(checker.are_types_overlapping(TypeId::STRING, TypeId::NULL));
+
+    // Undefined overlaps with all types (for TS2367 purposes)
+    assert!(checker.are_types_overlapping(TypeId::UNDEFINED, TypeId::STRING));
+    assert!(checker.are_types_overlapping(TypeId::UNDEFINED, TypeId::NUMBER));
+    assert!(checker.are_types_overlapping(TypeId::UNDEFINED, TypeId::BOOLEAN));
+    assert!(checker.are_types_overlapping(TypeId::STRING, TypeId::UNDEFINED));
+
+    // This should be true even with strict null checks
+    checker.strict_null_checks = true;
+    assert!(checker.are_types_overlapping(TypeId::NULL, TypeId::UNDEFINED));
+    assert!(checker.are_types_overlapping(TypeId::NULL, TypeId::STRING));
+    assert!(checker.are_types_overlapping(TypeId::UNDEFINED, TypeId::NUMBER));
 }
