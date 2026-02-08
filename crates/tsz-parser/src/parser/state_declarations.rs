@@ -1891,6 +1891,19 @@ impl ParserState {
         let then_statement = self.parse_statement();
         self.check_using_outside_block(then_statement);
 
+        // TS1313: Check if the body of the if statement is an empty statement
+        if let Some(node) = self.arena.get(then_statement) {
+            if node.kind == syntax_kind_ext::EMPTY_STATEMENT {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    node.pos,
+                    node.end - node.pos,
+                    "The body of an 'if' statement cannot be the empty statement.",
+                    diagnostic_codes::THE_BODY_OF_AN_IF_STATEMENT_CANNOT_BE_THE_EMPTY_STATEMENT,
+                );
+            }
+        }
+
         let else_statement = if self.parse_optional(SyntaxKind::ElseKeyword) {
             let stmt = self.parse_statement();
             self.check_using_outside_block(stmt);
