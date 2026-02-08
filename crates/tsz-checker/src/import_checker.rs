@@ -191,6 +191,8 @@ impl<'a> CheckerState<'a> {
                     self.check_statement(stmt_idx);
                 }
                 self.check_function_implementations(&statements.nodes);
+                // Check for duplicate export assignments (TS2300) and conflicts (TS2309)
+                self.check_export_assignment(&statements.nodes);
             }
         } else if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
             self.check_statement(body_idx);
