@@ -2103,6 +2103,13 @@ impl BinderState {
                 }
             }
 
+            // Get/Set accessors (in object literals and classes)
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                if let Some(accessor) = arena.get_accessor(node) {
+                    self.bind_callable_body(arena, &accessor.parameters, accessor.body, idx);
+                }
+            }
+
             // Class declarations
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 self.record_flow(idx);
