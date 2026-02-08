@@ -58,6 +58,47 @@ echo "  cargo $(cargo --version | awk '{print $2}')"
 echo "  git   $(git --version | awk '{print $3}')"
 echo "  $(green "All prerequisites met.")"
 
+# ── 1b. Optional: mold linker (Linux only) ──────────────────────────────────
+# Mold is the fastest linker available - significantly speeds up Rust builds
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+  step "Checking mold linker"
+  if command -v mold &>/dev/null; then
+    skip "mold linker already installed ($(mold --version | head -1))."
+  else
+    echo "  mold not found - checking if we can install it..."
+    if command -v apt &>/dev/null; then
+      echo "  Installing mold via apt..."
+      sudo apt-get update -qq && sudo apt-get install -y -qq mold 2>/dev/null || {
+        echo "  $(dim "Could not install mold automatically. Build will use system linker.")"
+        echo "  $(dim "To install manually: sudo apt install mold")"
+      }
+      if command -v mold &>/dev/null; then
+        echo "  $(green "mold installed successfully.")"
+      fi
+    elif command -v dnf &>/dev/null; then
+      echo "  Installing mold via dnf..."
+      sudo dnf install -y -q mold 2>/dev/null || {
+        echo "  $(dim "Could not install mold automatically. Build will use system linker.")"
+        echo "  $(dim "To install manually: sudo dnf install mold")"
+      }
+      if command -v mold &>/dev/null; then
+        echo "  $(green "mold installed successfully.")"
+      fi
+    elif command -v pacman &>/dev/null; then
+      echo "  Installing mold via pacman..."
+      sudo pacman -S --noconfirm -q mold 2>/dev/null || {
+        echo "  $(dim "Could not install mold automatically. Build will use system linker.")"
+        echo "  $(dim "To install manually: sudo pacman -S mold")"
+      }
+      if command -v mold &>/dev/null; then
+        echo "  $(green "mold installed successfully.")"
+      fi
+    else
+      skip "Could not detect package manager. Install mold manually for faster builds."
+    fi
+  fi
+fi
+
 # ── 2. TypeScript submodule ─────────────────────────────────────────────────
 step "TypeScript submodule"
 
@@ -145,8 +186,12 @@ echo ""
 echo "$(green "$(bold "✓ Setup complete!")")"
 echo ""
 echo "  Useful commands:"
-echo "    cargo build              Build tsz"
-echo "    cargo test               Run unit tests"
-echo "    ./scripts/conformance.sh Run conformance tests"
-echo "    cargo run -- file.ts     Type-check a file"
+echo "    cargo build                    Build tsz"
+echo "    cargo test                     Run unit tests"
+echo "    ./scripts/conformance.sh       Run conformance tests (uses dist-fast profile)"
+echo "    cargo run -- file.ts           Type-check a file"
+echo ""
+echo "  Build profiles:"
+echo "    dist-fast  (default)  Fast build + good runtime (best for testing)"
+echo "    dist                 Maximum optimization (best for releases)"
 echo ""
