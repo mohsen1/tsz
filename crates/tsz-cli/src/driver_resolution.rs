@@ -528,12 +528,21 @@ pub(crate) fn resolve_module_specifier(
         }
 
         if candidates.is_empty() {
-            let base = options.base_url.as_deref().unwrap_or(from_dir);
-            candidates.extend(expand_module_path_candidates(
-                &base.join(&specifier),
-                options,
-                package_type,
-            ));
+            // Classic resolution walks up the directory tree from the containing
+            // file's directory, probing for <specifier>.ts, .d.ts, etc. at each level.
+            let mut current = from_dir.to_path_buf();
+            loop {
+                candidates.extend(expand_module_path_candidates(
+                    &current.join(&specifier),
+                    options,
+                    package_type,
+                ));
+
+                match current.parent() {
+                    Some(parent) if parent != current => current = parent.to_path_buf(),
+                    _ => break,
+                }
+            }
         }
     } else if let Some(base_url) = options.base_url.as_ref() {
         allow_node_modules = true;
@@ -854,6 +863,18 @@ fn resolve_node_module_specifier(
             );
             if resolved.is_some() {
                 return resolved;
+            }
+        } else if subpath.is_none() {
+            // Try resolving as a file directly in node_modules
+            // e.g., node_modules/foo.d.ts for bare specifier "foo"
+            let node_modules_dir = current.join("node_modules");
+            if node_modules_dir.is_dir() {
+                let candidates = expand_module_path_candidates(&package_root, options, None);
+                for candidate in candidates {
+                    if candidate.is_file() && is_valid_module_file(&candidate) {
+                        return Some(canonicalize_or_owned(&candidate));
+                    }
+                }
             }
         }
 
