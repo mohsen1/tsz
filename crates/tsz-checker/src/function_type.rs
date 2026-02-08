@@ -507,9 +507,15 @@ impl<'a> CheckerState<'a> {
             // For generator functions with explicit return type (Generator<Y, R, N> or AsyncGenerator<Y, R, N>),
             // return statements should be checked against TReturn (R), not the full Generator type.
             // This matches TypeScript's behavior where `return x` in a generator checks `x` against TReturn.
+            //
+            // For async functions with return type Promise<T>, return statements should be checked
+            // against T, not Promise<T>. The function body returns T, which gets auto-wrapped.
             let body_return_type = if is_generator && has_type_annotation {
                 self.get_generator_return_type_argument(return_type)
                     .unwrap_or(return_type)
+            } else if is_async_for_context && has_type_annotation {
+                // Unwrap Promise<T> to T for async function return type checking
+                self.unwrap_promise_type(return_type).unwrap_or(return_type)
             } else {
                 return_type
             };

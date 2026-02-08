@@ -650,4 +650,15 @@ impl<'a> CheckerState<'a> {
                 | "AsyncIterableIterator"
         )
     }
+
+    /// Unwrap Promise<T> to T for async function return type checking.
+    ///
+    /// For async functions with declared return type `Promise<T>`, the function body
+    /// should return values of type `T` (which get auto-wrapped in Promise).
+    /// This function extracts T from Promise<T>.
+    ///
+    /// Returns None if the type is not a Promise type or if T cannot be extracted.
+    pub fn unwrap_promise_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.promise_like_return_type_argument(type_id)
+    }
 }
