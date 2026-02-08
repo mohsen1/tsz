@@ -1688,6 +1688,7 @@ impl<'a> CheckerState<'a> {
                             }
                         } else if !is_interface_only
                             && is_class_declaration
+                            && symbol_type != TypeId::ERROR  // Skip error recovery - don't emit TS2507 for unresolved types
                             && !self.is_constructor_type(symbol_type)
                             && !self.is_class_symbol(sym_to_check)
                             // Skip TS2507 for symbols with both INTERFACE and VARIABLE flags
