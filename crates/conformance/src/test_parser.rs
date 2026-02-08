@@ -70,9 +70,7 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
                 current_filename = Some(value.to_string());
                 current_content = Vec::new();
             } else {
-                directives
-                    .options
-                    .insert(key_lower, value.to_string());
+                directives.options.insert(key_lower, value.to_string());
             }
         } else {
             // Non-directive line - add to current file content

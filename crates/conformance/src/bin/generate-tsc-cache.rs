@@ -420,11 +420,10 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
 
 /// Parse error codes from tsc output
 fn parse_error_codes(text: &str) -> Vec<u32> {
-    use regex::Regex;
     use once_cell::sync::Lazy;
+    use regex::Regex;
 
-    static DIAG_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"error TS(\d+):").unwrap());
+    static DIAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"error TS(\d+):").unwrap());
 
     let mut codes = Vec::new();
     for line in text.lines() {
@@ -439,11 +438,10 @@ fn parse_error_codes(text: &str) -> Vec<u32> {
 
 /// Strip @ directive comments from test file content
 fn strip_directive_comments(content: &str) -> String {
-    use regex::Regex;
     use once_cell::sync::Lazy;
+    use regex::Regex;
 
-    static DIRECTIVE_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^\s*//\s*@\w+\s*:").unwrap());
+    static DIRECTIVE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*//\s*@\w+\s*:").unwrap());
 
     content
         .lines()
