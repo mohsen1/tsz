@@ -40,9 +40,16 @@ pub fn compile_test(
     let temp_dir = TempDir::new()?;
     let dir_path = temp_dir.path();
 
+    // Detect if any filename uses absolute (virtual root) paths
+    let has_absolute_filenames = filenames.iter().any(|(name, _)| name.starts_with('/'));
+    let ts_tests_lib_dir = std::path::Path::new("TypeScript/tests/lib");
+
     if filenames.is_empty() {
         // Single-file test: write content to test.ts (strip directive comments)
         let stripped_content = strip_directive_comments(content);
+        // Handle /.lib/ references and absolute reference paths in single-file tests
+        let stripped_content = resolve_lib_references(&stripped_content, dir_path, ts_tests_lib_dir);
+        let stripped_content = rewrite_absolute_reference_paths(&stripped_content);
         let main_file = dir_path.join("test.ts");
         std::fs::write(&main_file, stripped_content)?;
     } else {
@@ -63,7 +70,18 @@ pub fn compile_test(
             if let Some(parent) = file_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(&file_path, file_content)?;
+
+            // Rewrite absolute paths in content for virtual root tests
+            let written_content = if has_absolute_filenames {
+                let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
+                let c = rewrite_absolute_reference_paths(&c);
+                rewrite_absolute_imports(&c)
+            } else {
+                let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
+                rewrite_absolute_reference_paths(&c)
+            };
+
+            std::fs::write(&file_path, written_content)?;
         }
     }
 
@@ -152,8 +170,17 @@ pub fn prepare_test_dir(
     let temp_dir = TempDir::new()?;
     let dir_path = temp_dir.path();
 
+    // Detect if any filename uses absolute (virtual root) paths
+    let has_absolute_filenames = filenames.iter().any(|(name, _)| name.starts_with('/'));
+
+    // Path to TypeScript test harness lib files (for /.lib/ references)
+    let ts_tests_lib_dir = std::path::Path::new("TypeScript/tests/lib");
+
     if filenames.is_empty() {
         let stripped_content = strip_directive_comments(content);
+        // Handle /.lib/ references and absolute reference paths in single-file tests
+        let stripped_content = resolve_lib_references(&stripped_content, dir_path, ts_tests_lib_dir);
+        let stripped_content = rewrite_absolute_reference_paths(&stripped_content);
         let main_file = dir_path.join("test.ts");
         std::fs::write(&main_file, stripped_content)?;
     } else {
@@ -169,7 +196,21 @@ pub fn prepare_test_dir(
             if let Some(parent) = file_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(&file_path, file_content)?;
+
+            // When tests use absolute filenames, rewrite their content so that
+            // absolute import specifiers and /// <reference> paths resolve within
+            // the tmpdir (which acts as the virtual filesystem root).
+            let written_content = if has_absolute_filenames {
+                let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
+                let c = rewrite_absolute_reference_paths(&c);
+                rewrite_absolute_imports(&c)
+            } else {
+                // Even without absolute filenames, handle /.lib/ references
+                let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
+                rewrite_absolute_reference_paths(&c)
+            };
+
+            std::fs::write(&file_path, written_content)?;
         }
     }
 
@@ -430,6 +471,103 @@ fn strip_directive_comments(content: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Rewrite absolute import specifiers to relative ones.
+///
+/// TSC conformance tests use a virtual filesystem where `@Filename: /foo.ts`
+/// creates a file at virtual path `/foo.ts`. Imports like `from '/foo'` resolve
+/// via the VFS. Our harness writes files to a tmpdir (stripping the leading `/`),
+/// so `/foo.ts` becomes `<tmpdir>/foo.ts`. We rewrite absolute specifiers to
+/// relative so the compiler resolves them within the tmpdir.
+///
+/// Transforms:
+/// - `from '/foo'`  →  `from './foo'`
+/// - `import '/foo'` → `import './foo'`
+/// - `require('/foo')` → `require('./foo')`
+fn rewrite_absolute_imports(content: &str) -> String {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    // Match: from '/...' or from "/..."
+    static FROM_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"(from\s+)(['"])/((?:[^'"])*)\2"#).unwrap()
+    });
+
+    // Match: import '/...' or import "/..." (side-effect imports)
+    static IMPORT_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"(import\s+)(['"])/((?:[^'"])*)\2"#).unwrap()
+    });
+
+    // Match: require('/...') or require("/...")
+    static REQUIRE_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"(require\()(['"])/((?:[^'"])*)\2(\))"#).unwrap()
+    });
+
+    let result = FROM_RE.replace_all(content, "${1}${2}./${3}${2}");
+    let result = IMPORT_RE.replace_all(&result, "${1}${2}./${3}${2}");
+    let result = REQUIRE_RE.replace_all(&result, "${1}${2}./${3}${2}${4}");
+    result.into_owned()
+}
+
+/// Rewrite `/// <reference path="/.lib/...">` directives to point to a local copy
+/// of the test harness library, and copy the referenced file into the tmpdir.
+///
+/// TSC tests reference shared type definitions via absolute VFS paths like
+/// `/.lib/react16.d.ts`. These live in `TypeScript/tests/lib/` in the repo.
+/// We copy them into the tmpdir and rewrite the reference to a relative path.
+fn resolve_lib_references(
+    content: &str,
+    dir_path: &std::path::Path,
+    ts_tests_lib_dir: &std::path::Path,
+) -> String {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    // Match: /// <reference path="/.lib/react16.d.ts" />
+    static LIB_REF_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"(///\s*<reference\s+path\s*=\s*)(['"])/.lib/((?:[^'"])*)\2"#).unwrap()
+    });
+
+    let mut result = content.to_string();
+
+    for caps in LIB_REF_RE.captures_iter(content) {
+        let lib_file = &caps[3]; // e.g., "react16.d.ts"
+        let src = ts_tests_lib_dir.join(lib_file);
+
+        if src.exists() {
+            // Create .lib directory in tmpdir and copy the file
+            let lib_dir = dir_path.join(".lib");
+            let _ = std::fs::create_dir_all(&lib_dir);
+            let dest = lib_dir.join(lib_file);
+            let _ = std::fs::copy(&src, &dest);
+        }
+
+        // Rewrite the reference path to be relative (whether or not file exists)
+        let old = caps.get(0).unwrap().as_str();
+        let new = format!("{}{}/.lib/{}{}",
+            &caps[1], &caps[2], lib_file, &caps[2]
+        );
+        result = result.replace(old, &new);
+    }
+
+    result
+}
+
+/// Rewrite `/// <reference path="/absolute/path">` directives to relative paths.
+///
+/// After stripping leading `/` from @Filename paths, any `/// <reference path="/...">`
+/// pointing to another test file should become relative.
+fn rewrite_absolute_reference_paths(content: &str) -> String {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    // Match: /// <reference path="/..." /> but NOT /.lib/ (handled separately)
+    static ABS_REF_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"(///\s*<reference\s+path\s*=\s*)(['"])/((?!\.lib/)(?:[^'"])*)\2"#).unwrap()
+    });
+
+    ABS_REF_RE.replace_all(content, "${1}${2}./${3}${2}").into_owned()
 }
 
 #[cfg(test)]
