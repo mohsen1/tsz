@@ -1195,11 +1195,26 @@ impl ParserState {
                         expr = call_expr;
                     } else {
                         // expr?.prop
-                        let name = if self.is_token(SyntaxKind::PrivateIdentifier) {
+                        let is_private_identifier = self.is_token(SyntaxKind::PrivateIdentifier);
+                        let name = if is_private_identifier {
                             self.parse_private_identifier()
                         } else {
                             self.parse_identifier_name()
                         };
+
+                        // TS18030: Optional chain cannot contain private identifiers
+                        if is_private_identifier {
+                            if let Some(name_node) = self.arena.get(name) {
+                                use tsz_common::diagnostics::diagnostic_codes;
+                                self.parse_error_at(
+                                    name_node.pos,
+                                    name_node.end - name_node.pos,
+                                    "An optional chain cannot contain private identifiers.",
+                                    diagnostic_codes::AN_OPTIONAL_CHAIN_CANNOT_CONTAIN_PRIVATE_IDENTIFIERS,
+                                );
+                            }
+                        }
+
                         let end_pos = self.token_end();
 
                         expr = self.arena.add_access_expr(
@@ -2609,6 +2624,20 @@ impl ParserState {
 
         let name = self.parse_property_name();
 
+        // TS18016: Check for private identifiers in object literals
+        // Private identifiers (#foo) are not allowed in object literals
+        if let Some(name_node) = self.arena.get(name) {
+            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "Private identifiers are not allowed outside class bodies.",
+                    diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                );
+            }
+        }
+
         // Handle method: foo() { } or foo<T>() { }
         if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::LessThanToken) {
             return self.parse_object_method_after_name(start_pos, name, false, false);
@@ -2691,6 +2720,19 @@ impl ParserState {
         self.next_token(); // consume 'get'
         let name = self.parse_property_name();
 
+        // TS18016: Check for private identifiers in object literals
+        if let Some(name_node) = self.arena.get(name) {
+            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "Private identifiers are not allowed outside class bodies.",
+                    diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                );
+            }
+        }
+
         let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
@@ -2762,6 +2804,19 @@ impl ParserState {
     pub(crate) fn parse_object_set_accessor(&mut self, start_pos: u32) -> NodeIndex {
         self.next_token(); // consume 'set'
         let name = self.parse_property_name();
+
+        // TS18016: Check for private identifiers in object literals
+        if let Some(name_node) = self.arena.get(name) {
+            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "Private identifiers are not allowed outside class bodies.",
+                    diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                );
+            }
+        }
 
         let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
             use tsz_common::diagnostics::diagnostic_codes;
@@ -2860,6 +2915,20 @@ impl ParserState {
         };
 
         let name = self.parse_property_name();
+
+        // TS18016: Check for private identifiers in object literals
+        if let Some(name_node) = self.arena.get(name) {
+            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "Private identifiers are not allowed outside class bodies.",
+                    diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                );
+            }
+        }
+
         self.parse_object_method_after_name(start_pos, name, asterisk, modifiers.is_some())
     }
 
