@@ -31,9 +31,17 @@ impl<'a> Printer<'a> {
         }
 
         // Parameters (without types for JavaScript)
-        self.write("(");
+        // TypeScript omits parentheses for single simple parameters: x => x
+        // But uses them for: (x, y) => x, () => x, ({x}) => x, ([x]) => x
+        let needs_parens = self.arrow_function_needs_parens(&func.parameters.nodes);
+
+        if needs_parens {
+            self.write("(");
+        }
         self.emit_function_parameters_js(&func.parameters.nodes);
-        self.write(")");
+        if needs_parens {
+            self.write(")");
+        }
 
         // Skip return type for JavaScript
 
@@ -41,6 +49,43 @@ impl<'a> Printer<'a> {
 
         // Body
         self.emit(func.body);
+    }
+
+    /// Check if arrow function parameters need parentheses.
+    /// TypeScript omits parentheses only for a single simple identifier parameter.
+    fn arrow_function_needs_parens(&self, params: &[NodeIndex]) -> bool {
+        // Need parens if not exactly one parameter
+        if params.len() != 1 {
+            return true;
+        }
+
+        // Get the single parameter
+        let Some(param_node) = self.arena.get(params[0]) else {
+            return true;
+        };
+
+        // Need parens if not a parameter declaration
+        if param_node.kind != syntax_kind_ext::PARAMETER {
+            return true;
+        }
+
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return true;
+        };
+
+        // Need parens if the parameter name is not a simple identifier
+        // (e.g., destructuring patterns like {x}, [x], ...rest)
+        let Some(name_node) = self.arena.get(param.name) else {
+            return true;
+        };
+
+        use tsz_scanner::SyntaxKind;
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return true; // Destructuring or other complex pattern
+        }
+
+        // Simple identifier parameter - no parens needed
+        false
     }
 
     pub(super) fn emit_function_expression(&mut self, node: &Node, _idx: NodeIndex) {
