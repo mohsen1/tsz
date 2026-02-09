@@ -32,17 +32,41 @@ pub fn extract_reference_paths(source: &str) -> Vec<(String, usize)> {
     references
 }
 
-/// Extract path from a reference directive line
-fn extract_quoted_path(line: &str) -> Option<String> {
-    // Find "path" followed by optional whitespace, then "="
-    let path_idx = line.find("path")?;
-    let after_path = &line[path_idx + 4..];
+/// Extract `/// <reference types="..." />` directives from source text.
+///
+/// Returns a vector of (type_name, resolution_mode, line_number) tuples.
+/// `resolution_mode` is `Some("import")` or `Some("require")` if specified.
+pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usize)> {
+    let mut references = Vec::new();
 
-    // Find the equals sign (may have whitespace before it)
-    let eq_idx = after_path.find('=')?;
-    let after_equals = &after_path[eq_idx + 1..];
+    for (line_num, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
 
-    // Find opening quote (skip whitespace)
+        if !trimmed.starts_with("///") {
+            continue;
+        }
+
+        if !trimmed.contains("<reference") || !trimmed.contains("types=") {
+            continue;
+        }
+
+        if let Some(name) = extract_quoted_attr(trimmed, "types") {
+            let resolution_mode = extract_quoted_attr(trimmed, "resolution-mode");
+            references.push((name, resolution_mode, line_num));
+        }
+    }
+
+    references
+}
+
+/// Extract the value of a named attribute from a reference directive line.
+fn extract_quoted_attr(line: &str, attr: &str) -> Option<String> {
+    let idx = line.find(attr)?;
+    let after_attr = &line[idx + attr.len()..];
+
+    let eq_idx = after_attr.find('=')?;
+    let after_equals = &after_attr[eq_idx + 1..];
+
     let first_char = after_equals.trim_start().chars().next()?;
     if first_char != '"' && first_char != '\'' {
         return None;
@@ -51,9 +75,13 @@ fn extract_quoted_path(line: &str) -> Option<String> {
     let quote_char = first_char;
     let after_open_quote = &after_equals[after_equals.find(quote_char)? + 1..];
 
-    // Find closing quote
     let end_pos = after_open_quote.find(quote_char)?;
     Some(after_open_quote[..end_pos].to_string())
+}
+
+/// Extract path from a reference directive line
+fn extract_quoted_path(line: &str) -> Option<String> {
+    extract_quoted_attr(line, "path")
 }
 
 /// Check if a referenced file exists relative to the source file
