@@ -383,15 +383,28 @@ impl ResolutionFailure {
                 suggested_extension,
                 containing_file,
                 span,
-            } => Diagnostic::error(
-                containing_file,
-                *span,
-                format!(
-                    "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean '{}{}'?",
-                    specifier, suggested_extension
-                ),
-                IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
-            ),
+            } => {
+                if suggested_extension.is_empty() {
+                    // TS2834: No suggestion available
+                    Diagnostic::error(
+                        containing_file,
+                        *span,
+                        "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Consider adding an extension to the import path.".to_string(),
+                        IMPORT_PATH_NEEDS_EXTENSION,
+                    )
+                } else {
+                    // TS2835: With extension suggestion
+                    Diagnostic::error(
+                        containing_file,
+                        *span,
+                        format!(
+                            "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean '{}{}'?",
+                            specifier, suggested_extension
+                        ),
+                        IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
+                    )
+                }
+            }
             ResolutionFailure::ImportingTsExtensionNotAllowed {
                 extension,
                 containing_file,
@@ -1002,46 +1015,26 @@ impl ModuleResolver {
         // TypeScript always checks "types" first
         conditions.push("types".to_string());
 
-        // Add platform condition based on resolution kind
+        // Add platform condition: Node modes get "node", bundler does NOT
         match self.resolution_kind {
-            ModuleResolutionKind::Bundler => {
-                conditions.push("browser".to_string());
-            }
-            ModuleResolutionKind::Classic
-            | ModuleResolutionKind::Node
-            | ModuleResolutionKind::Node16
-            | ModuleResolutionKind::NodeNext => {
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
                 conditions.push("node".to_string());
             }
+            _ => {}
         }
 
-        // Add module kind conditions - primary first, then opposite as fallback
-        // This allows packages that only export one format to still be resolved
+        // Add module kind condition
         match importing_module_kind {
             ImportingModuleKind::Esm => {
                 conditions.push("import".to_string());
-                conditions.push("default".to_string());
-                conditions.push("require".to_string()); // Fallback: ESM file can use CJS-only package
             }
             ImportingModuleKind::CommonJs => {
                 conditions.push("require".to_string());
-                conditions.push("default".to_string());
-                conditions.push("import".to_string()); // Fallback: CJS file can use ESM-only package
             }
         }
 
-        // Add additional platform fallbacks
-        match self.resolution_kind {
-            ModuleResolutionKind::Bundler => {
-                conditions.push("node".to_string()); // Bundler can also use node exports
-            }
-            ModuleResolutionKind::Classic
-            | ModuleResolutionKind::Node
-            | ModuleResolutionKind::Node16
-            | ModuleResolutionKind::NodeNext => {
-                conditions.push("browser".to_string()); // Node can use browser exports as last resort
-            }
-        }
+        // "default" is always a fallback condition
+        conditions.push("default".to_string());
 
         conditions
     }
@@ -1114,7 +1107,7 @@ impl ModuleResolver {
         ) && importing_module_kind == ImportingModuleKind::Esm
             && !specifier_has_extension
         {
-            // Try to resolve to determine what extension to suggest
+            // Try to resolve to determine what extension to suggest (TS2835)
             if let Some(resolved) = self.try_file_or_directory(&candidate) {
                 // Resolution succeeded implicitly - this is an error in ESM mode
                 let resolved_ext = ModuleExtension::from_path(&resolved);
@@ -1139,7 +1132,9 @@ impl ModuleResolver {
                     span: specifier_span,
                 });
             }
-            // If resolution fails, fall through to NotFound
+            // When resolution fails and we can't tell if the import is ES-style
+            // (needs TS2834) or CJS-style require (needs TS2307), fall through.
+            // Note: import = require("./foo") in .mts is CJS-style and should get TS2307.
         }
 
         if let Some(resolved) = self.try_file_or_directory(&candidate) {
@@ -1203,6 +1198,9 @@ impl ModuleResolver {
         containing_file: &str,
         specifier_span: Span,
     ) -> Result<ResolvedModule, ResolutionFailure> {
+        let (package_name, subpath) = parse_package_specifier(specifier);
+        let conditions = self.get_export_conditions(ImportingModuleKind::CommonJs);
+
         let mut current = containing_dir.to_path_buf();
         loop {
             let candidate = current.join(specifier);
@@ -1214,6 +1212,46 @@ impl ModuleResolver {
                     original_specifier: specifier.to_string(),
                     extension: ModuleExtension::from_path(&resolved),
                 });
+            }
+
+            // Also check @types packages in node_modules (TypeScript classic resolution
+            // still resolves @types packages for bare specifiers)
+            if !package_name.starts_with("@types/") {
+                let types_package = types_package_name(&package_name);
+                let types_dir = current.join("node_modules").join(&types_package);
+                if types_dir.is_dir() {
+                    if let Ok(resolved) = self.resolve_package(
+                        &types_dir,
+                        subpath.as_deref(),
+                        specifier,
+                        containing_file,
+                        specifier_span,
+                        &conditions,
+                    ) {
+                        return Ok(resolved);
+                    }
+                }
+            }
+
+            // Check type_roots for the package
+            for type_root in &self.type_roots {
+                let types_package = if !package_name.starts_with("@types/") {
+                    type_root.join(types_package_name(&package_name))
+                } else {
+                    type_root.join(&package_name)
+                };
+                if types_package.is_dir()
+                    && let Ok(resolved) = self.resolve_package(
+                        &types_package,
+                        subpath.as_deref(),
+                        specifier,
+                        containing_file,
+                        specifier_span,
+                        &conditions,
+                    )
+                {
+                    return Ok(resolved);
+                }
             }
 
             // Move to parent directory
@@ -1256,10 +1294,6 @@ impl ModuleResolver {
             return Ok(resolved);
         }
 
-        // Track if we found a package with exports but couldn't resolve it
-        // (for TS2792 hint when not in Node16/NodeNext/Bundler mode)
-        let mut found_package_with_exports = false;
-
         // Walk up directory tree looking for node_modules
         let mut current = containing_dir.to_path_buf();
         loop {
@@ -1279,15 +1313,6 @@ impl ModuleResolver {
                     ) {
                         Ok(resolved) => return Ok(resolved),
                         Err(_) => {
-                            // Check if package has exports field - relevant for TS2792
-                            if !self.resolve_package_json_exports {
-                                let package_json_path = package_dir.join("package.json");
-                                if let Ok(pj) = self.read_package_json(&package_json_path) {
-                                    if pj.exports.is_some() {
-                                        found_package_with_exports = true;
-                                    }
-                                }
-                            }
                             // Continue searching in parent directories
                         }
                     }
@@ -1309,7 +1334,7 @@ impl ModuleResolver {
             }
 
             if !package_name.starts_with("@types/") {
-                let types_package = format!("@types/{}", package_name.replace('/', "__"));
+                let types_package = types_package_name(&package_name);
                 let types_dir = node_modules.join(&types_package);
                 if types_dir.is_dir() {
                     if let Ok(resolved) = self.resolve_package(
@@ -1334,8 +1359,7 @@ impl ModuleResolver {
 
         // Try type roots (for @types packages)
         for type_root in &self.type_roots {
-            let types_package =
-                type_root.join(format!("@types/{}", package_name.replace('/', "__")));
+            let types_package = type_root.join(types_package_name(&package_name));
             if types_package.is_dir()
                 && let Ok(resolved) = self.resolve_package(
                     &types_package,
@@ -1348,16 +1372,6 @@ impl ModuleResolver {
             {
                 return Ok(resolved);
             }
-        }
-
-        // TS2792: If we found a package with exports but couldn't resolve it,
-        // and we're not in a mode that supports exports, suggest switching modes
-        if found_package_with_exports {
-            return Err(ResolutionFailure::ModuleResolutionModeMismatch {
-                specifier: specifier.to_string(),
-                containing_file: containing_file.to_string(),
-                span: specifier_span,
-            });
         }
 
         Err(ResolutionFailure::NotFound {
@@ -1593,7 +1607,8 @@ impl ModuleResolver {
                     });
                 }
             }
-            if let Some(resolved) = self.try_file_or_directory(&main_path) {
+            // Try the main path as a file (with extension probing)
+            if let Some(resolved) = self.try_file(&main_path) {
                 return Ok(ResolvedModule {
                     resolved_path: resolved.clone(),
                     is_external: true,
@@ -1601,6 +1616,20 @@ impl ModuleResolver {
                     original_specifier: original_specifier.to_string(),
                     extension: ModuleExtension::from_path(&resolved),
                 });
+            }
+            // For main field targets that are directories, only try index files.
+            // Do NOT read nested package.json — main field resolution is non-recursive.
+            if main_path.is_dir() {
+                let index = main_path.join("index");
+                if let Some(resolved) = self.try_file(&index) {
+                    return Ok(ResolvedModule {
+                        resolved_path: resolved.clone(),
+                        is_external: true,
+                        package_name: Some(package_json.name.clone().unwrap_or_default()),
+                        original_specifier: original_specifier.to_string(),
+                        extension: ModuleExtension::from_path(&resolved),
+                    });
+                }
             }
         }
 
@@ -1818,19 +1847,17 @@ impl ModuleResolver {
             }
         }
         if let Some((base, extension)) = split_path_extension(path) {
-            if matches!(
-                self.resolution_kind,
-                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
-            ) && let Some(rewritten) = node16_extension_substitution(path, extension)
-            {
-                for candidate in rewritten {
-                    if let Some(resolved) = try_file_with_suffixes(&candidate, suffixes) {
+            // Try extension substitution (.js → .ts/.tsx/.d.ts) for all resolution modes.
+            // TypeScript resolves `.js` imports to `.ts` sources in all modes.
+            if let Some(rewritten) = node16_extension_substitution(path, extension) {
+                for candidate in &rewritten {
+                    if let Some(resolved) = try_file_with_suffixes(candidate, suffixes) {
                         return Some(resolved);
                     }
                 }
-                return None;
             }
 
+            // Fall back to the original extension (e.g., literal .js file)
             if let Some(resolved) = try_file_with_suffixes_and_extension(&base, extension, suffixes)
             {
                 return Some(resolved);
@@ -1882,11 +1909,9 @@ impl ModuleResolver {
                 }
             }
             ModuleResolutionKind::Classic => {
-                if self.allow_js {
-                    &CLASSIC_JS_EXTENSION_CANDIDATES
-                } else {
-                    &CLASSIC_EXTENSION_CANDIDATES
-                }
+                // Classic resolution only looks for TypeScript extensions,
+                // never .js/.jsx even with allowJs
+                &CLASSIC_EXTENSION_CANDIDATES
             }
             _ => {
                 if self.allow_js {
@@ -1905,8 +1930,30 @@ impl ModuleResolver {
             return Some(resolved);
         }
 
-        // Try as directory with index
+        // Try as directory: check package.json for types/main, then index
         if path.is_dir() {
+            let package_json_path = path.join("package.json");
+            if package_json_path.exists() {
+                if let Ok(pj) = self.read_package_json(&package_json_path) {
+                    // Try types/typings field first
+                    if let Some(types) = pj.types.or(pj.typings) {
+                        let types_path = path.join(&types);
+                        if let Some(resolved) = self.try_file(&types_path) {
+                            return Some(resolved);
+                        }
+                        if types_path.is_file() {
+                            return Some(types_path);
+                        }
+                    }
+                    // Try main field with extension remapping
+                    if let Some(main) = &pj.main {
+                        let main_path = path.join(main);
+                        if let Some(resolved) = self.try_file(&main_path) {
+                            return Some(resolved);
+                        }
+                    }
+                }
+            }
             let index = path.join("index");
             return self.try_file(&index);
         }
@@ -2011,6 +2058,14 @@ fn parse_package_specifier(specifier: &str) -> (String, Option<String>) {
     } else {
         (specifier.to_string(), None)
     }
+}
+
+/// Convert a package name to its @types equivalent.
+/// For scoped packages like `@see/saw`, this produces `@types/see__saw`.
+/// For regular packages like `foo`, this produces `@types/foo`.
+fn types_package_name(package_name: &str) -> String {
+    let stripped = package_name.strip_prefix('@').unwrap_or(package_name);
+    format!("@types/{}", stripped.replace('/', "__"))
 }
 
 /// Match an export pattern against a subpath

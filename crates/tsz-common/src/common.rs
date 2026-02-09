@@ -117,6 +117,9 @@ pub enum ModuleKind {
 
     /// Node.js with automatic detection
     NodeNext = 199,
+
+    /// Preserve original import/export syntax (let bundler handle it)
+    Preserve = 200,
 }
 
 impl ModuleKind {
@@ -136,7 +139,11 @@ impl ModuleKind {
     pub fn is_es_module(self) -> bool {
         matches!(
             self,
-            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
+            ModuleKind::ES2015
+                | ModuleKind::ES2020
+                | ModuleKind::ES2022
+                | ModuleKind::ESNext
+                | ModuleKind::Preserve
         )
     }
 }

@@ -657,19 +657,21 @@ fn expand_module_path_candidates(
     let base = normalize_path(path);
     let suffixes = &options.module_suffixes;
     if let Some((base_no_ext, extension)) = split_path_extension(&base) {
-        let resolution = options.effective_module_resolution();
-        if matches!(
-            resolution,
-            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
-        ) && let Some(rewritten) = node16_extension_substitution(&base, extension)
-        {
-            let mut candidates = Vec::new();
+        // Try extension substitution (.js → .ts/.tsx/.d.ts) for all resolution modes.
+        // TypeScript resolves `.js` imports to `.ts` sources in all modes.
+        let mut candidates = Vec::new();
+        if let Some(rewritten) = node16_extension_substitution(&base, extension) {
             for candidate in rewritten {
                 candidates.extend(candidates_with_suffixes(&candidate, suffixes));
             }
-            return candidates;
         }
-        return candidates_with_suffixes_and_extension(&base_no_ext, extension, suffixes);
+        // Also include the original extension as fallback
+        candidates.extend(candidates_with_suffixes_and_extension(
+            &base_no_ext,
+            extension,
+            suffixes,
+        ));
+        return candidates;
     }
 
     let extensions = extension_candidates_for_resolution(options, package_type);
@@ -1224,6 +1226,34 @@ fn resolve_package_entry(
     for candidate in expand_module_path_candidates(&path, options, package_type) {
         if candidate.is_file() && is_valid_module_file(&candidate) {
             return Some(canonicalize_or_owned(&candidate));
+        }
+    }
+
+    // Check subpath's package.json for types/main fields
+    if path.is_dir() {
+        if let Some(pj) = read_package_json(&path.join("package.json")) {
+            let sub_type = package_type_from_json(Some(&pj));
+            // Try types/typings field
+            if let Some(types) = pj.types.or(pj.typings) {
+                let types_path = path.join(&types);
+                for candidate in expand_module_path_candidates(&types_path, options, sub_type) {
+                    if candidate.is_file() && is_valid_module_file(&candidate) {
+                        return Some(canonicalize_or_owned(&candidate));
+                    }
+                }
+                if types_path.is_file() {
+                    return Some(canonicalize_or_owned(&types_path));
+                }
+            }
+            // Try main field
+            if let Some(main) = &pj.main {
+                let main_path = path.join(main);
+                for candidate in expand_module_path_candidates(&main_path, options, sub_type) {
+                    if candidate.is_file() && is_valid_module_file(&candidate) {
+                        return Some(canonicalize_or_owned(&candidate));
+                    }
+                }
+            }
         }
     }
 
@@ -2203,7 +2233,11 @@ fn js_extension_for(path: &Path, jsx: Option<JsxEmit>) -> Option<&'static str> {
         Some("ts") => Some("js"),
         Some("tsx") => match jsx {
             Some(JsxEmit::Preserve) => Some("jsx"),
-            Some(JsxEmit::ReactNative) | None => Some("js"),
+            Some(JsxEmit::React)
+            | Some(JsxEmit::ReactJsx)
+            | Some(JsxEmit::ReactJsxDev)
+            | Some(JsxEmit::ReactNative)
+            | None => Some("js"),
         },
         _ => None,
     }
