@@ -1195,11 +1195,26 @@ impl ParserState {
                         expr = call_expr;
                     } else {
                         // expr?.prop
-                        let name = if self.is_token(SyntaxKind::PrivateIdentifier) {
+                        let is_private_identifier = self.is_token(SyntaxKind::PrivateIdentifier);
+                        let name = if is_private_identifier {
                             self.parse_private_identifier()
                         } else {
                             self.parse_identifier_name()
                         };
+
+                        // TS18030: Optional chain cannot contain private identifiers
+                        if is_private_identifier {
+                            if let Some(name_node) = self.arena.get(name) {
+                                use tsz_common::diagnostics::diagnostic_codes;
+                                self.parse_error_at(
+                                    name_node.pos,
+                                    name_node.end - name_node.pos,
+                                    "An optional chain cannot contain private identifiers.",
+                                    diagnostic_codes::AN_OPTIONAL_CHAIN_CANNOT_CONTAIN_PRIVATE_IDENTIFIERS,
+                                );
+                            }
+                        }
+
                         let end_pos = self.token_end();
 
                         expr = self.arena.add_access_expr(

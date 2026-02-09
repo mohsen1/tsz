@@ -280,3 +280,100 @@ class Foo {
         diagnostics
     );
 }
+
+/// Issue: Private identifiers as parameters
+///
+/// Expected: TS18009 (private identifiers cannot be used as parameters)
+/// Status: FIXED (2026-02-09)
+///
+/// Root cause: Parser wasn't validating private identifier usage as parameters
+/// Fix: Added validation in state_statements.rs parse_parameter
+#[test]
+fn test_private_identifier_as_parameter() {
+    // TS18009 is a PARSER error
+    let source = r#"
+class Foo {
+    method(#param: any) {}
+}
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parser_diagnostics: Vec<(u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|d| (d.code, d.message.clone()))
+        .collect();
+
+    assert!(
+        parser_diagnostics.iter().any(|(c, _)| *c == 18009),
+        "Should emit TS18009 for private identifier as parameter.\nActual errors: {:#?}",
+        parser_diagnostics
+    );
+}
+
+/// Issue: Private identifiers in variable declarations
+///
+/// Expected: TS18029 (private identifiers not allowed in variable declarations)
+/// Status: FIXED (2026-02-09)
+///
+/// Root cause: Parser wasn't validating private identifier usage in variable declarations
+/// Fix: Added validation in state_statements.rs parse_variable_declaration_with_flags
+#[test]
+fn test_private_identifier_in_variable_declaration() {
+    // TS18029 is a PARSER error
+    let source = r#"
+const #x = 1;
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parser_diagnostics: Vec<(u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|d| (d.code, d.message.clone()))
+        .collect();
+
+    assert!(
+        parser_diagnostics.iter().any(|(c, _)| *c == 18029),
+        "Should emit TS18029 for private identifier in variable declaration.\nActual errors: {:#?}",
+        parser_diagnostics
+    );
+}
+
+/// Issue: Optional chain with private identifiers
+///
+/// Expected: TS18030 (optional chain cannot contain private identifiers)
+/// Status: FIXED (2026-02-09)
+///
+/// Root cause: Parser wasn't validating private identifier usage in optional chains
+/// Fix: Added validation in state_expressions.rs when handling QuestionDotToken
+#[test]
+fn test_private_identifier_in_optional_chain() {
+    // TS18030 is a PARSER error
+    let source = r#"
+class Bar {
+    #prop = 42;
+    test() {
+        return this?.#prop;
+    }
+}
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parser_diagnostics: Vec<(u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|d| (d.code, d.message.clone()))
+        .collect();
+
+    assert!(
+        parser_diagnostics.iter().any(|(c, _)| *c == 18030),
+        "Should emit TS18030 for private identifier in optional chain.\nActual errors: {:#?}",
+        parser_diagnostics
+    );
+}
