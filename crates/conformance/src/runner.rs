@@ -310,6 +310,11 @@ impl Runner {
             {
                 let path_str = path.to_string_lossy();
 
+                // Skip .d.ts files (declaration files, not test sources)
+                if path_str.ends_with(".d.ts") || path_str.ends_with(".d.mts") {
+                    continue;
+                }
+
                 // Skip fourslash tests (language service tests with special format)
                 if path_str.contains("/fourslash/") || path_str.contains("\\fourslash\\") {
                     continue;

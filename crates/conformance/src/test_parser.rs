@@ -46,6 +46,11 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
     let mut directives = TestDirectives::default();
     let mut filenames = Vec::new();
 
+    // Strip UTF-8 BOM if present — JavaScript's \s matches BOM (U+FEFF) but Rust's
+    // regex \s does not, so without stripping, the first-line directive after a BOM
+    // would be missed, causing hash mismatches with the Node.js cache generator.
+    let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
+
     // Split content into lines
     let lines: Vec<&str> = content.lines().collect();
 
@@ -292,6 +297,22 @@ function foo() {}
         // Original casing keys should NOT exist
         assert!(!parsed.directives.options.contains_key("Target"));
         assert!(!parsed.directives.options.contains_key("Strict"));
+    }
+
+    #[test]
+    fn test_bom_directive_on_first_line() {
+        // UTF-8 BOM followed by directive on first line
+        let content = "\u{FEFF}// @strict: true\n// @module: es2015\nfunction foo() {}";
+        let parsed = parse_test_file(content).unwrap();
+        assert_eq!(
+            parsed.directives.options.get("strict"),
+            Some(&"true".to_string()),
+            "First-line directive after BOM should be parsed"
+        );
+        assert_eq!(
+            parsed.directives.options.get("module"),
+            Some(&"es2015".to_string()),
+        );
     }
 
     #[test]
