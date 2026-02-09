@@ -3084,10 +3084,23 @@ fn create_cross_file_lookup_binder(
     binder.node_symbols = file.node_symbols.clone();
     binder.scopes = file.scopes.clone();
     binder.node_scope_ids = file.node_scope_ids.clone();
+    binder.declared_modules = program.declared_modules.clone();
+    binder.shorthand_ambient_modules = program.shorthand_ambient_modules.clone();
     if let Some(exports) = program.module_exports.get(&file.file_name) {
         binder
             .module_exports
             .insert(file.file_name.clone(), exports.clone());
+    }
+    for module_name in program
+        .declared_modules
+        .iter()
+        .chain(program.shorthand_ambient_modules.iter())
+    {
+        if let Some(exports) = program.module_exports.get(module_name) {
+            binder
+                .module_exports
+                .insert(module_name.clone(), exports.clone());
+        }
     }
     binder.is_external_module = file.is_external_module;
     binder

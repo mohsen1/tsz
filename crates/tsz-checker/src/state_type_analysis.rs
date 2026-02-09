@@ -577,6 +577,10 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing type query data - propagate error
         };
 
+        if self.is_import_type_query(type_query.expr_name) {
+            return TypeId::ANY;
+        }
+
         let name_text = self.entity_name_text(type_query.expr_name);
         let is_identifier = self
             .ctx
@@ -686,6 +690,22 @@ impl<'a> CheckerState<'a> {
         }
 
         base
+    }
+
+    fn is_import_type_query(&self, expr_name: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(expr_name) else {
+            return false;
+        };
+        if node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call_expr) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        let Some(callee) = self.ctx.arena.get(call_expr.expression) else {
+            return false;
+        };
+        callee.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16
     }
 
     /// Get type of a JSX opening element.
@@ -2178,6 +2198,19 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                     return (result, Vec::new());
+                }
+
+                // If the module resolved externally but isn't part of the program,
+                // skip export member validation (treat as `any`).
+                let has_exports_table = self.ctx.binder.module_exports.contains_key(module_name)
+                    || self
+                        .resolve_cross_file_namespace_exports(module_name)
+                        .is_some();
+                if module_exists
+                    && !has_exports_table
+                    && self.ctx.resolve_import_target(module_name).is_none()
+                {
+                    return (TypeId::ANY, Vec::new());
                 }
 
                 // Export not found - emit appropriate error based on what's missing

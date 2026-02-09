@@ -793,8 +793,12 @@ impl ParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::TypeOfKeyword);
 
-        // Parse the expression name (can be qualified: x.y.z)
-        let expr_name = self.parse_entity_name();
+        // Parse the expression name (can be qualified: x.y.z or typeof import("..."))
+        let expr_name = if self.is_token(SyntaxKind::ImportKeyword) {
+            self.parse_import_expression()
+        } else {
+            self.parse_entity_name()
+        };
 
         // Parse optional type arguments for instantiation expressions: typeof Err<U>
         let type_arguments = if self.is_token(SyntaxKind::LessThanToken) {

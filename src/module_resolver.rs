@@ -1638,7 +1638,7 @@ impl ModuleResolver {
             PackageExports::String(s) => {
                 if subpath == "." {
                     let resolved = package_dir.join(s.trim_start_matches("./"));
-                    if let Some(r) = self.try_file_or_directory(&resolved) {
+                    if let Some(r) = self.try_export_target(&resolved) {
                         return Some(r);
                     }
                 }
@@ -1714,7 +1714,7 @@ impl ModuleResolver {
         match value {
             PackageExports::String(s) => {
                 let resolved = package_dir.join(s.trim_start_matches("./"));
-                self.try_file_or_directory(&resolved)
+                self.try_export_target(&resolved)
             }
             PackageExports::Conditional(cond_map) => {
                 for condition in conditions {
@@ -1911,6 +1911,35 @@ impl ModuleResolver {
             return self.try_file(&index);
         }
 
+        None
+    }
+
+    /// Resolve an exports target without Node16 extension substitution.
+    ///
+    /// Explicit extensions must exist exactly; extensionless targets follow normal lookup.
+    fn try_export_target(&self, path: &Path) -> Option<PathBuf> {
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            if split_path_extension(path).is_some() {
+                if path.is_file() {
+                    return Some(path.to_path_buf());
+                }
+                return None;
+            }
+            if self.allow_arbitrary_extensions {
+                if let Some(resolved) = try_arbitrary_extension_declaration(path, extension) {
+                    return Some(resolved);
+                }
+            }
+            return None;
+        }
+
+        if let Some(resolved) = self.try_file(path) {
+            return Some(resolved);
+        }
+        if path.is_dir() {
+            let index = path.join("index");
+            return self.try_file(&index);
+        }
         None
     }
 
@@ -3472,6 +3501,34 @@ mod tests {
             }
             Err(_) => {} // OK in some environments
         }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_exports_js_target_does_not_substitute_dts() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_exports_js_target");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+
+        fs::write(
+            dir.join("node_modules/pkg/package.json"),
+            r#"{"name":"pkg","version":"0.0.1","exports":"./entrypoint.js"}"#,
+        )
+        .unwrap();
+        fs::write(dir.join("node_modules/pkg/entrypoint.d.ts"), "export {};").unwrap();
+        fs::write(dir.join("src/index.ts"), "import * as p from 'pkg';").unwrap();
+
+        let mut options = ResolvedCompilerOptions::default();
+        options.module_resolution = Some(ModuleResolutionKind::Node16);
+        options.resolve_package_json_exports = true;
+
+        let mut resolver = ModuleResolver::new(&options);
+        let result = resolver.resolve("pkg", &dir.join("src/index.ts"), Span::new(0, 3));
+
+        assert!(matches!(result, Err(ResolutionFailure::NotFound { .. })));
 
         let _ = fs::remove_dir_all(&dir);
     }

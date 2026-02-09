@@ -4,9 +4,10 @@
 //! configured in tsconfig.json don't resolve to actual files.
 
 use crate::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
-use crate::driver::{resolve_module_specifier, ModuleResolutionCache};
+use crate::driver::{ModuleResolutionCache, resolve_module_specifier};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+use tsz::emitter::ModuleKind;
 
 /// Helper function to create a test directory structure
 fn create_test_structure() -> TempDir {
@@ -14,7 +15,10 @@ fn create_test_structure() -> TempDir {
 }
 
 /// Helper function to create compiler options with path mappings
-fn create_options_with_paths(base_url: PathBuf, paths: Vec<PathMapping>) -> ResolvedCompilerOptions {
+fn create_options_with_paths(
+    base_url: PathBuf,
+    paths: Vec<PathMapping>,
+) -> ResolvedCompilerOptions {
     ResolvedCompilerOptions {
         base_url: Some(base_url),
         paths: Some(paths),
@@ -101,8 +105,7 @@ mod ts2307_path_mapping_tests {
 
         let resolved_path = result.unwrap();
         assert!(
-            resolved_path.ends_with("utils/helper.ts") ||
-            resolved_path.ends_with("utils/helper"),  // Extension might be added
+            resolved_path.ends_with("utils/helper.ts") || resolved_path.ends_with("utils/helper"), // Extension might be added
             "Resolved path should point to the utils/helper.ts file"
         );
     }
@@ -127,7 +130,7 @@ mod ts2307_path_mapping_tests {
         // Try to resolve a module that doesn't match the path mapping
         let result = resolve_module_specifier(
             &base_url.join("src/index.ts"),
-            "lodash",  // Bare specifier, should try node_modules
+            "lodash", // Bare specifier, should try node_modules
             &options,
             &base_url,
             &mut cache,
@@ -136,6 +139,44 @@ mod ts2307_path_mapping_tests {
         // Should attempt node_modules resolution (likely return None in test environment)
         // The important thing is it doesn't return early with None from path mapping
         // We can't easily test the full behavior without setting up node_modules
+    }
+
+    #[test]
+    fn test_exports_js_target_does_not_substitute_dts() {
+        let temp_dir = create_test_structure();
+        let base_dir = temp_dir.path().to_path_buf();
+
+        let pkg_dir = base_dir.join("node_modules").join("pkg");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::create_dir_all(base_dir.join("src")).unwrap();
+
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"pkg","version":"0.0.1","exports":"./entrypoint.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(pkg_dir.join("entrypoint.d.ts"), "export {};").unwrap();
+        std::fs::write(base_dir.join("src/index.ts"), "import * as p from 'pkg';").unwrap();
+
+        let mut options = ResolvedCompilerOptions::default();
+        options.module_resolution = Some(ModuleResolutionKind::Node16);
+        options.resolve_package_json_exports = true;
+        options.printer.module = ModuleKind::Node16;
+        options.checker.module = ModuleKind::Node16;
+
+        let mut cache = ModuleResolutionCache::new();
+        let result = resolve_module_specifier(
+            &base_dir.join("src/index.ts"),
+            "pkg",
+            &options,
+            &base_dir,
+            &mut cache,
+        );
+
+        assert!(
+            result.is_none(),
+            "exports target with .js should not substitute to .d.ts"
+        );
     }
 
     #[test]
