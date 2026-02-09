@@ -158,12 +158,55 @@ impl<'a> Printer<'a> {
 
     pub(super) fn emit_comma_separated(&mut self, nodes: &[NodeIndex]) {
         let mut first = true;
+        let mut prev_end: Option<u32> = None;
         for &idx in nodes {
             if !first {
                 self.write(", ");
             }
             first = false;
+            // Emit comments between the previous node and this one.
+            // This handles comments like: func(a, /*comment*/ b, c)
+            if let Some(prev_end_pos) = prev_end {
+                if let Some(node) = self.arena.get(idx) {
+                    // Only emit comments that haven't been emitted yet
+                    self.emit_unemitted_comments_between(prev_end_pos, node.pos);
+                }
+            }
+            if let Some(node) = self.arena.get(idx) {
+                prev_end = Some(node.end);
+            }
             self.emit(idx);
+        }
+    }
+
+    /// Emit comments between two positions that haven't been emitted yet.
+    /// This is used for comments in expression contexts (e.g., between function arguments).
+    fn emit_unemitted_comments_between(&mut self, from_pos: u32, to_pos: u32) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        // Find comments in the range [from_pos, to_pos) that haven't been emitted yet
+        while self.comment_emit_idx < self.all_comments.len() {
+            let c = &self.all_comments[self.comment_emit_idx];
+            // Only emit if the comment is within our range and after from_pos
+            if c.pos >= from_pos && c.end <= to_pos {
+                let comment_text = safe_slice::slice(text, c.pos as usize, c.end as usize);
+                if !comment_text.is_empty() {
+                    self.write(comment_text);
+                }
+                self.comment_emit_idx += 1;
+            } else if c.pos >= to_pos {
+                // Comment is past our target position, stop
+                break;
+            } else {
+                // Comment is before our range or already emitted, skip
+                self.comment_emit_idx += 1;
+            }
         }
     }
 
@@ -245,6 +288,25 @@ impl<'a> Printer<'a> {
                         pos += 1;
                     }
                 }
+                _ => break,
+            }
+        }
+        pos as u32
+    }
+
+    /// Scan forward from `pos` past whitespace only (preserving comments).
+    /// Used to find the start of a statement while preserving comments
+    /// that may belong to nested expressions.
+    pub fn skip_whitespace_forward(&self, start: u32, end: u32) -> u32 {
+        let Some(text) = self.source_text else {
+            return start;
+        };
+        let bytes = text.as_bytes();
+        let mut pos = start as usize;
+        let end = std::cmp::min(end as usize, bytes.len());
+        while pos < end {
+            match bytes[pos] {
+                b' ' | b'\t' | b'\r' | b'\n' => pos += 1,
                 _ => break,
             }
         }
