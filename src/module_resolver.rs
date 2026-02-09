@@ -1152,7 +1152,9 @@ impl ModuleResolver {
                     span: specifier_span,
                 });
             }
-            // If resolution fails, fall through to NotFound (TS2307)
+            // When resolution fails and we can't tell if the import is ES-style
+            // (needs TS2834) or CJS-style require (needs TS2307), fall through.
+            // Note: import = require("./foo") in .mts is CJS-style and should get TS2307.
         }
 
         if let Some(resolved) = self.try_file_or_directory(&candidate) {
@@ -1625,7 +1627,8 @@ impl ModuleResolver {
                     });
                 }
             }
-            if let Some(resolved) = self.try_file_or_directory(&main_path) {
+            // Try the main path as a file (with extension probing)
+            if let Some(resolved) = self.try_file(&main_path) {
                 return Ok(ResolvedModule {
                     resolved_path: resolved.clone(),
                     is_external: true,
@@ -1633,6 +1636,20 @@ impl ModuleResolver {
                     original_specifier: original_specifier.to_string(),
                     extension: ModuleExtension::from_path(&resolved),
                 });
+            }
+            // For main field targets that are directories, only try index files.
+            // Do NOT read nested package.json — main field resolution is non-recursive.
+            if main_path.is_dir() {
+                let index = main_path.join("index");
+                if let Some(resolved) = self.try_file(&index) {
+                    return Ok(ResolvedModule {
+                        resolved_path: resolved.clone(),
+                        is_external: true,
+                        package_name: Some(package_json.name.clone().unwrap_or_default()),
+                        original_specifier: original_specifier.to_string(),
+                        extension: ModuleExtension::from_path(&resolved),
+                    });
+                }
             }
         }
 

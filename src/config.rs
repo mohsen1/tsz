@@ -267,6 +267,9 @@ pub struct ResolvedCompilerOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JsxEmit {
     Preserve,
+    React,
+    ReactJsx,
+    ReactJsxDev,
     ReactNative,
 }
 
@@ -865,7 +868,10 @@ fn parse_jsx_emit(value: &str) -> Result<JsxEmit> {
     let normalized = normalize_option(value);
     let jsx = match normalized.as_str() {
         "preserve" => JsxEmit::Preserve,
-        "reactnative" => JsxEmit::ReactNative,
+        "react" => JsxEmit::React,
+        "react-jsx" | "reactjsx" => JsxEmit::ReactJsx,
+        "react-jsxdev" | "reactjsxdev" => JsxEmit::ReactJsxDev,
+        "reactnative" | "react-native" => JsxEmit::ReactNative,
         _ => bail!("unsupported compilerOptions.jsx '{}'", value),
     };
 
