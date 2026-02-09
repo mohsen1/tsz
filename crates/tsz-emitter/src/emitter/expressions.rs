@@ -271,9 +271,30 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.write("[");
-        self.emit_comma_separated(&array.elements.nodes);
-        self.write("]");
+        if array.elements.nodes.is_empty() {
+            self.write("[]");
+            return;
+        }
+
+        // Preserve multi-line formatting from source
+        if self.is_single_line(node) || array.elements.nodes.len() == 1 {
+            self.write("[");
+            self.emit_comma_separated(&array.elements.nodes);
+            self.write("]");
+        } else {
+            self.write("[");
+            self.write_line();
+            self.increase_indent();
+            for (i, &elem) in array.elements.nodes.iter().enumerate() {
+                self.emit(elem);
+                if i < array.elements.nodes.len() - 1 {
+                    self.write(",");
+                }
+                self.write_line();
+            }
+            self.decrease_indent();
+            self.write("]");
+        }
     }
 
     pub(super) fn emit_object_literal(&mut self, node: &Node) {
