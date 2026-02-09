@@ -590,4 +590,15 @@ impl<'a> Printer<'a> {
         self.write("debugger");
         self.write_semicolon();
     }
+
+    pub(super) fn emit_with_statement(&mut self, node: &Node) {
+        let Some(with_stmt) = self.arena.get_with_statement(node) else {
+            return;
+        };
+
+        self.write("with (");
+        self.emit(with_stmt.expression);
+        self.write(") ");
+        self.emit(with_stmt.then_statement);
+    }
 }

@@ -1699,6 +1699,9 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::DEBUGGER_STATEMENT => {
                 self.emit_debugger_statement();
             }
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                self.emit_with_statement(node);
+            }
 
             // Declarations
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
