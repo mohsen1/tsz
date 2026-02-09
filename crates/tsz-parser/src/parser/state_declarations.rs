@@ -145,12 +145,38 @@ impl ParserState {
             && !self.look_ahead_has_line_break_after_keyword()
         {
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "Modifiers cannot appear here.",
-                diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
-            );
+
+            // Save the modifier name for error message
+            let modifier_text = self.scanner.get_token_text().to_string();
+
+            // Check if this is an index signature - peek ahead to determine the right error
+            let snapshot = self.scanner.save_state();
+            let current = self.current_token;
             self.next_token();
-            if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_index_signature() {
+            let is_index_signature =
+                self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_index_signature();
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+
+            if is_index_signature {
+                // TS1071: '{0}' modifier cannot appear on an index signature.
+                self.parse_error_at_current_token(
+                    &format!(
+                        "'{}' modifier cannot appear on an index signature.",
+                        modifier_text
+                    ),
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_INDEX_SIGNATURE,
+                );
+            } else {
+                // TS1184: Modifiers cannot appear here.
+                self.parse_error_at_current_token(
+                    "Modifiers cannot appear here.",
+                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                );
+            }
+
+            self.next_token();
+            if is_index_signature {
                 return self.parse_index_signature_with_modifiers(None, start_pos);
             }
         }

@@ -13,7 +13,7 @@
 //!
 //! # Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use crate::type_queries::*;
 //!
 //! // Check if a type is callable
@@ -663,7 +663,7 @@ where
 // These are SHALLOW queries that do NOT resolve Lazy/Ref automatically.
 // Checker code must resolve types before calling these:
 //
-// ```rust
+// ```rust,ignore
 // // 1. Resolve the type first
 // let resolved_id = self.solver.resolve_type(type_id);
 //
@@ -1000,7 +1000,7 @@ pub enum ConstructorTypeKind {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use crate::type_queries::{classify_constructor_type, ConstructorTypeKind};
 ///
 /// match classify_constructor_type(db, type_id) {

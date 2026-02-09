@@ -108,7 +108,7 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// // Fast check
     /// let mut fast = FastTracer;
     /// let ok = checker.check_subtype_with_tracer(source, target, &mut fast);

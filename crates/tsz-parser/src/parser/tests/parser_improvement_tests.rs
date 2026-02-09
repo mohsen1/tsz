@@ -3,6 +3,38 @@
 use crate::parser::ParserState;
 
 #[test]
+fn test_index_signature_with_modifier_emits_ts1071() {
+    // Index signature with public modifier should emit TS1071, not TS1184
+    // TS1071: '{0}' modifier cannot appear on an index signature.
+    // TS1184: Modifiers cannot appear here. (too generic)
+    let source = r#"
+interface I {
+  public [a: string]: number;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+
+    // Should emit TS1071 for modifier on index signature
+    let ts1071_count = diagnostics.iter().filter(|d| d.code == 1071).count();
+    assert_eq!(
+        ts1071_count, 1,
+        "Expected 1 TS1071 error for modifier on index signature, got {}",
+        ts1071_count
+    );
+
+    // Should NOT emit the generic TS1184
+    let ts1184_count = diagnostics.iter().filter(|d| d.code == 1184).count();
+    assert_eq!(
+        ts1184_count, 0,
+        "Expected no TS1184 errors (should be TS1071 instead), got {}",
+        ts1184_count
+    );
+}
+
+#[test]
 #[ignore = "Parser hangs on malformed arrow function with line break - needs investigation"]
 fn test_arrow_function_with_line_break_no_false_positive() {
     // Arrow function where => is missing but there's a line break
