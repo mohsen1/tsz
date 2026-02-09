@@ -286,6 +286,7 @@ impl<'a> CheckerState<'a> {
                 target_type,
             } => {
                 // TS2739: Type 'A' is missing the following properties from type 'B': x, y, z
+                // TS2740: Type 'A' is missing the following properties from type 'B': x, y, z, and N more.
                 let src_str = self.format_type(*source_type);
                 let tgt_str = self.format_type(*target_type);
                 let prop_list: Vec<String> = property_names
@@ -293,26 +294,34 @@ impl<'a> CheckerState<'a> {
                     .take(5)
                     .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
                     .collect();
-                let props_str = if property_names.len() > 5 {
-                    format!(
-                        "{}, and {} more.",
-                        prop_list.join(", "),
-                        property_names.len() - 5
+                let props_joined = prop_list.join(", ");
+                // Use TS2740 when there are 5+ missing properties (tsc behavior)
+                if property_names.len() > 5 {
+                    let more_count = (property_names.len() - 5).to_string();
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                        &[&src_str, &tgt_str, &props_joined, &more_count],
+                    );
+                    Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                     )
                 } else {
-                    prop_list.join(", ")
-                };
-                let message = format_message(
-                    diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                    &[&src_str, &tgt_str, &props_str],
-                );
-                Diagnostic::error(
-                    file_name,
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                )
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                        &[&src_str, &tgt_str, &props_joined],
+                    );
+                    Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                    )
+                }
             }
 
             SubtypeFailureReason::PropertyTypeMismatch {
