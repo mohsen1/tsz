@@ -316,6 +316,13 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Skip override checking for private identifiers (#foo)
+                // Private fields are scoped to the class that declares them and
+                // do NOT participate in the inheritance hierarchy
+                if member_name.starts_with('#') {
+                    continue;
+                }
+
                 // Static members can only override static members, instance only instance
                 if is_static != base_is_static {
                     continue;

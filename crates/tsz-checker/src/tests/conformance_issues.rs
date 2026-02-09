@@ -8,38 +8,19 @@
 //!
 //! See docs/conformance-*.md for full context.
 
-use crate::checker::context::CheckerOptions;
-use crate::checker::state::CheckerState;
-use crate::test_fixtures::TestContext;
-use std::sync::Arc;
+use crate::context::CheckerOptions;
+use crate::state::CheckerState;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-/// Global type mocks to avoid TS2318 errors
-const GLOBAL_TYPE_MOCKS: &str = r#"
-interface Array<T> {}
-interface String {}
-interface Boolean {}
-interface Number {}
-interface Object {}
-interface Function {}
-interface Promise<T> {}
-interface Error { message?: string; }
-declare var console: { log: any };
-"#;
-
 /// Helper to compile TypeScript and get diagnostics
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let source = format!("{}\n{}", GLOBAL_TYPE_MOCKS, source);
-
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+    binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -49,19 +30,6 @@ fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
         "test.ts".to_string(),
         CheckerOptions::default(),
     );
-
-    // Set lib contexts
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
 
     checker.check_source_file(root);
 
@@ -375,5 +343,83 @@ class Bar {
         parser_diagnostics.iter().any(|(c, _)| *c == 18030),
         "Should emit TS18030 for private identifier in optional chain.\nActual errors: {:#?}",
         parser_diagnostics
+    );
+}
+
+/// Issue: TS18016 checker validation - private identifier outside class
+///
+/// Expected: TS18013 + TS18016 (both grammar and semantic errors)
+/// Status: FIXED (2026-02-09)
+///
+/// Root cause: Checker didn't emit TS18016 for private identifiers outside class
+/// Fix: Added grammar check in get_type_of_private_property_access
+#[test]
+fn test_ts18016_private_identifier_outside_class() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Foo {
+    #bar: number;
+}
+
+let f: Foo;
+let x = f.#bar;  // Outside class - should error TS18013 + TS18016
+        "#,
+    );
+
+    // Filter out TS2318 (missing global types) which are noise for this test
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    // Should emit TS18016 (grammar error - private identifier outside class)
+    assert!(
+        has_error(&relevant_diagnostics, 18016),
+        "Should emit TS18016 for private identifier outside class body.\nActual errors: {:#?}",
+        relevant_diagnostics
+    );
+
+    // Should also emit TS18013 (semantic error - property not accessible)
+    assert!(
+        has_error(&relevant_diagnostics, 18013),
+        "Should emit TS18013 for private identifier access outside class.\nActual errors: {:#?}",
+        relevant_diagnostics
+    );
+}
+
+/// Issue: TS2416 false positive for private field "overrides"
+///
+/// Expected: Private fields with same name in child class should NOT emit TS2416
+/// Status: FIXED (2026-02-09)
+///
+/// Root cause: Override checking didn't skip private identifiers
+/// Fix: Added check in class_checker.rs to skip override validation for names starting with '#'
+#[test]
+fn test_private_field_no_override_error() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Parent {
+    #foo: number;
+}
+
+class Child extends Parent {
+    #foo: string;  // Should NOT emit TS2416 - private fields don't participate in inheritance
+}
+        "#,
+    );
+
+    // Filter out TS2318 (missing global types)
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    // Should NOT emit TS2416 (incompatible override) for private fields
+    assert!(
+        !has_error(&relevant_diagnostics, 2416),
+        "Should NOT emit TS2416 for private field with same name in child class.\nActual errors: {:#?}",
+        relevant_diagnostics
     );
 }

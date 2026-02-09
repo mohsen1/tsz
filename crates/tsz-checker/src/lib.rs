@@ -97,6 +97,9 @@ pub mod union_type;
 
 // Tests that don't depend on root crate's test_fixtures
 #[cfg(test)]
+#[path = "tests/conformance_issues.rs"]
+mod conformance_issues;
+#[cfg(test)]
 #[path = "tests/control_flow_tests.rs"]
 mod control_flow_tests;
 #[cfg(test)]
