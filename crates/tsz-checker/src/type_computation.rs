@@ -49,51 +49,20 @@ impl<'a> CheckerState<'a> {
         // Get condition type for type computation
         let condition_type = self.get_type_of_node(cond.condition);
 
-        // Apply contextual typing to each branch and check assignability
+        // Apply contextual typing to each branch for better inference,
+        // but don't check assignability here - that happens at the call site.
+        // This allows `cond ? "a" : "b"` to infer as `"a" | "b"` and then
+        // the union is checked against the contextual type.
         let prev_context = self.ctx.contextual_type;
-        let (when_true, when_false) = if let Some(contextual) = prev_context {
-            // Check whenTrue branch against contextual type
-            self.ctx.contextual_type = Some(contextual);
-            let when_true = self.get_type_of_node(cond.when_true);
 
-            // Emit TS2322 if whenTrue is not assignable to contextual type
-            if contextual != TypeId::ANY
-                && contextual != TypeId::UNKNOWN
-                && !self.type_contains_error(contextual)
-                && !self.is_assignable_to(when_true, contextual)
-            {
-                self.error_type_not_assignable_with_reason_at(
-                    when_true,
-                    contextual,
-                    cond.when_true,
-                );
-            }
+        // Compute branch types with contextual type for inference
+        self.ctx.contextual_type = prev_context;
+        let when_true = self.get_type_of_node(cond.when_true);
 
-            // Check whenFalse branch against contextual type
-            self.ctx.contextual_type = Some(contextual);
-            let when_false = self.get_type_of_node(cond.when_false);
+        self.ctx.contextual_type = prev_context;
+        let when_false = self.get_type_of_node(cond.when_false);
 
-            // Emit TS2322 if whenFalse is not assignable to contextual type
-            if contextual != TypeId::ANY
-                && contextual != TypeId::UNKNOWN
-                && !self.type_contains_error(contextual)
-                && !self.is_assignable_to(when_false, contextual)
-            {
-                self.error_type_not_assignable_with_reason_at(
-                    when_false,
-                    contextual,
-                    cond.when_false,
-                );
-            }
-
-            self.ctx.contextual_type = prev_context;
-            (when_true, when_false)
-        } else {
-            // No contextual type - just compute branch types
-            let when_true = self.get_type_of_node(cond.when_true);
-            let when_false = self.get_type_of_node(cond.when_false);
-            (when_true, when_false)
-        };
+        self.ctx.contextual_type = prev_context;
 
         // Use Solver API for type computation (Solver-First architecture)
         expression_ops::compute_conditional_expression_type(
