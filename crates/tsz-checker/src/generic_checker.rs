@@ -136,19 +136,27 @@ impl<'a> CheckerState<'a> {
 
         let type_params = self.get_type_params_for_symbol(sym_id);
         if type_params.is_empty() {
-            if let Some(&arg_idx) = type_args_list.nodes.first() {
-                let lib_binders = self.get_lib_binders();
-                let name = self
-                    .ctx
-                    .binder
-                    .get_symbol_with_libs(sym_id, &lib_binders)
-                    .map(|s| s.escaped_name.clone())
-                    .unwrap_or_else(|| "<unknown>".to_string());
-                self.error_at_node_msg(
-                    arg_idx,
-                    crate::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
-                    &[name.as_str()],
-                );
+            // Before emitting TS2315, check if this symbol's declaration actually has
+            // type parameters. Cross-arena symbols (e.g., lib types like Awaited<T>)
+            // may fail to resolve type parameters because their declaration is in a
+            // different arena. In that case, check the declaration directly to avoid
+            // false positives.
+            let has_type_params_in_decl = self.symbol_declaration_has_type_parameters(sym_id);
+            if !has_type_params_in_decl {
+                if let Some(&arg_idx) = type_args_list.nodes.first() {
+                    let lib_binders = self.get_lib_binders();
+                    let name = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(sym_id, &lib_binders)
+                        .map(|s| s.escaped_name.clone())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    self.error_at_node_msg(
+                        arg_idx,
+                        crate::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                        &[name.as_str()],
+                    );
+                }
             }
             return;
         }
@@ -279,5 +287,71 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Check if a symbol's declaration has type parameters, even if they couldn't be
+    /// resolved via get_type_params_for_symbol (e.g., cross-arena lib types).
+    fn symbol_declaration_has_type_parameters(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders);
+        let Some(symbol) = symbol else {
+            return false;
+        };
+
+        // Check the value declaration and all declarations for type parameters
+        let decl_indices: Vec<_> = if !symbol.value_declaration.is_none() {
+            std::iter::once(symbol.value_declaration)
+                .chain(symbol.declarations.iter().copied())
+                .collect()
+        } else {
+            symbol.declarations.clone()
+        };
+
+        for decl_idx in decl_indices {
+            // Try current arena first
+            if let Some(node) = self.ctx.arena.get(decl_idx) {
+                if let Some(ta) = self.ctx.arena.get_type_alias(node) {
+                    return ta.type_parameters.is_some();
+                }
+                if let Some(iface) = self.ctx.arena.get_interface(node) {
+                    return iface.type_parameters.is_some();
+                }
+                if let Some(class) = self.ctx.arena.get_class(node) {
+                    return class.type_parameters.is_some();
+                }
+            }
+
+            // Try cross-arena (lib files)
+            if let Some(decl_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+                if let Some(node) = decl_arena.get(decl_idx) {
+                    if let Some(ta) = decl_arena.get_type_alias(node) {
+                        return ta.type_parameters.is_some();
+                    }
+                    if let Some(iface) = decl_arena.get_interface(node) {
+                        return iface.type_parameters.is_some();
+                    }
+                    if let Some(class) = decl_arena.get_class(node) {
+                        return class.type_parameters.is_some();
+                    }
+                }
+            }
+
+            // Try declaration_arenas
+            if let Some(decl_arena) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                if let Some(node) = decl_arena.get(decl_idx) {
+                    if let Some(ta) = decl_arena.get_type_alias(node) {
+                        return ta.type_parameters.is_some();
+                    }
+                    if let Some(iface) = decl_arena.get_interface(node) {
+                        return iface.type_parameters.is_some();
+                    }
+                    if let Some(class) = decl_arena.get_class(node) {
+                        return class.type_parameters.is_some();
+                    }
+                }
+            }
+        }
+
+        false
     }
 }
