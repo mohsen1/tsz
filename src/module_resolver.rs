@@ -827,7 +827,11 @@ impl ModuleResolver {
         }
 
         // Step 3: Handle relative imports
-        if specifier.starts_with("./") || specifier.starts_with("../") {
+        if specifier.starts_with("./")
+            || specifier.starts_with("../")
+            || specifier == "."
+            || specifier == ".."
+        {
             return self.resolve_relative(
                 specifier,
                 containing_dir,
@@ -977,9 +981,13 @@ impl ModuleResolver {
     ) -> Option<String> {
         match value {
             PackageExports::String(s) => Some(s.clone()),
-            PackageExports::Conditional(cond_map) => {
-                for condition in conditions {
-                    if let Some(nested) = cond_map.get(condition) {
+            PackageExports::Conditional(cond_entries) => {
+                // Iterate condition map entries in JSON key order
+                for (key, nested) in cond_entries {
+                    if conditions.iter().any(|c| c == key) {
+                        if matches!(nested, PackageExports::Null) {
+                            return None;
+                        }
                         if let Some(result) =
                             self.resolve_export_target_to_string(nested, conditions)
                         {
@@ -989,7 +997,7 @@ impl ModuleResolver {
                 }
                 None
             }
-            PackageExports::Map(_) => None, // Subpath maps not valid here
+            PackageExports::Map(_) | PackageExports::Null => None, // Subpath maps not valid here
         }
     }
 
@@ -1312,6 +1320,11 @@ impl ModuleResolver {
                         &conditions,
                     ) {
                         Ok(resolved) => return Ok(resolved),
+                        Err(e @ ResolutionFailure::ModuleResolutionModeMismatch { .. }) => {
+                            // Package found with exports field but resolution failed.
+                            // exports is authoritative — do not continue searching.
+                            return Err(e);
+                        }
                         Err(_) => {
                             // Continue searching in parent directories
                         }
@@ -1479,22 +1492,35 @@ impl ModuleResolver {
             let subpath_key = format!("./{}", subpath);
 
             // Try exports field first (Node16+)
-            if self.resolve_package_json_exports
-                && let Some(exports) = &package_json.exports
-                && let Some(resolved) = self.resolve_package_exports_with_conditions(
-                    package_dir,
-                    exports,
-                    &subpath_key,
-                    conditions,
-                )
-            {
-                return Ok(ResolvedModule {
-                    resolved_path: resolved.clone(),
-                    is_external: true,
-                    package_name: Some(package_json.name.clone().unwrap_or_default()),
-                    original_specifier: original_specifier.to_string(),
-                    extension: ModuleExtension::from_path(&resolved),
-                });
+            if self.resolve_package_json_exports {
+                if let Some(exports) = &package_json.exports {
+                    if let Some(resolved) = self.resolve_package_exports_with_conditions(
+                        package_dir,
+                        exports,
+                        &subpath_key,
+                        conditions,
+                    ) {
+                        return Ok(ResolvedModule {
+                            resolved_path: resolved.clone(),
+                            is_external: true,
+                            package_name: Some(package_json.name.clone().unwrap_or_default()),
+                            original_specifier: original_specifier.to_string(),
+                            extension: ModuleExtension::from_path(&resolved),
+                        });
+                    }
+                    // In Node16/NodeNext, exports field is authoritative for subpaths.
+                    // Bundler mode is more permissive and allows fallback.
+                    if matches!(
+                        self.resolution_kind,
+                        ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+                    ) {
+                        return Err(ResolutionFailure::ModuleResolutionModeMismatch {
+                            specifier: original_specifier.to_string(),
+                            containing_file: containing_file.to_string(),
+                            span: specifier_span,
+                        });
+                    }
+                }
             }
 
             // Try typesVersions field
@@ -1533,18 +1559,36 @@ impl ModuleResolver {
         // No subpath - resolve package entry point
 
         // Try exports "." field first (Node16+)
-        if self.resolve_package_json_exports
-            && let Some(exports) = &package_json.exports
-            && let Some(resolved) =
-                self.resolve_package_exports_with_conditions(package_dir, exports, ".", conditions)
-        {
-            return Ok(ResolvedModule {
-                resolved_path: resolved.clone(),
-                is_external: true,
-                package_name: Some(package_json.name.clone().unwrap_or_default()),
-                original_specifier: original_specifier.to_string(),
-                extension: ModuleExtension::from_path(&resolved),
-            });
+        if self.resolve_package_json_exports {
+            if let Some(exports) = &package_json.exports {
+                if let Some(resolved) = self.resolve_package_exports_with_conditions(
+                    package_dir,
+                    exports,
+                    ".",
+                    conditions,
+                ) {
+                    return Ok(ResolvedModule {
+                        resolved_path: resolved.clone(),
+                        is_external: true,
+                        package_name: Some(package_json.name.clone().unwrap_or_default()),
+                        original_specifier: original_specifier.to_string(),
+                        extension: ModuleExtension::from_path(&resolved),
+                    });
+                }
+                // In Node16/NodeNext, exports field is authoritative.
+                // Do NOT fall through to types/main/index — emit TS2792.
+                // Bundler mode is more permissive and allows fallback.
+                if matches!(
+                    self.resolution_kind,
+                    ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+                ) {
+                    return Err(ResolutionFailure::ModuleResolutionModeMismatch {
+                        specifier: original_specifier.to_string(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    });
+                }
+            }
         }
 
         // Try typesVersions field for index
@@ -1714,22 +1758,27 @@ impl ModuleResolver {
 
                 None
             }
-            PackageExports::Conditional(cond_map) => {
-                // Try conditions in the provided order
-                for condition in conditions {
-                    if let Some(value) = cond_map.get(condition)
-                        && let Some(resolved) = self.resolve_package_exports_with_conditions(
+            PackageExports::Conditional(cond_entries) => {
+                // Iterate condition map entries in JSON key order (not our conditions order)
+                for (key, value) in cond_entries {
+                    if conditions.iter().any(|c| c == key) {
+                        // null means explicitly blocked - stop here
+                        if matches!(value, PackageExports::Null) {
+                            return None;
+                        }
+                        if let Some(resolved) = self.resolve_package_exports_with_conditions(
                             package_dir,
                             value,
                             subpath,
                             conditions,
-                        )
-                    {
-                        return Some(resolved);
+                        ) {
+                            return Some(resolved);
+                        }
                     }
                 }
                 None
             }
+            PackageExports::Null => None,
         }
     }
 
@@ -1745,21 +1794,26 @@ impl ModuleResolver {
                 let resolved = package_dir.join(s.trim_start_matches("./"));
                 self.try_export_target(&resolved)
             }
-            PackageExports::Conditional(cond_map) => {
-                for condition in conditions {
-                    if let Some(nested) = cond_map.get(condition)
-                        && let Some(resolved) = self.resolve_export_value_with_conditions(
+            PackageExports::Conditional(cond_entries) => {
+                // Iterate condition map entries in JSON key order
+                for (key, nested) in cond_entries {
+                    if conditions.iter().any(|c| c == key) {
+                        // null means explicitly blocked - stop here
+                        if matches!(nested, PackageExports::Null) {
+                            return None;
+                        }
+                        if let Some(resolved) = self.resolve_export_value_with_conditions(
                             package_dir,
                             nested,
                             conditions,
-                        )
-                    {
-                        return Some(resolved);
+                        ) {
+                            return Some(resolved);
+                        }
                     }
                 }
                 None
             }
-            PackageExports::Map(_) => None,
+            PackageExports::Map(_) | PackageExports::Null => None,
         }
     }
 
@@ -1969,6 +2023,14 @@ impl ModuleResolver {
             if split_path_extension(path).is_some() {
                 if path.is_file() {
                     return Some(path.to_path_buf());
+                }
+                // For JS export targets, try declaration substitution
+                if let Some(rewritten) = node16_extension_substitution(path, extension) {
+                    for candidate in &rewritten {
+                        if candidate.is_file() {
+                            return Some(candidate.clone());
+                        }
+                    }
                 }
                 return None;
             }
@@ -2513,12 +2575,85 @@ pub struct PackageJson {
 }
 
 /// Package exports field can be a string, map, or conditional
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(untagged)]
+///
+/// Map variant: keys start with "." (subpath patterns like ".", "./foo")
+/// Conditional variant: keys don't start with "." (condition names like "import", "default")
+///   Uses Vec to preserve JSON key order (required for correct condition matching)
+#[derive(Debug, Clone)]
 pub enum PackageExports {
     String(String),
     Map(FxHashMap<String, PackageExports>),
-    Conditional(FxHashMap<String, PackageExports>),
+    Conditional(Vec<(String, PackageExports)>),
+    /// null in JSON — indicates an explicitly blocked export
+    Null,
+}
+
+impl<'de> serde::Deserialize<'de> for PackageExports {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de;
+
+        struct PackageExportsVisitor;
+
+        impl<'de> de::Visitor<'de> for PackageExportsVisitor {
+            type Value = PackageExports;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a string, object, or null")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PackageExports::String(v.to_string()))
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PackageExports::Null)
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(PackageExports::Null)
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let mut map_entries = FxHashMap::default();
+                let mut cond_entries = Vec::new();
+                let mut is_subpath_map = None;
+
+                while let Some((key, value)) = map.next_entry::<String, PackageExports>()? {
+                    if is_subpath_map.is_none() {
+                        is_subpath_map = Some(key.starts_with('.'));
+                    }
+                    if is_subpath_map == Some(true) {
+                        map_entries.insert(key, value);
+                    } else {
+                        cond_entries.push((key, value));
+                    }
+                }
+
+                if is_subpath_map.unwrap_or(false) {
+                    Ok(PackageExports::Map(map_entries))
+                } else {
+                    Ok(PackageExports::Conditional(cond_entries))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(PackageExportsVisitor)
+    }
 }
 
 #[cfg(test)]
@@ -3560,7 +3695,7 @@ mod tests {
     }
 
     #[test]
-    fn test_exports_js_target_does_not_substitute_dts() {
+    fn test_exports_js_target_substitutes_dts() {
         use std::fs;
         let dir = std::env::temp_dir().join("tsz_test_exports_js_target");
         let _ = fs::remove_dir_all(&dir);
@@ -3582,7 +3717,11 @@ mod tests {
         let mut resolver = ModuleResolver::new(&options);
         let result = resolver.resolve("pkg", &dir.join("src/index.ts"), Span::new(0, 3));
 
-        assert!(matches!(result, Err(ResolutionFailure::NotFound { .. })));
+        // TypeScript resolves export targets with declaration substitution:
+        // exports: "./entrypoint.js" → finds entrypoint.d.ts
+        let resolved =
+            result.expect("Expected exports .js target to resolve via .d.ts substitution");
+        assert!(resolved.resolved_path.ends_with("entrypoint.d.ts"));
 
         let _ = fs::remove_dir_all(&dir);
     }

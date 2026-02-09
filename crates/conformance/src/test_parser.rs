@@ -165,7 +165,10 @@ pub fn filter_incompatible_module_resolution_variants(
             let module = options.get("module").map(|v| normalize_value(v));
 
             match module_resolution.as_deref() {
-                Some("node16") => module.as_deref().map(|m| m == "node16").unwrap_or(true),
+                Some("node16") => module
+                    .as_deref()
+                    .map(|m| matches!(m, "node16" | "node18" | "node20"))
+                    .unwrap_or(true),
                 Some("nodenext") => module.as_deref().map(|m| m == "nodenext").unwrap_or(true),
                 _ => true,
             }
