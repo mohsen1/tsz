@@ -24,6 +24,7 @@ pub struct PreparedTest {
     /// Temp directory containing test files and tsconfig.json
     pub temp_dir: tempfile::TempDir,
     /// Compiler options used
+    #[allow(dead_code)]
     pub options: HashMap<String, String>,
 }
 
@@ -465,7 +466,7 @@ fn compile_tsz_with_binary(
     use std::process::Command;
 
     // Run tsz with --pretty false for machine-readable output
-    let output = Command::new(&tsz_path)
+    let output = Command::new(tsz_path)
         .arg("--project")
         .arg(base_dir)
         .arg("--noEmit")
@@ -695,10 +696,10 @@ fn rewrite_bare_specifiers(content: &str, filenames: &[(String, String)]) -> Str
             return false;
         }
         available_files.contains(specifier)
-            || available_files.contains(&specifier.trim_end_matches(".js").to_string())
-            || available_files.contains(&specifier.trim_end_matches(".ts").to_string())
-            || available_files.contains(&specifier.trim_end_matches(".tsx").to_string())
-            || available_files.contains(&specifier.trim_end_matches(".d.ts").to_string())
+            || available_files.contains(specifier.trim_end_matches(".js"))
+            || available_files.contains(specifier.trim_end_matches(".ts"))
+            || available_files.contains(specifier.trim_end_matches(".tsx"))
+            || available_files.contains(specifier.trim_end_matches(".d.ts"))
     };
 
     // Rewrite each pattern

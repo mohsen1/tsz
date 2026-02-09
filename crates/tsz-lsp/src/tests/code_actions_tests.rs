@@ -38,7 +38,7 @@ fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> Str
         })
         .collect();
 
-    edits_with_offsets.sort_by(|a, b| b.0.cmp(&a.0));
+    edits_with_offsets.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
     for (start, end, edit) in edits_with_offsets {
         result.replace_range(start..end, &edit.new_text);
     }

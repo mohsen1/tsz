@@ -214,9 +214,9 @@ pub const MAX_TYPE_RESOLUTION_OPS: u32 = 100_000;
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn test_limits_are_reasonable() {
-        use super::*;
+    use super::*;
+
+    const _: () = {
         assert!(MAX_INSTANTIATION_DEPTH >= 20 && MAX_INSTANTIATION_DEPTH <= 200);
         assert!(MAX_CALL_DEPTH >= 10 && MAX_CALL_DEPTH <= 100);
         assert!(MAX_SUBTYPE_DEPTH >= 50 && MAX_SUBTYPE_DEPTH <= 500);
@@ -224,5 +224,5 @@ mod tests {
         assert!(MAX_IN_PROGRESS_PAIRS >= 1_000 && MAX_IN_PROGRESS_PAIRS <= 100_000);
         assert!(MAX_PARSER_RECURSION_DEPTH >= 100 && MAX_PARSER_RECURSION_DEPTH <= 10_000);
         assert!(MAX_TYPE_RESOLUTION_OPS >= 10_000);
-    }
+    };
 }

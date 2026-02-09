@@ -18,7 +18,7 @@ fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> Str
         })
         .collect();
 
-    edits_with_offsets.sort_by(|a, b| b.0.cmp(&a.0));
+    edits_with_offsets.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
     for (start, end, edit) in edits_with_offsets {
         result.replace_range(start..end, &edit.new_text);
     }
@@ -148,7 +148,7 @@ fn test_project_rename_cross_file() {
         .get_rename_edits("b.ts", Position::new(1, 0), "renamed".to_string())
         .expect("Expected rename edits");
 
-    let a_file = project.file("a.ts").unwrap();
+    let a_file = &project.files["a.ts"];
     let b_file = project.file("b.ts").unwrap();
     let a_edits = edits.changes.get("a.ts").expect("Expected edits for a.ts");
     let b_edits = edits.changes.get("b.ts").expect("Expected edits for b.ts");
@@ -2606,12 +2606,12 @@ fn test_body_edit_does_not_invalidate_dependents() {
     // Force b.ts diagnostics to be "clean" by getting them once
     let _ = project.get_diagnostics("b.ts");
     assert!(
-        !project.files.get("b.ts").unwrap().diagnostics_dirty,
+        !project.files["b.ts"].diagnostics_dirty,
         "b.ts should be clean after getting diagnostics"
     );
 
     // Edit a.ts function body only (no export change)
-    let a_file = project.files.get("a.ts").unwrap();
+    let a_file = &project.files["a.ts"];
     let a_line_map = a_file.line_map().clone();
     let a_source = a_file.source_text().to_string();
     let edit_range = range_for_substring(&a_source, &a_line_map, "return 1");
@@ -2625,7 +2625,7 @@ fn test_body_edit_does_not_invalidate_dependents() {
 
     // b.ts should NOT be marked dirty — the export signature didn't change
     assert!(
-        !project.files.get("b.ts").unwrap().diagnostics_dirty,
+        !project.files["b.ts"].diagnostics_dirty,
         "b.ts should NOT be invalidated by a body-only edit in a.ts"
     );
 }
@@ -2649,12 +2649,12 @@ fn test_export_addition_invalidates_dependents() {
     // Clean b.ts diagnostics
     let _ = project.get_diagnostics("b.ts");
     assert!(
-        !project.files.get("b.ts").unwrap().diagnostics_dirty,
+        !project.files["b.ts"].diagnostics_dirty,
         "b.ts should be clean after getting diagnostics"
     );
 
     // Add a new export to a.ts — this changes the export signature
-    let a_file = project.files.get("a.ts").unwrap();
+    let a_file = &project.files["a.ts"];
     let a_line_map = a_file.line_map().clone();
     let a_source = a_file.source_text().to_string();
     let end_range = Range::new(
@@ -2671,7 +2671,7 @@ fn test_export_addition_invalidates_dependents() {
 
     // b.ts SHOULD be marked dirty — the export signature changed
     assert!(
-        project.files.get("b.ts").unwrap().diagnostics_dirty,
+        project.files["b.ts"].diagnostics_dirty,
         "b.ts SHOULD be invalidated when a.ts adds a new export"
     );
 }
@@ -2696,7 +2696,7 @@ fn test_comment_edit_does_not_invalidate_dependents() {
     let _ = project.get_diagnostics("b.ts");
 
     // Edit only the comment in a.ts
-    let a_file = project.files.get("a.ts").unwrap();
+    let a_file = &project.files["a.ts"];
     let a_line_map = a_file.line_map().clone();
     let a_source = a_file.source_text().to_string();
     let edit_range = range_for_substring(&a_source, &a_line_map, "version 1");
@@ -2710,7 +2710,7 @@ fn test_comment_edit_does_not_invalidate_dependents() {
 
     // b.ts should NOT be dirty
     assert!(
-        !project.files.get("b.ts").unwrap().diagnostics_dirty,
+        !project.files["b.ts"].diagnostics_dirty,
         "b.ts should NOT be invalidated by a comment-only edit in a.ts"
     );
 }
@@ -2732,7 +2732,7 @@ fn test_private_addition_does_not_invalidate_dependents() {
     let _ = project.get_diagnostics("b.ts");
 
     // Add a private (non-exported) symbol to a.ts
-    let a_file = project.files.get("a.ts").unwrap();
+    let a_file = &project.files["a.ts"];
     let a_line_map = a_file.line_map().clone();
     let a_source = a_file.source_text().to_string();
     let end_range = Range::new(
@@ -2749,7 +2749,7 @@ fn test_private_addition_does_not_invalidate_dependents() {
 
     // b.ts should NOT be dirty — private additions don't change exports
     assert!(
-        !project.files.get("b.ts").unwrap().diagnostics_dirty,
+        !project.files["b.ts"].diagnostics_dirty,
         "b.ts should NOT be invalidated when a.ts adds a private symbol"
     );
 }

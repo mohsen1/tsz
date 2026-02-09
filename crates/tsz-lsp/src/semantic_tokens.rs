@@ -454,10 +454,7 @@ impl<'a> SemanticTokensProvider<'a> {
 
         // Walk up the tree to find enclosing function/class/interface with type parameters
         let mut current = ident_idx;
-        loop {
-            let Some(ext) = self.arena.get_extended(current) else {
-                break;
-            };
+        while let Some(ext) = self.arena.get_extended(current) {
             let parent_idx = ext.parent;
             if parent_idx.is_none() {
                 break;

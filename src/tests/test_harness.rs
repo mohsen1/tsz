@@ -394,6 +394,7 @@ macro_rules! test_with_timeout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing::debug;
 
     #[test]
     fn test_run_with_timeout_passes() {
@@ -410,7 +411,7 @@ mod tests {
         let result = run_with_timeout(Duration::from_secs(1), || {
             panic!("Intentional panic");
         });
-        eprintln!("DEBUG: result = {:?}", result);
+        debug!(?result, "test result");
         assert!(
             matches!(result, TestResult::Panicked { .. }),
             "Expected Panicked, got: {:?}",

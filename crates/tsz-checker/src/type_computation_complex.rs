@@ -1596,43 +1596,37 @@ impl<'a> CheckerState<'a> {
                     value_decl = ?value_decl,
                     "get_type_of_identifier: merged interface+value path"
                 );
-                // BUG FIX: Use get_type_of_symbol directly instead of complex value declaration logic.
-                // The value_decl field can point to wrong declarations when lib symbols are merged.
-                // For "Symbol", sym_id=2344 had value_decl=NodeIndex(40) which resolved to
-                // RTCEncodedVideoFrameType instead of SymbolConstructor.
-                // get_type_of_symbol should return the correct merged type.
-                let direct_type = self.get_type_of_symbol(sym_id);
-                trace!(
-                    name = name,
-                    direct_type = ?direct_type,
-                    "get_type_of_identifier: direct type from get_type_of_symbol"
-                );
-
-                let mut value_type =
-                    if direct_type != TypeId::UNKNOWN && direct_type != TypeId::ERROR {
-                        direct_type
-                    } else {
-                        self.type_of_value_symbol_by_name(name)
-                    };
-                trace!(
-                    name = name,
-                    value_type = ?value_type,
-                    "get_type_of_identifier: value_type from type_of_value_symbol_by_name"
-                );
-                // Fall back to value_decl if type_of_value_symbol_by_name didn't find anything
+                // Prefer value-declaration resolution for merged symbols so we pick
+                // the constructor-side type (e.g. Promise -> PromiseConstructor).
+                let mut value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
                 if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
-                    value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
-                    if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
-                        for &decl_idx in &symbol_declarations {
-                            let candidate =
-                                self.type_of_value_declaration_for_symbol(sym_id, decl_idx);
-                            if candidate != TypeId::UNKNOWN && candidate != TypeId::ERROR {
-                                value_type = candidate;
-                                break;
-                            }
+                    for &decl_idx in &symbol_declarations {
+                        let candidate = self.type_of_value_declaration_for_symbol(sym_id, decl_idx);
+                        if candidate != TypeId::UNKNOWN && candidate != TypeId::ERROR {
+                            value_type = candidate;
+                            break;
                         }
                     }
                 }
+                if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
+                    value_type = self.type_of_value_symbol_by_name(name);
+                }
+                if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
+                    let direct_type = self.get_type_of_symbol(sym_id);
+                    trace!(
+                        name = name,
+                        direct_type = ?direct_type,
+                        "get_type_of_identifier: direct type from get_type_of_symbol"
+                    );
+                    if direct_type != TypeId::UNKNOWN && direct_type != TypeId::ERROR {
+                        value_type = direct_type;
+                    }
+                }
+                trace!(
+                    name = name,
+                    value_type = ?value_type,
+                    "get_type_of_identifier: value_type after value-decl resolution"
+                );
                 // Lib globals often model value-side constructors through a sibling
                 // `*Constructor` interface (Promise -> PromiseConstructor).
                 // Prefer that when available to avoid falling back to the instance interface.

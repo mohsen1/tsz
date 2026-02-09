@@ -50,7 +50,7 @@ impl Runner {
         // Load cache
         let cache_path = Path::new(&args.cache_file);
         let cache = if cache_path.exists() {
-            load_cache(&cache_path)
+            load_cache(cache_path)
                 .with_context(|| format!("Failed to load cache from {}", args.cache_file))?
         } else {
             warn!("Cache file not found, starting with empty cache");
@@ -304,9 +304,10 @@ impl Runner {
             }
 
             // Check file extension
-            if path.extension().map_or(false, |ext| {
-                ext == "ts" || ext == "tsx" || ext == "js" || ext == "jsx"
-            }) {
+            if path
+                .extension()
+                .is_some_and(|ext| ext == "ts" || ext == "tsx" || ext == "js" || ext == "jsx")
+            {
                 let path_str = path.to_string_lossy();
 
                 // Skip fourslash tests (language service tests with special format)
@@ -476,27 +477,27 @@ impl Runner {
             let extra: Vec<_> = tsz_codes.difference(&tsc_codes).cloned().collect();
 
             if missing.is_empty() && extra.is_empty() {
-                return Ok(TestResult::Pass);
+                Ok(TestResult::Pass)
             } else {
                 // Sort the codes for consistent display
                 let mut expected = tsc_result.error_codes.clone();
                 let mut actual = compile_result.error_codes.clone();
                 expected.sort();
                 actual.sort();
-                return Ok(TestResult::Fail {
+                Ok(TestResult::Fail {
                     expected,
                     actual,
                     missing,
                     extra,
                     options: compile_result.options,
-                });
+                })
             }
         } else {
             debug!("Cache miss for {}", path.display());
 
             // Cache miss - run tsz anyway (but we can't compare without TSC results)
             // Return Skipped with reason "no TSC cache"
-            return Ok(TestResult::Skipped("no TSC cache"));
+            Ok(TestResult::Skipped("no TSC cache"))
         }
     }
 }
