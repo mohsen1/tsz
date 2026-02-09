@@ -2643,6 +2643,11 @@ pub fn is_word_character(ch: u32) -> bool {
 #[path = "tests/asi_conformance_tests.rs"]
 mod asi_conformance_tests;
 
+// Conformance issues documented from investigation (2026-02-08)
+#[cfg(test)]
+#[path = "../crates/tsz-checker/src/tests/conformance_issues.rs"]
+mod conformance_issues;
+
 #[cfg(test)]
 #[path = "tests/debug_asi.rs"]
 mod debug_asi;
