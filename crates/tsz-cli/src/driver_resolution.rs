@@ -1229,6 +1229,34 @@ fn resolve_package_entry(
         }
     }
 
+    // Check subpath's package.json for types/main fields
+    if path.is_dir() {
+        if let Some(pj) = read_package_json(&path.join("package.json")) {
+            let sub_type = package_type_from_json(Some(&pj));
+            // Try types/typings field
+            if let Some(types) = pj.types.or(pj.typings) {
+                let types_path = path.join(&types);
+                for candidate in expand_module_path_candidates(&types_path, options, sub_type) {
+                    if candidate.is_file() && is_valid_module_file(&candidate) {
+                        return Some(canonicalize_or_owned(&candidate));
+                    }
+                }
+                if types_path.is_file() {
+                    return Some(canonicalize_or_owned(&types_path));
+                }
+            }
+            // Try main field
+            if let Some(main) = &pj.main {
+                let main_path = path.join(main);
+                for candidate in expand_module_path_candidates(&main_path, options, sub_type) {
+                    if candidate.is_file() && is_valid_module_file(&candidate) {
+                        return Some(canonicalize_or_owned(&candidate));
+                    }
+                }
+            }
+        }
+    }
+
     None
 }
 
