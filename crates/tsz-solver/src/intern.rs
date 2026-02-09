@@ -2213,7 +2213,10 @@ impl TypeInterner {
             let mut found = false;
             while si < sp.len() && ti < tp.len() {
                 match sp[si].name.cmp(&tp[ti].name) {
-                    std::cmp::Ordering::Equal => { found = true; break; }
+                    std::cmp::Ordering::Equal => {
+                        found = true;
+                        break;
+                    }
                     std::cmp::Ordering::Less => si += 1,
                     std::cmp::Ordering::Greater => ti += 1,
                 }

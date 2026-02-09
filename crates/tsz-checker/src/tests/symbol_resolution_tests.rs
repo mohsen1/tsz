@@ -67,7 +67,7 @@ function f() {
 }
 "#;
 
-    let diagnostics = collect_diagnostics(source);
+    let diagnostics = collect_diagnostics_with_libs(source);
     let value_as_type = diagnostics.iter().filter(|d| d.code == 2749).count();
     let cannot_find = diagnostics.iter().filter(|d| d.code == 2304).count();
 
@@ -226,6 +226,259 @@ let y = N.value;
 }
 
 #[test]
+fn test_symbol_resolution_namespace_used_as_type_errors() {
+    let source = r#"
+namespace A {
+    export const x = 1;
+}
+let a: A;
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2709_count = diagnostics.iter().filter(|d| d.code == 2709).count();
+
+    assert_eq!(
+        ts2709_count, 1,
+        "Expected TS2709 for namespace used as type, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_symbol_resolution_namespace_interface_type_args_error() {
+    let source = r#"
+namespace X {
+    export namespace Y {
+        export interface Z { }
+    }
+    export interface Y { }
+}
+let z2: X.Y<string>;
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2315_count = diagnostics.iter().filter(|d| d.code == 2315).count();
+
+    assert_eq!(
+        ts2315_count, 1,
+        "Expected TS2315 for non-generic namespace interface, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_symbol_resolution_namespace_interface_generic_merge() {
+    let source = r#"
+namespace X {
+    export namespace Y {
+        export interface Z { }
+    }
+    export interface Y<T> { }
+}
+var z: X.Y.Z = null;
+var z2: X.Y<string>;
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2315_count = diagnostics.iter().filter(|d| d.code == 2315).count();
+    let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
+
+    assert_eq!(
+        ts2315_count, 0,
+        "Expected no TS2315 for merged namespace/interface, got: {:?}",
+        diagnostics
+    );
+    assert_eq!(
+        ts2304_count, 0,
+        "Expected no TS2304 for merged namespace/interface, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_namespace_exports_table_excludes_non_exported_members() {
+    let source = r#"
+namespace M {
+    export class A {}
+    class B {}
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let m_sym_id = binder
+        .file_locals
+        .get("M")
+        .expect("expected namespace symbol for M");
+    let symbol = binder
+        .symbols
+        .get(m_sym_id)
+        .expect("expected namespace symbol data");
+    let exports = symbol.exports.as_ref().expect("expected exports table");
+
+    assert!(exports.has("A"), "expected A to be exported");
+    assert!(!exports.has("B"), "expected B to be non-exported");
+}
+
+#[test]
+fn test_namespace_exports_include_interface_with_same_name_as_namespace() {
+    let source = r#"
+namespace X {
+    export namespace Y {
+        export interface Z { }
+    }
+    export interface Y { }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let x_sym_id = binder
+        .file_locals
+        .get("X")
+        .expect("expected namespace symbol for X");
+    let x_symbol = binder
+        .symbols
+        .get(x_sym_id)
+        .expect("expected namespace symbol data");
+    let exports = x_symbol.exports.as_ref().expect("expected exports table");
+
+    assert!(exports.has("Y"), "expected Y to be exported");
+}
+
+#[test]
+fn test_namespace_non_exported_class_has_no_export_modifier() {
+    use tsz_scanner::SyntaxKind;
+
+    let source = r#"
+namespace M {
+    export class A {}
+    class B {}
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut found_b = false;
+    let mut b_has_export = false;
+
+    for node in arena.nodes.iter() {
+        if node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION {
+            if let Some(class) = arena.get_class(node)
+                && let Some(name_node) = arena.get(class.name)
+                && let Some(ident) = arena.get_identifier(name_node)
+                && ident.escaped_text == "B"
+            {
+                found_b = true;
+                if let Some(mods) = &class.modifiers {
+                    for &mod_idx in &mods.nodes {
+                        if let Some(mod_node) = arena.get(mod_idx)
+                            && mod_node.kind == SyntaxKind::ExportKeyword as u16
+                        {
+                            b_has_export = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(found_b, "expected to find class B");
+    assert!(!b_has_export, "class B should not be exported");
+}
+
+#[test]
+fn test_array_type_uses_qualified_name_for_namespace_member() {
+    let source = r#"
+namespace M {
+    export class A {}
+    class B {}
+}
+var t2: M.B[] = [];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut found = false;
+    for node in arena.nodes.iter() {
+        if let Some(type_ref) = arena.get_type_ref(node) {
+            if let Some(name_node) = arena.get(type_ref.type_name)
+                && name_node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME
+                && let Some(qn) = arena.get_qualified_name(name_node)
+                && let Some(left_node) = arena.get(qn.left)
+                && let Some(right_node) = arena.get(qn.right)
+                && let Some(left_ident) = arena.get_identifier(left_node)
+                && let Some(right_ident) = arena.get_identifier(right_node)
+                && left_ident.escaped_text == "M"
+                && right_ident.escaped_text == "B"
+            {
+                found = true;
+                break;
+            }
+        }
+    }
+
+    assert!(
+        found,
+        "expected type reference for M.B[] to use qualified name"
+    );
+}
+
+#[test]
+fn test_symbol_resolution_interface_value_property_access_errors() {
+    let source = r#"
+namespace Foo2 {
+    namespace Bar {
+        export var x = 42;
+    }
+
+    export interface Bar {
+        y: string;
+    }
+}
+
+var z2 = Foo2.Bar.y;
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2339_count = diagnostics.iter().filter(|d| d.code == 2339).count();
+
+    assert_eq!(
+        ts2339_count, 1,
+        "Expected TS2339 for interface used as value property access, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_symbol_resolution_namespace_as_base_type_errors() {
+    let source = r#"
+namespace M {}
+class C extends M {}
+interface I extends M { }
+class C2 implements M { }
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2708_count = diagnostics.iter().filter(|d| d.code == 2708).count();
+    let ts2709_count = diagnostics.iter().filter(|d| d.code == 2709).count();
+
+    assert!(
+        ts2708_count >= 1 && ts2709_count >= 1,
+        "Expected TS2708 and TS2709 for namespace as base type, got: {:?}",
+        diagnostics
+    );
+}
+
 fn test_symbol_resolution_nested_namespace_qualified_type() {
     let source = r#"
 namespace Outer {

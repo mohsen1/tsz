@@ -174,6 +174,8 @@ pub struct BindResult {
     pub file_locals: SymbolTable,
     /// Ambient module declarations by specifier
     pub declared_modules: FxHashSet<String>,
+    /// Module exports keyed by specifier or file name
+    pub module_exports: FxHashMap<String, SymbolTable>,
     /// Node-to-symbol mapping
     pub node_symbols: FxHashMap<u32, SymbolId>,
     /// Symbol-to-arena mapping for cross-file declaration lookup (including lib symbols)
@@ -244,6 +246,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                     symbols: binder.symbols,
                     file_locals: binder.file_locals,
                     declared_modules: binder.declared_modules,
+                    module_exports: binder.module_exports,
                     node_symbols: binder.node_symbols,
                     symbol_arenas: binder.symbol_arenas,
                     declaration_arenas: binder.declaration_arenas,
@@ -281,6 +284,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 symbols: binder.symbols,
                 file_locals: binder.file_locals,
                 declared_modules: binder.declared_modules,
+                module_exports: binder.module_exports,
                 node_symbols: binder.node_symbols,
                 symbol_arenas: binder.symbol_arenas,
                 declaration_arenas: binder.declaration_arenas,
@@ -320,6 +324,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         symbols: binder.symbols,
         file_locals: binder.file_locals,
         declared_modules: binder.declared_modules,
+        module_exports: binder.module_exports,
         node_symbols: binder.node_symbols,
         symbol_arenas: binder.symbol_arenas,
         declaration_arenas: binder.declaration_arenas,
@@ -538,6 +543,7 @@ pub fn parse_and_bind_parallel_with_libs(
                     symbols: binder.symbols,
                     file_locals: binder.file_locals,
                     declared_modules: binder.declared_modules,
+                    module_exports: binder.module_exports,
                     node_symbols: binder.node_symbols,
                     symbol_arenas: binder.symbol_arenas,
                     declaration_arenas: binder.declaration_arenas,
@@ -585,6 +591,7 @@ pub fn parse_and_bind_parallel_with_libs(
                 symbols: binder.symbols,
                 file_locals: binder.file_locals,
                 declared_modules: binder.declared_modules,
+                module_exports: binder.module_exports,
                 node_symbols: binder.node_symbols,
                 symbol_arenas: binder.symbol_arenas,
                 declaration_arenas: binder.declaration_arenas,
@@ -1076,10 +1083,6 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             exports.set("default".to_string(), remapped_id);
         }
 
-        if !exports.is_empty() {
-            module_exports.insert(result.file_name.clone(), exports);
-        }
-
         let remap_symbol_table =
             |table: &SymbolTable, id_remap: &FxHashMap<SymbolId, SymbolId>| -> SymbolTable {
                 let mut remapped = SymbolTable::new();
@@ -1090,6 +1093,20 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 }
                 remapped
             };
+
+        if !exports.is_empty() {
+            module_exports.insert(result.file_name.clone(), exports);
+        }
+
+        for (module_key, exports_table) in result.module_exports.iter() {
+            if module_key == &result.file_name {
+                continue;
+            }
+            let remapped = remap_symbol_table(exports_table, &id_remap);
+            if !remapped.is_empty() {
+                module_exports.insert(module_key.clone(), remapped);
+            }
+        }
 
         for (old_id, &new_id) in id_remap.iter() {
             let Some(old_sym) = result.symbols.get(*old_id) else {

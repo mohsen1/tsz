@@ -43,6 +43,10 @@ struct Args {
     /// Timeout per file in seconds
     #[arg(long, default_value_t = 60)]
     timeout: u64,
+
+    /// Optional substring filter for test file paths
+    #[arg(long)]
+    filter: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +71,7 @@ const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
     "suppressOutputPathCheck",
     "noImplicitReferences",
     "currentDirectory",
+    "traceResolution",
     "symlink",
     "link",
     "noTypesAndSymbols",
@@ -119,6 +124,8 @@ fn resolve_tsc_path() -> Result<String> {
     Ok("npx:tsc".to_string())
 }
 
+// filter logic lives in tsz_conformance::test_filter
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -133,7 +140,7 @@ fn main() -> Result<()> {
     println!("📍 Using tsc: {}", tsc_path);
 
     println!("🔍 Discovering test files in: {}", args.test_dir);
-    let test_files = discover_tests(&args.test_dir, args.max)?;
+    let test_files = discover_tests(&args.test_dir, args.max, args.filter.as_deref())?;
     println!("✓ Found {} test files", test_files.len());
 
     println!(
@@ -200,7 +207,8 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
+fn discover_tests(test_dir: &str, max: usize, filter: Option<&str>) -> Result<Vec<PathBuf>> {
+    use tsz_conformance::test_filter::matches_path_filter;
     let mut files = Vec::new();
 
     for entry in WalkDir::new(test_dir)
@@ -230,6 +238,9 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
             .extension()
             .map_or(false, |ext| ext == "ts" || ext == "tsx")
         {
+            if !matches_path_filter(path, filter) {
+                continue;
+            }
             files.push(path.to_path_buf());
         }
     }
@@ -276,17 +287,24 @@ fn process_test_file(
     let temp_dir = tempfile::TempDir::new()?;
     let test_dir = temp_dir.path();
 
-    // Create tsconfig.json with parsed @-directives
-    let tsconfig_path = test_dir.join("tsconfig.json");
-    let tsconfig_content = serde_json::json!({
-        "compilerOptions": convert_options_to_tsconfig(&parsed.directives.options),
-        "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
-        "exclude": ["node_modules"]
-    });
-    fs::write(
-        &tsconfig_path,
-        serde_json::to_string_pretty(&tsconfig_content)?,
-    )?;
+    // Create tsconfig.json with parsed @-directives unless test provides its own.
+    let has_tsconfig_file = parsed
+        .directives
+        .filenames
+        .iter()
+        .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
+    if !has_tsconfig_file {
+        let tsconfig_path = test_dir.join("tsconfig.json");
+        let tsconfig_content = serde_json::json!({
+            "compilerOptions": convert_options_to_tsconfig(&parsed.directives.options),
+            "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
+            "exclude": ["node_modules"]
+        });
+        fs::write(
+            &tsconfig_path,
+            serde_json::to_string_pretty(&tsconfig_content)?,
+        )?;
+    }
 
     // Write test files
     if parsed.directives.filenames.is_empty() {
@@ -389,6 +407,7 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
             continue;
         }
 
+        let canonical_key = canonical_option_name(&key_lower);
         let json_value = if value == "true" {
             serde_json::Value::Bool(true)
         } else if value == "false" {
@@ -412,10 +431,41 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
             }
         };
 
-        opts.insert(key_lower, json_value);
+        opts.insert(canonical_key.to_string(), json_value);
     }
 
     serde_json::Value::Object(opts)
+}
+
+fn canonical_option_name(key_lower: &str) -> &str {
+    match key_lower {
+        "allowjs" => "allowJs",
+        "checkjs" => "checkJs",
+        "esmoduleinterop" => "esModuleInterop",
+        "jsx" => "jsx",
+        "module" => "module",
+        "moduleresolution" => "moduleResolution",
+        "modulesuffixes" => "moduleSuffixes",
+        "noimplicitany" => "noImplicitAny",
+        "noresolve" => "noResolve",
+        "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
+        "outdir" => "outDir",
+        "paths" => "paths",
+        "preservesymlinks" => "preserveSymlinks",
+        "baseurl" => "baseUrl",
+        "rootdirs" => "rootDirs",
+        "typeroots" => "typeRoots",
+        "types" => "types",
+        "target" => "target",
+        "resolvejsonmodule" => "resolveJsonModule",
+        "allowimportingtsextensions" => "allowImportingTsExtensions",
+        "allowarbitraryextensions" => "allowArbitraryExtensions",
+        "rewriterelativeimportextensions" => "rewriteRelativeImportExtensions",
+        "resolvepackagejsonexports" => "resolvePackageJsonExports",
+        "resolvepackagejsonimports" => "resolvePackageJsonImports",
+        "customconditions" => "customConditions",
+        _ => key_lower,
+    }
 }
 
 /// Parse error codes from tsc output

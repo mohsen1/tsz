@@ -1648,6 +1648,18 @@ impl<'a> CheckerState<'a> {
                         let sym_to_check = resolved_sym.unwrap_or(heritage_sym);
 
                         let symbol_type = self.get_type_of_symbol(sym_to_check);
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_to_check) {
+                            if symbol.flags & symbol_flags::MODULE != 0 {
+                                if let Some(name) = self.heritage_name_text(expr_idx) {
+                                    if is_class_declaration && is_extends_clause {
+                                        self.error_namespace_used_as_value_at(&name, expr_idx);
+                                    } else {
+                                        self.error_namespace_used_as_type_at(&name, expr_idx);
+                                    }
+                                }
+                                continue;
+                            }
+                        }
 
                         // TS2675: Check if base class has a private constructor (only for class declarations)
                         if is_class_declaration {
@@ -2672,6 +2684,7 @@ impl<'a> CheckerState<'a> {
     /// If a referenced file doesn't exist, emits error 6053.
     fn check_triple_slash_references(&mut self, file_name: &str, source_text: &str) {
         use crate::triple_slash_validator::{extract_reference_paths, validate_reference_path};
+        use std::collections::HashSet;
         use std::path::Path;
 
         let references = extract_reference_paths(source_text);
@@ -2681,8 +2694,65 @@ impl<'a> CheckerState<'a> {
 
         let source_path = Path::new(file_name);
 
+        let mut known_files: HashSet<String> = HashSet::new();
+        if let Some(arenas) = self.ctx.all_arenas.as_ref() {
+            for arena in arenas.iter() {
+                for source_file in &arena.source_files {
+                    known_files.insert(source_file.file_name.clone());
+                }
+            }
+        } else {
+            for source_file in &self.ctx.arena.source_files {
+                known_files.insert(source_file.file_name.clone());
+            }
+        }
+
+        let has_virtual_reference = |reference_path: &str| {
+            let base = source_path.parent().unwrap_or_else(|| Path::new(""));
+            let mut candidates = Vec::new();
+            candidates.push(base.join(reference_path));
+            if !reference_path.contains('.') {
+                for ext in [".ts", ".tsx", ".d.ts"] {
+                    candidates.push(base.join(format!("{}{}", reference_path, ext)));
+                }
+            }
+            let reference_stem = Path::new(reference_path)
+                .file_stem()
+                .and_then(|stem| stem.to_str());
+            candidates.iter().any(|candidate| {
+                let candidate_str = candidate.to_string_lossy();
+                if known_files.contains(candidate_str.as_ref()) {
+                    return true;
+                }
+                if known_files
+                    .iter()
+                    .any(|known| known.ends_with(candidate_str.as_ref()))
+                {
+                    return true;
+                }
+                let candidate_file = Path::new(candidate_str.as_ref())
+                    .file_name()
+                    .and_then(|name| name.to_str());
+                if let Some(candidate_file) = candidate_file {
+                    return known_files.iter().any(|known| {
+                        Path::new(known).file_name().and_then(|name| name.to_str())
+                            == Some(candidate_file)
+                    });
+                }
+                if let Some(reference_stem) = reference_stem {
+                    return known_files.iter().any(|known| {
+                        Path::new(known).file_stem().and_then(|stem| stem.to_str())
+                            == Some(reference_stem)
+                    });
+                }
+                false
+            })
+        };
+
         for (reference_path, line_num) in references {
-            if !validate_reference_path(source_path, &reference_path) {
+            if !has_virtual_reference(&reference_path)
+                && !validate_reference_path(source_path, &reference_path)
+            {
                 // Calculate the position of the error (start of the line)
                 let mut pos = 0u32;
                 for (idx, _) in source_text.lines().enumerate() {

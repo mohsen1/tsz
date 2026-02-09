@@ -450,6 +450,10 @@ pub struct CheckerContext<'a> {
     /// Resolved module specifiers for this file (multi-file CLI mode).
     pub resolved_modules: Option<FxHashSet<String>>,
 
+    /// Track value exports declared in module augmentations for duplicate detection.
+    /// Keyed by a canonical module key (resolved file index or specifier).
+    pub module_augmentation_value_decls: FxHashMap<String, FxHashMap<String, NodeIndex>>,
+
     /// Per-file cache of is_external_module values to preserve state across files.
     /// Maps file path -> whether that file is an external module (has imports/exports).
     /// This prevents state corruption when binding multiple files sequentially.
@@ -652,6 +656,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            module_augmentation_value_decls: FxHashMap::default(),
             is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
@@ -759,6 +764,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            module_augmentation_value_decls: FxHashMap::default(),
             is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
@@ -869,6 +875,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            module_augmentation_value_decls: FxHashMap::default(),
             is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
@@ -978,6 +985,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            module_augmentation_value_decls: FxHashMap::default(),
             is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
@@ -1098,6 +1106,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            module_augmentation_value_decls: FxHashMap::default(),
             is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),

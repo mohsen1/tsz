@@ -51,6 +51,14 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
                     TypeSymbolResolution::NotFound => {
+                        if let Some(sym_id) = self.resolve_qualified_symbol(type_name_idx) {
+                            if let Some(args) = &type_ref.type_arguments {
+                                if !self.is_inside_type_parameter_declaration(idx) {
+                                    self.validate_type_reference_type_arguments(sym_id, args);
+                                }
+                            }
+                            return self.type_reference_symbol_type(sym_id);
+                        }
                         let _ = self.resolve_qualified_name(type_name_idx);
                         return TypeId::ERROR;
                     }
@@ -133,6 +141,12 @@ impl<'a> CheckerState<'a> {
                     }
                     TypeSymbolResolution::NotFound => None,
                 };
+                if let Some(sym_id) = sym_id {
+                    if self.symbol_is_namespace_only(sym_id) {
+                        self.error_namespace_used_as_type_at(name, type_name_idx);
+                        return TypeId::ERROR;
+                    }
+                }
                 // TS2318: Array<T> with noLib should emit "Cannot find global type 'Array'"
                 if is_builtin_array && !has_libs && sym_id.is_none() {
                     self.error_cannot_find_global_type(name, type_name_idx);
@@ -453,6 +467,10 @@ impl<'a> CheckerState<'a> {
         if name != "Array" && name != "ReadonlyArray" {
             match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
                 TypeSymbolResolution::Type(sym_id) => {
+                    if self.symbol_is_namespace_only(sym_id) {
+                        self.error_namespace_used_as_type_at(name, type_name_idx);
+                        return TypeId::ERROR;
+                    }
                     let type_params = self.get_type_params_for_symbol(sym_id);
                     let required_count = type_params.iter().filter(|p| p.default.is_none()).count();
                     if required_count > 0 {
@@ -516,6 +534,16 @@ impl<'a> CheckerState<'a> {
         }
         self.error_cannot_find_name_at(name, type_name_idx);
         TypeId::ERROR
+    }
+
+    fn symbol_is_namespace_only(&self, sym_id: SymbolId) -> bool {
+        let lib_binders = self.get_lib_binders();
+        if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+            let is_namespace = (symbol.flags & symbol_flags::MODULE) != 0;
+            let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+            return is_namespace && !has_type;
+        }
+        false
     }
 
     pub(crate) fn should_resolve_recursive_type_alias(
@@ -1107,6 +1135,10 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         export_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
+        if let Some(sym_id) = self.resolve_ambient_module_export(module_specifier, export_name) {
+            return Some(sym_id);
+        }
+
         // First, try to resolve the module specifier to a target file index
         let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
 
@@ -1129,6 +1161,22 @@ impl<'a> CheckerState<'a> {
         target_binder.file_locals.get(export_name)
     }
 
+    fn resolve_ambient_module_export(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let binders = self.ctx.all_binders.as_ref()?;
+        for binder in binders.iter() {
+            if let Some(exports_table) = binder.module_exports.get(module_specifier) {
+                if let Some(sym_id) = exports_table.get(export_name) {
+                    return Some(sym_id);
+                }
+            }
+        }
+        None
+    }
+
     /// Resolve a namespace import (import * as ns) from another file using cross-file resolution.
     ///
     /// Returns a SymbolTable containing all exports from the target module.
@@ -1136,6 +1184,10 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
     ) -> Option<tsz_binder::SymbolTable> {
+        if let Some(exports) = self.resolve_ambient_module_namespace_exports(module_specifier) {
+            return Some(exports);
+        }
+
         let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
 
@@ -1150,6 +1202,19 @@ impl<'a> CheckerState<'a> {
             return Some(exports_table.clone());
         }
 
+        None
+    }
+
+    fn resolve_ambient_module_namespace_exports(
+        &self,
+        module_specifier: &str,
+    ) -> Option<tsz_binder::SymbolTable> {
+        let binders = self.ctx.all_binders.as_ref()?;
+        for binder in binders.iter() {
+            if let Some(exports) = binder.module_exports.get(module_specifier) {
+                return Some(exports.clone());
+            }
+        }
         None
     }
 

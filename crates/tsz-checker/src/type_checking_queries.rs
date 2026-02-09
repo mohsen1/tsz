@@ -2065,7 +2065,17 @@ impl<'a> CheckerState<'a> {
 
         // Clone lib_contexts to allow access within the resolver closure
         let lib_contexts = self.ctx.lib_contexts.clone();
-
+        let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
+            let arenas = self.ctx.all_arenas.as_ref()?;
+            let binders = self.ctx.all_binders.as_ref()?;
+            let arena_ptr = arena_ref as *const NodeArena;
+            for (idx, arena) in arenas.iter().enumerate() {
+                if Arc::as_ptr(arena) == arena_ptr {
+                    return binders.get(idx).map(Arc::as_ref);
+                }
+            }
+            None
+        };
         // Collect lowered types from ALL lib contexts that define this symbol.
         // This is critical for interface merging across lib files - e.g. Array is
         // defined in lib.es5.d.ts and augmented in lib.es2015.core.d.ts with
@@ -2310,15 +2320,52 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            let resolve_in_scope = |binder: &tsz_binder::BinderState,
+                                    arena_ref: &NodeArena,
+                                    node_idx: NodeIndex|
+             -> Option<u32> {
+                let ident_name = arena_ref.get_identifier_text(node_idx)?;
+                let mut scope_id = binder.find_enclosing_scope(arena_ref, node_idx)?;
+                while scope_id != tsz_binder::ScopeId::NONE {
+                    let scope = binder.scopes.get(scope_id.0 as usize)?;
+                    if let Some(sym_id) = scope.table.get(ident_name) {
+                        return Some(sym_id.0);
+                    }
+                    scope_id = scope.parent;
+                }
+                None
+            };
+
             // Helper: lower augmentation declarations using a given arena
             let mut lower_with_arena = |arena_ref: &NodeArena, decls: &[NodeIndex]| {
+                let decl_binder = binder_for_arena(arena_ref).unwrap_or(binder_ref);
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                    if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
+                        return Some(sym_id.0);
+                    }
+                    if let Some(sym_id) = resolve_in_scope(decl_binder, arena_ref, node_idx) {
+                        return Some(sym_id);
+                    }
                     let ident_name = arena_ref.get_identifier_text(node_idx)?;
                     if is_compiler_managed_type(ident_name) {
                         return None;
                     }
-                    if let Some(found_sym) = binder_ref.file_locals.get(ident_name) {
+                    if let Some(found_sym) = decl_binder.file_locals.get(ident_name) {
                         return Some(found_sym.0);
+                    }
+                    if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                        for binder in all_binders.iter() {
+                            if let Some(found_sym) = binder.file_locals.get(ident_name) {
+                                return Some(found_sym.0);
+                            }
+                        }
+                    }
+                    if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                        for binder in all_binders.iter() {
+                            if let Some(found_sym) = binder.file_locals.get(ident_name) {
+                                return Some(found_sym.0);
+                            }
+                        }
                     }
                     for ctx in &lib_contexts {
                         if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
@@ -2328,11 +2375,27 @@ impl<'a> CheckerState<'a> {
                     None
                 };
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
+                    if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
+                        return Some(
+                            self.ctx
+                                .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
+                        );
+                    }
+                    if let Some(sym_id) = resolve_in_scope(decl_binder, arena_ref, node_idx) {
+                        return Some(self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)));
+                    }
                     let ident_name = arena_ref.get_identifier_text(node_idx)?;
                     if is_compiler_managed_type(ident_name) {
                         return None;
                     }
-                    let sym_id = binder_ref.file_locals.get(ident_name).or_else(|| {
+                    let sym_id = decl_binder.file_locals.get(ident_name).or_else(|| {
+                        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                            for binder in all_binders.iter() {
+                                if let Some(found_sym) = binder.file_locals.get(ident_name) {
+                                    return Some(found_sym);
+                                }
+                            }
+                        }
                         lib_contexts
                             .iter()
                             .find_map(|ctx| ctx.binder.file_locals.get(ident_name))
@@ -2405,6 +2468,17 @@ impl<'a> CheckerState<'a> {
         };
 
         let lib_contexts = self.ctx.lib_contexts.clone();
+        let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
+            let arenas = self.ctx.all_arenas.as_ref()?;
+            let binders = self.ctx.all_binders.as_ref()?;
+            let arena_ptr = arena_ref as *const NodeArena;
+            for (idx, arena) in arenas.iter().enumerate() {
+                if Arc::as_ptr(arena) == arena_ptr {
+                    return binders.get(idx).map(Arc::as_ref);
+                }
+            }
+            None
+        };
 
         let mut lib_types: Vec<TypeId> = Vec::new();
         let mut first_params: Option<Vec<TypeParamInfo>> = None;
@@ -2610,14 +2684,37 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            let resolve_in_scope = |binder: &tsz_binder::BinderState,
+                                    arena_ref: &NodeArena,
+                                    node_idx: NodeIndex|
+             -> Option<u32> {
+                let ident_name = arena_ref.get_identifier_text(node_idx)?;
+                let mut scope_id = binder.find_enclosing_scope(arena_ref, node_idx)?;
+                while scope_id != tsz_binder::ScopeId::NONE {
+                    let scope = binder.scopes.get(scope_id.0 as usize)?;
+                    if let Some(sym_id) = scope.table.get(ident_name) {
+                        return Some(sym_id.0);
+                    }
+                    scope_id = scope.parent;
+                }
+                None
+            };
+
             // Helper: lower augmentation declarations using a given arena
             let mut lower_with_arena = |arena_ref: &NodeArena, decls: &[NodeIndex]| {
+                let decl_binder = binder_for_arena(arena_ref).unwrap_or(binder_ref);
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                    if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
+                        return Some(sym_id.0);
+                    }
+                    if let Some(sym_id) = resolve_in_scope(decl_binder, arena_ref, node_idx) {
+                        return Some(sym_id);
+                    }
                     let ident_name = arena_ref.get_identifier_text(node_idx)?;
                     if is_compiler_managed_type(ident_name) {
                         return None;
                     }
-                    if let Some(found_sym) = binder_ref.file_locals.get(ident_name) {
+                    if let Some(found_sym) = decl_binder.file_locals.get(ident_name) {
                         return Some(found_sym.0);
                     }
                     for ctx in &lib_contexts {
@@ -2628,11 +2725,27 @@ impl<'a> CheckerState<'a> {
                     None
                 };
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
+                    if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
+                        return Some(
+                            self.ctx
+                                .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
+                        );
+                    }
+                    if let Some(sym_id) = resolve_in_scope(decl_binder, arena_ref, node_idx) {
+                        return Some(self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)));
+                    }
                     let ident_name = arena_ref.get_identifier_text(node_idx)?;
                     if is_compiler_managed_type(ident_name) {
                         return None;
                     }
-                    let sym_id = binder_ref.file_locals.get(ident_name).or_else(|| {
+                    let sym_id = decl_binder.file_locals.get(ident_name).or_else(|| {
+                        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                            for binder in all_binders.iter() {
+                                if let Some(found_sym) = binder.file_locals.get(ident_name) {
+                                    return Some(found_sym);
+                                }
+                            }
+                        }
                         lib_contexts
                             .iter()
                             .find_map(|ctx| ctx.binder.file_locals.get(ident_name))
@@ -2747,6 +2860,15 @@ impl<'a> CheckerState<'a> {
             {
                 // Recursively resolve if the target is also an alias
                 return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+            }
+            if let Some(binders) = &self.ctx.all_binders {
+                for binder in binders.iter() {
+                    if let Some(exports) = binder.module_exports.get(module_name)
+                        && let Some(target_sym_id) = exports.get(export_name)
+                    {
+                        return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                    }
+                }
             }
             // For ES6 imports, if we can't find the export, return the alias symbol itself
             // This allows the type checker to use the symbol reference
@@ -3170,6 +3292,25 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    pub(crate) fn is_namespace_value_type(&self, object_type: TypeId) -> bool {
+        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+
+        match classify_namespace_member(self.ctx.types, object_type) {
+            NamespaceMemberKind::Lazy(def_id) => {
+                let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
+                    return false;
+                };
+                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    return false;
+                };
+                (symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
+            }
+            NamespaceMemberKind::Enum(_) => true,
+            NamespaceMemberKind::Callable(_) => false,
+            NamespaceMemberKind::Other => false,
+        }
     }
 
     /// Get the namespace name if the type is a namespace/module type.

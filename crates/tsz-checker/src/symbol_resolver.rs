@@ -518,6 +518,15 @@ impl<'a> CheckerState<'a> {
         );
 
         if let Some(sym_id) = resolved {
+            if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                && symbol.flags & symbol_flags::ALIAS != 0
+            {
+                let mut visited_aliases = Vec::new();
+                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                {
+                    return TypeSymbolResolution::Type(target_sym_id);
+                }
+            }
             return TypeSymbolResolution::Type(sym_id);
         }
 
@@ -1365,16 +1374,35 @@ impl<'a> CheckerState<'a> {
     ///
     /// Supports simple wildcard patterns using `*` (e.g., "foo*baz", "*!text").
     pub(crate) fn is_ambient_module_match(&self, module_name: &str) -> bool {
-        if self.matches_module_pattern(&self.ctx.binder.declared_modules, module_name)
-            || self.matches_module_pattern(&self.ctx.binder.shorthand_ambient_modules, module_name)
+        if self.binder_has_ambient_module(&self.ctx.binder, module_name) {
+            return true;
+        }
+
+        if let Some(binders) = &self.ctx.all_binders {
+            for binder in binders.iter() {
+                if self.binder_has_ambient_module(binder, module_name) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn binder_has_ambient_module(
+        &self,
+        binder: &tsz_binder::BinderState,
+        module_name: &str,
+    ) -> bool {
+        if self.matches_module_pattern(&binder.declared_modules, module_name)
+            || self.matches_module_pattern(&binder.shorthand_ambient_modules, module_name)
         {
             return true;
         }
 
         // Also check module_exports keys for wildcard module declarations with bodies.
         // These are stored as exact pattern strings in module_exports.
-        self.ctx
-            .binder
+        binder
             .module_exports
             .keys()
             .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))

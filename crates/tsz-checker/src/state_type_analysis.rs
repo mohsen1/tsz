@@ -116,6 +116,7 @@ impl<'a> CheckerState<'a> {
 
         // First, try to resolve the left side as a symbol and check its exports.
         // This handles merged class+namespace, function+namespace, and enum+namespace symbols.
+        let mut left_sym_for_missing = None;
         let member_sym_id_from_symbol = if let Some(left_node) = self.ctx.arena.get(qn.left)
             && left_node.kind == SyntaxKind::Identifier as u16
         {
@@ -123,6 +124,7 @@ impl<'a> CheckerState<'a> {
                 self.resolve_identifier_symbol_in_type_position(qn.left)
             {
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                    left_sym_for_missing = Some(sym_id);
                     self.resolve_symbol_export(symbol, &right_name, &lib_binders)
                 } else {
                     None
@@ -152,6 +154,26 @@ impl<'a> CheckerState<'a> {
                 }
             }
             return self.type_reference_symbol_type(member_sym_id);
+        }
+
+        if let Some(left_sym_id) = left_sym_for_missing
+            && let Some(symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(left_sym_id, &lib_binders)
+            && symbol.flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::CLASS
+                    | symbol_flags::REGULAR_ENUM
+                    | symbol_flags::CONST_ENUM
+                    | symbol_flags::INTERFACE)
+                != 0
+        {
+            let namespace_name = self
+                .entity_name_text(qn.left)
+                .unwrap_or_else(|| symbol.escaped_name.clone());
+            self.error_namespace_no_export(&namespace_name, &right_name, qn.right);
+            return TypeId::ERROR;
         }
 
         // Otherwise, fall back to type-based lookup for pure namespace/module types
@@ -190,7 +212,10 @@ impl<'a> CheckerState<'a> {
                 return self.type_reference_symbol_type(member_sym_id);
             }
 
-            // Not found - report TS2694
+            // Not found - report TS2694 unless this is a namespace/module symbol
+            if symbol.flags & symbol_flags::MODULE != 0 {
+                return TypeId::ERROR;
+            }
             let namespace_name = self
                 .entity_name_text(qn.left)
                 .unwrap_or_else(|| symbol.escaped_name.clone());
@@ -237,6 +262,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if symbol.flags & symbol_flags::MODULE != 0 {
+            if let Some(member_id) =
+                self.resolve_module_export_from_declarations(symbol, member_name)
+            {
+                return Some(member_id);
+            }
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(member_name)
+                && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+                && sym.is_exported
+            {
+                return Some(sym_id);
+            }
+        }
+
         // If not found in direct exports, check for re-exports
         // The member might be re-exported from another module
         if let Some(ref module_specifier) = symbol.import_module {
@@ -247,6 +286,187 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        None
+    }
+
+    fn resolve_module_export_from_declarations(
+        &self,
+        symbol: &tsz_binder::Symbol,
+        member_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module) = self.ctx.arena.get_module(node) else {
+                continue;
+            };
+            if module.body.is_none() {
+                continue;
+            }
+            if let Some(&scope_id) = self.ctx.binder.node_scope_ids.get(&module.body.0)
+                && let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize)
+                && let Some(sym_id) = scope.table.get(member_name)
+                && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+                && sym.is_exported
+            {
+                return Some(sym_id);
+            }
+            let Some(module_block) = self.ctx.arena.get_module_block_at(module.body) else {
+                continue;
+            };
+            let Some(statements) = &module_block.statements else {
+                continue;
+            };
+
+            for &stmt_idx in &statements.nodes {
+                let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                {
+                    let name = if stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                        self.ctx
+                            .arena
+                            .get_type_alias(stmt_node)
+                            .and_then(|alias| self.ctx.arena.get(alias.name))
+                            .and_then(|node| self.ctx.arena.get_identifier(node))
+                            .map(|ident| ident.escaped_text.clone())
+                    } else {
+                        self.ctx
+                            .arena
+                            .get_interface(stmt_node)
+                            .and_then(|iface| self.ctx.arena.get(iface.name))
+                            .and_then(|node| self.ctx.arena.get_identifier(node))
+                            .map(|ident| ident.escaped_text.clone())
+                    };
+                    if let Some(name) = name
+                        && name == member_name
+                        && let Some(&sym_id) = self.ctx.binder.node_symbols.get(&stmt_idx.0)
+                    {
+                        return Some(sym_id);
+                    }
+                }
+                if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                    continue;
+                }
+                let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) else {
+                    continue;
+                };
+                if export_decl.export_clause.is_none() {
+                    continue;
+                }
+                let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) else {
+                    continue;
+                };
+
+                match clause_node.kind {
+                    syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::INTERFACE_DECLARATION
+                    | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    | syntax_kind_ext::ENUM_DECLARATION
+                    | syntax_kind_ext::MODULE_DECLARATION => {
+                        let name = match clause_node.kind {
+                            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                                .ctx
+                                .arena
+                                .get_function(clause_node)
+                                .and_then(|func| self.ctx.arena.get(func.name))
+                                .and_then(|node| self.ctx.arena.get_identifier(node))
+                                .map(|ident| ident.escaped_text.clone()),
+                            k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                                .ctx
+                                .arena
+                                .get_class(clause_node)
+                                .and_then(|class| self.ctx.arena.get(class.name))
+                                .and_then(|node| self.ctx.arena.get_identifier(node))
+                                .map(|ident| ident.escaped_text.clone()),
+                            k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
+                                .ctx
+                                .arena
+                                .get_interface(clause_node)
+                                .and_then(|iface| self.ctx.arena.get(iface.name))
+                                .and_then(|node| self.ctx.arena.get_identifier(node))
+                                .map(|ident| ident.escaped_text.clone()),
+                            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                                .ctx
+                                .arena
+                                .get_type_alias(clause_node)
+                                .and_then(|alias| self.ctx.arena.get(alias.name))
+                                .and_then(|node| self.ctx.arena.get_identifier(node))
+                                .map(|ident| ident.escaped_text.clone()),
+                            k if k == syntax_kind_ext::ENUM_DECLARATION => self
+                                .ctx
+                                .arena
+                                .get_enum(clause_node)
+                                .and_then(|enm| self.ctx.arena.get(enm.name))
+                                .and_then(|node| self.ctx.arena.get_identifier(node))
+                                .map(|ident| ident.escaped_text.clone()),
+                            k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                                .ctx
+                                .arena
+                                .get_module(clause_node)
+                                .and_then(|module| self.ctx.arena.get(module.name))
+                                .and_then(|node| {
+                                    self.ctx
+                                        .arena
+                                        .get_identifier(node)
+                                        .map(|ident| ident.escaped_text.clone())
+                                        .or_else(|| {
+                                            self.ctx
+                                                .arena
+                                                .get_literal(node)
+                                                .map(|lit| lit.text.clone())
+                                        })
+                                }),
+                            _ => None,
+                        };
+                        if let Some(name) = name
+                            && name == member_name
+                            && let Some(&sym_id) = self
+                                .ctx
+                                .binder
+                                .node_symbols
+                                .get(&export_decl.export_clause.0)
+                        {
+                            return Some(sym_id);
+                        }
+                    }
+                    syntax_kind_ext::VARIABLE_STATEMENT => {
+                        if let Some(var_stmt) = self.ctx.arena.get_variable(clause_node) {
+                            for &decl_idx in &var_stmt.declarations.nodes {
+                                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                                    continue;
+                                };
+                                let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                                else {
+                                    continue;
+                                };
+                                let Some(name_node) = self.ctx.arena.get(decl.name) else {
+                                    continue;
+                                };
+                                let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                                    continue;
+                                };
+                                if ident.escaped_text == member_name {
+                                    if let Some(&sym_id) =
+                                        self.ctx.binder.node_symbols.get(&decl_idx.0)
+                                    {
+                                        return Some(sym_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         None
     }
 
@@ -1922,6 +2142,9 @@ impl<'a> CheckerState<'a> {
                 // Check if the module exists first (for proper error differentiation)
                 let module_exists = self.ctx.binder.module_exports.contains_key(module_name)
                     || self.module_exists_cross_file(module_name);
+                if self.is_ambient_module_match(module_name) && !module_exists {
+                    return (TypeId::ANY, Vec::new());
+                }
 
                 // First, try local binder's module_exports
                 let export_sym_id = self
