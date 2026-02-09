@@ -1435,6 +1435,12 @@ impl<'a> CheckerState<'a> {
         // Resolve via binder persistent scopes for stateless lookup.
         if let Some(sym_id) = self.resolve_identifier_symbol(idx) {
             // Reference tracking is handled by resolve_identifier_symbol wrapper
+            trace!(
+                name = name,
+                idx = ?idx,
+                sym_id = ?sym_id,
+                "get_type_of_identifier: resolved symbol"
+            );
 
             if self.alias_resolves_to_type_only(sym_id) {
                 self.error_type_only_value_at(name, idx);
@@ -1481,11 +1487,29 @@ impl<'a> CheckerState<'a> {
             // (e.g., `declare var Promise` in es2015.promise.d.ts). When we find
             // a TYPE-only symbol, check if a VALUE exists elsewhere in libs.
             if is_type_alias || (has_type && !has_value) {
+                trace!(
+                    name = name,
+                    sym_id = ?sym_id,
+                    is_type_alias = is_type_alias,
+                    has_type = has_type,
+                    has_value = has_value,
+                    "get_type_of_identifier: TYPE-only symbol, checking for VALUE in libs"
+                );
                 // Cross-lib merging: interface/type may be in one lib while VALUE
                 // declaration is in another. Resolve by declaration node first to
                 // avoid SymbolId collisions across binders.
                 let value_type = self.type_of_value_symbol_by_name(name);
+                trace!(
+                    name = name,
+                    value_type = ?value_type,
+                    "get_type_of_identifier: value_type from type_of_value_symbol_by_name"
+                );
                 if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    trace!(
+                        name = name,
+                        value_type = ?value_type,
+                        "get_type_of_identifier: using cross-lib VALUE type"
+                    );
                     return self.check_flow_usage(idx, value_type, sym_id);
                 }
 
@@ -1552,6 +1576,11 @@ impl<'a> CheckerState<'a> {
             // in value position. Falling back to interface type here causes
             // false TS2339/TS2351 on `Promise.resolve` / `new Promise(...)`.
             if has_type && has_value && (flags & tsz_binder::symbol_flags::INTERFACE) != 0 {
+                trace!(
+                    name = name,
+                    sym_id = ?sym_id,
+                    "get_type_of_identifier: merged interface+value path"
+                );
                 let mut value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
                 if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
                     for &decl_idx in &symbol_declarations {
@@ -1569,10 +1598,25 @@ impl<'a> CheckerState<'a> {
                 // `*Constructor` interface (Promise -> PromiseConstructor).
                 // Prefer that when available to avoid falling back to the instance interface.
                 let constructor_name = format!("{}Constructor", name);
+                trace!(
+                    name = name,
+                    constructor_name = %constructor_name,
+                    "get_type_of_identifier: looking for *Constructor symbol"
+                );
                 if let Some(constructor_sym_id) =
                     self.resolve_global_value_symbol(&constructor_name)
                 {
+                    trace!(
+                        name = name,
+                        constructor_sym_id = ?constructor_sym_id,
+                        "get_type_of_identifier: found *Constructor symbol"
+                    );
                     let constructor_type = self.get_type_of_symbol(constructor_sym_id);
+                    trace!(
+                        name = name,
+                        constructor_type = ?constructor_type,
+                        "get_type_of_identifier: *Constructor type"
+                    );
                     if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR {
                         value_type = constructor_type;
                     }
