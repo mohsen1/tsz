@@ -445,12 +445,13 @@ impl<'a> Printer<'a> {
         self.emit(try_stmt.try_block);
 
         if !try_stmt.catch_clause.is_none() {
-            self.write(" ");
+            self.write_line();
             self.emit(try_stmt.catch_clause);
         }
 
         if !try_stmt.finally_block.is_none() {
-            self.write(" finally ");
+            self.write_line();
+            self.write("finally ");
             self.emit(try_stmt.finally_block);
         }
     }
@@ -588,5 +589,16 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_debugger_statement(&mut self) {
         self.write("debugger");
         self.write_semicolon();
+    }
+
+    pub(super) fn emit_with_statement(&mut self, node: &Node) {
+        let Some(with_stmt) = self.arena.get_with_statement(node) else {
+            return;
+        };
+
+        self.write("with (");
+        self.emit(with_stmt.expression);
+        self.write(") ");
+        self.emit(with_stmt.then_statement);
     }
 }
