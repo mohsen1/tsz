@@ -362,14 +362,13 @@ pub fn resolve_compiler_options(
     }
     resolved.checker.target = checker_target_from_emitter(resolved.printer.target);
 
+    let module_explicitly_set = options.module.is_some();
     if let Some(module) = options.module.as_deref() {
         let kind = parse_module_kind(module)?;
         resolved.printer.module = kind;
         resolved.checker.module = kind;
     } else {
-        // Default to CommonJS if not specified (matches tsc behavior)
-        // Note: tsc only changes the default module kind when 'module' is explicitly set
-        // The target does NOT affect the default module kind
+        // Default to CommonJS initially; may be overridden below based on moduleResolution
         resolved.printer.module = ModuleKind::CommonJS;
         resolved.checker.module = ModuleKind::CommonJS;
     }
@@ -378,6 +377,22 @@ pub fn resolve_compiler_options(
         let value = module_resolution.trim();
         if !value.is_empty() {
             resolved.module_resolution = Some(parse_module_resolution(value)?);
+        }
+    }
+
+    // When module is not explicitly set, infer it from moduleResolution (matches tsc behavior).
+    // tsc infers module: node16 when moduleResolution: node16, etc.
+    if !module_explicitly_set {
+        if let Some(mr) = resolved.module_resolution {
+            let inferred = match mr {
+                ModuleResolutionKind::Node16 => Some(ModuleKind::Node16),
+                ModuleResolutionKind::NodeNext => Some(ModuleKind::NodeNext),
+                _ => None,
+            };
+            if let Some(kind) = inferred {
+                resolved.printer.module = kind;
+                resolved.checker.module = kind;
+            }
         }
     }
     let effective_resolution = resolved.effective_module_resolution();
