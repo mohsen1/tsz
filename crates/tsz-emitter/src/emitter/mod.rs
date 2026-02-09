@@ -1699,6 +1699,9 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::DEBUGGER_STATEMENT => {
                 self.emit_debugger_statement();
             }
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                self.emit_with_statement(node);
+            }
 
             // Declarations
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
@@ -1721,6 +1724,15 @@ impl<'a> Printer<'a> {
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.emit_module_declaration(node, idx);
+            }
+
+            // Computed property name: [expr]
+            k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                if let Some(computed) = self.arena.get_computed_property(node) {
+                    self.write("[");
+                    self.emit(computed.expression);
+                    self.write("]");
+                }
             }
 
             // Class members
