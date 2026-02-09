@@ -645,7 +645,14 @@ impl ModuleResolver {
         let containing_file_str = containing_file.display().to_string();
 
         if let Some(extension) = explicit_ts_extension(specifier) {
-            if !self.allow_importing_ts_extensions {
+            // allowImportingTsExtensions is only valid with moduleResolution: bundler
+            // (or nodenext in TS 5.4+). For other modes, always emit TS5097.
+            let ts_extensions_allowed = self.allow_importing_ts_extensions
+                && matches!(
+                    self.resolution_kind,
+                    ModuleResolutionKind::Bundler | ModuleResolutionKind::NodeNext
+                );
+            if !ts_extensions_allowed {
                 return Err(ResolutionFailure::ImportingTsExtensionNotAllowed {
                     extension,
                     containing_file: containing_file_str.clone(),
