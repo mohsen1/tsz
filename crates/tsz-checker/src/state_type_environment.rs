@@ -4,6 +4,7 @@
 //! application types, resolving property access types, and type node resolution.
 
 use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
+use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -1060,19 +1061,15 @@ impl<'a> CheckerState<'a> {
     pub fn build_type_environment(&mut self) -> tsz_solver::TypeEnvironment {
         use tsz_binder::symbol_flags;
 
-        // Collect all unique symbols from node_symbols map using BTreeSet for
-        // deterministic ordering. Non-deterministic HashSet caused type parameter
-        // resolution failures: parameter symbols processed before their parent
-        // function would fail to resolve type params like T, causing spurious TS2304.
-        let mut symbols: Vec<SymbolId> = self
-            .ctx
-            .binder
-            .node_symbols
-            .values()
-            .copied()
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        // Collect unique symbols with a HashSet to avoid O(N^2) Vec::contains costs.
+        // We'll sort deterministically with a stable tie-breaker below.
+        let mut symbols: Vec<SymbolId> = Vec::with_capacity(self.ctx.binder.node_symbols.len());
+        let mut seen: FxHashSet<SymbolId> = FxHashSet::default();
+        for &sym_id in self.ctx.binder.node_symbols.values() {
+            if seen.insert(sym_id) {
+                symbols.push(sym_id);
+            }
+        }
 
         // FIX: Also include lib symbols for proper property resolution
         // This ensures Error, Math, JSON, Promise, Array, etc. can be resolved when accessed.
@@ -1081,11 +1078,9 @@ impl<'a> CheckerState<'a> {
         // After merge_lib_contexts_into_binder(), lib symbols are stored in file_locals
         // with new IDs unique to the main binder's arena.
         if !self.ctx.lib_contexts.is_empty() {
-            let existing: rustc_hash::FxHashSet<SymbolId> = symbols.iter().copied().collect();
-
             // Get lib symbols from file_locals (where they were merged with remapped IDs)
             for (_name, &sym_id) in self.ctx.binder.file_locals.iter() {
-                if !existing.contains(&sym_id) {
+                if seen.insert(sym_id) {
                     symbols.push(sym_id);
                 }
             }
@@ -1111,7 +1106,7 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::NAMESPACE_MODULE
                     | symbol_flags::VALUE_MODULE)
                 != 0;
-            if is_type_defining { 0u8 } else { 1u8 }
+            (if is_type_defining { 0u8 } else { 1u8 }, sym_id.0)
         });
 
         // Resolve each symbol and add to the environment.
