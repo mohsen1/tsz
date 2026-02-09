@@ -48,7 +48,7 @@ use crate::TypeInterner;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// fn check_subtype_with_tracer<T: SubtypeTracer>(
 ///     source: TypeId,
 ///     target: TypeId,
@@ -111,7 +111,7 @@ impl<T: SubtypeTracer> DynSubtypeTracer for T {
 ///
 /// # Zero-Cost Abstraction
 ///
-/// ```rust
+/// ```rust,ignore
 /// // With FastTracer, this compiles to:
 /// // if condition { return false; }
 /// if !tracer.on_mismatch(|| reason) { return false; }
@@ -139,7 +139,7 @@ impl SubtypeTracer for FastTracer {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// let mut tracer = DiagnosticTracer::new();
 /// check_subtype_with_tracer(source, target, &mut tracer);
 /// if let Some(reason) = tracer.take_failure() {

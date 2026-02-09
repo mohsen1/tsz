@@ -239,7 +239,7 @@ impl<'a> CheckerState<'a> {
     /// Generic helper to traverse both sides of a binary expression.
     ///
     /// This eliminates the repeated pattern of:
-    /// ```rust
+    /// ```rust,ignore
     /// if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
     ///     self.some_check(bin_expr.left);
     ///     self.some_check(bin_expr.right);
@@ -267,7 +267,7 @@ impl<'a> CheckerState<'a> {
     /// Generic helper to traverse conditional expression branches.
     ///
     /// This eliminates the repeated pattern of:
-    /// ```rust
+    /// ```rust,ignore
     /// if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
     ///     self.some_check(cond.condition);
     ///     self.some_check(cond.when_true);
@@ -299,7 +299,7 @@ impl<'a> CheckerState<'a> {
     /// Generic helper to traverse call expression with arguments.
     ///
     /// This eliminates the repeated pattern of:
-    /// ```rust
+    /// ```rust,ignore
     /// if let Some(call) = self.ctx.arena.get_call_expr(node) {
     ///     self.some_check(call.expression);
     ///     if let Some(args) = &call.arguments {
@@ -335,7 +335,7 @@ impl<'a> CheckerState<'a> {
     /// Generic helper to skip parenthesized expressions.
     ///
     /// This eliminates the repeated pattern of:
-    /// ```rust
+    /// ```rust,ignore
     /// if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
     ///     self.some_check(paren.expression);
     /// }
