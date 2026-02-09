@@ -2465,7 +2465,6 @@ const CLASSIC_EXTENSION_CANDIDATES: [&str; 7] = TS_EXTENSION_CANDIDATES;
 const TS_JS_EXTENSION_CANDIDATES: [&str; 11] = [
     "ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts", "js", "jsx", "mjs", "cjs",
 ];
-const CLASSIC_JS_EXTENSION_CANDIDATES: [&str; 11] = TS_JS_EXTENSION_CANDIDATES;
 
 fn node16_extension_substitution(path: &Path, extension: &str) -> Option<Vec<PathBuf>> {
     let replacements: &[&str] = match extension {
@@ -3625,6 +3624,8 @@ mod tests {
         let mut options = ResolvedCompilerOptions::default();
         options.allow_js = true;
         options.jsx = None;
+        // Use Node resolution so allowJs is respected (Classic never resolves .jsx)
+        options.module_resolution = Some(ModuleResolutionKind::Node);
         let mut resolver = ModuleResolver::new(&options);
         let result = resolver.resolve("./jsx", &dir.join("app.ts"), Span::new(0, 10));
 
@@ -3647,6 +3648,8 @@ mod tests {
 
         let mut options = ResolvedCompilerOptions::default();
         options.jsx = None;
+        // Use Node resolution so .tsx files are found (Classic also finds .tsx, but be explicit)
+        options.module_resolution = Some(ModuleResolutionKind::Node);
         let mut resolver = ModuleResolver::new(&options);
         let result = resolver.resolve("./tsx", &dir.join("app.ts"), Span::new(0, 10));
 

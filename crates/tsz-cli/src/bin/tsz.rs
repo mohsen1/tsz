@@ -16,10 +16,34 @@ const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
 const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
 
 fn main() -> Result<()> {
+    // Configure rayon thread pool with 8MB stacks (default is 2MB).
+    // Type-checking can recurse deeply (e.g., circular class inheritance across files),
+    // so worker threads need stack sizes comparable to the main thread.
+    if let Err(e) = rayon::ThreadPoolBuilder::new()
+        .stack_size(8 * 1024 * 1024)
+        .build_global()
+    {
+        eprintln!("Warning: Could not configure rayon thread pool: {e}");
+    }
+
     // Initialize tracing if TSZ_LOG or RUST_LOG is set (zero cost otherwise).
     // Supports TSZ_LOG_FORMAT=tree|json|text (see src/tracing_config.rs).
     tsz_cli::tracing_config::init_tracing();
 
+    // Run on a thread with a larger stack to handle deep cross-arena type resolution.
+    // The default 8MB main thread stack can overflow when build_type_environment
+    // resolves interdependent lib types that require cross-arena delegation.
+    const MAIN_STACK_SIZE: usize = 64 * 1024 * 1024;
+    let result = std::thread::Builder::new()
+        .stack_size(MAIN_STACK_SIZE)
+        .spawn(actual_main)
+        .expect("failed to spawn main thread")
+        .join()
+        .expect("main thread panicked");
+    result
+}
+
+fn actual_main() -> Result<()> {
     // Preprocess args for tsc compatibility:
     // - Convert -v to -V (tsc uses lowercase -v for version, clap uses -V)
     // - Expand @file response files

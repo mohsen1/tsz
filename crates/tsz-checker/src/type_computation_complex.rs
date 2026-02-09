@@ -2076,14 +2076,18 @@ impl<'a> CheckerState<'a> {
             return self.type_of_value_declaration(decl_idx);
         }
 
-        let mut checker = CheckerState::with_parent_cache(
+        // Guard against deep cross-arena recursion (shared with all delegation points)
+        if !Self::enter_cross_arena_delegation() {
+            return TypeId::UNKNOWN;
+        }
+        let mut checker = Box::new(CheckerState::with_parent_cache(
             decl_arena.as_ref(),
             self.ctx.binder,
             self.ctx.types,
             self.ctx.file_name.clone(),
             self.ctx.compiler_options.clone(),
             self,
-        );
+        ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
         checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
@@ -2104,6 +2108,7 @@ impl<'a> CheckerState<'a> {
                 .or_insert(cached_ty);
         }
 
+        Self::leave_cross_arena_delegation();
         result
     }
 
