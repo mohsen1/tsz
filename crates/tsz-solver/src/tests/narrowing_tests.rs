@@ -1191,3 +1191,32 @@ fn test_type_guard_truthy() {
     // Should narrow to string (exclude null and undefined)
     assert_eq!(narrowed, TypeId::STRING);
 }
+
+#[test]
+fn test_narrow_by_typeof_indexed_access() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // Create T[K] indexed access type
+    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let k_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let indexed_access = interner.intern(TypeKey::IndexAccess(t_param, k_param));
+
+    // typeof fn === 'function' should narrow to T[K] & Function
+    let narrowed = narrow_by_typeof(&interner, indexed_access, "function");
+
+    // Should be an intersection of indexed_access and function type
+    let function_type = ctx.function_type();
+    let expected = interner.intersection2(indexed_access, function_type);
+    assert_eq!(narrowed, expected);
+}
