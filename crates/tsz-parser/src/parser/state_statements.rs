@@ -1628,6 +1628,8 @@ impl ParserState {
             if self.is_reserved_word() {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+                // Consume the invalid token to avoid cascading errors
+                self.next_token();
                 NodeIndex::NONE
             } else {
                 self.parse_identifier_name()
@@ -1685,6 +1687,8 @@ impl ParserState {
             if self.is_reserved_word() {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+                // Consume the invalid token to avoid cascading errors
+                self.next_token();
                 NodeIndex::NONE
             } else {
                 self.parse_identifier_name()

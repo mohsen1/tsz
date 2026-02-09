@@ -97,28 +97,36 @@ var r = c.foo('', '');      // Should NOT error (c is still C<string>)
 ///
 /// From: classWithPredefinedTypesAsNames2.ts
 /// Expected: TS1005 only
-/// Actual: TS1005 + TS1068 (cascading "unexpected token" error)
+/// Status: FIXED (2026-02-09)
 ///
-/// Root cause: Parser recovery emitting secondary errors
-///
-/// Complexity: MEDIUM - requires parser recovery improvements
-/// See: docs/conformance-reality-check.md
+/// Root cause: Parser didn't consume the invalid token after emitting error
+/// Fix: Added next_token() call in state_statements.rs after reserved word error
 #[test]
-#[ignore = "Parser cascading errors - MEDIUM complexity"]
 fn test_parser_cascading_error_suppression() {
-    let diagnostics = compile_and_get_diagnostics(
-        r#"
+    let source = r#"
 // classes cannot use predefined types as names
 class void {}
-        "#,
-    );
+        "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parser_diagnostics: Vec<(u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|d| (d.code, d.message.clone()))
+        .collect();
 
     // Should only emit TS1005 '{' expected
-    let ts1005_count = diagnostics.iter().filter(|(c, _)| *c == 1005).count();
+    let ts1005_count = parser_diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 1005)
+        .count();
 
     assert!(
-        has_error(&diagnostics, 1005),
-        "Should emit TS1005 for syntax error"
+        has_error(&parser_diagnostics, 1005),
+        "Should emit TS1005 for syntax error.\nActual errors: {:#?}",
+        parser_diagnostics
     );
     assert_eq!(
         ts1005_count, 1,
@@ -126,9 +134,9 @@ class void {}
         ts1005_count
     );
     assert!(
-        !has_error(&diagnostics, 1068),
+        !has_error(&parser_diagnostics, 1068),
         "Should NOT emit cascading TS1068 error.\nActual errors: {:#?}",
-        diagnostics
+        parser_diagnostics
     );
 }
 
