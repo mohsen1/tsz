@@ -303,7 +303,7 @@ impl<'a> Printer<'a> {
             // Extract the var name from "var ns = __importStar(module_var);"
             if let Some(eq_pos) = binding.find(" = __importStar(") {
                 let var_name = &binding[4..eq_pos]; // Skip "var "
-                self.write("var ");
+                self.write_var_or_const();
                 self.write(var_name);
                 self.write(" = __importStar(require(\"");
                 self.write(&module_spec);
@@ -311,7 +311,7 @@ impl<'a> Printer<'a> {
                 self.write_line();
             } else {
                 // Fallback
-                self.write("var ");
+                self.write_var_or_const();
                 self.write(&module_var);
                 self.write(" = require(\"");
                 self.write(&module_spec);
@@ -330,14 +330,14 @@ impl<'a> Printer<'a> {
                 let rest = &binding[eq_pos + 3..]; // After " = "
                 // Check if it's using __importDefault
                 if rest.contains("__importDefault") {
-                    self.write("var ");
+                    self.write_var_or_const();
                     self.write(var_name);
                     self.write(" = __importDefault(require(\"");
                     self.write(&module_spec);
                     self.write("\"));");
                     self.write_line();
                 } else {
-                    self.write("var ");
+                    self.write_var_or_const();
                     self.write(&module_var);
                     self.write(" = require(\"");
                     self.write(&module_spec);
@@ -349,7 +349,7 @@ impl<'a> Printer<'a> {
                     }
                 }
             } else {
-                self.write("var ");
+                self.write_var_or_const();
                 self.write(&module_var);
                 self.write(" = require(\"");
                 self.write(&module_spec);
@@ -362,7 +362,7 @@ impl<'a> Printer<'a> {
             }
         } else {
             // Emit: var module_1 = require("module");
-            self.write("var ");
+            self.write_var_or_const();
             self.write(&module_var);
             self.write(" = require(\"");
             self.write(&module_spec);
@@ -391,7 +391,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.write("var ");
+        self.write_var_or_const();
         self.emit(import.import_clause);
         self.write(" = ");
 
@@ -611,7 +611,7 @@ impl<'a> Printer<'a> {
 
             if export.export_clause.is_none() {
                 // First emit the require
-                self.write("var ");
+                self.write_var_or_const();
                 self.write(&module_var);
                 self.write(" = require(\"");
                 self.write(&module_spec);
@@ -635,7 +635,7 @@ impl<'a> Printer<'a> {
                 }
 
                 // First emit the require
-                self.write("var ");
+                self.write_var_or_const();
                 self.write(&module_var);
                 self.write(" = require(\"");
                 self.write(&module_spec);
@@ -1490,6 +1490,17 @@ impl<'a> Printer<'a> {
             self.write(name);
             self.write(";");
             self.write_line();
+        }
+    }
+
+    /// Write the appropriate variable declaration keyword based on target.
+    /// For ES2015+, use `const` for top-level module imports.
+    /// For ES3/ES5, use `var`.
+    pub(super) fn write_var_or_const(&mut self) {
+        if self.ctx.target_es5 {
+            self.write("var ");
+        } else {
+            self.write("const ");
         }
     }
 }
