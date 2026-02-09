@@ -3762,7 +3762,7 @@ namespace M {
             .expect("expected namespace symbol for M");
         let symbol = binder
             .symbols
-            .get(*m_sym_id)
+            .get(m_sym_id)
             .expect("expected namespace symbol data");
         let exports = symbol.exports.as_ref().expect("expected exports table");
 
