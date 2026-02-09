@@ -46,10 +46,15 @@ impl<'a> Printer<'a> {
             self.write("...");
         }
 
-        // propertyName: name  or just name
+        // propertyName: name  or just name (shorthand)
+        // For shorthand bindings like `{ name }`, property_name and name are both set
+        // to the same identifier. We only emit `propertyName: name` when they differ.
         if !elem.property_name.is_none() {
-            self.emit(elem.property_name);
-            self.write(": ");
+            let is_shorthand = self.is_shorthand_binding(&elem.property_name, &elem.name);
+            if !is_shorthand {
+                self.emit(elem.property_name);
+                self.write(": ");
+            }
         }
 
         self.emit(elem.name);
@@ -70,6 +75,36 @@ impl<'a> Printer<'a> {
     /// across both destructuring and for-of lowering.
     pub(super) fn get_temp_var_name(&mut self) -> String {
         self.make_unique_name()
+    }
+
+    /// Check if a binding element is a shorthand (property_name and name are the same identifier)
+    fn is_shorthand_binding(&self, property_name: &NodeIndex, name: &NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(prop_node) = self.arena.get(*property_name) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(*name) else {
+            return false;
+        };
+
+        // Both must be identifiers
+        if prop_node.kind != SyntaxKind::Identifier as u16
+            || name_node.kind != SyntaxKind::Identifier as u16
+        {
+            return false;
+        }
+
+        // Compare identifier text
+        let prop_text = self
+            .arena
+            .get_identifier(prop_node)
+            .map(|i| &i.escaped_text);
+        let name_text = self
+            .arena
+            .get_identifier(name_node)
+            .map(|i| &i.escaped_text);
+        prop_text == name_text && prop_text.is_some()
     }
 
     /// Check if a node is a binding pattern
