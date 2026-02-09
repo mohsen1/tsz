@@ -1723,6 +1723,15 @@ impl<'a> Printer<'a> {
                 self.emit_module_declaration(node, idx);
             }
 
+            // Computed property name: [expr]
+            k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                if let Some(computed) = self.arena.get_computed_property(node) {
+                    self.write("[");
+                    self.emit(computed.expression);
+                    self.write("]");
+                }
+            }
+
             // Class members
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 self.emit_method_declaration(node);
