@@ -1509,16 +1509,39 @@ impl<'a> InferenceContext<'a> {
             return Ok(ty);
         }
 
-        let (root, result, upper_bounds) = self.compute_constraint_result(var);
+        let (root, result, upper_bounds, upper_bounds_only) = self.compute_constraint_result(var);
 
         // Validate against upper bounds
-        for &upper in &upper_bounds {
-            if !self.is_subtype(result, upper) {
-                return Err(InferenceError::BoundsViolation {
-                    var,
-                    lower: result,
-                    upper,
-                });
+        if !upper_bounds_only {
+            let mut filtered_upper_bounds = Vec::new();
+            for &upper in &upper_bounds {
+                if matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                    continue;
+                }
+                filtered_upper_bounds.push(upper);
+            }
+
+            if filtered_upper_bounds.len() > 1 {
+                let intersection = self.interner.intersection(filtered_upper_bounds.clone());
+                if !self.is_subtype(result, intersection) {
+                    for &upper in &filtered_upper_bounds {
+                        if !self.is_subtype(result, upper) {
+                            return Err(InferenceError::BoundsViolation {
+                                var,
+                                lower: result,
+                                upper,
+                            });
+                        }
+                    }
+                }
+            } else if let Some(&upper) = filtered_upper_bounds.first() {
+                if !self.is_subtype(result, upper) {
+                    return Err(InferenceError::BoundsViolation {
+                        var,
+                        lower: result,
+                        upper,
+                    });
+                }
             }
         }
 
@@ -1556,15 +1579,38 @@ impl<'a> InferenceContext<'a> {
             return Ok(ty);
         }
 
-        let (root, result, upper_bounds) = self.compute_constraint_result(var);
+        let (root, result, upper_bounds, upper_bounds_only) = self.compute_constraint_result(var);
 
-        for &upper in &upper_bounds {
-            if !is_subtype(result, upper) {
-                return Err(InferenceError::BoundsViolation {
-                    var,
-                    lower: result,
-                    upper,
-                });
+        if !upper_bounds_only {
+            let mut filtered_upper_bounds = Vec::new();
+            for &upper in &upper_bounds {
+                if matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                    continue;
+                }
+                filtered_upper_bounds.push(upper);
+            }
+
+            if filtered_upper_bounds.len() > 1 {
+                let intersection = self.interner.intersection(filtered_upper_bounds.clone());
+                if !is_subtype(result, intersection) {
+                    for &upper in &filtered_upper_bounds {
+                        if !is_subtype(result, upper) {
+                            return Err(InferenceError::BoundsViolation {
+                                var,
+                                lower: result,
+                                upper,
+                            });
+                        }
+                    }
+                }
+            } else if let Some(&upper) = filtered_upper_bounds.first() {
+                if !is_subtype(result, upper) {
+                    return Err(InferenceError::BoundsViolation {
+                        var,
+                        lower: result,
+                        upper,
+                    });
+                }
             }
         }
 
@@ -1589,7 +1635,7 @@ impl<'a> InferenceContext<'a> {
     fn compute_constraint_result(
         &mut self,
         var: InferenceVar,
-    ) -> (InferenceVar, TypeId, Vec<TypeId>) {
+    ) -> (InferenceVar, TypeId, Vec<TypeId>, bool) {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
         let target_names = self.type_param_names_for_root(root);
@@ -1626,6 +1672,8 @@ impl<'a> InferenceContext<'a> {
         // Check if this is a const type parameter to preserve literal types
         let is_const = self.is_var_const(root);
 
+        let upper_bounds_only = candidates.is_empty() && !upper_bounds.is_empty();
+
         let result = if !candidates.is_empty() {
             self.resolve_from_candidates(&candidates, is_const)
         } else if !upper_bounds.is_empty() {
@@ -1642,7 +1690,7 @@ impl<'a> InferenceContext<'a> {
             TypeId::UNKNOWN
         };
 
-        (root, result, upper_bounds)
+        (root, result, upper_bounds, upper_bounds_only)
     }
 
     /// Resolve all type parameters using constraints.

@@ -479,6 +479,7 @@ class C2 implements M { }
     );
 }
 
+#[test]
 fn test_symbol_resolution_nested_namespace_qualified_type() {
     let source = r#"
 namespace Outer {

@@ -4,7 +4,7 @@
 
 use crate::intern::TypeInterner;
 use crate::subtype::{TypeEnvironment, are_types_structurally_identical};
-use crate::types::{TypeId, Visibility};
+use crate::types::TypeId;
 
 #[test]
 fn test_primitive_identity() {

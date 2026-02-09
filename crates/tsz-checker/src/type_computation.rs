@@ -56,7 +56,6 @@ impl<'a> CheckerState<'a> {
         let prev_context = self.ctx.contextual_type;
 
         // Compute branch types with contextual type for inference
-        self.ctx.contextual_type = prev_context;
         let when_true = self.get_type_of_node(cond.when_true);
 
         self.ctx.contextual_type = prev_context;

@@ -268,7 +268,7 @@ fn bench_type_check(c: &mut Criterion) {
                 let mut binder = BinderState::new();
                 binder.bind_source_file(parser.get_arena(), root);
                 let types = TypeInterner::new();
-                let compiler_options = tsz::cli::config::CheckerOptions::default();
+                let compiler_options = tsz::checker::context::CheckerOptions::default();
                 let mut checker = CheckerState::new(
                     parser.get_arena(),
                     &binder,

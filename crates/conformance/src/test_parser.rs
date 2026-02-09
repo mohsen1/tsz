@@ -290,8 +290,8 @@ function foo() {}
             Some(&"true".to_string())
         );
         // Original casing keys should NOT exist
-        assert!(parsed.directives.options.get("Target").is_none());
-        assert!(parsed.directives.options.get("Strict").is_none());
+        assert!(!parsed.directives.options.contains_key("Target"));
+        assert!(!parsed.directives.options.contains_key("Strict"));
     }
 
     #[test]

@@ -390,7 +390,7 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
 
         if path
             .extension()
-            .map_or(false, |ext| ext == "ts" || ext == "tsx")
+            .is_some_and(|ext| ext == "ts" || ext == "tsx")
         {
             // Skip .d.ts files
             if path_str.ends_with(".d.ts") {
@@ -552,7 +552,7 @@ fn process_test_file(
         .modified()?
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis() as u64;
-    let size = metadata.len() as u64;
+    let size = metadata.len();
 
     // Calculate hash
     let hash = tsz_conformance::cache::calculate_test_hash(&content, &parsed.directives.options);

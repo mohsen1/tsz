@@ -2592,7 +2592,7 @@ impl TypeInterner {
         flags: ObjectFlags,
     ) -> TypeId {
         // Sort by property name for consistent hashing
-        properties.sort_by(|a, b| a.name.cmp(&b.name));
+        properties.sort_by_key(|a| a.name);
         let shape_id = self.intern_object_shape(ObjectShape {
             flags,
             properties,
@@ -2612,7 +2612,7 @@ impl TypeInterner {
         symbol: Option<tsz_binder::SymbolId>,
     ) -> TypeId {
         // Sort by property name for consistent hashing
-        properties.sort_by(|a, b| a.name.cmp(&b.name));
+        properties.sort_by_key(|a| a.name);
         let shape_id = self.intern_object_shape(ObjectShape {
             flags,
             properties,
@@ -2626,7 +2626,7 @@ impl TypeInterner {
     /// Intern an object type with index signatures.
     pub fn object_with_index(&self, mut shape: ObjectShape) -> TypeId {
         // Sort properties by name for consistent hashing
-        shape.properties.sort_by(|a, b| a.name.cmp(&b.name));
+        shape.properties.sort_by_key(|a| a.name);
         let shape_id = self.intern_object_shape(shape);
         self.intern(TypeKey::ObjectWithIndex(shape_id))
     }

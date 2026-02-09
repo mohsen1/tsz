@@ -1022,10 +1022,7 @@ impl<'a> CheckerState<'a> {
             }
             if node.kind == syntax_kind_ext::QUALIFIED_NAME {
                 let mut current = idx;
-                loop {
-                    let Some(node) = self.ctx.arena.get(current) else {
-                        break;
-                    };
+                while let Some(node) = self.ctx.arena.get(current) {
                     if node.kind == SyntaxKind::Identifier as u16 {
                         if let Some(sym_id) = self.resolve_identifier_symbol(current)
                             && self.alias_resolves_to_type_only(sym_id)

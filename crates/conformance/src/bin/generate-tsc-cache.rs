@@ -177,7 +177,7 @@ fn main() -> Result<()> {
         }
 
         let count = processed.fetch_add(1, Ordering::SeqCst) + 1;
-        if count % 100 == 0 {
+        if count.is_multiple_of(100) {
             let err_count = errors.load(Ordering::SeqCst);
             let skip_count = skipped.load(Ordering::SeqCst);
             eprint!(
@@ -236,7 +236,7 @@ fn discover_tests(test_dir: &str, max: usize, filter: Option<&str>) -> Result<Ve
 
         if path
             .extension()
-            .map_or(false, |ext| ext == "ts" || ext == "tsx")
+            .is_some_and(|ext| ext == "ts" || ext == "tsx")
         {
             if !matches_path_filter(path, filter) {
                 continue;
@@ -278,7 +278,7 @@ fn process_test_file(
         .modified()?
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis() as u64;
-    let size = metadata.len() as u64;
+    let size = metadata.len();
 
     // Calculate hash
     let hash = tsz_conformance::cache::calculate_test_hash(&content, &parsed.directives.options);

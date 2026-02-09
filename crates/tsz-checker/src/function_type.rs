@@ -605,10 +605,7 @@ impl<'a> CheckerState<'a> {
         // Collect enclosing type parameter node indices (inner-to-outer order)
         let mut enclosing_param_indices: Vec<Vec<NodeIndex>> = Vec::new();
         let mut current = func_idx;
-        loop {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
             let parent_idx = ext.parent;
             if parent_idx.is_none() {
                 break;
