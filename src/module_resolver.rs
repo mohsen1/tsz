@@ -1903,8 +1903,30 @@ impl ModuleResolver {
             return Some(resolved);
         }
 
-        // Try as directory with index
+        // Try as directory: check package.json for types/main, then index
         if path.is_dir() {
+            let package_json_path = path.join("package.json");
+            if package_json_path.exists() {
+                if let Ok(pj) = self.read_package_json(&package_json_path) {
+                    // Try types/typings field first
+                    if let Some(types) = pj.types.or(pj.typings) {
+                        let types_path = path.join(&types);
+                        if let Some(resolved) = self.try_file(&types_path) {
+                            return Some(resolved);
+                        }
+                        if types_path.is_file() {
+                            return Some(types_path);
+                        }
+                    }
+                    // Try main field with extension remapping
+                    if let Some(main) = &pj.main {
+                        let main_path = path.join(main);
+                        if let Some(resolved) = self.try_file(&main_path) {
+                            return Some(resolved);
+                        }
+                    }
+                }
+            }
             let index = path.join("index");
             return self.try_file(&index);
         }
