@@ -1015,46 +1015,26 @@ impl ModuleResolver {
         // TypeScript always checks "types" first
         conditions.push("types".to_string());
 
-        // Add platform condition based on resolution kind
+        // Add platform condition: Node modes get "node", bundler does NOT
         match self.resolution_kind {
-            ModuleResolutionKind::Bundler => {
-                conditions.push("browser".to_string());
-            }
-            ModuleResolutionKind::Classic
-            | ModuleResolutionKind::Node
-            | ModuleResolutionKind::Node16
-            | ModuleResolutionKind::NodeNext => {
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
                 conditions.push("node".to_string());
             }
+            _ => {}
         }
 
-        // Add module kind conditions - primary first, then opposite as fallback
-        // This allows packages that only export one format to still be resolved
+        // Add module kind condition
         match importing_module_kind {
             ImportingModuleKind::Esm => {
                 conditions.push("import".to_string());
-                conditions.push("default".to_string());
-                conditions.push("require".to_string()); // Fallback: ESM file can use CJS-only package
             }
             ImportingModuleKind::CommonJs => {
                 conditions.push("require".to_string());
-                conditions.push("default".to_string());
-                conditions.push("import".to_string()); // Fallback: CJS file can use ESM-only package
             }
         }
 
-        // Add additional platform fallbacks
-        match self.resolution_kind {
-            ModuleResolutionKind::Bundler => {
-                conditions.push("node".to_string()); // Bundler can also use node exports
-            }
-            ModuleResolutionKind::Classic
-            | ModuleResolutionKind::Node
-            | ModuleResolutionKind::Node16
-            | ModuleResolutionKind::NodeNext => {
-                conditions.push("browser".to_string()); // Node can use browser exports as last resort
-            }
-        }
+        // "default" is always a fallback condition
+        conditions.push("default".to_string());
 
         conditions
     }
