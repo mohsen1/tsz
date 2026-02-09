@@ -233,7 +233,7 @@ async function findTestCases(filter: string, maxTests: number): Promise<TestCase
       : 1;  // TypeScript defaults to CommonJS when no module is specified
 
     const alwaysStrict = directives.strict === true || directives.alwaysstrict === true;
-    const sourceMap = directives.sourcemap === true;
+    const sourceMap = directives.sourcemap === true || directives.inlinesourcemap === true;
 
     return {
       baselineFile,

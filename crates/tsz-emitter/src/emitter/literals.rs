@@ -28,8 +28,14 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_string_literal(&mut self, node: &Node) {
+        // Prefer raw source text to preserve line continuations and escape sequences
+        if let Some(raw) = self.get_raw_string_literal(node) {
+            self.write(&raw);
+            return;
+        }
+
         if let Some(lit) = self.arena.get_literal(node) {
-            // Preserve original quote style from source text
+            // Fallback: re-escape the parsed text
             let quote = self.detect_original_quote(node).unwrap_or_else(|| {
                 if self.ctx.options.single_quote {
                     '\''
@@ -41,6 +47,30 @@ impl<'a> Printer<'a> {
             self.emit_escaped_string(&lit.text, quote);
             self.write_char(quote);
         }
+    }
+
+    /// Extract the raw string literal from source text, preserving escape sequences.
+    fn get_raw_string_literal(&self, node: &Node) -> Option<String> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let start = node.pos as usize;
+        let end = std::cmp::min(node.end as usize, bytes.len());
+
+        // Find the opening quote (skip leading trivia)
+        let mut quote_start = start;
+        while quote_start < end {
+            match bytes[quote_start] {
+                b'\'' | b'"' => break,
+                b' ' | b'\t' | b'\r' | b'\n' => quote_start += 1,
+                _ => return None, // Not a simple string literal
+            }
+        }
+        if quote_start >= end {
+            return None;
+        }
+
+        // Extract from opening quote to end of node (which includes closing quote)
+        Some(text[quote_start..end].to_string())
     }
 
     /// Detect the original quote character used in source text.

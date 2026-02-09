@@ -21,19 +21,24 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit_arrow_function_native(func);
+        self.emit_arrow_function_native(node, func);
     }
 
     /// Emit native ES6+ arrow function syntax
-    fn emit_arrow_function_native(&mut self, func: &tsz_parser::parser::node::FunctionData) {
+    fn emit_arrow_function_native(
+        &mut self,
+        node: &Node,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) {
         if func.is_async {
             self.write("async ");
         }
 
         // Parameters (without types for JavaScript)
-        // TypeScript omits parentheses for single simple parameters: x => x
-        // But uses them for: (x, y) => x, () => x, ({x}) => x, ([x]) => x
-        let needs_parens = self.arrow_function_needs_parens(&func.parameters.nodes);
+        // TypeScript preserves parentheses from source for single simple parameters.
+        // If the source had `(x) => ...`, emit `(x) => ...`.
+        // If the source had `x => ...`, emit `x => ...`.
+        let needs_parens = self.arrow_function_needs_parens(node, &func.parameters.nodes);
 
         if needs_parens {
             self.write("(");
@@ -52,8 +57,8 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if arrow function parameters need parentheses.
-    /// TypeScript omits parentheses only for a single simple identifier parameter.
-    fn arrow_function_needs_parens(&self, params: &[NodeIndex]) -> bool {
+    /// TypeScript preserves parentheses from the original source.
+    fn arrow_function_needs_parens(&self, node: &Node, params: &[NodeIndex]) -> bool {
         // Need parens if not exactly one parameter
         if params.len() != 1 {
             return true;
@@ -84,7 +89,20 @@ impl<'a> Printer<'a> {
             return true; // Destructuring or other complex pattern
         }
 
-        // Simple identifier parameter - no parens needed
+        // Check source text: if the source had parentheses, preserve them
+        if let Some(text) = self.source_text {
+            let start = node.pos as usize;
+            let param_start = param_node.pos as usize;
+            if param_start > start && param_start <= text.len() {
+                // Scan from node start to parameter start for '('
+                let slice = &text[start..param_start];
+                if slice.contains('(') {
+                    return true;
+                }
+            }
+        }
+
+        // Simple identifier parameter without source parens - no parens needed
         false
     }
 

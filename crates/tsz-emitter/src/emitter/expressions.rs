@@ -350,6 +350,15 @@ impl<'a> Printer<'a> {
             "Emitting property assignment: name={:?}, initializer={:?}",
             prop.name, prop.initializer
         );
+
+        // Detect shorthand properties: parser creates PROPERTY_ASSIGNMENT with
+        // name == initializer (same NodeIndex) for shorthand `{ name }` syntax.
+        if prop.name == prop.initializer {
+            // Shorthand: just emit the name
+            self.emit(prop.name);
+            return;
+        }
+
         self.emit(prop.name);
         self.write(": ");
         self.emit_expression(prop.initializer);
