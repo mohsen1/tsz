@@ -2385,6 +2385,18 @@ impl<'a> CheckerState<'a> {
 
         let (symbols, saw_class_scope) = self.resolve_private_identifier_symbols(name_idx);
 
+        // TS18016: Grammar check - private identifiers not allowed outside class bodies
+        // This is a grammar error that can co-occur with TS18013 (semantic error)
+        if !saw_class_scope {
+            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                name_idx,
+                diagnostic_messages::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+            );
+            // Don't return - continue processing to potentially emit TS18013 as well
+        }
+
         // Evaluate for type checking but preserve original for error messages
         // This preserves nominal identity (e.g., D<string>) in error messages
         let original_object_type = object_type;
