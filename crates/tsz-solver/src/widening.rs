@@ -22,7 +22,7 @@ use crate::types::{LiteralValue, TypeId, TypeKey};
 ///
 /// ## Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use crate::widening::widen_type;
 ///
 /// // Widen a literal string to the string primitive
@@ -115,7 +115,7 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use crate::widening::apply_const_assertion;
 ///
 /// // [1, 2] as const becomes readonly [1, 2] (tuple)

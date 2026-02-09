@@ -338,7 +338,7 @@ impl TypeResolver for NoopResolver {
 /// through contexts like `NarrowingContext` that store `Option<&dyn TypeResolver>`.
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// let env: TypeEnvironment = ...;
 /// let resolver: &dyn TypeResolver = &env;
 /// // resolver can now be passed to functions expecting R: TypeResolver

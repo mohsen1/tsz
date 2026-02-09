@@ -17,7 +17,7 @@ pub use self::token_validation::*;
 /// Look ahead to check if current token is followed by a specific token.
 ///
 /// This consolidates the repeated pattern:
-/// ```rust
+/// ```rust,ignore
 /// let snapshot = self.scanner.save_state();
 /// let current = self.current_token;
 /// self.next_token();
@@ -113,7 +113,7 @@ pub struct ParsedModifier {
 /// Returns Some(ParsedModifier) with the modifier kind and position.
 ///
 /// This consolidates the repeated pattern:
-/// ```rust
+/// ```rust,ignore
 /// SyntaxKind::StaticKeyword => {
 ///     self.next_token();
 ///     self.arena.create_modifier(SyntaxKind::StaticKeyword, start_pos)

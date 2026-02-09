@@ -26,7 +26,7 @@
 //! Canonicalization is for **comparison and hashing only**, not for display.
 //! Use `canonicalize()` to check if two types are structurally identical:
 //!
-//! ```rust
+//! ```rust,ignore
 //! let canon_a = canonicalizer.canonicalize(type_a);
 //! let canon_b = canonicalizer.canonicalize(type_b);
 //! assert_eq!(canon_a, canon_b); // Same structure = same TypeId
