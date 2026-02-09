@@ -313,6 +313,56 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Check if there are any comments within a source range.
+    pub(super) fn has_comments_in_range(&self, start: u32, end: u32) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+        for i in self.comment_emit_idx..self.all_comments.len() {
+            let c = &self.all_comments[i];
+            if c.pos >= end {
+                break;
+            }
+            if c.pos >= start && c.end <= end {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Emit all comments within a source range, advancing comment_emit_idx.
+    pub(super) fn emit_comments_in_range(&mut self, start: u32, end: u32) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+        if self.source_text.is_none() {
+            return;
+        }
+
+        while self.comment_emit_idx < self.all_comments.len() {
+            let c_pos = self.all_comments[self.comment_emit_idx].pos;
+            let c_end = self.all_comments[self.comment_emit_idx].end;
+            let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+            if c_pos >= end {
+                break;
+            }
+            if c_pos >= start && c_end <= end {
+                if let Some(text) = self.source_text {
+                    let comment_text = safe_slice::slice(text, c_pos as usize, c_end as usize);
+                    if !comment_text.is_empty() {
+                        self.write(comment_text);
+                    }
+                }
+                if c_trailing {
+                    self.write_line();
+                }
+                self.comment_emit_idx += 1;
+            } else {
+                self.comment_emit_idx += 1;
+            }
+        }
+    }
+
     /// Emit comments in the gap between last_processed_pos and the given position.
     /// This handles comments that appear between AST nodes.
     #[allow(dead_code)] // Infrastructure for comment preservation
