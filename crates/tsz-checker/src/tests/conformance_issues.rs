@@ -387,3 +387,39 @@ let x = f.#bar;  // Outside class - should error TS18013 + TS18016
         relevant_diagnostics
     );
 }
+
+/// Issue: TS2416 false positive for private field "overrides"
+///
+/// Expected: Private fields with same name in child class should NOT emit TS2416
+/// Status: FIXED (2026-02-09)
+///
+/// Root cause: Override checking didn't skip private identifiers
+/// Fix: Added check in class_checker.rs to skip override validation for names starting with '#'
+#[test]
+fn test_private_field_no_override_error() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Parent {
+    #foo: number;
+}
+
+class Child extends Parent {
+    #foo: string;  // Should NOT emit TS2416 - private fields don't participate in inheritance
+}
+        "#,
+    );
+
+    // Filter out TS2318 (missing global types)
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    // Should NOT emit TS2416 (incompatible override) for private fields
+    assert!(
+        !has_error(&relevant_diagnostics, 2416),
+        "Should NOT emit TS2416 for private field with same name in child class.\nActual errors: {:#?}",
+        relevant_diagnostics
+    );
+}
