@@ -513,15 +513,14 @@ impl<'a> Printer<'a> {
         self.write("case ");
         self.emit(clause.expression);
         self.write(":");
-        self.write_line();
-        self.increase_indent();
 
-        for &stmt in &clause.statements.nodes {
-            self.emit(stmt);
-            self.write_line();
-        }
-
-        self.decrease_indent();
+        // Use the expression node's end position as reference for same-line detection
+        let label_end = self
+            .arena
+            .get(clause.expression)
+            .map(|n| n.end)
+            .unwrap_or(node.pos);
+        self.emit_case_clause_body(&clause.statements, label_end);
     }
 
     pub(super) fn emit_default_clause(&mut self, node: &Node) {
@@ -530,15 +529,53 @@ impl<'a> Printer<'a> {
         };
 
         self.write("default:");
+
+        // "default" is 7 chars + ":" is 1, so label ends around node.pos + 8
+        let label_end = node.pos + 8;
+        self.emit_case_clause_body(&clause.statements, label_end);
+    }
+
+    fn emit_case_clause_body(&mut self, statements: &NodeList, label_end: u32) {
+        // If single block statement and the block is on the same line as the
+        // case/default label in source, emit it on the same line (e.g., `case 0: {`)
+        if statements.nodes.len() == 1 {
+            if let Some(stmt_node) = self.arena.get(statements.nodes[0]) {
+                if stmt_node.kind == syntax_kind_ext::BLOCK {
+                    if self.is_on_same_source_line(label_end, stmt_node.pos) {
+                        self.write(" ");
+                        self.emit(statements.nodes[0]);
+                        self.write_line();
+                        return;
+                    }
+                }
+            }
+        }
+
         self.write_line();
         self.increase_indent();
 
-        for &stmt in &clause.statements.nodes {
+        for &stmt in &statements.nodes {
             self.emit(stmt);
             self.write_line();
         }
 
         self.decrease_indent();
+    }
+
+    /// Check if two source positions are on the same line in the original source
+    fn is_on_same_source_line(&self, pos1: u32, pos2: u32) -> bool {
+        if let Some(text) = self.source_text {
+            let start = std::cmp::min(pos1 as usize, text.len());
+            let end = std::cmp::min(pos2 as usize, text.len());
+            let (start, end) = if start <= end {
+                (start, end)
+            } else {
+                (end, start)
+            };
+            !text[start..end].contains('\n')
+        } else {
+            false
+        }
     }
 
     pub(super) fn emit_break_statement(&mut self, node: &Node) {
