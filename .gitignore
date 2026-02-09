@@ -61,6 +61,7 @@ yarn.lock
 /*.py
 /*.rs
 /*.md
+/*.gz
 
 
 # Claude Code - ignore everything in .claude except local settings and skills
