@@ -1328,9 +1328,15 @@ impl<'a> CheckerState<'a> {
             && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
         {
             // Guard against deep cross-arena recursion to prevent stack overflow.
-            // Each delegation creates a full checker stack frame chain, so even
-            // moderate depth can overflow the stack.
+            // Uses shared thread-local counter across all delegation points.
+            if !Self::enter_cross_arena_delegation() {
+                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+                return Some((TypeId::ERROR, Vec::new()));
+            }
+
+            // Also check the per-checker recursion guard
             if !self.ctx.enter_recursion() {
+                Self::leave_cross_arena_delegation();
                 self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
                 return Some((TypeId::ERROR, Vec::new()));
             }
@@ -1340,14 +1346,18 @@ impl<'a> CheckerState<'a> {
             // want the child checker to observe that placeholder.
             self.ctx.symbol_types.remove(&sym_id);
 
-            let mut checker = CheckerState::with_parent_cache(
+            // Box the child checker to keep it on the heap — nested delegations for
+            // interdependent lib types (Array → ReadonlyArray → Iterator → ...) can
+            // create deep call stacks, and CheckerState is too large to stack-allocate
+            // at every level without risking stack overflow.
+            let mut checker = Box::new(CheckerState::with_parent_cache(
                 symbol_arena.as_ref(),
                 self.ctx.binder,
                 self.ctx.types,
                 self.ctx.file_name.clone(),
                 self.ctx.compiler_options.clone(),
                 self, // Share parent's cache to fix Cache Isolation Bug
-            );
+            ));
             // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
             // Copy symbol resolution state to detect cross-file cycles, but exclude
@@ -1379,6 +1389,7 @@ impl<'a> CheckerState<'a> {
             }
 
             self.ctx.leave_recursion();
+            Self::leave_cross_arena_delegation();
             return Some((result, Vec::new()));
         }
 

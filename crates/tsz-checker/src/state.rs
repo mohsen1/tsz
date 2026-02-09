@@ -99,6 +99,12 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{QueryDatabase, TypeId};
 
+thread_local! {
+    /// Shared depth counter for all cross-arena delegation points.
+    /// Prevents stack overflow from deeply nested CheckerState creation.
+    static CROSS_ARENA_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 // =============================================================================
 // CheckerState
 // =============================================================================
@@ -283,6 +289,24 @@ impl<'a> CheckerState<'a> {
                 &parent.ctx,
             ),
         }
+    }
+
+    /// Thread-local guard for cross-arena delegation depth.
+    /// All cross-arena delegation points (delegate_cross_arena_symbol_resolution,
+    /// get_type_params_for_symbol, type_of_value_declaration) MUST call this
+    /// before creating a child CheckerState. Returns true if delegation is allowed.
+    pub(crate) fn enter_cross_arena_delegation() -> bool {
+        let d = CROSS_ARENA_DEPTH.with(|c| c.get());
+        if d >= 5 {
+            return false;
+        }
+        CROSS_ARENA_DEPTH.with(|c| c.set(d + 1));
+        true
+    }
+
+    /// Decrement the cross-arena delegation depth counter.
+    pub(crate) fn leave_cross_arena_delegation() {
+        CROSS_ARENA_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
     }
 
     /// Check if the source file has any parse errors.
