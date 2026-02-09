@@ -52,10 +52,13 @@ impl<'a> Printer<'a> {
         for &stmt_idx in &block.statements.nodes {
             // Emit leading comments before this statement
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                // Only skip whitespace, not comments - comments inside expressions
+                // should be handled by expression emitters
+                let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
                 if let Some(text) = self.source_text {
                     while self.comment_emit_idx < self.all_comments.len() {
                         let c_end = self.all_comments[self.comment_emit_idx].end;
+                        // Only emit if the comment ends before the statement starts
                         if c_end <= actual_start {
                             let c_pos = self.all_comments[self.comment_emit_idx].pos;
                             let c_trailing =
