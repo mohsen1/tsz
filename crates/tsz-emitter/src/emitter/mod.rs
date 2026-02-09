@@ -22,14 +22,13 @@
 //!
 //! Note: pub(super) fields and methods allow future submodules to access Printer internals.
 
-#![allow(clippy::print_stderr)]
-
 use crate::emit_context::EmitContext;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use crate::transform_context::{IdentifierId, TransformContext, TransformDirective};
 use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
+use tracing::warn;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -1292,11 +1291,13 @@ impl<'a> Printer<'a> {
         // Recursion depth check to prevent infinite loops
         self.emit_recursion_depth += 1;
         if self.emit_recursion_depth > MAX_EMIT_RECURSION_DEPTH {
-            // Log a warning to stderr about the recursion limit being exceeded.
+            // Log a warning about the recursion limit being exceeded.
             // This helps developers identify problematic deeply nested ASTs.
-            eprintln!(
-                "Warning: emit recursion limit ({}) exceeded at node kind={} pos={}",
-                MAX_EMIT_RECURSION_DEPTH, node.kind, node.pos
+            warn!(
+                depth = MAX_EMIT_RECURSION_DEPTH,
+                node_kind = node.kind,
+                node_pos = node.pos,
+                "Emit recursion limit exceeded"
             );
             self.write("/* emit recursion limit exceeded */");
             self.emit_recursion_depth -= 1;

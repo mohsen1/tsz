@@ -3,9 +3,8 @@
 //! This module handles emission of special expressions like yield, await, spread,
 //! and decorators that don't fit neatly into other categories.
 
-#![allow(clippy::print_stderr)]
-
 use super::Printer;
+use tracing::warn;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -88,9 +87,9 @@ impl<'a> Printer<'a> {
         if self.ctx.target_es5 {
             // Get decorator expression text for the warning
             let decorator_text = self.get_decorator_text(decorator.expression);
-            eprintln!(
-                "Warning: Decorator @{} skipped in ES5 mode - decorator lowering not fully implemented",
-                decorator_text
+            warn!(
+                decorator = %decorator_text,
+                "Decorator skipped in ES5 mode - decorator lowering not fully implemented"
             );
             self.write("/* @");
             self.write(&decorator_text);
