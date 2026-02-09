@@ -163,15 +163,16 @@ impl<'a> Printer<'a> {
             if !first {
                 self.write(", ");
             }
-            first = false;
-            // Emit comments between the previous node and this one.
-            // This handles comments like: func(a, /*comment*/ b, c)
-            if let Some(prev_end_pos) = prev_end {
-                if let Some(node) = self.arena.get(idx) {
-                    // Only emit comments that haven't been emitted yet
-                    self.emit_unemitted_comments_between(prev_end_pos, node.pos);
+            // Emit comments between the previous node/comma and this node.
+            // This handles comments like: func(a, /*comment*/ b, c) or func(/*c*/ a)
+            if let Some(node) = self.arena.get(idx) {
+                let _range_start = prev_end.unwrap_or(node.pos); // For first node, this won't emit anything
+                if prev_end.is_some() {
+                    // For non-first nodes, emit comments between previous node end and current node start
+                    self.emit_unemitted_comments_between(prev_end.unwrap(), node.pos);
                 }
             }
+            first = false;
             if let Some(node) = self.arena.get(idx) {
                 prev_end = Some(node.end);
             }
@@ -181,7 +182,7 @@ impl<'a> Printer<'a> {
 
     /// Emit comments between two positions that haven't been emitted yet.
     /// This is used for comments in expression contexts (e.g., between function arguments).
-    fn emit_unemitted_comments_between(&mut self, from_pos: u32, to_pos: u32) {
+    pub(crate) fn emit_unemitted_comments_between(&mut self, from_pos: u32, to_pos: u32) {
         if self.ctx.options.remove_comments {
             return;
         }
@@ -190,22 +191,33 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Find comments in the range [from_pos, to_pos) that haven't been emitted yet
-        while self.comment_emit_idx < self.all_comments.len() {
-            let c = &self.all_comments[self.comment_emit_idx];
-            // Only emit if the comment is within our range and after from_pos
+        // Scan through all_comments to find ones in range [from_pos, to_pos)
+        // that come after the current comment_emit_idx position.
+        // We use a temporary index to scan without modifying comment_emit_idx,
+        // since we're looking for comments that may be ahead of the current
+        // emission position.
+        let mut scan_idx = self.comment_emit_idx;
+        while scan_idx < self.all_comments.len() {
+            let c = &self.all_comments[scan_idx];
             if c.pos >= from_pos && c.end <= to_pos {
+                // Found a comment in our range - emit it
                 let comment_text = safe_slice::slice(text, c.pos as usize, c.end as usize);
                 if !comment_text.is_empty() {
                     self.write(comment_text);
+                    self.write_space();
                 }
-                self.comment_emit_idx += 1;
+                // Advance the main index past this comment
+                self.comment_emit_idx = scan_idx + 1;
+                scan_idx += 1;
+            } else if c.end <= from_pos {
+                // Comment is before our range - already handled by statement-level emission
+                scan_idx += 1;
             } else if c.pos >= to_pos {
-                // Comment is past our target position, stop
+                // Comment is past our target position, stop scanning
                 break;
             } else {
-                // Comment is before our range or already emitted, skip
-                self.comment_emit_idx += 1;
+                // Comment overlaps with range boundaries, skip it
+                scan_idx += 1;
             }
         }
     }

@@ -99,9 +99,37 @@ impl<'a> Printer<'a> {
         self.emit(call.expression);
         self.write("(");
         if let Some(ref args) = call.arguments {
+            // For the first argument, emit any comments between '(' and the argument
+            // This handles: func(/*comment*/ arg)
+            if let Some(first_arg) = args.nodes.first() {
+                if let Some(arg_node) = self.arena.get(*first_arg) {
+                    // Use node.end of the call expression to approximate '(' position
+                    // Actually, we need to find the '(' position more carefully
+                    let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
+                    self.emit_unemitted_comments_between(paren_pos, arg_node.pos);
+                }
+            }
             self.emit_comma_separated(&args.nodes);
         }
         self.write(")");
+    }
+
+    /// Find the position of the opening parenthesis in a call expression.
+    /// Scans forward from start_pos looking for '(' before arg_pos.
+    fn find_open_paren_position(&self, start_pos: u32, arg_pos: u32) -> u32 {
+        let Some(text) = self.source_text else {
+            return start_pos;
+        };
+        let bytes = text.as_bytes();
+        let start = start_pos as usize;
+        let end = std::cmp::min(arg_pos as usize, bytes.len());
+
+        for i in start..end {
+            if bytes[i] == b'(' {
+                return i as u32;
+            }
+        }
+        start_pos
     }
 
     pub(super) fn emit_new_expression(&mut self, node: &Node) {
