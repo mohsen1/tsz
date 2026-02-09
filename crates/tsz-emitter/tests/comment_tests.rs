@@ -1,10 +1,9 @@
 //! Integration tests for comment preservation in emitter
 
-use tsz_emitter::printer::{PrintOptions, print_to_string};
+use tsz_emitter::printer::PrintOptions;
 use tsz_parser::ParserState;
 
 #[test]
-#[ignore = "TODO: Fix comment emission between call arguments - currently WIP"]
 fn test_comment_between_call_arguments() {
     let source = r#"function test() {
     var x = foo(/*comment*/ "arg");
@@ -12,10 +11,18 @@ fn test_comment_between_call_arguments() {
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    let options = PrintOptions::default();
-    let output = print_to_string(&parser.arena, root, options);
+
+    // Need to use Printer directly to set source text for comment preservation
+    use tsz_emitter::printer::Printer;
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
 
     // The comment should be preserved before the string literal
+    if !output.contains("/*comment*/") {
+        println!("Full output:\n{}", output);
+    }
     assert!(
         output.contains("/*comment*/"),
         "Comment should be preserved in output: {}",

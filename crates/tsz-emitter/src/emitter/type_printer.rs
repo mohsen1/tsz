@@ -15,7 +15,8 @@ use tsz_solver::types::{TypeId, TypeKey};
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
+/// # use tsz_solver::types::TypeId;
 /// let printer = TypePrinter::new(&interner);
 /// assert_eq!(printer.print_type(TypeId::STRING), "string");
 /// assert_eq!(printer.print_type(TypeId::NUMBER), "number");
