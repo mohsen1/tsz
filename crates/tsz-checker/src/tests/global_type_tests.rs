@@ -463,3 +463,47 @@ class C {
         diagnostics
     );
 }
+
+/// Tests for Symbol constructor with lib files loaded
+///
+/// NOTE: These tests currently fail because the test environment only loads ES5 lib files.
+/// Symbol was introduced in ES2015. These tests document the expected behavior once
+/// ES2015 libs are loaded in tests or the Symbol resolution bug is fixed.
+///
+/// KNOWN BUG: When running with full lib files (CLI), Symbol() incorrectly resolves to
+/// RTCEncodedVideoFrameType instead of symbol primitive. See docs/conformance/bug-symbol-resolution.md
+
+#[test]
+#[ignore = "Test environment only loads ES5, Symbol requires ES2015"]
+fn test_symbol_constructor_returns_symbol_type() {
+    let source = r#"const s: symbol = Symbol('test');"#;
+    let diagnostics = check_with_lib(source);
+
+    // Should have NO errors - Symbol() returns symbol type
+    let all_errors: Vec<_> = diagnostics.iter().collect();
+    assert_eq!(
+        all_errors.len(),
+        0,
+        "Symbol() should return symbol type with no errors, got: {:?}",
+        all_errors
+    );
+}
+
+#[test]
+#[ignore = "Test environment only loads ES5, Symbol requires ES2015"]
+fn test_symbol_inferred_type_is_symbol() {
+    let source = r#"
+const s = Symbol('test');
+const x: symbol = s;
+"#;
+    let diagnostics = check_with_lib(source);
+
+    // Should have NO errors - inferred type of s should be symbol
+    let all_errors: Vec<_> = diagnostics.iter().collect();
+    assert_eq!(
+        all_errors.len(),
+        0,
+        "Symbol() inferred type should be symbol, got: {:?}",
+        all_errors
+    );
+}
