@@ -420,10 +420,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2309: Check for export assignment with other exports
+        // Skip if already emitting TS1203 (ES module target) or TS2300 (duplicate)
         if let Some(&export_idx) = export_assignment_indices.first()
             && has_other_exports
             && export_assignment_indices.len() == 1
-        // Only emit TS2309 if not already emitting TS2300
+            && !self.ctx.compiler_options.module.is_es_module()
         {
             self.error_at_node(
                 export_idx,
