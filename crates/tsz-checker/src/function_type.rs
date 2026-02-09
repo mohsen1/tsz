@@ -993,6 +993,24 @@ impl<'a> CheckerState<'a> {
                     ) {
                         return TypeId::ANY;
                     }
+
+                    // JavaScript files allow dynamic property assignment on 'this' without errors.
+                    // In JS files, accessing a property on 'this' that doesn't exist should not error
+                    // and should return 'any' type, matching TypeScript's behavior.
+                    let is_js_file =
+                        self.ctx.file_name.ends_with(".js") || self.ctx.file_name.ends_with(".jsx");
+                    let is_this_access =
+                        if let Some(obj_node) = self.ctx.arena.get(access.expression) {
+                            obj_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+                        } else {
+                            false
+                        };
+
+                    if is_js_file && is_this_access {
+                        // Allow dynamic property on 'this' in JavaScript files
+                        return TypeId::ANY;
+                    }
+
                     // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere
                     if !property_name.starts_with('#') {
                         // Property access expressions are VALUE context - always emit TS2339.
