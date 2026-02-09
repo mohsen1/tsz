@@ -423,3 +423,187 @@ class Child extends Parent {
         relevant_diagnostics
     );
 }
+
+/// Issue: Computed property destructuring produces false TS2349
+///
+/// From: computed-property-destructuring.md
+/// Expected: No TS2349 errors
+/// Actual: TS2349 "This expression is not callable" errors
+///
+/// Root cause: Computed property name expression in destructuring binding
+/// may be incorrectly treated or the type resolution fails.
+#[test]
+fn test_computed_property_destructuring_no_false_ts2349() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+let foo = "bar";
+let {[foo]: bar} = {bar: "baz"};
+        "#,
+    );
+
+    // Filter out TS2318 (missing global types)
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2349),
+        "Should NOT emit TS2349 for computed property destructuring.\nActual errors: {:#?}",
+        relevant
+    );
+}
+
+/// Issue: Contextual typing for generic function parameters
+///
+/// From: contextual-typing-generics.md
+/// Expected: No TS7006 errors (parameter gets contextual type from generic function type)
+/// Actual: TS7006 "Parameter implicitly has 'any' type"
+///
+/// Root cause: When a function expression/arrow is assigned to a generic function type
+/// like `<T>(x: T) => void`, the parameter should get its type from contextual typing.
+/// Currently, the parameter type is not inferred from the contextual type.
+#[test]
+fn test_contextual_typing_generic_function_param() {
+    // Enable noImplicitAny to trigger TS7006
+    let source = r#"
+// @noImplicitAny: true
+const fn2: <T>(x: T) => void = function test(t) { };
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut options = CheckerOptions::default();
+    options.no_implicit_any = true;
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    // Filter out TS2318 (missing global types)
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 7006),
+        "Should NOT emit TS7006 - parameter 't' should be contextually typed as T.\nActual errors: {:#?}",
+        relevant
+    );
+}
+
+/// Issue: Contextual typing for arrow function assigned to generic type
+#[test]
+fn test_contextual_typing_generic_arrow_param() {
+    let source = r#"
+// @noImplicitAny: true
+declare function f(fun: <T>(t: T) => void): void;
+f(t => { });
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut options = CheckerOptions::default();
+    options.no_implicit_any = true;
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    // Filter out TS2318 (missing global types)
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 7006),
+        "Should NOT emit TS7006 - parameter 't' should be contextually typed from generic.\nActual errors: {:#?}",
+        relevant
+    );
+}
+
+/// Regression test: TS7006 SHOULD still fire for closures without any contextual type
+#[test]
+fn test_ts7006_still_fires_without_contextual_type() {
+    let source = r#"
+// @noImplicitAny: true
+var f = function(x) { };
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut options = CheckerOptions::default();
+    options.no_implicit_any = true;
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant, 7006),
+        "SHOULD emit TS7006 - parameter 'x' has no contextual type.\nActual errors: {:#?}",
+        relevant
+    );
+}

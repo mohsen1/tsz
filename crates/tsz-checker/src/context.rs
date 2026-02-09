@@ -368,6 +368,11 @@ pub struct CheckerContext<'a> {
     /// Contextual type for expression being checked.
     pub contextual_type: Option<TypeId>,
 
+    /// Whether we're in the statement checking phase (vs type environment building).
+    /// During build_type_environment, closure parameter types may not have contextual types
+    /// yet, so TS7006 should be deferred until the checking phase.
+    pub is_checking_statements: bool,
+
     /// Whether we are currently evaluating the LHS of a destructuring assignment.
     /// Used to suppress TS1117 (duplicate property) checks in object patterns.
     pub in_destructuring_target: bool,
@@ -630,6 +635,7 @@ impl<'a> CheckerContext<'a> {
             node_resolution_set: FxHashSet::default(),
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
+            is_checking_statements: false,
             in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
@@ -738,6 +744,7 @@ impl<'a> CheckerContext<'a> {
             node_resolution_set: FxHashSet::default(),
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
+            is_checking_statements: false,
             in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
@@ -849,6 +856,7 @@ impl<'a> CheckerContext<'a> {
             node_resolution_set: FxHashSet::default(),
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
+            is_checking_statements: false,
             in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
@@ -959,6 +967,7 @@ impl<'a> CheckerContext<'a> {
             node_resolution_set: FxHashSet::default(),
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
+            is_checking_statements: false,
             in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
@@ -1078,6 +1087,7 @@ impl<'a> CheckerContext<'a> {
             node_resolution_set: FxHashSet::default(),
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
+            is_checking_statements: false,
             in_destructuring_target: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
