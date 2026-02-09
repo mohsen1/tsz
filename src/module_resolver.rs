@@ -383,15 +383,28 @@ impl ResolutionFailure {
                 suggested_extension,
                 containing_file,
                 span,
-            } => Diagnostic::error(
-                containing_file,
-                *span,
-                format!(
-                    "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean '{}{}'?",
-                    specifier, suggested_extension
-                ),
-                IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
-            ),
+            } => {
+                if suggested_extension.is_empty() {
+                    // TS2834: No suggestion available
+                    Diagnostic::error(
+                        containing_file,
+                        *span,
+                        "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Consider adding an extension to the import path.".to_string(),
+                        IMPORT_PATH_NEEDS_EXTENSION,
+                    )
+                } else {
+                    // TS2835: With extension suggestion
+                    Diagnostic::error(
+                        containing_file,
+                        *span,
+                        format!(
+                            "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean '{}{}'?",
+                            specifier, suggested_extension
+                        ),
+                        IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
+                    )
+                }
+            }
             ResolutionFailure::ImportingTsExtensionNotAllowed {
                 extension,
                 containing_file,
@@ -1114,7 +1127,7 @@ impl ModuleResolver {
         ) && importing_module_kind == ImportingModuleKind::Esm
             && !specifier_has_extension
         {
-            // Try to resolve to determine what extension to suggest
+            // Try to resolve to determine what extension to suggest (TS2835)
             if let Some(resolved) = self.try_file_or_directory(&candidate) {
                 // Resolution succeeded implicitly - this is an error in ESM mode
                 let resolved_ext = ModuleExtension::from_path(&resolved);
@@ -1139,7 +1152,7 @@ impl ModuleResolver {
                     span: specifier_span,
                 });
             }
-            // If resolution fails, fall through to NotFound
+            // If resolution fails, fall through to NotFound (TS2307)
         }
 
         if let Some(resolved) = self.try_file_or_directory(&candidate) {
