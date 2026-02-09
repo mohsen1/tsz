@@ -2654,35 +2654,49 @@ impl ParserState {
             self.next_token(); // Skip the '?' for error recovery
         }
 
-        let initializer = if self.parse_optional(SyntaxKind::ColonToken) {
+        if self.parse_optional(SyntaxKind::ColonToken) {
             let expr = self.parse_assignment_expression();
-            if expr.is_none() {
+            let initializer = if expr.is_none() {
                 // Emit TS1109 for missing property value: { prop: }
                 self.error_expression_expected();
                 name // Use property name as fallback for error recovery
             } else {
                 expr
-            }
+            };
+
+            let end_pos = self.token_end();
+            // Regular property assignment with explicit value
+            self.arena.add_property_assignment(
+                syntax_kind_ext::PROPERTY_ASSIGNMENT,
+                start_pos,
+                end_pos,
+                crate::parser::node::PropertyAssignmentData {
+                    modifiers: None,
+                    name,
+                    initializer,
+                },
+            )
         } else {
             // Shorthand property - but certain property names require `:` syntax
             if requires_colon {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
             }
-            name
-        };
 
-        let end_pos = self.token_end();
-        self.arena.add_property_assignment(
-            syntax_kind_ext::PROPERTY_ASSIGNMENT,
-            start_pos,
-            end_pos,
-            crate::parser::node::PropertyAssignmentData {
-                modifiers: None,
-                name,
-                initializer,
-            },
-        )
+            let end_pos = self.token_end();
+            // Create SHORTHAND_PROPERTY_ASSIGNMENT node for `{ name }` syntax
+            self.arena.add_shorthand_property(
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT,
+                start_pos,
+                end_pos,
+                crate::parser::node::ShorthandPropertyData {
+                    modifiers: None,
+                    name,
+                    equals_token: false,
+                    object_assignment_initializer: NodeIndex::NONE,
+                },
+            )
+        }
     }
 
     /// Look ahead to check if get/set/async is a method vs property name
