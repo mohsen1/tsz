@@ -1235,7 +1235,7 @@ impl ModuleResolver {
             // Also check @types packages in node_modules (TypeScript classic resolution
             // still resolves @types packages for bare specifiers)
             if !package_name.starts_with("@types/") {
-                let types_package = format!("@types/{}", package_name.replace('/', "__"));
+                let types_package = types_package_name(&package_name);
                 let types_dir = current.join("node_modules").join(&types_package);
                 if types_dir.is_dir() {
                     if let Ok(resolved) = self.resolve_package(
@@ -1254,7 +1254,7 @@ impl ModuleResolver {
             // Check type_roots for the package
             for type_root in &self.type_roots {
                 let types_package = if !package_name.starts_with("@types/") {
-                    type_root.join(format!("@types/{}", package_name.replace('/', "__")))
+                    type_root.join(types_package_name(&package_name))
                 } else {
                     type_root.join(&package_name)
                 };
@@ -1352,7 +1352,7 @@ impl ModuleResolver {
             }
 
             if !package_name.starts_with("@types/") {
-                let types_package = format!("@types/{}", package_name.replace('/', "__"));
+                let types_package = types_package_name(&package_name);
                 let types_dir = node_modules.join(&types_package);
                 if types_dir.is_dir() {
                     if let Ok(resolved) = self.resolve_package(
@@ -1377,8 +1377,7 @@ impl ModuleResolver {
 
         // Try type roots (for @types packages)
         for type_root in &self.type_roots {
-            let types_package =
-                type_root.join(format!("@types/{}", package_name.replace('/', "__")));
+            let types_package = type_root.join(types_package_name(&package_name));
             if types_package.is_dir()
                 && let Ok(resolved) = self.resolve_package(
                     &types_package,
@@ -2062,6 +2061,14 @@ fn parse_package_specifier(specifier: &str) -> (String, Option<String>) {
     } else {
         (specifier.to_string(), None)
     }
+}
+
+/// Convert a package name to its @types equivalent.
+/// For scoped packages like `@see/saw`, this produces `@types/see__saw`.
+/// For regular packages like `foo`, this produces `@types/foo`.
+fn types_package_name(package_name: &str) -> String {
+    let stripped = package_name.strip_prefix('@').unwrap_or(package_name);
+    format!("@types/{}", stripped.replace('/', "__"))
 }
 
 /// Match an export pattern against a subpath

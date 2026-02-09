@@ -138,7 +138,7 @@ pub fn compile_test(
             serde_json::to_string_pretty(&tsconfig_content)?,
         )?;
     } else {
-        copy_tsconfig_to_root_if_needed(dir_path, filenames)?;
+        copy_tsconfig_to_root_if_needed(dir_path, filenames, options)?;
     }
 
     // Run tsz compiler using the tsz binary
@@ -274,7 +274,7 @@ pub fn prepare_test_dir(
             serde_json::to_string_pretty(&tsconfig_content)?,
         )?;
     } else {
-        copy_tsconfig_to_root_if_needed(dir_path, filenames)?;
+        copy_tsconfig_to_root_if_needed(dir_path, filenames, options)?;
     }
 
     Ok(PreparedTest {
@@ -521,17 +521,48 @@ fn parse_diagnostics_from_text(text: &str) -> Vec<Diagnostic> {
 fn copy_tsconfig_to_root_if_needed(
     dir_path: &Path,
     filenames: &[(String, String)],
+    options: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     let root_tsconfig = dir_path.join("tsconfig.json");
-    if root_tsconfig.is_file() {
-        return Ok(());
+    // If the tsconfig was already written (e.g. at the root via @filename), read and merge
+    let base_content = if root_tsconfig.is_file() {
+        std::fs::read_to_string(&root_tsconfig)?
+    } else {
+        // Find the tsconfig.json from filenames
+        let content = filenames
+            .iter()
+            .find(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"))
+            .map(|(_, content)| content.clone());
+        match content {
+            Some(c) => c,
+            None => return Ok(()),
+        }
+    };
+
+    // Merge directive options into the tsconfig's compilerOptions
+    let directive_opts = convert_options_to_tsconfig(options);
+    if let serde_json::Value::Object(ref directive_map) = directive_opts {
+        if !directive_map.is_empty() {
+            let mut tsconfig: serde_json::Value =
+                serde_json::from_str(&base_content).unwrap_or_else(|_| serde_json::json!({}));
+            if let serde_json::Value::Object(ref mut root) = tsconfig {
+                let compiler_options = root
+                    .entry("compilerOptions")
+                    .or_insert_with(|| serde_json::json!({}));
+                if let serde_json::Value::Object(ref mut opts) = compiler_options {
+                    for (key, value) in directive_map {
+                        opts.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            std::fs::write(&root_tsconfig, serde_json::to_string_pretty(&tsconfig)?)?;
+            return Ok(());
+        }
     }
-    let tsconfig_content = filenames
-        .iter()
-        .find(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"))
-        .map(|(_, content)| content);
-    if let Some(content) = tsconfig_content {
-        std::fs::write(root_tsconfig, content)?;
+
+    // No directive options to merge, just write the original content
+    if !root_tsconfig.is_file() {
+        std::fs::write(&root_tsconfig, base_content)?;
     }
     Ok(())
 }
