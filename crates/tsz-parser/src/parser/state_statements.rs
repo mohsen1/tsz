@@ -943,6 +943,19 @@ impl ParserState {
         // Check for illegal binding identifiers (e.g., 'await' in static blocks)
         self.check_illegal_binding_identifier();
 
+        // TS18029: Check for private identifiers in variable declarations (check before parsing)
+        if self.is_token(SyntaxKind::PrivateIdentifier) {
+            let start = self.token_pos();
+            let length = self.token_end() - start;
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at(
+                start,
+                length,
+                "Private identifiers are not allowed in variable declarations.",
+                diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_IN_VARIABLE_DECLARATIONS,
+            );
+        }
+
         let name = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_object_binding_pattern()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
@@ -1515,6 +1528,19 @@ impl ParserState {
         // Check for illegal binding identifiers (e.g., 'await' in async contexts, 'yield' in generator contexts)
         // This must be called BEFORE parsing the parameter name to catch reserved words
         self.check_illegal_binding_identifier();
+
+        // TS18009: Check for private identifiers used as parameters (check before parsing)
+        if self.is_token(SyntaxKind::PrivateIdentifier) {
+            let start = self.token_pos();
+            let length = self.token_end() - start;
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at(
+                start,
+                length,
+                "Private identifiers cannot be used as parameters.",
+                diagnostic_codes::PRIVATE_IDENTIFIERS_CANNOT_BE_USED_AS_PARAMETERS,
+            );
+        }
 
         // Parse parameter name - can be an identifier, keyword, or binding pattern
         let name = if self.is_token(SyntaxKind::OpenBraceToken) {
