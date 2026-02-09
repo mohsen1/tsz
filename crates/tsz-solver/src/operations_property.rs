@@ -1769,7 +1769,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         match self.interner().object_property_index(shape_id, prop_atom) {
             PropertyLookup::Found(idx) => props.get(idx),
             PropertyLookup::NotFound => None,
-            PropertyLookup::Uncached => props.iter().find(|p| p.name == prop_atom),
+            // Properties are sorted by Atom, use binary search for O(log N)
+            PropertyLookup::Uncached => props
+                .binary_search_by_key(&prop_atom, |p| p.name)
+                .ok()
+                .map(|idx| &props[idx]),
         }
     }
 
