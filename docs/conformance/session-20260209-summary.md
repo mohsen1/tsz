@@ -148,3 +148,45 @@ Flow:
 
 **Session Completed:** 2026-02-09  
 **All work committed and pushed to:** `claude/improve-conformance-tests-btem0`
+
+## Additional TS2339 Investigation
+
+After completing Symbol bug investigation, explored TS2339 false positives further:
+
+### Findings
+
+**Pattern 1: Symbol-Related (High Priority)**
+- Test: `acceptSymbolAsWeakType.ts`
+- Expected: No errors
+- Actual: TS2322, TS2339, TS2339, TS2769, TS2769
+- Root cause: Symbol bug causes `Symbol('s')` to fail, then WeakSet/WeakMap methods not found
+- **Fix:** Blocked on Symbol bug resolution
+
+**Pattern 2: JavaScript/JSDoc (Medium Priority)**  
+- Tests: `argumentsReferenceInMethod1_Js.ts`, `argumentsReferenceInMethod3_Js.ts`, etc.
+- Issue: Property access on `this` in JavaScript files with JSDoc
+- Example: `this.arguments = foo;` reports TS2339 when it shouldn't
+- **Fix:** Review property access checking for JavaScript files
+
+**Pattern 3: Module/Namespace Exports (Medium Priority)**
+- Test: `aliasDoesNotDuplicateSignatures.ts`
+- Expected: TS2322
+- Actual: TS2339
+- Issue: Import alias not resolving properties correctly
+- **Fix:** Review namespace/module export resolution
+
+### Updated Priorities
+
+1. **Symbol bug** (blocks ~30% of TS2339 errors)
+2. **JavaScript/JSDoc property access** (affects multiple JS test files)
+3. **Module alias resolution** (affects import/export tests)
+
+### Pass Rate Analysis
+
+Different slices show varying pass rates:
+- Tests 0-144: 79.2% (114/144 passed)
+- Tests 0-500: 61.1% (302/494 passed)  
+- Tests 200-500: 53.7% (161/300 passed)
+
+**Observation:** Later test ranges have more complex scenarios, lower pass rates.
+
