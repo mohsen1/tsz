@@ -1106,28 +1106,75 @@ impl<'a> CheckerState<'a> {
     /// Returns the SymbolId of the VALUE symbol if found.
     pub(crate) fn find_value_symbol_in_libs(&self, name: &str) -> Option<SymbolId> {
         let lib_binders = self.get_lib_binders();
+        trace!(
+            name = name,
+            "find_value_symbol_in_libs: searching for VALUE symbol"
+        );
         // Check file_locals first (may have merged value from lib)
         if let Some(val_sym_id) = self.ctx.binder.file_locals.get(name) {
+            trace!(
+                name = name,
+                val_sym_id = ?val_sym_id,
+                "find_value_symbol_in_libs: found in file_locals"
+            );
             if let Some(val_symbol) = self
                 .ctx
                 .binder
                 .get_symbol_with_libs(val_sym_id, &lib_binders)
             {
+                trace!(
+                    name = name,
+                    val_sym_id = ?val_sym_id,
+                    has_value = (val_symbol.flags & symbol_flags::VALUE) != 0,
+                    is_type_only = val_symbol.is_type_only,
+                    flags = val_symbol.flags,
+                    "find_value_symbol_in_libs: symbol details"
+                );
                 if (val_symbol.flags & symbol_flags::VALUE) != 0 && !val_symbol.is_type_only {
+                    trace!(
+                        name = name,
+                        returned_sym_id = ?val_sym_id,
+                        "find_value_symbol_in_libs: returning from file_locals"
+                    );
                     return Some(val_sym_id);
                 }
             }
         }
         // Search lib binders directly
-        for lib_binder in &lib_binders {
+        for (lib_idx, lib_binder) in lib_binders.iter().enumerate() {
             if let Some(val_sym_id) = lib_binder.file_locals.get(name) {
+                trace!(
+                    name = name,
+                    lib_idx = lib_idx,
+                    val_sym_id = ?val_sym_id,
+                    "find_value_symbol_in_libs: found in lib_binder"
+                );
                 if let Some(val_symbol) = lib_binder.get_symbol(val_sym_id) {
+                    trace!(
+                        name = name,
+                        lib_idx = lib_idx,
+                        val_sym_id = ?val_sym_id,
+                        has_value = (val_symbol.flags & symbol_flags::VALUE) != 0,
+                        is_type_only = val_symbol.is_type_only,
+                        flags = val_symbol.flags,
+                        "find_value_symbol_in_libs: lib symbol details"
+                    );
                     if (val_symbol.flags & symbol_flags::VALUE) != 0 && !val_symbol.is_type_only {
+                        trace!(
+                            name = name,
+                            lib_idx = lib_idx,
+                            returned_sym_id = ?val_sym_id,
+                            "find_value_symbol_in_libs: returning from lib_binder"
+                        );
                         return Some(val_sym_id);
                     }
                 }
             }
         }
+        trace!(
+            name = name,
+            "find_value_symbol_in_libs: no VALUE symbol found"
+        );
         None
     }
 
