@@ -657,19 +657,21 @@ fn expand_module_path_candidates(
     let base = normalize_path(path);
     let suffixes = &options.module_suffixes;
     if let Some((base_no_ext, extension)) = split_path_extension(&base) {
-        let resolution = options.effective_module_resolution();
-        if matches!(
-            resolution,
-            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
-        ) && let Some(rewritten) = node16_extension_substitution(&base, extension)
-        {
-            let mut candidates = Vec::new();
+        // Try extension substitution (.js → .ts/.tsx/.d.ts) for all resolution modes.
+        // TypeScript resolves `.js` imports to `.ts` sources in all modes.
+        let mut candidates = Vec::new();
+        if let Some(rewritten) = node16_extension_substitution(&base, extension) {
             for candidate in rewritten {
                 candidates.extend(candidates_with_suffixes(&candidate, suffixes));
             }
-            return candidates;
         }
-        return candidates_with_suffixes_and_extension(&base_no_ext, extension, suffixes);
+        // Also include the original extension as fallback
+        candidates.extend(candidates_with_suffixes_and_extension(
+            &base_no_ext,
+            extension,
+            suffixes,
+        ));
+        return candidates;
     }
 
     let extensions = extension_candidates_for_resolution(options, package_type);
