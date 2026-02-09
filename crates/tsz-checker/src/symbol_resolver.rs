@@ -23,6 +23,7 @@
 
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use std::sync::Arc;
+use tracing::trace;
 use tsz_binder::symbol_flags::CLASS;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
@@ -284,6 +285,13 @@ impl<'a> CheckerState<'a> {
     }
 
     fn resolve_identifier_symbol_inner(&self, idx: NodeIndex) -> Option<SymbolId> {
+        // Get identifier name for tracing
+        let ident_name = self
+            .ctx
+            .arena
+            .get_identifier_at(idx)
+            .map(|i| i.escaped_text.as_str().to_string());
+
         let ignore_libs = !self.ctx.has_lib_loaded();
         let lib_binders = if ignore_libs {
             Vec::new()
@@ -292,6 +300,13 @@ impl<'a> CheckerState<'a> {
         };
         let is_from_lib = |sym_id: SymbolId| self.ctx.symbol_is_from_lib(sym_id);
         let should_skip_lib_symbol = |sym_id: SymbolId| ignore_libs && is_from_lib(sym_id);
+
+        trace!(
+            ident_name = ?ident_name,
+            idx = ?idx,
+            ignore_libs = ignore_libs,
+            "Resolving identifier symbol"
+        );
 
         // First try the binder's resolver which checks scope chain and file_locals
         let result = self.ctx.binder.resolve_identifier_with_filter(
@@ -313,6 +328,12 @@ impl<'a> CheckerState<'a> {
             },
         );
 
+        trace!(
+            ident_name = ?ident_name,
+            binder_result = ?result,
+            "Binder resolution result"
+        );
+
         // IMPORTANT: If the binder didn't find the symbol, check lib_contexts directly as a fallback.
         // The binder's method has a bug where it only queries lib_binders when lib_symbols_merged is FALSE.
         // After lib symbols are merged into the main binder, lib_symbols_merged is set to TRUE,
@@ -328,18 +349,35 @@ impl<'a> CheckerState<'a> {
             };
 
             // Check lib_contexts directly for global symbols
-            for lib_ctx in &self.ctx.lib_contexts {
+            for (lib_idx, lib_ctx) in self.ctx.lib_contexts.iter().enumerate() {
                 if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    trace!(
+                        name = name,
+                        lib_idx = lib_idx,
+                        lib_sym_id = ?lib_sym_id,
+                        "Found symbol in lib_context"
+                    );
                     if !should_skip_lib_symbol(lib_sym_id) {
                         // Use file binder's sym_id for correct ID space after lib merge
                         let file_sym_id =
                             self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                        trace!(
+                            name = name,
+                            file_sym_id = ?file_sym_id,
+                            lib_sym_id = ?lib_sym_id,
+                            "Returning symbol from lib_contexts fallback"
+                        );
                         return Some(file_sym_id);
                     }
                 }
             }
         }
 
+        trace!(
+            ident_name = ?ident_name,
+            final_result = ?result,
+            "Symbol resolution final result"
+        );
         result
     }
 
