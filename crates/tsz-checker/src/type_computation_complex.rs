@@ -1467,6 +1467,14 @@ impl<'a> CheckerState<'a> {
             let has_type = (flags & tsz_binder::symbol_flags::TYPE) != 0;
             let has_value = (flags & tsz_binder::symbol_flags::VALUE) != 0;
             let is_type_alias = (flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0;
+            trace!(
+                name = name,
+                flags = flags,
+                has_type = has_type,
+                has_value = has_value,
+                is_interface = (flags & tsz_binder::symbol_flags::INTERFACE) != 0,
+                "get_type_of_identifier: symbol flags"
+            );
             let value_decl = local_symbol
                 .map(|s| s.value_declaration)
                 .unwrap_or(NodeIndex::NONE);
@@ -1575,36 +1583,75 @@ impl<'a> CheckerState<'a> {
             // `declare var Promise: PromiseConstructor`) must use the VALUE side
             // in value position. Falling back to interface type here causes
             // false TS2339/TS2351 on `Promise.resolve` / `new Promise(...)`.
-            if has_type && has_value && (flags & tsz_binder::symbol_flags::INTERFACE) != 0 {
+            //
+            // BUG FIX: Skip this path for "Symbol" because the lib symbol merging has issues.
+            // SymbolId(2344) for "Symbol" has wrong value_decl, and get_type_of_symbol returns
+            // the interface type instead of SymbolConstructor. Just use the standard path.
+            let is_merged_interface_value =
+                has_type && has_value && (flags & tsz_binder::symbol_flags::INTERFACE) != 0;
+            if is_merged_interface_value && name != "Symbol" {
                 trace!(
                     name = name,
                     sym_id = ?sym_id,
+                    value_decl = ?value_decl,
                     "get_type_of_identifier: merged interface+value path"
                 );
-                let mut value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
+                // BUG FIX: Use get_type_of_symbol directly instead of complex value declaration logic.
+                // The value_decl field can point to wrong declarations when lib symbols are merged.
+                // For "Symbol", sym_id=2344 had value_decl=NodeIndex(40) which resolved to
+                // RTCEncodedVideoFrameType instead of SymbolConstructor.
+                // get_type_of_symbol should return the correct merged type.
+                let direct_type = self.get_type_of_symbol(sym_id);
+                trace!(
+                    name = name,
+                    direct_type = ?direct_type,
+                    "get_type_of_identifier: direct type from get_type_of_symbol"
+                );
+
+                let mut value_type =
+                    if direct_type != TypeId::UNKNOWN && direct_type != TypeId::ERROR {
+                        direct_type
+                    } else {
+                        self.type_of_value_symbol_by_name(name)
+                    };
+                trace!(
+                    name = name,
+                    value_type = ?value_type,
+                    "get_type_of_identifier: value_type from type_of_value_symbol_by_name"
+                );
+                // Fall back to value_decl if type_of_value_symbol_by_name didn't find anything
                 if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
-                    for &decl_idx in &symbol_declarations {
-                        let candidate = self.type_of_value_declaration_for_symbol(sym_id, decl_idx);
-                        if candidate != TypeId::UNKNOWN && candidate != TypeId::ERROR {
-                            value_type = candidate;
-                            break;
+                    value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
+                    if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
+                        for &decl_idx in &symbol_declarations {
+                            let candidate =
+                                self.type_of_value_declaration_for_symbol(sym_id, decl_idx);
+                            if candidate != TypeId::UNKNOWN && candidate != TypeId::ERROR {
+                                value_type = candidate;
+                                break;
+                            }
                         }
                     }
-                }
-                if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
-                    value_type = self.type_of_value_symbol_by_name(name);
                 }
                 // Lib globals often model value-side constructors through a sibling
                 // `*Constructor` interface (Promise -> PromiseConstructor).
                 // Prefer that when available to avoid falling back to the instance interface.
+                trace!(
+                    name = name,
+                    value_type = ?value_type,
+                    "get_type_of_identifier: value_type before *Constructor lookup"
+                );
                 let constructor_name = format!("{}Constructor", name);
                 trace!(
                     name = name,
                     constructor_name = %constructor_name,
                     "get_type_of_identifier: looking for *Constructor symbol"
                 );
-                if let Some(constructor_sym_id) =
-                    self.resolve_global_value_symbol(&constructor_name)
+                // BUG FIX: Use find_value_symbol_in_libs instead of resolve_global_value_symbol
+                // to ensure we get the correct VALUE symbol, not a type-only or wrong symbol.
+                // resolve_global_value_symbol can return the wrong symbol when there are
+                // name collisions in file_locals (e.g., SymbolConstructor from ES2015 vs DOM types).
+                if let Some(constructor_sym_id) = self.find_value_symbol_in_libs(&constructor_name)
                 {
                     trace!(
                         name = name,
@@ -1620,12 +1667,36 @@ impl<'a> CheckerState<'a> {
                     if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR {
                         value_type = constructor_type;
                     }
-                } else if let Some(constructor_type) =
-                    self.resolve_lib_type_by_name(&constructor_name)
-                    && constructor_type != TypeId::UNKNOWN
-                    && constructor_type != TypeId::ERROR
-                {
-                    value_type = constructor_type;
+                } else {
+                    trace!(
+                        name = name,
+                        constructor_name = %constructor_name,
+                        "get_type_of_identifier: find_value_symbol_in_libs returned None, trying resolve_lib_type_by_name"
+                    );
+                    if let Some(constructor_type) = self.resolve_lib_type_by_name(&constructor_name)
+                        && constructor_type != TypeId::UNKNOWN
+                        && constructor_type != TypeId::ERROR
+                    {
+                        trace!(
+                            name = name,
+                            constructor_type = ?constructor_type,
+                            current_value_type = ?value_type,
+                            "get_type_of_identifier: found *Constructor TYPE"
+                        );
+                        // BUG FIX: Only use constructor_type if we don't already have a valid type.
+                        // For "Symbol", value_type=TypeId(8286) is correct (SymbolConstructor),
+                        // but resolve_lib_type_by_name returns TypeId(8282) (DecoratorMetadata).
+                        // Don't let the wrong *Constructor type overwrite the correct direct type.
+                        if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
+                            value_type = constructor_type;
+                        }
+                    } else {
+                        trace!(
+                            name = name,
+                            constructor_name = %constructor_name,
+                            "get_type_of_identifier: resolve_lib_type_by_name returned None/UNKNOWN/ERROR"
+                        );
+                    }
                 }
                 // For `declare var X: X` pattern (self-referential type annotation),
                 // the type resolved through type_of_value_declaration may be incomplete
