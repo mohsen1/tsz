@@ -23,6 +23,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Default lib assets for fresh checkouts (tsz expects a lib directory)
+TSZ_LIB_DIR_DEFAULT="$PROJECT_ROOT/src/lib-assets"
+TSZ_LIB_DIR="${TSZ_LIB_DIR:-$TSZ_LIB_DIR_DEFAULT}"
+export TSZ_LIB_DIR
+
 # Dedicated target directory for benchmarks - isolated from dev builds
 # This prevents other cargo builds from accidentally overwriting the optimized binary
 BENCH_TARGET_DIR="$PROJECT_ROOT/.target-bench"
@@ -73,6 +78,7 @@ while [[ $# -gt 0 ]]; do
             echo "Environment overrides:"
             echo "  TSGO=<path>            Use a specific tsgo binary (skip auto-install)"
             echo "  TSGO_NPM_SPEC=<spec>   Override pinned npm package (default: $TSGO_NPM_SPEC)"
+            echo "  TSZ_LIB_DIR=<path>     Override tsz lib assets (default: $TSZ_LIB_DIR_DEFAULT)"
             echo "  UTILITY_TYPES_REF=<sha> Override pinned utility-types commit"
             echo "  NEXTJS_REF=<sha>       Override pinned next.js commit"
             exit 0
@@ -187,6 +193,14 @@ check_prerequisites() {
         echo -e "${YELLOW}○${NC} jq not found (optional, install for results table)"
     fi
     
+    # Check for lib assets directory used by tsz
+    if [ ! -d "$TSZ_LIB_DIR" ]; then
+        echo -e "${RED}✗ lib directory not found: $TSZ_LIB_DIR${NC}"
+        echo "  Set TSZ_LIB_DIR or ensure src/lib-assets exists."
+        exit 1
+    fi
+    echo -e "${GREEN}✓${NC} tsz lib assets: $TSZ_LIB_DIR"
+
     # Check/build tsz with dedicated benchmark target directory
     # Using isolated target dir prevents other cargo builds from affecting benchmark binary
     local need_rebuild=false
@@ -236,30 +250,45 @@ run_benchmark() {
         return
     fi
 
-    # Pre-validate: both compilers must succeed (exit 0) before benchmarking
-    local tsz_check=$($TSZ --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
-    local tsgo_check=$($TSGO --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
-
-    if [ "$tsz_check" -ne 0 ]; then
-        echo -e "${YELLOW}$name${NC} - ${RED}SKIPPED${NC} (tsz failed, check: $tsz_check)"
-        local tsz_error=$($TSZ --noEmit $extra_args "$file" 2>&1 | head -1)
-        echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
-        return
-    fi
-
-    if [ "$tsgo_check" -ne 0 ]; then
-        echo -e "${YELLOW}$name${NC} - ${RED}SKIPPED${NC} (tsgo failed, check: $tsgo_check)"
-        local tsgo_error=$($TSGO --noEmit $extra_args "$file" 2>&1 | head -1)
-        echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
-        return
-    fi
-
     BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
 
     local lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
     local bytes=$(wc -c < "$file" 2>/dev/null | tr -d ' ')
     local kb=$((bytes / 1024))
     local info="${lines} lines, ${kb}KB"
+
+    # Pre-validate: record errors in summary table instead of skipping
+    local tsz_check=$(TSZ_LIB_DIR="$TSZ_LIB_DIR" $TSZ --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
+    local tsgo_check=$($TSGO --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
+
+    if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
+        local status=""
+        local tsz_ms="N/A"
+        local tsgo_ms="N/A"
+        local tsz_lps="N/A"
+        local tsgo_lps="N/A"
+        local winner="error"
+        local ratio="0"
+
+        echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC}"
+
+        if [ "$tsz_check" -ne 0 ]; then
+            status="tsz error"
+            tsz_ms="ERR"
+            local tsz_error=$(TSZ_LIB_DIR="$TSZ_LIB_DIR" $TSZ --noEmit $extra_args "$file" 2>&1 | head -1)
+            echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
+        fi
+
+        if [ "$tsgo_check" -ne 0 ]; then
+            status="${status:+${status}; }tsgo error"
+            tsgo_ms="ERR"
+            local tsgo_error=$($TSGO --noEmit $extra_args "$file" 2>&1 | head -1)
+            echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
+        fi
+
+        RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
+        return
+    fi
 
     echo -e "${GREEN}$name${NC} ($info)"
 
@@ -271,7 +300,7 @@ run_benchmark() {
         --max-runs "$MAX_RUNS" \
         --style full \
         --export-json "$json_file" \
-        -n "tsz" "$TSZ --noEmit $extra_args $file 2>/dev/null" \
+        -n "tsz" "TSZ_LIB_DIR=$TSZ_LIB_DIR $TSZ --noEmit $extra_args $file 2>/dev/null" \
         -n "tsgo" "$TSGO --noEmit $extra_args $file 2>/dev/null"
     
     # Extract times and calculate throughput
@@ -296,7 +325,7 @@ run_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
             
-            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio}\n"
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
         fi
     fi
     rm -f "$json_file"
@@ -312,24 +341,6 @@ run_project_benchmark() {
         return
     fi
 
-    # Pre-validate: both compilers must succeed (exit 0) before benchmarking
-    local tsz_check=$($TSZ --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
-    local tsgo_check=$($TSGO --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
-
-    if [ "$tsz_check" -ne 0 ]; then
-        echo -e "${YELLOW}$name${NC} - ${RED}SKIPPED${NC} (tsz failed, check: $tsz_check)"
-        local tsz_error=$($TSZ --noEmit -p "$tsconfig" 2>&1 | head -1)
-        echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
-        return
-    fi
-
-    if [ "$tsgo_check" -ne 0 ]; then
-        echo -e "${YELLOW}$name${NC} - ${RED}SKIPPED${NC} (tsgo failed, check: $tsgo_check)"
-        local tsgo_error=$($TSGO --noEmit -p "$tsconfig" 2>&1 | head -1)
-        echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
-        return
-    fi
-
     BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
 
     # Count total TS/TSX source lines in the project
@@ -339,6 +350,39 @@ run_project_benchmark() {
         | xargs -0 cat 2>/dev/null | wc -c | tr -d ' ')
     local kb=$((bytes / 1024))
     local info="${lines} lines, ${kb}KB (project)"
+
+    # Pre-validate: record errors in summary table instead of skipping
+    local tsz_check=$(TSZ_LIB_DIR="$TSZ_LIB_DIR" $TSZ --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
+    local tsgo_check=$($TSGO --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
+
+    if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
+        local status=""
+        local tsz_ms="N/A"
+        local tsgo_ms="N/A"
+        local tsz_lps="N/A"
+        local tsgo_lps="N/A"
+        local winner="error"
+        local ratio="0"
+
+        echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC}"
+
+        if [ "$tsz_check" -ne 0 ]; then
+            status="tsz error"
+            tsz_ms="ERR"
+            local tsz_error=$(TSZ_LIB_DIR="$TSZ_LIB_DIR" $TSZ --noEmit -p "$tsconfig" 2>&1 | head -1)
+            echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
+        fi
+
+        if [ "$tsgo_check" -ne 0 ]; then
+            status="${status:+${status}; }tsgo error"
+            tsgo_ms="ERR"
+            local tsgo_error=$($TSGO --noEmit -p "$tsconfig" 2>&1 | head -1)
+            echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
+        fi
+
+        RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
+        return
+    fi
 
     echo -e "${GREEN}$name${NC} ($info)"
 
@@ -350,7 +394,7 @@ run_project_benchmark() {
         --max-runs "$MAX_RUNS" \
         --style full \
         --export-json "$json_file" \
-        -n "tsz" "$TSZ --noEmit -p $tsconfig 2>/dev/null" \
+        -n "tsz" "TSZ_LIB_DIR=$TSZ_LIB_DIR $TSZ --noEmit -p $tsconfig 2>/dev/null" \
         -n "tsgo" "$TSGO --noEmit -p $tsconfig 2>/dev/null"
 
     # Extract times and calculate throughput
@@ -373,7 +417,7 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
-            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio}\n"
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
         fi
     fi
     rm -f "$json_file"
@@ -1750,19 +1794,20 @@ main() {
     if command -v jq &>/dev/null && [ -n "$RESULTS_CSV" ]; then
         echo
         # Table header
-        printf "${BOLD}%-45s %7s %6s %10s %10s %8s %8s${NC}\n" \
-            "Test" "Lines" "KB" "tsz(ms)" "tsgo(ms)" "Winner" "Factor"
-        printf "${CYAN}%s${NC}\n" "─────────────────────────────────────────────────────────────────────────────────────────────────"
+        printf "${BOLD}%-45s %7s %6s %10s %10s %8s %8s %12s${NC}\n" \
+            "Test" "Lines" "KB" "tsz(ms)" "tsgo(ms)" "Winner" "Factor" "Status"
+        printf "${CYAN}%s${NC}\n" "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
         
         # Table rows (sorted best-to-worst for tsz: tsz wins by descending factor, then tsgo wins by ascending factor)
         echo -e "$RESULTS_CSV" | awk -F',' '
             $1 != "" {
-                # Create a sort key: tsz wins get +ratio, tsgo wins get -ratio
-                if ($8 == "tsz") sort_key = $9 + 0;
+                # Create a sort key: tsz wins get +ratio, tsgo wins get -ratio, errors sink
+                if ($10 != "") sort_key = -999999;
+                else if ($8 == "tsz") sort_key = $9 + 0;
                 else sort_key = -($9 + 0);
                 print sort_key "," $0
             }
-        ' | sort -t',' -k1 -rn | cut -d',' -f2- | while IFS=',' read -r name lines kb tsz_ms tsgo_ms tsz_lps tsgo_lps winner ratio; do
+        ' | sort -t',' -k1 -rn | cut -d',' -f2- | while IFS=',' read -r name lines kb tsz_ms tsgo_ms tsz_lps tsgo_lps winner ratio status; do
             [ -z "$name" ] && continue
 
             # Truncate long test names
@@ -1771,18 +1816,23 @@ main() {
                 display_name="${name:0:41}..."
             fi
 
-            # Color the winner and show factor
-            if [ "$winner" = "tsz" ]; then
-                printf "%-45s %7s %6s %10s %10s ${GREEN}%8s${NC} ${GREEN}%7sx${NC}\n" \
-                    "$display_name" "$lines" "$kb" "$tsz_ms" "$tsgo_ms" "$winner" "$ratio"
+            local status_display="${status:--}"
+            local ratio_display="$ratio"
+            if [ -n "$status" ]; then
+                ratio_display="N/A"
+                printf "%-45s %7s %6s %10s %10s ${RED}%8s${NC} ${RED}%7s${NC} ${RED}%12s${NC}\n" \
+                    "$display_name" "$lines" "$kb" "$tsz_ms" "$tsgo_ms" "error" "$ratio_display" "$status_display"
+            elif [ "$winner" = "tsz" ]; then
+                printf "%-45s %7s %6s %10s %10s ${GREEN}%8s${NC} ${GREEN}%7sx${NC} %12s\n" \
+                    "$display_name" "$lines" "$kb" "$tsz_ms" "$tsgo_ms" "$winner" "$ratio" "$status_display"
             else
-                printf "%-45s %7s %6s %10s %10s ${YELLOW}%8s${NC} ${YELLOW}%7sx${NC}\n" \
-                    "$display_name" "$lines" "$kb" "$tsz_ms" "$tsgo_ms" "$winner" "$ratio"
+                printf "%-45s %7s %6s %10s %10s ${YELLOW}%8s${NC} ${YELLOW}%7sx${NC} %12s\n" \
+                    "$display_name" "$lines" "$kb" "$tsz_ms" "$tsgo_ms" "$winner" "$ratio" "$status_display"
             fi
         done
         
         # Summary line
-        printf "${CYAN}%s${NC}\n" "─────────────────────────────────────────────────────────────────────────────────────────────────"
+        printf "${CYAN}%s${NC}\n" "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
         
         # Count wins
         local tsz_wins=$(echo -e "$RESULTS_CSV" | awk -F',' '$8 == "tsz" { c++ } END { print c+0 }')
