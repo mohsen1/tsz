@@ -227,7 +227,16 @@ impl<'a> CheckerState<'a> {
 
                 // Check all function parameters for implicit any (TS7006)
                 // This includes function declarations, expressions, arrow functions, and methods
-                self.maybe_report_implicit_any_parameter(param, has_contextual_type);
+                //
+                // For closures (function expressions and arrow functions), skip TS7006 during
+                // the build_type_environment phase. During that phase, contextual types are not
+                // yet available (they're set during check_variable_declaration). The closure
+                // will be re-evaluated with contextual types during the checking phase.
+                let skip_implicit_any =
+                    is_closure && !self.ctx.is_checking_statements && !has_contextual_type;
+                if !skip_implicit_any {
+                    self.maybe_report_implicit_any_parameter(param, has_contextual_type);
+                }
 
                 // Check if optional or has initializer
                 let optional = param.question_token || !param.initializer.is_none();
