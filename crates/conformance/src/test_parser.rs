@@ -108,9 +108,146 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
     None
 }
 
+/// Expand directives with comma-separated values into multiple option variants.
+///
+/// Some harness directives (e.g. module, moduleResolution) represent multiple runs.
+pub fn expand_option_variants(options: &HashMap<String, String>) -> Vec<HashMap<String, String>> {
+    const MULTI_VALUE_KEYS: &[&str] = &["module", "moduleresolution", "target", "jsx"];
+
+    let mut variants = vec![options.clone()];
+    for key in MULTI_VALUE_KEYS {
+        let Some(value) = options.get(*key) else {
+            continue;
+        };
+        let values: Vec<String> = value
+            .split(',')
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_string())
+            .collect();
+        if values.len() <= 1 {
+            if let Some(v) = values.first() {
+                for variant in &mut variants {
+                    variant.insert((*key).to_string(), v.clone());
+                }
+            }
+            continue;
+        }
+
+        let mut next_variants = Vec::new();
+        for variant in &variants {
+            for v in &values {
+                let mut next = variant.clone();
+                next.insert((*key).to_string(), v.clone());
+                next_variants.push(next);
+            }
+        }
+        variants = next_variants;
+    }
+
+    variants
+}
+
+/// Filter out option variants that are incompatible with moduleResolution rules.
+///
+/// Specifically, node16/nodenext moduleResolution requires module to match.
+pub fn filter_incompatible_module_resolution_variants(
+    variants: Vec<HashMap<String, String>>,
+) -> Vec<HashMap<String, String>> {
+    fn normalize_value(value: &str) -> String {
+        value.trim().to_lowercase()
+    }
+
+    variants
+        .into_iter()
+        .filter(|options| {
+            let module_resolution = options.get("moduleresolution").map(|v| normalize_value(v));
+            let module = options.get("module").map(|v| normalize_value(v));
+
+            match module_resolution.as_deref() {
+                Some("node16") => module.as_deref().map(|m| m == "node16").unwrap_or(true),
+                Some("nodenext") => module.as_deref().map(|m| m == "nodenext").unwrap_or(true),
+                _ => true,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_expand_option_variants_cartesian() {
+        let mut options = HashMap::new();
+        options.insert(
+            "moduleresolution".to_string(),
+            "node16, nodenext".to_string(),
+        );
+        options.insert("module".to_string(), "commonjs, node16".to_string());
+        options.insert("traceResolution".to_string(), "true".to_string());
+
+        let expanded = expand_option_variants(&options);
+        assert_eq!(expanded.len(), 4);
+
+        let mut seen: std::collections::HashSet<(String, String, String)> =
+            std::collections::HashSet::new();
+        for opts in expanded {
+            let mr = opts.get("moduleresolution").cloned().unwrap_or_default();
+            let m = opts.get("module").cloned().unwrap_or_default();
+            let tr = opts.get("traceResolution").cloned().unwrap_or_default();
+            seen.insert((mr, m, tr));
+        }
+
+        assert!(seen.contains(&(
+            "node16".to_string(),
+            "commonjs".to_string(),
+            "true".to_string()
+        )));
+        assert!(seen.contains(&(
+            "node16".to_string(),
+            "node16".to_string(),
+            "true".to_string()
+        )));
+        assert!(seen.contains(&(
+            "nodenext".to_string(),
+            "commonjs".to_string(),
+            "true".to_string()
+        )));
+        assert!(seen.contains(&(
+            "nodenext".to_string(),
+            "node16".to_string(),
+            "true".to_string()
+        )));
+    }
+
+    #[test]
+    fn test_filter_incompatible_module_resolution_variants() {
+        let mut options = HashMap::new();
+        options.insert(
+            "moduleresolution".to_string(),
+            "node16, nodenext".to_string(),
+        );
+        options.insert(
+            "module".to_string(),
+            "commonjs, node16, nodenext".to_string(),
+        );
+
+        let variants = expand_option_variants(&options);
+        let filtered = filter_incompatible_module_resolution_variants(variants);
+        assert_eq!(filtered.len(), 2);
+
+        let mut seen: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        for opts in filtered {
+            let mr = opts.get("moduleresolution").cloned().unwrap_or_default();
+            let m = opts.get("module").cloned().unwrap_or_default();
+            seen.insert((mr, m));
+        }
+
+        assert!(seen.contains(&("node16".to_string(), "node16".to_string())));
+        assert!(seen.contains(&("nodenext".to_string(), "nodenext".to_string())));
+    }
 
     #[test]
     fn test_parse_simple_directives() {

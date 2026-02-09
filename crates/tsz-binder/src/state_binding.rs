@@ -1406,20 +1406,46 @@ impl BinderState {
                     // Collect the exported names and direct symbol mappings first
                     let mut exported_names = Vec::new();
                     let mut exported_symbols: Vec<(String, SymbolId)> = Vec::new();
+                    let mut collect_var_exports =
+                        |var_stmt: &tsz_parser::parser::node::VariableData| {
+                            for &list_idx in &var_stmt.declarations.nodes {
+                                if let Some(list_node) = arena.get(list_idx)
+                                    && let Some(decl_list) = arena.get_variable(list_node)
+                                {
+                                    for &decl_idx in &decl_list.declarations.nodes {
+                                        if let Some(decl_node) = arena.get(decl_idx)
+                                            && let Some(decl) =
+                                                arena.get_variable_declaration(decl_node)
+                                            && let Some(name_node) = arena.get(decl.name)
+                                            && let Some(ident) = arena.get_identifier(name_node)
+                                        {
+                                            exported_names.push(ident.escaped_text.to_string());
+                                            if let Some(&sym_id) =
+                                                self.node_symbols.get(&decl.name.0)
+                                            {
+                                                exported_symbols
+                                                    .push((ident.escaped_text.to_string(), sym_id));
+                                            }
+                                        }
+                                    }
+                                } else if let Some(decl_node) = arena.get(list_idx)
+                                    && let Some(decl) = arena.get_variable_declaration(decl_node)
+                                    && let Some(name_node) = arena.get(decl.name)
+                                    && let Some(ident) = arena.get_identifier(name_node)
+                                {
+                                    exported_names.push(ident.escaped_text.to_string());
+                                    if let Some(&sym_id) = self.node_symbols.get(&decl.name.0) {
+                                        exported_symbols
+                                            .push((ident.escaped_text.to_string(), sym_id));
+                                    }
+                                }
+                            }
+                        };
 
                     match stmt_node.kind {
                         syntax_kind_ext::VARIABLE_STATEMENT => {
                             if let Some(var_stmt) = arena.get_variable(stmt_node) {
-                                for &decl_idx in &var_stmt.declarations.nodes {
-                                    if let Some(decl_node) = arena.get(decl_idx)
-                                        && let Some(decl) =
-                                            arena.get_variable_declaration(decl_node)
-                                        && let Some(name_node) = arena.get(decl.name)
-                                        && let Some(ident) = arena.get_identifier(name_node)
-                                    {
-                                        exported_names.push(ident.escaped_text.to_string());
-                                    }
-                                }
+                                collect_var_exports(var_stmt);
                             }
                         }
                         syntax_kind_ext::FUNCTION_DECLARATION => {
@@ -1481,26 +1507,7 @@ impl BinderState {
                                 match clause_node.kind {
                                     syntax_kind_ext::VARIABLE_STATEMENT => {
                                         if let Some(var_stmt) = arena.get_variable(clause_node) {
-                                            for &decl_idx in &var_stmt.declarations.nodes {
-                                                if let Some(decl_node) = arena.get(decl_idx)
-                                                    && let Some(decl) =
-                                                        arena.get_variable_declaration(decl_node)
-                                                    && let Some(name_node) = arena.get(decl.name)
-                                                    && let Some(ident) =
-                                                        arena.get_identifier(name_node)
-                                                {
-                                                    exported_names
-                                                        .push(ident.escaped_text.to_string());
-                                                    if let Some(&sym_id) =
-                                                        self.node_symbols.get(&decl_idx.0)
-                                                    {
-                                                        exported_symbols.push((
-                                                            ident.escaped_text.to_string(),
-                                                            sym_id,
-                                                        ));
-                                                    }
-                                                }
-                                            }
+                                            collect_var_exports(var_stmt);
                                         }
                                     }
                                     syntax_kind_ext::FUNCTION_DECLARATION => {
@@ -1623,6 +1630,28 @@ impl BinderState {
                             }
                         }
                         _ => {}
+                    }
+
+                    if is_ambient_module {
+                        let in_scope: Vec<String> = exported_names
+                            .iter()
+                            .filter(|name| {
+                                self.current_scope.has(name.as_str())
+                                    || self.file_locals.has(name.as_str())
+                            })
+                            .cloned()
+                            .collect();
+                        let module_name = self
+                            .symbols
+                            .get(module_symbol_id)
+                            .map(|sym| sym.escaped_name.as_str())
+                            .unwrap_or("<unknown>");
+                        tracing::debug!(
+                            module_name,
+                            exported_names = ?exported_names,
+                            in_scope = ?in_scope,
+                            "Ambient module export candidates"
+                        );
                     }
 
                     // Now add them to exports

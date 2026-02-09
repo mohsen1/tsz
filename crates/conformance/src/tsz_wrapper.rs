@@ -3,6 +3,7 @@
 //! Provides a simple API to compile TypeScript code and extract error codes.
 
 use std::collections::HashMap;
+use std::path::Path;
 use tsz::diagnostics::{Diagnostic, DiagnosticSeverity};
 use tsz::span::Span;
 
@@ -136,6 +137,8 @@ pub fn compile_test(
             &tsconfig_path,
             serde_json::to_string_pretty(&tsconfig_content)?,
         )?;
+    } else {
+        copy_tsconfig_to_root_if_needed(dir_path, filenames)?;
     }
 
     // Run tsz compiler using the tsz binary
@@ -270,6 +273,8 @@ pub fn prepare_test_dir(
             &tsconfig_path,
             serde_json::to_string_pretty(&tsconfig_content)?,
         )?;
+    } else {
+        copy_tsconfig_to_root_if_needed(dir_path, filenames)?;
     }
 
     Ok(PreparedTest {
@@ -511,6 +516,24 @@ fn parse_diagnostics_from_text(text: &str) -> Vec<Diagnostic> {
     }
 
     diagnostics
+}
+
+fn copy_tsconfig_to_root_if_needed(
+    dir_path: &Path,
+    filenames: &[(String, String)],
+) -> anyhow::Result<()> {
+    let root_tsconfig = dir_path.join("tsconfig.json");
+    if root_tsconfig.is_file() {
+        return Ok(());
+    }
+    let tsconfig_content = filenames
+        .iter()
+        .find(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"))
+        .map(|(_, content)| content);
+    if let Some(content) = tsconfig_content {
+        std::fs::write(root_tsconfig, content)?;
+    }
+    Ok(())
 }
 
 /// Extract error codes from diagnostics
@@ -802,6 +825,29 @@ fn rewrite_absolute_reference_paths(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_prepare_test_dir_copies_absolute_tsconfig_to_root() {
+        let content = "";
+        let filenames = vec![
+            (
+                "/project/tsconfig.json".to_string(),
+                r#"{"compilerOptions": {}}"#.to_string(),
+            ),
+            (
+                "/project/src/app.ts".to_string(),
+                "export const x = 1;".to_string(),
+            ),
+        ];
+        let options: HashMap<String, String> = HashMap::new();
+
+        let prepared = prepare_test_dir(content, &filenames, &options).unwrap();
+        let root_tsconfig = prepared.temp_dir.path().join("tsconfig.json");
+        assert!(
+            root_tsconfig.is_file(),
+            "tsconfig should exist at project root"
+        );
+    }
 
     #[test]
     fn test_compile_simple_error() {

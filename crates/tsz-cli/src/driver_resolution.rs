@@ -696,6 +696,41 @@ fn expand_module_path_candidates(
     candidates
 }
 
+fn expand_export_path_candidates(
+    path: &Path,
+    options: &ResolvedCompilerOptions,
+    package_type: Option<PackageType>,
+) -> Vec<PathBuf> {
+    let base = normalize_path(path);
+    let suffixes = &options.module_suffixes;
+    if let Some((base_no_ext, extension)) = split_path_extension(&base) {
+        return candidates_with_suffixes_and_extension(&base_no_ext, extension, suffixes);
+    }
+
+    let extensions = extension_candidates_for_resolution(options, package_type);
+    let mut candidates = Vec::new();
+    for ext in extensions {
+        candidates.extend(candidates_with_suffixes_and_extension(&base, ext, suffixes));
+    }
+    if options.resolve_json_module {
+        candidates.extend(candidates_with_suffixes_and_extension(
+            &base, "json", suffixes,
+        ));
+    }
+    let index = base.join("index");
+    for ext in extensions {
+        candidates.extend(candidates_with_suffixes_and_extension(
+            &index, ext, suffixes,
+        ));
+    }
+    if options.resolve_json_module {
+        candidates.extend(candidates_with_suffixes_and_extension(
+            &index, "json", suffixes,
+        ));
+    }
+    candidates
+}
+
 fn split_path_extension(path: &Path) -> Option<(PathBuf, &'static str)> {
     let path_str = path.to_string_lossy();
     for ext in KNOWN_EXTENSIONS {
@@ -1030,6 +1065,55 @@ fn resolve_package_imports_specifier(
     None
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustc_hash::FxHashSet;
+    use tsz::emitter::ModuleKind;
+
+    #[test]
+    fn test_exports_js_target_does_not_substitute_dts() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_driver_resolution_exports_js_target");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+
+        fs::write(
+            dir.join("node_modules/pkg/package.json"),
+            r#"{"name":"pkg","version":"0.0.1","exports":"./entrypoint.js"}"#,
+        )
+        .unwrap();
+        fs::write(dir.join("node_modules/pkg/entrypoint.d.ts"), "export {};").unwrap();
+        fs::write(dir.join("src/index.ts"), "import * as p from 'pkg';").unwrap();
+
+        let mut options = ResolvedCompilerOptions::default();
+        options.module_resolution = Some(ModuleResolutionKind::Node16);
+        options.resolve_package_json_exports = true;
+        options.module_suffixes = vec![String::new()];
+        options.printer.module = ModuleKind::Node16;
+        options.checker.module = ModuleKind::Node16;
+
+        let mut cache = ModuleResolutionCache::default();
+        let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+        let resolved = resolve_module_specifier(
+            &dir.join("src/index.ts"),
+            "pkg",
+            &options,
+            &dir,
+            &mut cache,
+            &known_files,
+        );
+
+        assert!(
+            resolved.is_none(),
+            "exports target with .js should not substitute to .d.ts"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
 fn resolve_package_specifier(
     package_root: &Path,
     subpath: Option<&str>,
@@ -1048,7 +1132,7 @@ fn resolve_package_specifier(
             };
             if let Some(target) = resolve_exports_subpath(exports, &subpath_key, conditions)
                 && let Some(resolved) =
-                    resolve_package_entry(package_root, &target, options, package_type)
+                    resolve_export_entry(package_root, &target, options, package_type)
             {
                 return Some(resolved);
             }
@@ -1138,6 +1222,32 @@ fn resolve_package_entry(
     };
 
     for candidate in expand_module_path_candidates(&path, options, package_type) {
+        if candidate.is_file() && is_valid_module_file(&candidate) {
+            return Some(canonicalize_or_owned(&candidate));
+        }
+    }
+
+    None
+}
+
+fn resolve_export_entry(
+    package_root: &Path,
+    entry: &str,
+    options: &ResolvedCompilerOptions,
+    package_type: Option<PackageType>,
+) -> Option<PathBuf> {
+    let entry = entry.trim();
+    if entry.is_empty() {
+        return None;
+    }
+    let entry = entry.trim_start_matches("./");
+    let path = if Path::new(entry).is_absolute() {
+        PathBuf::from(entry)
+    } else {
+        package_root.join(entry)
+    };
+
+    for candidate in expand_export_path_candidates(&path, options, package_type) {
         if candidate.is_file() && is_valid_module_file(&candidate) {
             return Some(canonicalize_or_owned(&candidate));
         }

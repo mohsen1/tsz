@@ -4,7 +4,10 @@
 
 use crate::cache::{calculate_test_hash, check_cache_metadata, load_cache};
 use crate::cli::Args;
-use crate::test_parser::{parse_test_file, should_skip_test};
+use crate::test_parser::{
+    expand_option_variants, filter_incompatible_module_resolution_variants, parse_test_file,
+    should_skip_test,
+};
 use crate::tsc_results::{ErrorFrequency, TestResult, TestStats};
 use crate::tsz_wrapper;
 use anyhow::Context;
@@ -402,48 +405,64 @@ impl Runner {
             debug!("Cache hit for {}", path.display());
 
             // Cache hit - prepare test directory (fast sync I/O)
-            let content_clone = content.clone();
-            let filenames = parsed.directives.filenames.clone();
             let options = parsed.directives.options.clone();
-
-            let prepared = tokio::task::spawn_blocking(move || {
-                tsz_wrapper::prepare_test_dir(&content_clone, &filenames, &options)
-            })
-            .await??;
-
-            // Spawn tsz process with kill_on_drop — ensures cleanup on timeout
-            let child = tokio::process::Command::new(&tsz_binary)
-                .arg("--project")
-                .arg(prepared.temp_dir.path())
-                .arg("--noEmit")
-                .arg("--pretty")
-                .arg("false")
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()?;
-
-            // Wait with timeout — child is auto-killed on drop if timeout fires
-            let output = if timeout_secs > 0 {
-                match tokio::time::timeout(
-                    Duration::from_secs(timeout_secs),
-                    child.wait_with_output(),
-                )
-                .await
-                {
-                    Ok(result) => result?,
-                    Err(_) => return Ok(TestResult::Timeout),
-                }
-            } else {
-                child.wait_with_output().await?
-            };
-
-            let compile_result = tsz_wrapper::parse_tsz_output(&output, prepared.options);
-
-            // Check for crash
-            if compile_result.crashed {
-                return Ok(TestResult::Crashed);
+            let expanded = expand_option_variants(&options);
+            let mut option_variants = filter_incompatible_module_resolution_variants(expanded);
+            if option_variants.is_empty() {
+                option_variants = vec![options.clone()];
             }
+
+            let mut all_codes = std::collections::HashSet::new();
+            for variant in option_variants {
+                let content_clone = content.clone();
+                let filenames = parsed.directives.filenames.clone();
+                let variant_clone = variant.clone();
+
+                let prepared = tokio::task::spawn_blocking(move || {
+                    tsz_wrapper::prepare_test_dir(&content_clone, &filenames, &variant_clone)
+                })
+                .await??;
+
+                // Spawn tsz process with kill_on_drop — ensures cleanup on timeout
+                let child = tokio::process::Command::new(&tsz_binary)
+                    .arg("--project")
+                    .arg(prepared.temp_dir.path())
+                    .arg("--noEmit")
+                    .arg("--pretty")
+                    .arg("false")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()?;
+
+                // Wait with timeout — child is auto-killed on drop if timeout fires
+                let output = if timeout_secs > 0 {
+                    match tokio::time::timeout(
+                        Duration::from_secs(timeout_secs),
+                        child.wait_with_output(),
+                    )
+                    .await
+                    {
+                        Ok(result) => result?,
+                        Err(_) => return Ok(TestResult::Timeout),
+                    }
+                } else {
+                    child.wait_with_output().await?
+                };
+
+                let compile_result = tsz_wrapper::parse_tsz_output(&output, variant);
+                if compile_result.crashed {
+                    return Ok(TestResult::Crashed);
+                }
+
+                all_codes.extend(compile_result.error_codes);
+            }
+
+            let compile_result = tsz_wrapper::CompilationResult {
+                error_codes: all_codes.into_iter().collect(),
+                crashed: false,
+                options,
+            };
 
             // Compare error codes
             let tsc_codes: std::collections::HashSet<_> =

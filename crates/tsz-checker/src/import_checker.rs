@@ -72,7 +72,9 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        if self.is_ambient_module_match(module_name) {
+        if self.is_ambient_module_match(module_name)
+            || self.any_ambient_module_declared(module_name)
+        {
             return;
         }
         if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
@@ -112,21 +114,70 @@ impl<'a> CheckerState<'a> {
                 None => return,
             };
 
-            let exports_table = if let Some(table) = self.ctx.binder.module_exports.get(module_name)
-            {
-                Some(table)
-            } else if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
-                let arena = self.ctx.get_arena_for_file(target_idx as u32);
-                if let Some(source_file) = arena.source_files.first() {
-                    self.ctx.binder.module_exports.get(&source_file.file_name)
+            let normalized = module_name.trim_matches('"').trim_matches('\'');
+            let quoted = format!("\"{}\"", normalized);
+            let single_quoted = format!("'{}'", normalized);
+
+            let mut exports_table =
+                if let Some(table) = self.ctx.binder.module_exports.get(module_name) {
+                    Some(table.clone())
+                } else if let Some(table) = self.ctx.binder.module_exports.get(normalized) {
+                    Some(table.clone())
+                } else if let Some(table) = self.ctx.binder.module_exports.get(&quoted) {
+                    Some(table.clone())
+                } else if let Some(table) = self.ctx.binder.module_exports.get(&single_quoted) {
+                    Some(table.clone())
                 } else {
                     None
+                };
+
+            if exports_table.is_none()
+                && let Some(target_idx) = self.ctx.resolve_import_target(module_name)
+            {
+                let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                if let Some(source_file) = arena.source_files.first() {
+                    exports_table = self
+                        .ctx
+                        .binder
+                        .module_exports
+                        .get(&source_file.file_name)
+                        .cloned();
                 }
-            } else {
-                None
-            };
+            }
+
+            if exports_table.is_none()
+                && let Some(all_binders) = &self.ctx.all_binders
+            {
+                for binder in all_binders.iter() {
+                    if let Some(table) = binder.module_exports.get(module_name) {
+                        exports_table = Some(table.clone());
+                        break;
+                    }
+                    if let Some(table) = binder.module_exports.get(normalized) {
+                        exports_table = Some(table.clone());
+                        break;
+                    }
+                    if let Some(table) = binder.module_exports.get(&quoted) {
+                        exports_table = Some(table.clone());
+                        break;
+                    }
+                    if let Some(table) = binder.module_exports.get(&single_quoted) {
+                        exports_table = Some(table.clone());
+                        break;
+                    }
+                }
+            }
 
             let Some(exports_table) = exports_table else {
+                if self
+                    .ctx
+                    .resolved_modules
+                    .as_ref()
+                    .is_some_and(|resolved| resolved.contains(module_name))
+                    && self.ctx.resolve_import_target(module_name).is_none()
+                {
+                    return;
+                }
                 for element_idx in &named_imports.elements.nodes {
                     let element_node = match self.ctx.arena.get(*element_idx) {
                         Some(node) => node,
@@ -241,6 +292,42 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn any_ambient_module_declared(&self, module_name: &str) -> bool {
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        let Some(all_binders) = &self.ctx.all_binders else {
+            return false;
+        };
+        for binder in all_binders.iter() {
+            for pattern in binder
+                .declared_modules
+                .iter()
+                .chain(binder.shorthand_ambient_modules.iter())
+                .chain(binder.module_exports.keys())
+            {
+                if Self::module_name_matches_pattern_for_imports(pattern, normalized) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn module_name_matches_pattern_for_imports(pattern: &str, module_name: &str) -> bool {
+        let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
+        let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
+        if !pattern.contains('*') {
+            return pattern == module_name;
+        }
+        if let Ok(glob) = globset::GlobBuilder::new(pattern)
+            .literal_separator(false)
+            .build()
+        {
+            let matcher = glob.compile_matcher();
+            return matcher.is_match(module_name);
+        }
+        false
     }
 
     // =========================================================================
