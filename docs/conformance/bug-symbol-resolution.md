@@ -129,7 +129,47 @@ echo 'const s: symbol = Symbol("test");' > /tmp/test.ts
 # Should pass but shows RTCEncodedVideoFrameType error
 ```
 
+## Root Cause (FOUND)
+
+After extensive investigation with tracing:
+
+### The Bug Flow
+
+1. `"Symbol"` identifier resolves to `SymbolId(2344)` ✓ CORRECT
+2. `SymbolId(2344)` has flags: TYPE + VALUE + INTERFACE (merged symbol)
+3. `get_type_of_symbol(SymbolId(2344))` returns Symbol **INTERFACE** type (instance)
+4. Should return **SymbolConstructor** type (the constructor with call signature)
+
+### The Problem
+
+`SymbolId(2344)` represents both:
+- `interface Symbol { ... }` (instance type)
+- `declare var Symbol: SymbolConstructor;` (constructor type)
+
+When `get_type_of_symbol` is called on a merged interface+value symbol, it returns the INTERFACE type instead of the variable's type annotation (SymbolConstructor).
+
+Additionally, the symbol's `value_declaration` field points to `NodeIndex(40)` which resolves to the WRONG declaration (RTCEncodedVideoFrameType instead of SymbolConstructor).
+
+### The Fix Needed
+
+The fix requires changes at the binder/type system level:
+
+1. **Binder**: Ensure `value_declaration` points to the correct declaration node when lib symbols are merged
+2. **Type System**: When getting the type of a merged interface+value symbol in value position, use the variable's type annotation (SymbolConstructor), not the interface type (Symbol)
+3. **Lib Merging**: Ensure ES2015 types (SymbolConstructor) take priority over unrelated DOM types with same name
+
+### Attempted Workarounds
+
+Several workarounds were attempted but failed:
+- Using `type_of_value_symbol_by_name("Symbol")` - Returns TypeId(4) (wrong)
+- Using `find_value_symbol_in_libs("SymbolConstructor")` - Returns None (no VALUE)
+- Using `resolve_lib_type_by_name("SymbolConstructor")` - Returns DecoratorMetadata (wrong)
+- Skipping merged interface+value path - Still returns Symbol interface instead of SymbolConstructor
+
+All workarounds fail because the cached type for `SymbolId(2344)` is fundamentally wrong.
+
 ## Related Files
 - `crates/tsz-checker/src/symbol_resolver.rs` - Symbol resolution logic
 - `crates/tsz-checker/src/state_type_analysis.rs` - Type computation
+- `crates/tsz-checker/src/type_computation_complex.rs` - get_type_of_identifier
 - Lib files in TypeScript submodule
