@@ -1923,7 +1923,7 @@ fn collect_diagnostics(
             let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
             let file_path = Path::new(&file.file_name);
 
-            for (specifier, specifier_node) in &module_specifiers {
+            for (specifier, specifier_node, import_kind) in &module_specifiers {
                 // Get span from the specifier node
                 let span = if let Some(spec_node) = file.arena.get(*specifier_node) {
                     Span::new(spec_node.pos, spec_node.end)
@@ -1932,7 +1932,7 @@ fn collect_diagnostics(
                 };
 
                 // Always try ModuleResolver first to get specific error types (TS2834/TS2835/TS2792)
-                match module_resolver.resolve(specifier, file_path, span) {
+                match module_resolver.resolve_with_kind(specifier, file_path, span, *import_kind) {
                     Ok(resolved_module) => {
                         resolved_module_specifiers.insert((file_idx, specifier.clone()));
                         let canonical = canonicalize_or_owned(&resolved_module.resolved_path);
@@ -2132,7 +2132,7 @@ fn collect_diagnostics(
 
                     // Bridge raw module specifiers to resolved export tables using
                     // the pre-computed resolved_module_paths map (no FS calls needed).
-                    for (specifier, _) in &module_specifiers {
+                    for (specifier, _, _) in &module_specifiers {
                         if let Some(&target_idx) =
                             resolved_module_paths.get(&(file_idx, specifier.clone()))
                         {
@@ -2249,7 +2249,7 @@ fn collect_diagnostics(
             let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
 
             // Bridge multi-file module resolution for ES module imports.
-            for (specifier, _) in &module_specifiers {
+            for (specifier, _, _) in &module_specifiers {
                 if let Some(resolved) = resolve_module_specifier(
                     Path::new(&file.file_name),
                     specifier,
@@ -2335,7 +2335,7 @@ fn collect_diagnostics(
 
             // Build resolved_modules set for backward compatibility
             let mut resolved_modules = rustc_hash::FxHashSet::default();
-            for (specifier, _) in &module_specifiers {
+            for (specifier, _, _) in &module_specifiers {
                 if resolved_module_specifiers.contains(&(file_idx, specifier.clone())) {
                     resolved_modules.insert(specifier.clone());
                 } else if resolved_module_paths.contains_key(&(file_idx, specifier.clone())) {
@@ -2451,11 +2451,11 @@ fn check_file_for_parallel(
     // Build resolved_modules from the pre-computed resolved module maps
     let resolved_modules: FxHashSet<String> = module_specifiers
         .iter()
-        .filter(|(specifier, _)| {
+        .filter(|(specifier, _, _)| {
             resolved_module_paths.contains_key(&(file_idx, specifier.clone()))
                 || resolved_module_specifiers.contains(&(file_idx, specifier.clone()))
         })
-        .map(|(specifier, _)| specifier.clone())
+        .map(|(specifier, _, _)| specifier.clone())
         .collect();
 
     let mut checker = CheckerState::with_options(

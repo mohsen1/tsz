@@ -184,14 +184,15 @@ pub(crate) fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Ve
     let (arena, _diagnostics) = parser.into_parts();
     collect_module_specifiers(&arena, source_file)
         .into_iter()
-        .map(|(specifier, _)| specifier)
+        .map(|(specifier, _, _)| specifier)
         .collect()
 }
 
 pub(crate) fn collect_module_specifiers(
     arena: &NodeArena,
     source_file: NodeIndex,
-) -> Vec<(String, NodeIndex)> {
+) -> Vec<(String, NodeIndex, tsz::module_resolver::ImportKind)> {
+    use tsz::module_resolver::ImportKind;
     let mut specifiers = Vec::new();
 
     let Some(source) = arena.get_source_file_at(source_file) else {
@@ -213,16 +214,29 @@ pub(crate) fn collect_module_specifiers(
         // Handle ES6 imports: import { x } from './module'
         // and import equals with require: import x = require('./module')
         if let Some(import_decl) = arena.get_import_decl(stmt) {
-            // Try to get literal text directly (ES6 import)
+            // Check if this is an import equals declaration (kind 272 = CJS require)
+            // vs a regular import declaration (kind 273 = ESM import)
+            let is_import_equals =
+                stmt.kind == tsz::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION;
+
             if let Some(text) = arena.get_literal_text(import_decl.module_specifier) {
-                specifiers.push((strip_quotes(text), import_decl.module_specifier));
+                let kind = if is_import_equals {
+                    ImportKind::CjsRequire
+                } else {
+                    ImportKind::EsmImport
+                };
+                specifiers.push((strip_quotes(text), import_decl.module_specifier, kind));
             } else {
                 // Handle import equals declaration: import x = require('./module')
                 // The module_specifier might be a CallExpression for require()
                 if let Some(spec_text) =
                     extract_require_specifier(arena, import_decl.module_specifier)
                 {
-                    specifiers.push((spec_text, import_decl.module_specifier));
+                    specifiers.push((
+                        spec_text,
+                        import_decl.module_specifier,
+                        ImportKind::CjsRequire,
+                    ));
                 }
             }
         }
@@ -230,12 +244,20 @@ pub(crate) fn collect_module_specifiers(
         // Handle exports: export { x } from './module'
         if let Some(export_decl) = arena.get_export_decl(stmt) {
             if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
-                specifiers.push((strip_quotes(text), export_decl.module_specifier));
+                specifiers.push((
+                    strip_quotes(text),
+                    export_decl.module_specifier,
+                    ImportKind::EsmReExport,
+                ));
             } else if !export_decl.export_clause.is_none()
                 && let Some(import_decl) = arena.get_import_decl_at(export_decl.export_clause)
                 && let Some(text) = arena.get_literal_text(import_decl.module_specifier)
             {
-                specifiers.push((strip_quotes(text), import_decl.module_specifier));
+                specifiers.push((
+                    strip_quotes(text),
+                    import_decl.module_specifier,
+                    ImportKind::EsmReExport,
+                ));
             }
         }
 
@@ -250,13 +272,62 @@ pub(crate) fn collect_module_specifiers(
             });
             if has_declare {
                 if let Some(text) = arena.get_literal_text(module_decl.name) {
-                    specifiers.push((strip_quotes(text), module_decl.name));
+                    specifiers.push((strip_quotes(text), module_decl.name, ImportKind::EsmImport));
                 }
             }
         }
     }
 
+    // Also collect dynamic imports from expression statements
+    collect_dynamic_imports(arena, source_file, &strip_quotes, &mut specifiers);
+
     specifiers
+}
+
+/// Collect dynamic import() expressions from the AST
+fn collect_dynamic_imports(
+    arena: &NodeArena,
+    _source_file: NodeIndex,
+    strip_quotes: &dyn Fn(&str) -> String,
+    specifiers: &mut Vec<(String, NodeIndex, tsz::module_resolver::ImportKind)>,
+) {
+    use tsz::parser::syntax_kind_ext;
+    use tsz::scanner::SyntaxKind;
+
+    // Iterate all nodes looking for CallExpression with ImportKeyword callee
+    for i in 0..arena.nodes.len() {
+        let node = &arena.nodes[i];
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            continue;
+        }
+        let Some(call) = arena.get_call_expr(node) else {
+            continue;
+        };
+        // Check if the callee is an ImportKeyword (dynamic import)
+        let Some(callee) = arena.get(call.expression) else {
+            continue;
+        };
+        if callee.kind != SyntaxKind::ImportKeyword as u16 {
+            continue;
+        }
+        // Get the first argument (the module specifier)
+        let Some(args) = call.arguments.as_ref() else {
+            continue;
+        };
+        let Some(&arg_idx) = args.nodes.first() else {
+            continue;
+        };
+        if arg_idx.is_none() {
+            continue;
+        }
+        if let Some(text) = arena.get_literal_text(arg_idx) {
+            specifiers.push((
+                strip_quotes(text),
+                arg_idx,
+                tsz::module_resolver::ImportKind::DynamicImport,
+            ));
+        }
+    }
 }
 
 /// Extract module specifier from a require() call expression

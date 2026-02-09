@@ -466,7 +466,9 @@ mod tests {
     fn test_isolated_runner_pass() {
         let config = IsolatedTestConfig {
             limits: ResourceLimits {
-                max_memory_mb: Some(100),
+                // Disable memory limit: VmRSS is process-wide, not per-thread,
+                // so it exceeds any reasonable limit when 2000+ tests run in parallel.
+                max_memory_mb: None,
                 timeout: Duration::from_secs(5),
                 ..Default::default()
             },
@@ -483,7 +485,15 @@ mod tests {
 
     #[test]
     fn test_isolated_runner_panic() {
-        let config = IsolatedTestConfig::default();
+        let config = IsolatedTestConfig {
+            limits: ResourceLimits {
+                // Disable memory limit: VmRSS is process-wide, not per-thread,
+                // so it exceeds any reasonable limit when 2000+ tests run in parallel.
+                max_memory_mb: None,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         let result = run_enhanced_test("test_panic", Some(config), || {
             panic!("Intentional panic");

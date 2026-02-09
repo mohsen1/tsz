@@ -182,6 +182,10 @@ pub fn prepare_test_dir(
     let temp_dir = TempDir::new()?;
     let dir_path = temp_dir.path();
 
+    // Parse @symlink associations from raw content
+    // Format: @filename: /path/to/file followed by @symlink: /link1,/link2
+    let symlink_map = parse_symlink_associations(content);
+
     // Detect if any filename uses absolute (virtual root) paths
     let has_absolute_filenames = filenames.iter().any(|(name, _)| name.starts_with('/'));
 
@@ -226,6 +230,33 @@ pub fn prepare_test_dir(
             };
 
             std::fs::write(&file_path, written_content)?;
+        }
+    }
+
+    // Create symlinks from @symlink directives
+    for (source_filename, symlink_paths) in &symlink_map {
+        for symlink_path in symlink_paths {
+            let sanitized_link = symlink_path
+                .replace("..", "_")
+                .trim_start_matches('/')
+                .to_string();
+            let link_path = dir_path.join(&sanitized_link);
+            let sanitized_source = source_filename
+                .replace("..", "_")
+                .trim_start_matches('/')
+                .to_string();
+            let source_path = dir_path.join(&sanitized_source);
+
+            if source_path.exists() {
+                if let Some(parent) = link_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                // Create symlink (Unix only)
+                #[cfg(unix)]
+                {
+                    let _ = std::os::unix::fs::symlink(&source_path, &link_path);
+                }
+            }
         }
     }
 
@@ -583,6 +614,47 @@ fn extract_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
     }
 
     codes
+}
+
+/// Parse @symlink associations from raw test file content.
+/// Returns a map of source filename -> list of symlink paths.
+/// Format in test files: @filename: /path followed by @symlink: /link1,/link2
+fn parse_symlink_associations(content: &str) -> Vec<(String, Vec<String>)> {
+    let mut result = Vec::new();
+    let mut current_filename: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Match @filename or @Filename
+        if let Some(rest) = trimmed
+            .strip_prefix("// @filename:")
+            .or_else(|| trimmed.strip_prefix("// @Filename:"))
+            .or_else(|| trimmed.strip_prefix("//@filename:"))
+            .or_else(|| trimmed.strip_prefix("//@Filename:"))
+        {
+            current_filename = Some(rest.trim().to_string());
+        }
+        // Match @symlink or @Symlink
+        if let Some(rest) = trimmed
+            .strip_prefix("// @symlink:")
+            .or_else(|| trimmed.strip_prefix("// @Symlink:"))
+            .or_else(|| trimmed.strip_prefix("//@symlink:"))
+            .or_else(|| trimmed.strip_prefix("//@Symlink:"))
+        {
+            if let Some(ref filename) = current_filename {
+                let links: Vec<String> = rest
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !links.is_empty() {
+                    result.push((filename.clone(), links));
+                }
+            }
+        }
+    }
+
+    result
 }
 
 /// Strip @ directive comments from test file content

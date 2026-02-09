@@ -118,6 +118,21 @@ pub enum ImportingModuleKind {
     CommonJs,
 }
 
+/// Import syntax kind - determines which error codes to use
+/// for extensionless imports in Node16/NodeNext resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImportKind {
+    /// ESM static import: `import { x } from "./foo"`
+    #[default]
+    EsmImport,
+    /// Dynamic import: `import("./foo")` - always ESM regardless of file type
+    DynamicImport,
+    /// CommonJS require: `import x = require("./foo")` or `require("./foo")`
+    CjsRequire,
+    /// Re-export: `export { x } from "./foo"`
+    EsmReExport,
+}
+
 impl ModuleExtension {
     /// Parse extension from file path
     pub fn from_path(path: &Path) -> Self {
@@ -638,6 +653,24 @@ impl ModuleResolver {
         containing_file: &Path,
         specifier_span: Span,
     ) -> Result<ResolvedModule, ResolutionFailure> {
+        self.resolve_with_kind(
+            specifier,
+            containing_file,
+            specifier_span,
+            ImportKind::EsmImport,
+        )
+    }
+
+    /// Resolve a module specifier from a containing file, with import kind information.
+    /// The import_kind is used to determine whether to emit TS2834 (extensionless ESM import)
+    /// or TS2307 (cannot find module) for extensionless imports in Node16/NodeNext.
+    pub fn resolve_with_kind(
+        &mut self,
+        specifier: &str,
+        containing_file: &Path,
+        specifier_span: Span,
+        import_kind: ImportKind,
+    ) -> Result<ResolvedModule, ResolutionFailure> {
         let containing_dir = containing_file
             .parent()
             .unwrap_or(Path::new("."))
@@ -683,6 +716,7 @@ impl ModuleResolver {
             &containing_file_str,
             specifier_span,
             importing_module_kind,
+            import_kind,
         );
         if let Ok(resolved) = &result {
             if matches!(
@@ -798,6 +832,7 @@ impl ModuleResolver {
         containing_file: &str,
         specifier_span: Span,
         importing_module_kind: ImportingModuleKind,
+        import_kind: ImportKind,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         // Step 1: Handle #-prefixed imports (package.json imports field)
         // This is a Node16/NodeNext feature for subpath imports
@@ -845,6 +880,7 @@ impl ModuleResolver {
                 containing_file,
                 specifier_span,
                 importing_module_kind,
+                import_kind,
             );
         }
 
@@ -1106,6 +1142,7 @@ impl ModuleResolver {
         containing_file: &str,
         specifier_span: Span,
         importing_module_kind: ImportingModuleKind,
+        import_kind: ImportKind,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         let candidate = containing_dir.join(specifier);
 
@@ -1115,13 +1152,30 @@ impl ModuleResolver {
             .map(|ext| !ext.is_empty())
             .unwrap_or(false);
 
-        // TS2834 Check: In Node16/NodeNext + ESM context, relative imports must have explicit extensions
-        if matches!(
+        // TS2834/TS2835 Check: In Node16/NodeNext, ESM-style imports must have explicit extensions.
+        // This applies when:
+        // - The resolution mode is Node16 or NodeNext
+        // - The import is ESM syntax in an ESM context:
+        //   - Dynamic import() always counts as ESM regardless of file type
+        //   - Static import/export only counts if the file is an ESM module
+        //   - require() never triggers this check
+        // - The specifier has no extension
+        let needs_extension_check = matches!(
             self.resolution_kind,
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
-        ) && importing_module_kind == ImportingModuleKind::Esm
-            && !specifier_has_extension
-        {
+        ) && !specifier_has_extension
+            && match import_kind {
+                // Dynamic import() is always ESM, even in .cts files
+                ImportKind::DynamicImport => true,
+                // Static import/export only triggers TS2834 in ESM files
+                ImportKind::EsmImport | ImportKind::EsmReExport => {
+                    importing_module_kind == ImportingModuleKind::Esm
+                }
+                // require() never triggers TS2834
+                ImportKind::CjsRequire => false,
+            };
+
+        if needs_extension_check {
             // Try to resolve to determine what extension to suggest (TS2835)
             if let Some(resolved) = self.try_file_or_directory(&candidate) {
                 // Resolution succeeded implicitly - this is an error in ESM mode
@@ -1147,9 +1201,13 @@ impl ModuleResolver {
                     span: specifier_span,
                 });
             }
-            // When resolution fails and we can't tell if the import is ES-style
-            // (needs TS2834) or CJS-style require (needs TS2307), fall through.
-            // Note: import = require("./foo") in .mts is CJS-style and should get TS2307.
+            // File doesn't exist - emit TS2834 (no suggestion) for ESM imports
+            return Err(ResolutionFailure::ImportPathNeedsExtension {
+                specifier: specifier.to_string(),
+                suggested_extension: String::new(),
+                containing_file: containing_file.to_string(),
+                span: specifier_span,
+            });
         }
 
         if let Some(resolved) = self.try_file_or_directory(&candidate) {
