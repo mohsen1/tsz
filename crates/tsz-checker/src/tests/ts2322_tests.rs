@@ -375,3 +375,66 @@ fn test_ts2322_no_false_positive_conditional_infer() {
         ts2322_errors
     );
 }
+
+#[test]
+fn test_ts2322_no_false_positive_conditional_expression_with_generics() {
+    // Conditional expressions should compute union type first, not check branches individually
+    // This tests the fix for premature assignability checking in conditional expressions
+    let source = r#"
+        interface Shape {
+            name: string;
+            width: number;
+            height: number;
+        }
+
+        function getProperty<T, K extends keyof T>(obj: T, key: K): T[K] {
+            return obj[key];
+        }
+
+        function test(shape: Shape, cond: boolean) {
+            // cond ? "width" : "height" should be type "width" | "height"
+            // which IS assignable to K extends keyof Shape
+            // Should NOT emit TS2322 on individual branches
+            let widthOrHeight = getProperty(shape, cond ? "width" : "height");
+        }
+    "#;
+
+    let errors = get_all_diagnostics(source);
+    let ts2322_errors: Vec<_> = errors
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert!(
+        ts2322_errors.is_empty(),
+        "Expected no TS2322 for conditional expression in generic function call, got: {:?}",
+        ts2322_errors
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_nested_conditional() {
+    // Nested conditional expressions should also work
+    let source = r#"
+        function pick<T, K extends keyof T>(obj: T, key: K): T[K] {
+            return obj[key];
+        }
+
+        type Point = { x: number; y: number; z: number };
+
+        function test(p: Point, a: boolean, b: boolean) {
+            // Nested ternary should produce "x" | "y" | "z"
+            let value = pick(p, a ? "x" : (b ? "y" : "z"));
+        }
+    "#;
+
+    let errors = get_all_diagnostics(source);
+    let ts2322_errors: Vec<_> = errors
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert!(
+        ts2322_errors.is_empty(),
+        "Expected no TS2322 for nested conditional expression, got: {:?}",
+        ts2322_errors
+    );
+}

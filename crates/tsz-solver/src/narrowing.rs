@@ -33,7 +33,7 @@ use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::types::Visibility;
 use crate::types::*;
 use crate::visitor::{
-    TypeVisitor, intersection_list_id, is_function_type_db, is_literal_type_db,
+    TypeVisitor, index_access_parts, intersection_list_id, is_function_type_db, is_literal_type_db,
     is_object_like_type_db, lazy_def_id, literal_value, object_shape_id,
     object_with_index_shape_id, template_literal_id, type_param_info, union_list_id,
 };
@@ -1833,6 +1833,11 @@ impl<'a> NarrowingContext<'a> {
             } else {
                 TypeId::NEVER
             }
+        } else if index_access_parts(self.db, source_type).is_some() {
+            // For indexed access types like T[K], narrow to T[K] & Function
+            // This handles cases like: typeof obj[key] === 'function'
+            let function_type = self.function_type();
+            self.db.intersection2(source_type, function_type)
         } else {
             TypeId::NEVER
         }
