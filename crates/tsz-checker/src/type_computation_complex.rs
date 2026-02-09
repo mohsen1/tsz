@@ -5,6 +5,7 @@
 //! call expressions, constructability, union/keyof types, and identifiers.
 
 use crate::state::CheckerState;
+use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::types::Visibility;
@@ -933,6 +934,11 @@ impl<'a> CheckerState<'a> {
 
         // Get the type of the callee
         let mut callee_type = self.get_type_of_node(call.expression);
+        trace!(
+            callee_type = ?callee_type,
+            callee_expr = ?call.expression,
+            "Call expression callee type resolved"
+        );
 
         // Check for dynamic import module resolution (TS2307)
         if self.is_dynamic_import(call) {
@@ -1040,10 +1046,16 @@ impl<'a> CheckerState<'a> {
             callee_type
         };
 
-        let overload_signatures = match tsz_solver::type_queries::classify_for_call_signatures(
+        let classification = tsz_solver::type_queries::classify_for_call_signatures(
             self.ctx.types,
             callee_type_for_resolution,
-        ) {
+        );
+        trace!(
+            callee_type_for_resolution = ?callee_type_for_resolution,
+            classification = ?classification,
+            "Call signatures classified"
+        );
+        let overload_signatures = match classification {
             tsz_solver::type_queries::CallSignaturesKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 if shape.call_signatures.len() > 1 {
@@ -1076,6 +1088,11 @@ impl<'a> CheckerState<'a> {
                 force_bivariant_callbacks,
             )
         {
+            trace!(
+                return_type = ?return_type,
+                signatures_count = signatures.len(),
+                "Resolved overloaded call return type"
+            );
             let return_type =
                 self.apply_this_substitution_to_call_return(return_type, call.expression);
             return if nullish_cause.is_some() {
