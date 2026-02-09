@@ -236,7 +236,7 @@ fn discover_tests(test_dir: &str, max: usize, filter: Option<&str>) -> Result<Ve
 
         if path
             .extension()
-            .is_some_and(|ext| ext == "ts" || ext == "tsx")
+            .is_some_and(|ext| ext == "ts" || ext == "tsx" || ext == "js" || ext == "jsx")
         {
             if !matches_path_filter(path, filter) {
                 continue;
@@ -297,7 +297,7 @@ fn process_test_file(
         let tsconfig_path = test_dir.join("tsconfig.json");
         let tsconfig_content = serde_json::json!({
             "compilerOptions": convert_options_to_tsconfig(&parsed.directives.options),
-            "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
+            "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
             "exclude": ["node_modules"]
         });
         fs::write(

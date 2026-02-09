@@ -468,6 +468,32 @@ clean_cache() {
     echo -e "${GREEN}Cache cleaned${NC}"
 }
 
+# Check if the TypeScript submodule has dirty/untracked files
+# tsc can emit .d.ts/.js files next to test files, polluting the submodule
+check_submodule_clean() {
+    local ts_dir="$REPO_ROOT/TypeScript"
+    if [ ! -d "$ts_dir/.git" ] && [ ! -f "$ts_dir/.git" ]; then
+        return 0  # Not a git repo/submodule, skip check
+    fi
+
+    local dirty_count
+    dirty_count=$(cd "$ts_dir" && git status --short 2>/dev/null | wc -l | tr -d ' ')
+
+    if [ "$dirty_count" -gt 0 ]; then
+        echo -e "${YELLOW}⚠ TypeScript submodule has $dirty_count dirty/untracked file(s):${NC}"
+        (cd "$ts_dir" && git status --short | head -10)
+        if [ "$dirty_count" -gt 10 ]; then
+            echo "  ... and $((dirty_count - 10)) more"
+        fi
+        echo ""
+        echo -e "${YELLOW}This is usually caused by tsc emitting files next to test sources.${NC}"
+        echo -e "${YELLOW}Cleaning with: git -C TypeScript checkout -- . && git -C TypeScript clean -fd${NC}"
+        (cd "$ts_dir" && git checkout -- . 2>/dev/null; git clean -fd 2>/dev/null)
+        echo -e "${GREEN}✓ TypeScript submodule cleaned${NC}"
+        echo ""
+    fi
+}
+
 # Parse arguments
 # Check for help flags first
 if [[ "${1:-}" == "help" ]] || [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
@@ -513,6 +539,7 @@ case "$COMMAND" in
         fi
         ;;
     generate)
+        check_submodule_clean
         ensure_binaries
         if [ "$NO_CACHE" = "true" ]; then
             generate_cache "true"
@@ -521,6 +548,7 @@ case "$COMMAND" in
         fi
         ;;
     run)
+        check_submodule_clean
         ensure_binaries
         if [ "$NO_CACHE" = "true" ]; then
             echo -e "${YELLOW}--no-cache flag set, regenerating cache...${NC}"
@@ -533,6 +561,7 @@ case "$COMMAND" in
         run_tests "${REMAINING_ARGS[@]}"
         ;;
     analyze)
+        check_submodule_clean
         ensure_binaries
         if [ ! -f "$CACHE_FILE" ]; then
             ensure_cache "$NO_DOWNLOAD"
@@ -541,6 +570,7 @@ case "$COMMAND" in
         analyze_tests "${REMAINING_ARGS[@]}"
         ;;
     all)
+        check_submodule_clean
         ensure_binaries
         if [ "$NO_CACHE" = "true" ]; then
             generate_cache "true"

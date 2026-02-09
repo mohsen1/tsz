@@ -349,7 +349,8 @@ function processFile(ts, file, libCache) {
 
   if (!filenames || filenames.length === 0) {
     const stripped = stripDirectiveComments(content);
-    const ext = (file.path && file.path.endsWith('.tsx')) ? '.tsx' : '.ts';
+    const origExt = file.path ? extname(file.path) : '.ts';
+    const ext = ['.ts', '.tsx', '.js', '.jsx'].includes(origExt) ? origExt : '.ts';
     virtualFiles.set('/virtual/test' + ext, stripped);
   } else {
     for (const { name, content: fileContent } of filenames) {
@@ -442,7 +443,7 @@ function walkDir(dir, files) {
       walkDir(fullPath, files);
     } else if (entry.isFile()) {
       const ext = extname(entry.name);
-      if (ext !== '.ts' && ext !== '.tsx') continue;
+      if (ext !== '.ts' && ext !== '.tsx' && ext !== '.js' && ext !== '.jsx') continue;
       if (entry.name.endsWith('.d.ts')) continue;
       files.push(fullPath);
     }
