@@ -1216,6 +1216,9 @@ impl ModuleResolver {
         containing_file: &str,
         specifier_span: Span,
     ) -> Result<ResolvedModule, ResolutionFailure> {
+        let (package_name, subpath) = parse_package_specifier(specifier);
+        let conditions = self.get_export_conditions(ImportingModuleKind::CommonJs);
+
         let mut current = containing_dir.to_path_buf();
         loop {
             let candidate = current.join(specifier);
@@ -1227,6 +1230,46 @@ impl ModuleResolver {
                     original_specifier: specifier.to_string(),
                     extension: ModuleExtension::from_path(&resolved),
                 });
+            }
+
+            // Also check @types packages in node_modules (TypeScript classic resolution
+            // still resolves @types packages for bare specifiers)
+            if !package_name.starts_with("@types/") {
+                let types_package = format!("@types/{}", package_name.replace('/', "__"));
+                let types_dir = current.join("node_modules").join(&types_package);
+                if types_dir.is_dir() {
+                    if let Ok(resolved) = self.resolve_package(
+                        &types_dir,
+                        subpath.as_deref(),
+                        specifier,
+                        containing_file,
+                        specifier_span,
+                        &conditions,
+                    ) {
+                        return Ok(resolved);
+                    }
+                }
+            }
+
+            // Check type_roots for the package
+            for type_root in &self.type_roots {
+                let types_package = if !package_name.starts_with("@types/") {
+                    type_root.join(format!("@types/{}", package_name.replace('/', "__")))
+                } else {
+                    type_root.join(&package_name)
+                };
+                if types_package.is_dir()
+                    && let Ok(resolved) = self.resolve_package(
+                        &types_package,
+                        subpath.as_deref(),
+                        specifier,
+                        containing_file,
+                        specifier_span,
+                        &conditions,
+                    )
+                {
+                    return Ok(resolved);
+                }
             }
 
             // Move to parent directory
@@ -1269,10 +1312,6 @@ impl ModuleResolver {
             return Ok(resolved);
         }
 
-        // Track if we found a package with exports but couldn't resolve it
-        // (for TS2792 hint when not in Node16/NodeNext/Bundler mode)
-        let mut found_package_with_exports = false;
-
         // Walk up directory tree looking for node_modules
         let mut current = containing_dir.to_path_buf();
         loop {
@@ -1292,15 +1331,6 @@ impl ModuleResolver {
                     ) {
                         Ok(resolved) => return Ok(resolved),
                         Err(_) => {
-                            // Check if package has exports field - relevant for TS2792
-                            if !self.resolve_package_json_exports {
-                                let package_json_path = package_dir.join("package.json");
-                                if let Ok(pj) = self.read_package_json(&package_json_path) {
-                                    if pj.exports.is_some() {
-                                        found_package_with_exports = true;
-                                    }
-                                }
-                            }
                             // Continue searching in parent directories
                         }
                     }
@@ -1361,16 +1391,6 @@ impl ModuleResolver {
             {
                 return Ok(resolved);
             }
-        }
-
-        // TS2792: If we found a package with exports but couldn't resolve it,
-        // and we're not in a mode that supports exports, suggest switching modes
-        if found_package_with_exports {
-            return Err(ResolutionFailure::ModuleResolutionModeMismatch {
-                specifier: specifier.to_string(),
-                containing_file: containing_file.to_string(),
-                span: specifier_span,
-            });
         }
 
         Err(ResolutionFailure::NotFound {
