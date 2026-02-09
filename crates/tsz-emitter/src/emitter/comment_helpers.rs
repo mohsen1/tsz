@@ -1,5 +1,6 @@
 use super::{CommentKind, Printer, get_leading_comment_ranges, get_trailing_comment_ranges};
 use crate::printer::safe_slice;
+use tsz_parser::parser::node::Node;
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -170,6 +171,46 @@ impl<'a> Printer<'a> {
                 self.write_line();
             } else if comment.kind == CommentKind::MultiLine {
                 self.write_space();
+            }
+        }
+    }
+
+    /// Emit leading comments for a node, using the node's position.
+    /// This emits comments that appear immediately before the node in the source.
+    #[allow(dead_code)]
+    pub(super) fn emit_leading_comments_for_node(&mut self, node: &Node) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        // Skip trivia to find the actual token start, then look for comments before it
+        let actual_start = self.skip_trivia_forward(node.pos, node.end);
+        let comments = get_leading_comment_ranges(text, actual_start as usize);
+        for comment in comments {
+            // Use safe slicing to avoid panics
+            let comment_text = safe_slice::slice(text, comment.pos as usize, comment.end as usize);
+            if !comment_text.is_empty() {
+                self.write(comment_text);
+            }
+            if comment.has_trailing_newline {
+                self.write_line();
+            } else if comment.kind == CommentKind::MultiLine {
+                self.write_space();
+            }
+            // Advance the global comment index past this comment
+            while self.comment_emit_idx < self.all_comments.len() {
+                let c = &self.all_comments[self.comment_emit_idx];
+                if c.pos >= comment.pos as u32 && c.end <= comment.end as u32 {
+                    self.comment_emit_idx += 1;
+                    break;
+                } else if c.end > comment.end as u32 {
+                    break;
+                }
+                self.comment_emit_idx += 1;
             }
         }
     }

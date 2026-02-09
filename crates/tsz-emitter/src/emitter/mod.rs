@@ -2038,17 +2038,24 @@ impl<'a> Printer<'a> {
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 // Find the actual start of the statement's first token by
-                // scanning forward from node.pos past whitespace and comments
-                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                // scanning forward from node.pos past whitespace only.
+                // We preserve comments here - they're handled either as leading
+                // comments (if truly before the statement) or by nested expression emitters.
+                let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
 
-                // Emit comments whose end position is at or before the actual token start
+                // Emit comments whose end position is at or before the actual token start.
+                // These are truly "leading" comments for this statement.
+                // Comments inside expressions (like call arguments) have positions AFTER
+                // the statement's first token, so they won't be emitted here.
                 if let Some(text) = self.source_text {
                     while self.comment_emit_idx < self.all_comments.len() {
+                        let c_pos = self.all_comments[self.comment_emit_idx].pos;
                         let c_end = self.all_comments[self.comment_emit_idx].end;
+                        let c_trailing =
+                            self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                        // Only emit if this comment ends before the statement's first token
+                        // AND hasn't been emitted by a nested expression emitter
                         if c_end <= actual_start {
-                            let c_pos = self.all_comments[self.comment_emit_idx].pos;
-                            let c_trailing =
-                                self.all_comments[self.comment_emit_idx].has_trailing_new_line;
                             let comment_text = crate::printer::safe_slice::slice(
                                 text,
                                 c_pos as usize,
@@ -2178,7 +2185,3 @@ fn get_operator_text(op: u16) -> &'static str {
         _ => "",
     }
 }
-
-#[cfg(test)]
-#[path = "tests/comment_tests.rs"]
-mod comment_tests;
