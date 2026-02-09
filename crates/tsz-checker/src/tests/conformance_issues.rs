@@ -140,6 +140,52 @@ class void {}
     );
 }
 
+/// Issue: Interface with reserved word name
+///
+/// Expected: TS1005 only (no cascading errors)
+/// Status: FIXED (2026-02-09)
+///
+/// Root cause: Similar to class declarations, interfaces need to reject reserved words
+/// Fix: Added reserved word check in state_declarations.rs parse_interface_declaration
+#[test]
+fn test_interface_reserved_word_error_suppression() {
+    let source = r#"
+interface void {}
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parser_diagnostics: Vec<(u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|d| (d.code, d.message.clone()))
+        .collect();
+
+    // Should only emit TS1005 '{' expected
+    let ts1005_count = parser_diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 1005)
+        .count();
+
+    assert!(
+        has_error(&parser_diagnostics, 1005),
+        "Should emit TS1005 for syntax error.\nActual errors: {:#?}",
+        parser_diagnostics
+    );
+    assert_eq!(
+        ts1005_count, 1,
+        "Should only emit one TS1005, got {}",
+        ts1005_count
+    );
+    // Check for common cascading errors
+    assert!(
+        !has_error(&parser_diagnostics, 1068),
+        "Should NOT emit cascading TS1068 error.\nActual errors: {:#?}",
+        parser_diagnostics
+    );
+}
+
 /// Issue: Overly aggressive strict null checking
 ///
 /// From: neverReturningFunctions1.ts
