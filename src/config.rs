@@ -841,8 +841,9 @@ fn parse_module_kind(value: &str) -> Result<ModuleKind> {
         "es2020" => ModuleKind::ES2020,
         "es2022" => ModuleKind::ES2022,
         "esnext" => ModuleKind::ESNext,
-        "node16" => ModuleKind::Node16,
+        "node16" | "node18" | "node20" => ModuleKind::Node16,
         "nodenext" => ModuleKind::NodeNext,
+        "preserve" => ModuleKind::Preserve,
         _ => bail!("unsupported compilerOptions.module '{}'", value),
     };
 
