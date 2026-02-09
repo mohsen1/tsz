@@ -2233,7 +2233,11 @@ fn js_extension_for(path: &Path, jsx: Option<JsxEmit>) -> Option<&'static str> {
         Some("ts") => Some("js"),
         Some("tsx") => match jsx {
             Some(JsxEmit::Preserve) => Some("jsx"),
-            Some(JsxEmit::ReactNative) | None => Some("js"),
+            Some(JsxEmit::React)
+            | Some(JsxEmit::ReactJsx)
+            | Some(JsxEmit::ReactJsxDev)
+            | Some(JsxEmit::ReactNative)
+            | None => Some("js"),
         },
         _ => None,
     }
