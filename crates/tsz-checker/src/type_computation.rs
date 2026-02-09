@@ -1050,6 +1050,46 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // TS18013: Check for private identifier access outside of class
+        // Private identifiers (#foo) can only be accessed from within the class that declares them
+        if let Some(name_node) = self.ctx.arena.get(access.name_or_argument) {
+            if name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16 {
+                // Get the property name
+                let prop_name = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    &ident.escaped_text
+                } else {
+                    "#"
+                };
+
+                // Check if we're inside the class that declares this private identifier
+                let (symbols, _saw_class_scope) =
+                    self.resolve_private_identifier_symbols(access.name_or_argument);
+
+                // If we didn't find the symbol, it's being accessed outside the class that declares it
+                if symbols.is_empty() {
+                    use crate::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+
+                    // Try to get the class name from the type
+                    let class_name = self
+                        .get_class_name_from_type(object_type)
+                        .unwrap_or_else(|| "the class".to_string());
+
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
+                        &[prop_name, &class_name],
+                    );
+                    self.error_at_node(
+                        access.name_or_argument,
+                        &message,
+                        diagnostic_codes::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
+                    );
+                    return TypeId::ERROR;
+                }
+            }
+        }
+
         if let Some(name) = literal_string.as_deref() {
             if !self.check_property_accessibility(
                 access.expression,
