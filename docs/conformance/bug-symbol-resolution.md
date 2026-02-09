@@ -49,11 +49,78 @@ Only Symbol is affected, suggesting the issue is specific to Symbol, not a gener
 - CLI loads full libs including ES2015 and DOM
 - Bug only reproduces with full lib set (CLI), not in unit test environment
 
-## Next Steps
-1. Debug symbol resolution with tracing for `Symbol` identifier
-2. Examine type cache for Symbol - possible stale/wrong entry
-3. Check call signature return type extraction for SymbolConstructor
-4. Investigate if DOM type definitions interfere with ES2015 types
+## Code Path Analysis
+
+### Call Expression Type Resolution
+Location: `crates/tsz-checker/src/type_computation_complex.rs`
+
+**Key Functions**:
+- `get_type_of_call_expression` (line 908) - Entry point with recursion guard
+- `get_type_of_call_expression_inner` (line 921) - Main resolution logic
+
+**Resolution Flow for `Symbol('test')`**:
+```rust
+// 1. Get callee type (should resolve to SymbolConstructor)
+let mut callee_type = self.get_type_of_node(call.expression); // line 935
+
+// 2. Apply type arguments if present (none for Symbol())
+let callee_type_for_resolution = self.apply_type_arguments_to_callable_type(...); // line 1037
+
+// 3. Classify callable and extract call signatures
+let overload_signatures = tsz_solver::type_queries::classify_for_call_signatures(...); // line 1043
+
+// 4. Resolve call with signatures to get return type
+let return_type = self.resolve_overloaded_call_with_signatures(...); // line 1073
+```
+
+**Bug Location**: Return type comes back as `RTCEncodedVideoFrameType` instead of `symbol`.
+Likely issues:
+- Callee type resolves to wrong symbol (step 1)
+- Call signature extraction gets wrong signature (step 3)
+- Return type mapping is corrupted (step 4)
+
+### Symbol Resolution Path
+Location: `crates/tsz-checker/src/symbol_resolver.rs`
+
+When `Symbol` identifier is encountered:
+1. Check local scope chain
+2. Check type parameters
+3. Check module exports
+4. Check file locals
+5. **Fallback to lib_contexts** (lines 322-341) - Global symbols
+
+**Key Investigation**: How are DOM and ES2015 lib symbols merged?
+
+## Next Steps (Prioritized)
+
+### High Priority
+1. **Add targeted debug output**:
+   ```rust
+   // In get_type_of_call_expression_inner at line 935
+   eprintln!("DEBUG: Callee type for {:?} = {:?}", call.expression, callee_type);
+   ```
+
+2. **Check symbol resolution**:
+   - What symbol does "Symbol" identifier resolve to?
+   - Is it getting SymbolConstructor or something else?
+
+3. **Verify call signature extraction**:
+   - What signatures are extracted for the resolved type?
+   - Does it have the correct `(): symbol` signature?
+
+### Medium Priority
+4. **Check type cache**: Look at `state_type_analysis.rs` `get_type_of_symbol`
+5. **Test with isolated libs**: Run with only ES2015, no DOM types
+6. **Examine lib merging**: How are conflicting global names handled?
+
+### Investigation Commands
+```bash
+# Add tracing to type resolution
+TSZ_LOG="tsz_checker::type_computation_complex=trace" cargo run -- /tmp/test.ts
+
+# Check what type Symbol resolves to
+TSZ_LOG="tsz_checker::symbol_resolver=debug" cargo run -- /tmp/test.ts
+```
 
 ## Test Case
 ```bash
