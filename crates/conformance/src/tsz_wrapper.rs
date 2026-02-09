@@ -881,13 +881,36 @@ mod tests {
         );
     }
 
+    fn find_tsz_binary() -> String {
+        // Try common build locations relative to workspace root
+        let candidates = [
+            ".target/dist-fast/tsz",
+            ".target/release/tsz",
+            "target/release/tsz",
+            "target/debug/tsz",
+        ];
+        // Workspace root is two levels up from crates/conformance/
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("Could not find workspace root");
+        for candidate in &candidates {
+            let path = workspace_root.join(candidate);
+            if path.exists() {
+                return path.to_string_lossy().to_string();
+            }
+        }
+        panic!("tsz binary not found. Build with: cargo build --profile dist-fast -p tsz-cli");
+    }
+
     #[test]
     fn test_compile_simple_error() {
         let content = r#"
 // @strict: true
 const x: number = "string";
 "#;
-        let result = compile_test(content, &[], &HashMap::new(), "../target/release/tsz").unwrap();
+        let tsz = find_tsz_binary();
+        let result = compile_test(content, &[], &HashMap::new(), &tsz).unwrap();
         // Should have type error (TS2322)
         assert!(!result.error_codes.is_empty());
     }
@@ -898,7 +921,8 @@ const x: number = "string";
 // @strict: true
 const x: number = 42;
 "#;
-        let result = compile_test(content, &[], &HashMap::new(), "../target/release/tsz").unwrap();
+        let tsz = find_tsz_binary();
+        let result = compile_test(content, &[], &HashMap::new(), &tsz).unwrap();
         // Should have no errors
         assert!(result.error_codes.is_empty());
     }
