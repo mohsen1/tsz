@@ -20,6 +20,7 @@ use tsz::checker::context::LibContext;
 use tsz::checker::state::CheckerState;
 use tsz::checker::types::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
+    diagnostic_messages, format_message,
 };
 use tsz::lib_loader::LibFile;
 use tsz::module_resolver::ModuleResolver;
@@ -646,7 +647,16 @@ fn compile_inner(
     let tsconfig_path = if let Some(path) = explicit_config_path {
         Some(path.to_path_buf())
     } else {
-        resolve_tsconfig_path(&cwd, args.project.as_deref())?
+        match resolve_tsconfig_path(&cwd, args.project.as_deref()) {
+            Ok(path) => path,
+            Err(err) => {
+                return Ok(config_error_result(
+                    None,
+                    err.to_string(),
+                    diagnostic_codes::CANNOT_FIND_A_TSCONFIG_JSON_FILE_AT_THE_SPECIFIED_DIRECTORY,
+                ));
+            }
+        }
     };
     let config = load_config(tsconfig_path.as_deref())?;
 
@@ -656,6 +666,15 @@ fn compile_inner(
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
     apply_cli_overrides(&mut resolved, args)?;
+
+    if let Some(diag) = check_module_resolution_compatibility(&resolved, tsconfig_path.as_deref()) {
+        return Ok(CompilationResult {
+            diagnostics: vec![diag],
+            emitted_files: Vec::new(),
+            files_read: Vec::new(),
+            file_infos: Vec::new(),
+        });
+    }
 
     let base_dir = config_base_dir(&cwd, tsconfig_path.as_deref());
     let base_dir = canonicalize_or_owned(&base_dir);
@@ -1012,6 +1031,81 @@ fn compile_inner(
     })
 }
 
+fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> CompilationResult {
+    let file = file_path
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    CompilationResult {
+        diagnostics: vec![Diagnostic::error(file, 0, 0, message, code)],
+        emitted_files: Vec::new(),
+        files_read: Vec::new(),
+        file_infos: Vec::new(),
+    }
+}
+
+fn check_module_resolution_compatibility(
+    resolved: &ResolvedCompilerOptions,
+    tsconfig_path: Option<&Path>,
+) -> Option<Diagnostic> {
+    use tsz::config::ModuleResolutionKind;
+    use tsz_common::common::ModuleKind;
+
+    let module_resolution = resolved.module_resolution?;
+    let required = match module_resolution {
+        ModuleResolutionKind::Node16 => ModuleKind::Node16,
+        ModuleResolutionKind::NodeNext => ModuleKind::NodeNext,
+        _ => return None,
+    };
+
+    if resolved.printer.module == required {
+        return None;
+    }
+
+    let required_str = match required {
+        ModuleKind::Node16 => "Node16",
+        ModuleKind::NodeNext => "NodeNext",
+        _ => "Node16",
+    };
+    let resolution_str = match module_resolution {
+        ModuleResolutionKind::Node16 => "Node16",
+        ModuleResolutionKind::NodeNext => "NodeNext",
+        _ => "Node16",
+    };
+
+    let message = format_message(
+        diagnostic_messages::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO,
+        &[required_str, resolution_str],
+    );
+    let file = tsconfig_path
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    Some(Diagnostic::error(
+        file,
+        0,
+        0,
+        message,
+        diagnostic_codes::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_module_resolution_compatibility;
+    use crate::config::ResolvedCompilerOptions;
+    use tsz::config::ModuleResolutionKind;
+    use tsz_common::common::ModuleKind;
+
+    #[test]
+    fn test_module_resolution_requires_matching_module() {
+        let mut resolved = ResolvedCompilerOptions::default();
+        resolved.module_resolution = Some(ModuleResolutionKind::Node16);
+        resolved.printer.module = ModuleKind::CommonJS;
+
+        let diag = check_module_resolution_compatibility(&resolved, None);
+        assert!(diag.is_some());
+    }
+}
+
 /// Build file info with inclusion reasons
 fn build_file_infos(
     sources: &[SourceEntry],
@@ -1154,6 +1248,7 @@ fn build_program_with_cache(
                     symbols: Default::default(),
                     file_locals: Default::default(),
                     declared_modules: Default::default(),
+                    module_exports: Default::default(),
                     node_symbols: Default::default(),
                     symbol_arenas: Default::default(),
                     declaration_arenas: Default::default(),
@@ -1968,6 +2063,25 @@ fn collect_diagnostics(
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = tsz::solver::QueryCache::new(&program.type_interner);
 
+    // Prime Array<T> base type with global augmentations before any file checks.
+    if !program.files.is_empty() && !lib_contexts.is_empty() {
+        let prime_idx = 0;
+        let file = &program.files[prime_idx];
+        let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);
+        let mut checker = CheckerState::with_options(
+            &file.arena,
+            &binder,
+            &query_cache,
+            file.file_name.clone(),
+            &options.checker,
+        );
+        checker.ctx.set_lib_contexts(lib_contexts.to_vec());
+        checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.prime_boxed_types();
+    }
+
     // --- SMART INVALIDATION: Work Queue Algorithm ---
     // Only type-check files that have changed or depend on files with changed export signatures
 
@@ -2027,6 +2141,35 @@ fn collect_diagnostics(
                                 binder.module_exports.get(target_file_name).cloned()
                             {
                                 binder.module_exports.insert(specifier.clone(), exports);
+                            }
+                            if let Some(wildcards) =
+                                binder.wildcard_reexports.get(target_file_name).cloned()
+                            {
+                                binder
+                                    .wildcard_reexports
+                                    .insert(specifier.clone(), wildcards);
+                            }
+                            if let Some(reexports) = binder.reexports.get(target_file_name).cloned()
+                            {
+                                binder.reexports.insert(specifier.clone(), reexports);
+                            }
+                            if let Some(source_modules) =
+                                binder.wildcard_reexports.get(target_file_name).cloned()
+                            {
+                                for source_module in source_modules {
+                                    if let Some(&source_idx) = resolved_module_paths
+                                        .get(&(target_idx, source_module.clone()))
+                                    {
+                                        let source_file_name = &program.files[source_idx].file_name;
+                                        if let Some(exports) =
+                                            binder.module_exports.get(source_file_name).cloned()
+                                        {
+                                            binder
+                                                .module_exports
+                                                .insert(source_module.clone(), exports);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -2120,6 +2263,35 @@ fn collect_diagnostics(
                         && let Some(exports) = binder.module_exports.get(target_file_name).cloned()
                     {
                         binder.module_exports.insert(specifier.clone(), exports);
+                        if let Some(wildcards) =
+                            binder.wildcard_reexports.get(target_file_name).cloned()
+                        {
+                            binder
+                                .wildcard_reexports
+                                .insert(specifier.clone(), wildcards);
+                        }
+                        if let Some(reexports) = binder.reexports.get(target_file_name).cloned() {
+                            binder.reexports.insert(specifier.clone(), reexports);
+                        }
+                        if let Some(&target_idx) = canonical_to_file_idx.get(&canonical)
+                            && let Some(source_modules) =
+                                binder.wildcard_reexports.get(target_file_name).cloned()
+                        {
+                            for source_module in source_modules {
+                                if let Some(&source_idx) =
+                                    resolved_module_paths.get(&(target_idx, source_module.clone()))
+                                {
+                                    let source_file_name = &program.files[source_idx].file_name;
+                                    if let Some(exports) =
+                                        binder.module_exports.get(source_file_name).cloned()
+                                    {
+                                        binder
+                                            .module_exports
+                                            .insert(source_module.clone(), exports);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2833,6 +3005,27 @@ fn create_binder_from_bound_file(
         }
     }
 
+    // Merge global augmentations from all files
+    // Each augmentation is tagged with its source arena for cross-file resolution.
+    let mut merged_global_augmentations: rustc_hash::FxHashMap<
+        String,
+        Vec<tsz::binder::GlobalAugmentation>,
+    > = rustc_hash::FxHashMap::default();
+
+    for other_file in &program.files {
+        for (name, decls) in &other_file.global_augmentations {
+            merged_global_augmentations
+                .entry(name.clone())
+                .or_default()
+                .extend(decls.iter().map(|aug| {
+                    tsz::binder::GlobalAugmentation::with_arena(
+                        aug.node,
+                        Arc::clone(&other_file.arena),
+                    )
+                }));
+        }
+    }
+
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),
         program.symbols.clone(),
@@ -2840,7 +3033,7 @@ fn create_binder_from_bound_file(
         file.node_symbols.clone(),
         file.scopes.clone(),
         file.node_scope_ids.clone(),
-        file.global_augmentations.clone(),
+        merged_global_augmentations,
         merged_module_augmentations,
         program.module_exports.clone(),
         program.reexports.clone(),
@@ -2888,6 +3081,9 @@ fn create_cross_file_lookup_binder(
     // import targets to that file's locals/exports.
     let mut binder = BinderState::new();
     binder.file_locals = file_locals;
+    binder.node_symbols = file.node_symbols.clone();
+    binder.scopes = file.scopes.clone();
+    binder.node_scope_ids = file.node_scope_ids.clone();
     if let Some(exports) = program.module_exports.get(&file.file_name) {
         binder
             .module_exports

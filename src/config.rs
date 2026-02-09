@@ -811,7 +811,8 @@ fn parse_script_target(value: &str) -> Result<ScriptTarget> {
 }
 
 fn parse_module_kind(value: &str) -> Result<ModuleKind> {
-    let normalized = normalize_option(value);
+    let cleaned = value.split(',').next().unwrap_or(value).trim();
+    let normalized = normalize_option(cleaned);
     let module = match normalized.as_str() {
         "none" => ModuleKind::None,
         "commonjs" => ModuleKind::CommonJS,
@@ -831,7 +832,8 @@ fn parse_module_kind(value: &str) -> Result<ModuleKind> {
 }
 
 fn parse_module_resolution(value: &str) -> Result<ModuleResolutionKind> {
-    let normalized = normalize_option(value);
+    let cleaned = value.split(',').next().unwrap_or(value).trim();
+    let normalized = normalize_option(cleaned);
     let resolution = match normalized.as_str() {
         "classic" => ModuleResolutionKind::Classic,
         "node" | "node10" => ModuleResolutionKind::Node,
@@ -1412,5 +1414,17 @@ mod tests {
         let json = r#"{"strict": "invalid"}"#;
         let result: Result<CompilerOptions, _> = serde_json::from_str(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_module_resolution_list_value() {
+        let json =
+            r#"{"compilerOptions":{"moduleResolution":"node16,nodenext","module":"commonjs"}} "#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert_eq!(
+            resolved.module_resolution,
+            Some(ModuleResolutionKind::Node16)
+        );
     }
 }

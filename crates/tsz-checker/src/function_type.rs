@@ -925,6 +925,12 @@ impl<'a> CheckerState<'a> {
                 }
                 return TypeId::ERROR;
             }
+            if self.is_namespace_value_type(object_type) {
+                if !access.question_dot_token && !property_name.starts_with('#') {
+                    self.error_property_not_exist_at(property_name, original_object_type, idx);
+                }
+                return TypeId::ERROR;
+            }
 
             let object_type_for_access = self.resolve_type_for_property_access(object_type);
             if object_type_for_access == TypeId::ANY {
@@ -965,6 +971,12 @@ impl<'a> CheckerState<'a> {
                 }
 
                 PropertyAccessResult::PropertyNotFound { .. } => {
+                    if let Some(augmented_type) = self.resolve_array_global_augmentation_property(
+                        object_type_for_access,
+                        property_name,
+                    ) {
+                        return self.apply_flow_narrowing(idx, augmented_type);
+                    }
                     // Check for optional chaining (?.) - suppress TS2339 error when using optional chaining
                     if access.question_dot_token {
                         // With optional chaining, missing property results in undefined
@@ -1136,6 +1148,220 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             TypeId::ANY
+        }
+    }
+
+    fn resolve_array_global_augmentation_property(
+        &mut self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        use rustc_hash::FxHashMap;
+        use std::sync::Arc;
+        use tsz_parser::parser::NodeArena;
+        use tsz_parser::parser::node::NodeAccess;
+        use tsz_solver::operations_property::PropertyAccessResult;
+        use tsz_solver::type_queries::get_tuple_elements;
+        use tsz_solver::types::TypeKey;
+        use tsz_solver::{TypeLowering, types::is_compiler_managed_type};
+
+        let mut base_type = object_type;
+        if let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(base_type) {
+            base_type = inner;
+        }
+
+        let element_type = match self.ctx.types.lookup(base_type) {
+            Some(TypeKey::Array(elem)) => Some(elem),
+            Some(TypeKey::Tuple(_list_id)) => {
+                let elems = get_tuple_elements(self.ctx.types, base_type)?;
+                let mut members = Vec::new();
+                for elem in elems {
+                    let mut ty = if elem.rest {
+                        match self.ctx.types.lookup(elem.type_id) {
+                            Some(TypeKey::Array(inner)) => inner,
+                            _ => elem.type_id,
+                        }
+                    } else {
+                        elem.type_id
+                    };
+                    if elem.optional {
+                        ty = self.ctx.types.union2(ty, TypeId::UNDEFINED);
+                    }
+                    members.push(ty);
+                }
+                Some(self.ctx.types.union(members))
+            }
+            Some(TypeKey::Application(app_id)) => {
+                let app = self.ctx.types.type_application(app_id);
+                app.args.first().copied()
+            }
+            _ => None,
+        }?;
+
+        let augmentation_decls = self.ctx.binder.global_augmentations.get("Array")?;
+        if augmentation_decls.is_empty() {
+            return None;
+        }
+
+        let all_arenas = self.ctx.all_arenas.clone();
+        let all_binders = self.ctx.all_binders.clone();
+        let lib_contexts = self.ctx.lib_contexts.clone();
+        let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
+            let arenas = all_arenas.as_ref()?;
+            let binders = all_binders.as_ref()?;
+            let arena_ptr = arena_ref as *const NodeArena;
+            for (idx, arena) in arenas.iter().enumerate() {
+                if Arc::as_ptr(arena) == arena_ptr {
+                    return binders.get(idx).map(Arc::as_ref);
+                }
+            }
+            None
+        };
+
+        let resolve_in_scope = |binder: &tsz_binder::BinderState,
+                                arena_ref: &NodeArena,
+                                node_idx: NodeIndex|
+         -> Option<u32> {
+            let ident_name = arena_ref.get_identifier_text(node_idx)?;
+            let mut scope_id = binder.find_enclosing_scope(arena_ref, node_idx)?;
+            while scope_id != tsz_binder::ScopeId::NONE {
+                let scope = binder.scopes.get(scope_id.0 as usize)?;
+                if let Some(sym_id) = scope.table.get(ident_name) {
+                    return Some(sym_id.0);
+                }
+                scope_id = scope.parent;
+            }
+            None
+        };
+
+        let mut cross_file_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
+            FxHashMap::default();
+        for aug in augmentation_decls {
+            if let Some(ref arena) = aug.arena {
+                let key = Arc::as_ptr(arena) as usize;
+                cross_file_groups
+                    .entry(key)
+                    .or_insert_with(|| (Arc::clone(arena), Vec::new()))
+                    .1
+                    .push(aug.node);
+            } else {
+                let key = self.ctx.arena as *const NodeArena as usize;
+                cross_file_groups
+                    .entry(key)
+                    .or_insert_with(|| (Arc::new(self.ctx.arena.clone()), Vec::new()))
+                    .1
+                    .push(aug.node);
+            }
+        }
+
+        let mut found_types = Vec::new();
+        for (_, (arena, decls)) in cross_file_groups {
+            let decl_binder = binder_for_arena(arena.as_ref()).unwrap_or(self.ctx.binder);
+            let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
+                    return Some(sym_id.0);
+                }
+                if let Some(sym_id) = resolve_in_scope(decl_binder, arena.as_ref(), node_idx) {
+                    return Some(sym_id);
+                }
+                let ident_name = arena.as_ref().get_identifier_text(node_idx)?;
+                if is_compiler_managed_type(ident_name) {
+                    return None;
+                }
+                if let Some(found_sym) = decl_binder.file_locals.get(ident_name) {
+                    return Some(found_sym.0);
+                }
+                if let Some(all_binders) = all_binders.as_ref() {
+                    for binder in all_binders.iter() {
+                        if let Some(found_sym) = binder.file_locals.get(ident_name) {
+                            return Some(found_sym.0);
+                        }
+                    }
+                }
+                for ctx in &lib_contexts {
+                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                        return Some(found_sym.0);
+                    }
+                }
+                None
+            };
+            let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
+                if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
+                    return Some(
+                        self.ctx
+                            .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
+                    );
+                }
+                if let Some(sym_id) = resolve_in_scope(decl_binder, arena.as_ref(), node_idx) {
+                    return Some(self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)));
+                }
+                let ident_name = arena.as_ref().get_identifier_text(node_idx)?;
+                if is_compiler_managed_type(ident_name) {
+                    return None;
+                }
+                let sym_id = decl_binder.file_locals.get(ident_name).or_else(|| {
+                    if let Some(all_binders) = all_binders.as_ref() {
+                        for binder in all_binders.iter() {
+                            if let Some(found_sym) = binder.file_locals.get(ident_name) {
+                                return Some(found_sym);
+                            }
+                        }
+                    }
+                    lib_contexts
+                        .iter()
+                        .find_map(|ctx| ctx.binder.file_locals.get(ident_name))
+                })?;
+                Some(
+                    self.ctx
+                        .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
+                )
+            };
+
+            let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = decls
+                .iter()
+                .map(|&decl_idx| (decl_idx, arena.as_ref()))
+                .collect();
+            let lowering = TypeLowering::with_hybrid_resolver(
+                arena.as_ref(),
+                self.ctx.types,
+                &resolver,
+                &def_id_resolver,
+                &|_| None,
+            );
+            let (aug_type, params) =
+                lowering.lower_merged_interface_declarations(&decls_with_arenas);
+            if aug_type == TypeId::ERROR {
+                continue;
+            }
+
+            if let PropertyAccessResult::Success { type_id, .. } =
+                self.resolve_property_access_with_env(aug_type, property_name)
+            {
+                found_types.push(type_id);
+                continue;
+            }
+
+            if !params.is_empty() {
+                let mut args = Vec::with_capacity(params.len());
+                args.push(element_type);
+                for _ in 1..params.len() {
+                    args.push(TypeId::ANY);
+                }
+                let app_type = self.ctx.types.application(aug_type, args);
+                if let PropertyAccessResult::Success { type_id, .. } =
+                    self.resolve_property_access_with_env(app_type, property_name)
+                {
+                    found_types.push(type_id);
+                }
+            }
+        }
+
+        if found_types.is_empty() {
+            None
+        } else if found_types.len() == 1 {
+            Some(found_types[0])
+        } else {
+            Some(self.ctx.types.union(found_types))
         }
     }
 

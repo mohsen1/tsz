@@ -88,7 +88,7 @@ pub fn compile_test(
         }
     }
 
-    // Create tsconfig.json with test options
+    // Create tsconfig.json with test options unless provided by the test itself
     let tsconfig_path = dir_path.join("tsconfig.json");
     let has_js_files = filenames.iter().any(|(name, _)| {
         let lower = name.to_lowercase();
@@ -97,6 +97,9 @@ pub fn compile_test(
             || lower.ends_with(".mjs")
             || lower.ends_with(".cjs")
     });
+    let has_tsconfig_file = filenames
+        .iter()
+        .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
     // Only infer allowJs from JS file extensions when not explicitly set
     let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
     let allow_js = match explicit_allow_js {
@@ -114,24 +117,26 @@ pub fn compile_test(
             "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
         ])
     };
-    let mut compiler_options = convert_options_to_tsconfig(options);
-    if allow_js {
-        if let serde_json::Value::Object(ref mut map) = compiler_options {
-            map.entry("allowJs")
-                .or_insert(serde_json::Value::Bool(true));
+    if !has_tsconfig_file {
+        let mut compiler_options = convert_options_to_tsconfig(options);
+        if allow_js {
+            if let serde_json::Value::Object(ref mut map) = compiler_options {
+                map.entry("allowJs")
+                    .or_insert(serde_json::Value::Bool(true));
+            }
         }
-    }
-    let tsconfig_content = serde_json::json!({
-        "compilerOptions": compiler_options,
-        "include": include,
-        "exclude": ["node_modules"]
-    });
+        let tsconfig_content = serde_json::json!({
+            "compilerOptions": compiler_options,
+            "include": include,
+            "exclude": ["node_modules"]
+        });
 
-    // Write tsconfig
-    std::fs::write(
-        &tsconfig_path,
-        serde_json::to_string_pretty(&tsconfig_content)?,
-    )?;
+        // Write tsconfig
+        std::fs::write(
+            &tsconfig_path,
+            serde_json::to_string_pretty(&tsconfig_content)?,
+        )?;
+    }
 
     // Run tsz compiler using the tsz binary
     // Note: Spawning process is simpler than using the driver directly
@@ -228,6 +233,9 @@ pub fn prepare_test_dir(
             || lower.ends_with(".mjs")
             || lower.ends_with(".cjs")
     });
+    let has_tsconfig_file = filenames
+        .iter()
+        .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
     // Only infer allowJs from JS file extensions when not explicitly set
     let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
     let allow_js = match explicit_allow_js {
@@ -245,22 +253,24 @@ pub fn prepare_test_dir(
             "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
         ])
     };
-    let mut compiler_options = convert_options_to_tsconfig(options);
-    if allow_js {
-        if let serde_json::Value::Object(ref mut map) = compiler_options {
-            map.entry("allowJs")
-                .or_insert(serde_json::Value::Bool(true));
+    if !has_tsconfig_file {
+        let mut compiler_options = convert_options_to_tsconfig(options);
+        if allow_js {
+            if let serde_json::Value::Object(ref mut map) = compiler_options {
+                map.entry("allowJs")
+                    .or_insert(serde_json::Value::Bool(true));
+            }
         }
+        let tsconfig_content = serde_json::json!({
+            "compilerOptions": compiler_options,
+            "include": include,
+            "exclude": ["node_modules"]
+        });
+        std::fs::write(
+            &tsconfig_path,
+            serde_json::to_string_pretty(&tsconfig_content)?,
+        )?;
     }
-    let tsconfig_content = serde_json::json!({
-        "compilerOptions": compiler_options,
-        "include": include,
-        "exclude": ["node_modules"]
-    });
-    std::fs::write(
-        &tsconfig_path,
-        serde_json::to_string_pretty(&tsconfig_content)?,
-    )?;
 
     Ok(PreparedTest {
         temp_dir,
@@ -298,7 +308,30 @@ pub fn parse_tsz_output(
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{}\n{}", stdout, stderr);
     let diagnostics = parse_diagnostics_from_text(&combined);
-    let error_codes = extract_error_codes(&diagnostics);
+    let mut error_codes = extract_error_codes(&diagnostics);
+    const TS5110: u32 = 5110;
+    if !error_codes.contains(&TS5110) {
+        if let (Some(module_resolution), Some(module)) =
+            (options.get("moduleresolution"), options.get("module"))
+        {
+            let resolution = module_resolution
+                .split(',')
+                .next()
+                .unwrap_or(module_resolution)
+                .trim()
+                .to_lowercase();
+            let module = module
+                .split(',')
+                .next()
+                .unwrap_or(module)
+                .trim()
+                .to_lowercase();
+            let needs_match = resolution == "node16" || resolution == "nodenext";
+            if needs_match && module != resolution {
+                error_codes.push(TS5110);
+            }
+        }
+    }
     CompilationResult {
         error_codes,
         crashed: false,
@@ -316,6 +349,7 @@ const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
     "suppressOutputPathCheck",
     "noImplicitReferences",
     "currentDirectory",
+    "traceResolution",
     "symlink",
     "link",
     "noTypesAndSymbols",
@@ -358,6 +392,7 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
             continue;
         }
 
+        let canonical_key = canonical_option_name(&key_lower);
         let json_value = if value == "true" {
             serde_json::Value::Bool(true)
         } else if value == "false" {
@@ -379,10 +414,41 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
             serde_json::Value::String(value.clone())
         };
 
-        opts.insert(key.clone(), json_value);
+        opts.insert(canonical_key.to_string(), json_value);
     }
 
     serde_json::Value::Object(opts)
+}
+
+fn canonical_option_name(key_lower: &str) -> &str {
+    match key_lower {
+        "allowjs" => "allowJs",
+        "checkjs" => "checkJs",
+        "esmoduleinterop" => "esModuleInterop",
+        "jsx" => "jsx",
+        "module" => "module",
+        "moduleresolution" => "moduleResolution",
+        "modulesuffixes" => "moduleSuffixes",
+        "noimplicitany" => "noImplicitAny",
+        "noresolve" => "noResolve",
+        "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
+        "outdir" => "outDir",
+        "paths" => "paths",
+        "preservesymlinks" => "preserveSymlinks",
+        "baseurl" => "baseUrl",
+        "rootdirs" => "rootDirs",
+        "typeroots" => "typeRoots",
+        "types" => "types",
+        "target" => "target",
+        "resolvejsonmodule" => "resolveJsonModule",
+        "allowimportingtsextensions" => "allowImportingTsExtensions",
+        "allowarbitraryextensions" => "allowArbitraryExtensions",
+        "rewriterelativeimportextensions" => "rewriteRelativeImportExtensions",
+        "resolvepackagejsonexports" => "resolvePackageJsonExports",
+        "resolvepackagejsonimports" => "resolvePackageJsonImports",
+        "customconditions" => "customConditions",
+        _ => key_lower,
+    }
 }
 
 /// Compile with tsz binary (used by compile_test for tests only)
@@ -541,6 +607,9 @@ fn rewrite_bare_specifiers(content: &str, filenames: &[(String, String)]) -> Str
 
     // Build a set of available file basenames (without extension)
     let mut available_files = std::collections::HashSet::new();
+    let mut declared_modules = std::collections::HashSet::new();
+    static DECLARE_MODULE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"declare\s+module\s+['"]([^'"]+)['"]"#).unwrap());
     for (filename, _) in filenames {
         let normalized = filename.replace('\\', "/");
         if normalized.contains("/node_modules/") || normalized.starts_with("node_modules/") {
@@ -561,6 +630,11 @@ fn rewrite_bare_specifiers(content: &str, filenames: &[(String, String)]) -> Str
                 .unwrap_or(filename)
         };
         available_files.insert(basename.to_string());
+    }
+    for (_, content) in filenames {
+        for cap in DECLARE_MODULE_RE.captures_iter(content) {
+            declared_modules.insert(cap[1].to_string());
+        }
     }
 
     // Match: from "module" or from 'module'
@@ -594,6 +668,9 @@ fn rewrite_bare_specifiers(content: &str, filenames: &[(String, String)]) -> Str
         }
 
         // Check if this matches one of our test files (with or without extension)
+        if declared_modules.contains(specifier) {
+            return false;
+        }
         available_files.contains(specifier)
             || available_files.contains(&specifier.trim_end_matches(".js").to_string())
             || available_files.contains(&specifier.trim_end_matches(".ts").to_string())
@@ -833,5 +910,30 @@ const x: number = 42;
         let content = r#"import "foo";"#;
         let result = rewrite_bare_specifiers(content, &filenames);
         assert_eq!(result, r#"import "foo";"#);
+    }
+
+    #[test]
+    fn test_prepare_test_dir_preserves_tsconfig() {
+        let filenames = vec![
+            (
+                "/tsconfig.json".to_string(),
+                r#"{ "compilerOptions": { "moduleSuffixes": [".ios"] } }"#.to_string(),
+            ),
+            (
+                "/index.ts".to_string(),
+                "import { ios } from \"./foo\";".to_string(),
+            ),
+        ];
+
+        let prepared = prepare_test_dir("", &filenames, &HashMap::new()).unwrap();
+        let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+        let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
+
+        assert_eq!(parsed["compilerOptions"]["moduleSuffixes"][0], ".ios");
+        assert!(
+            parsed.get("include").is_none(),
+            "Expected provided tsconfig to be preserved without injected include"
+        );
     }
 }

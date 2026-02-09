@@ -53,9 +53,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Fast path: if neither side has non-public properties, there can't be any
         // private brands. This avoids the expensive resolve_atom + starts_with scan
         // on every property.
-        let target_has_nonpublic = target
-            .iter()
-            .any(|p| p.visibility != Visibility::Public);
+        let target_has_nonpublic = target.iter().any(|p| p.visibility != Visibility::Public);
         if !target_has_nonpublic {
             // No non-public target properties → no brand to check against
             return true;

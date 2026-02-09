@@ -2914,6 +2914,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Prime boxed and Array base types before checking files.
+    pub fn prime_boxed_types(&mut self) {
+        self.register_boxed_types();
+    }
+
     /// Check for feature-specific global types that may be missing.
     ///
     /// This function checks if certain global types that are required for specific
@@ -3305,7 +3310,88 @@ impl<'a> CheckerState<'a> {
                     && (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM)) != 0
             });
 
-            let (message, code) = if has_enum_conflict && has_non_block_scoped {
+            let decl_is_exported = |decl_idx: NodeIndex| {
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    return false;
+                };
+                match node.kind {
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                        self.ctx.arena.get_function(node).is_some_and(|func| {
+                            self.ctx
+                                .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword as u16)
+                        })
+                    }
+                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                        self.ctx.arena.get_class(node).is_some_and(|class| {
+                            self.ctx
+                                .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword as u16)
+                        })
+                    }
+                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                        self.ctx.arena.get_interface(node).is_some_and(|iface| {
+                            self.ctx
+                                .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword as u16)
+                        })
+                    }
+                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                        self.ctx.arena.get_enum(node).is_some_and(|enm| {
+                            self.ctx
+                                .has_modifier(&enm.modifiers, SyntaxKind::ExportKeyword as u16)
+                        })
+                    }
+                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                        self.ctx.arena.get_type_alias(node).is_some_and(|alias| {
+                            self.ctx
+                                .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword as u16)
+                        })
+                    }
+                    k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                        self.ctx.arena.get_module(node).is_some_and(|module| {
+                            self.ctx
+                                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword as u16)
+                        })
+                    }
+                    k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                        if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+                            && let Some(list_ext) = self.ctx.arena.get_extended(ext.parent)
+                            && let Some(stmt_node) = self.ctx.arena.get(list_ext.parent)
+                            && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                            && let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node)
+                        {
+                            self.ctx
+                                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword as u16)
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+            };
+
+            let has_variable_conflict = declarations.iter().any(|(decl_idx, flags)| {
+                conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) != 0
+            });
+            let has_non_variable_conflict = declarations.iter().any(|(decl_idx, flags)| {
+                conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) == 0
+            });
+            let has_exported_variable_conflict = declarations.iter().any(|(decl_idx, flags)| {
+                conflicts.contains(decl_idx)
+                    && (flags & symbol_flags::VARIABLE) != 0
+                    && decl_is_exported(*decl_idx)
+            });
+
+            let (message, code) = if has_exported_variable_conflict
+                && has_variable_conflict
+                && !has_non_variable_conflict
+            {
+                (
+                    format_message(
+                        diagnostic_messages::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                        &[&name],
+                    ),
+                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                )
+            } else if has_enum_conflict && has_non_block_scoped {
                 // Enum merging conflict: TS2567
                 (
                     diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS

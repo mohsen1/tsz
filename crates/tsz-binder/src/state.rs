@@ -1243,6 +1243,18 @@ impl BinderState {
             return true;
         }
 
+        // Namespace/module can merge with interface
+        if (existing_flags & symbol_flags::MODULE) != 0
+            && (new_flags & symbol_flags::INTERFACE) != 0
+        {
+            return true;
+        }
+        if (new_flags & symbol_flags::MODULE) != 0
+            && (existing_flags & symbol_flags::INTERFACE) != 0
+        {
+            return true;
+        }
+
         // Enum can merge with enum
         if (existing_flags & symbol_flags::ENUM) != 0 && (new_flags & symbol_flags::ENUM) != 0 {
             return true;
@@ -3533,6 +3545,18 @@ impl BinderState {
             return true;
         }
 
+        // Namespace/module can merge with interface
+        if (existing_flags & symbol_flags::MODULE) != 0
+            && (new_flags & symbol_flags::INTERFACE) != 0
+        {
+            return true;
+        }
+        if (new_flags & symbol_flags::MODULE) != 0
+            && (existing_flags & symbol_flags::INTERFACE) != 0
+        {
+            return true;
+        }
+
         if (existing_flags & symbol_flags::FUNCTION) != 0
             && (new_flags & symbol_flags::FUNCTION) != 0
         {
@@ -3710,5 +3734,39 @@ impl BinderState {
         if let Some(parent_scope) = self.scope_stack.pop() {
             self.current_scope = parent_scope;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    #[test]
+    fn test_namespace_exports_exclude_non_exported_members() {
+        let source = r#"
+namespace M {
+    export class A {}
+    class B {}
+}
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let m_sym_id = binder
+            .file_locals
+            .get("M")
+            .expect("expected namespace symbol for M");
+        let symbol = binder
+            .symbols
+            .get(*m_sym_id)
+            .expect("expected namespace symbol data");
+        let exports = symbol.exports.as_ref().expect("expected exports table");
+
+        assert!(exports.has("A"), "expected A to be exported");
+        assert!(!exports.has("B"), "expected B to be non-exported");
     }
 }

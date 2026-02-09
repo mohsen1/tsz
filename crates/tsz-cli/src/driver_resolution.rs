@@ -238,6 +238,22 @@ pub(crate) fn collect_module_specifiers(
                 specifiers.push((strip_quotes(text), import_decl.module_specifier));
             }
         }
+
+        // Handle ambient module declarations: declare module "x" { ... }
+        if let Some(module_decl) = arena.get_module(stmt) {
+            let has_declare = module_decl.modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == SyntaxKind::DeclareKeyword as u16)
+                })
+            });
+            if has_declare {
+                if let Some(text) = arena.get_literal_text(module_decl.name) {
+                    specifiers.push((strip_quotes(text), module_decl.name));
+                }
+            }
+        }
     }
 
     specifiers

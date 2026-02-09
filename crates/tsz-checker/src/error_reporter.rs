@@ -2215,6 +2215,42 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS2709: Cannot use namespace '{0}' as a type.
+    pub fn error_namespace_used_as_type_at(&mut self, name: &str, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let message =
+                format_message(diagnostic_messages::CANNOT_USE_NAMESPACE_AS_A_TYPE, &[name]);
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_TYPE,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                start: loc.start,
+                length: loc.length(),
+                file: self.ctx.file_name.clone(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
+    /// Report TS2708: Cannot use namespace '{0}' as a value.
+    pub fn error_namespace_used_as_value_at(&mut self, name: &str, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let message = format_message(
+                diagnostic_messages::CANNOT_USE_NAMESPACE_AS_A_VALUE,
+                &[name],
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                start: loc.start,
+                length: loc.length(),
+                file: self.ctx.file_name.clone(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
     /// Report TS18050: The value 'X' cannot be used here.
     /// Emitted when a value (like a variable or literal) is used where it's not permitted.
     pub fn error_value_cannot_be_used_here_at(&mut self, name: &str, idx: NodeIndex) {

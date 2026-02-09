@@ -121,10 +121,35 @@ impl<'a> CheckerState<'a> {
         sym_id: tsz_binder::SymbolId,
         type_args_list: &tsz_parser::parser::NodeList,
     ) {
+        use tsz_binder::symbol_flags;
         use tsz_solver::AssignabilityChecker;
+
+        let mut sym_id = sym_id;
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.flags & symbol_flags::ALIAS != 0
+        {
+            let mut visited_aliases = Vec::new();
+            if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
+                sym_id = target;
+            }
+        }
 
         let type_params = self.get_type_params_for_symbol(sym_id);
         if type_params.is_empty() {
+            if let Some(&arg_idx) = type_args_list.nodes.first() {
+                let lib_binders = self.get_lib_binders();
+                let name = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(sym_id, &lib_binders)
+                    .map(|s| s.escaped_name.clone())
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                self.error_at_node_msg(
+                    arg_idx,
+                    crate::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                    &[name.as_str()],
+                );
+            }
             return;
         }
 

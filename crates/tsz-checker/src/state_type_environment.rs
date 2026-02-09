@@ -1217,6 +1217,16 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         }
 
+        let mut sym_id = sym_id;
+        if let Some(symbol) = self.get_symbol_globally(sym_id)
+            && symbol.flags & symbol_flags::ALIAS != 0
+        {
+            let mut visited_aliases = Vec::new();
+            if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
+                sym_id = target;
+            }
+        }
+
         let def_id = self.ctx.get_or_create_def_id(sym_id);
         if let Some(cached) = self.ctx.get_def_type_params(def_id) {
             self.ctx.leave_recursion();
@@ -1333,10 +1343,25 @@ impl<'a> CheckerState<'a> {
 
         // Interface - get type parameters from first declaration
         if flags & symbol_flags::INTERFACE != 0 {
-            let decl_idx = if !value_decl.is_none() {
+            let decl_idx = if !value_decl.is_none()
+                && self
+                    .ctx
+                    .arena
+                    .get(value_decl)
+                    .is_some_and(|node| self.ctx.arena.get_interface(node).is_some())
+            {
                 value_decl
             } else {
-                declarations.first().copied().unwrap_or(NodeIndex::NONE)
+                declarations
+                    .iter()
+                    .copied()
+                    .find(|&decl| {
+                        self.ctx
+                            .arena
+                            .get(decl)
+                            .is_some_and(|node| self.ctx.arena.get_interface(node).is_some())
+                    })
+                    .unwrap_or_else(|| declarations.first().copied().unwrap_or(NodeIndex::NONE))
             };
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)

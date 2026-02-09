@@ -420,6 +420,7 @@ const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
     "suppressOutputPathCheck",
     "noImplicitReferences",
     "currentDirectory",
+    "traceResolution",
     "symlink",
     "link",
     "noTypesAndSymbols",
@@ -463,6 +464,7 @@ fn convert_options_to_tsconfig(
             continue;
         }
 
+        let canonical_key = canonical_option_name(&key_lower);
         let json_value = if value == "true" {
             serde_json::Value::Bool(true)
         } else if value == "false" {
@@ -486,10 +488,41 @@ fn convert_options_to_tsconfig(
             }
         };
 
-        opts.insert(key_lower, json_value);
+        opts.insert(canonical_key.to_string(), json_value);
     }
 
     serde_json::Value::Object(opts)
+}
+
+fn canonical_option_name(key_lower: &str) -> &str {
+    match key_lower {
+        "allowjs" => "allowJs",
+        "checkjs" => "checkJs",
+        "esmoduleinterop" => "esModuleInterop",
+        "jsx" => "jsx",
+        "module" => "module",
+        "moduleresolution" => "moduleResolution",
+        "modulesuffixes" => "moduleSuffixes",
+        "noimplicitany" => "noImplicitAny",
+        "noresolve" => "noResolve",
+        "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
+        "outdir" => "outDir",
+        "paths" => "paths",
+        "preservesymlinks" => "preserveSymlinks",
+        "baseurl" => "baseUrl",
+        "rootdirs" => "rootDirs",
+        "typeroots" => "typeRoots",
+        "types" => "types",
+        "target" => "target",
+        "resolvejsonmodule" => "resolveJsonModule",
+        "allowimportingtsextensions" => "allowImportingTsExtensions",
+        "allowarbitraryextensions" => "allowArbitraryExtensions",
+        "rewriterelativeimportextensions" => "rewriteRelativeImportExtensions",
+        "resolvepackagejsonexports" => "resolvePackageJsonExports",
+        "resolvepackagejsonimports" => "resolvePackageJsonImports",
+        "customconditions" => "customConditions",
+        _ => key_lower,
+    }
 }
 
 fn process_test_file(
@@ -529,18 +562,25 @@ fn process_test_file(
     let test_dir = temp_dir.join(format!("test_{}", unique_id));
     fs::create_dir_all(&test_dir)?;
 
-    // CRITICAL FIX: Create tsconfig.json with parsed @-directives
+    // Create tsconfig.json with parsed @-directives unless test provides its own.
     // This ensures tsserver respects options like @target: es6, @module: commonjs, etc.
-    let tsconfig_path = test_dir.join("tsconfig.json");
-    let tsconfig_content = serde_json::json!({
-        "compilerOptions": convert_options_to_tsconfig(&parsed.directives.options),
-        "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
-        "exclude": ["node_modules"]
-    });
-    fs::write(
-        &tsconfig_path,
-        serde_json::to_string_pretty(&tsconfig_content)?,
-    )?;
+    let has_tsconfig_file = parsed
+        .directives
+        .filenames
+        .iter()
+        .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
+    if !has_tsconfig_file {
+        let tsconfig_path = test_dir.join("tsconfig.json");
+        let tsconfig_content = serde_json::json!({
+            "compilerOptions": convert_options_to_tsconfig(&parsed.directives.options),
+            "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
+            "exclude": ["node_modules"]
+        });
+        fs::write(
+            &tsconfig_path,
+            serde_json::to_string_pretty(&tsconfig_content)?,
+        )?;
+    }
 
     // Track all files we open
     let mut opened_files: Vec<String> = Vec::new();

@@ -263,7 +263,9 @@ impl ParserState {
                         SyntaxKind::InterfaceKeyword => {
                             self.parse_interface_declaration_with_modifiers(start_pos, modifiers)
                         }
-                        SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
+                        SyntaxKind::NamespaceKeyword
+                        | SyntaxKind::ModuleKeyword
+                        | SyntaxKind::GlobalKeyword => {
                             if self.look_ahead_is_module_declaration() {
                                 self.parse_module_declaration_with_modifiers(start_pos, modifiers)
                             } else {
@@ -305,7 +307,9 @@ impl ParserState {
                     match self.token() {
                         SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
                         SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
-                        SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
+                        SyntaxKind::NamespaceKeyword
+                        | SyntaxKind::ModuleKeyword
+                        | SyntaxKind::GlobalKeyword => {
                             if self.look_ahead_is_module_declaration() {
                                 self.parse_module_declaration()
                             } else {
@@ -367,7 +371,9 @@ impl ParserState {
             }
             SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
             SyntaxKind::DeclareKeyword => self.parse_ambient_declaration(),
-            SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
+            SyntaxKind::NamespaceKeyword
+            | SyntaxKind::ModuleKeyword
+            | SyntaxKind::GlobalKeyword => {
                 if self.look_ahead_is_module_declaration() {
                     self.parse_module_declaration()
                 } else {

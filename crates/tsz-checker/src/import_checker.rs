@@ -72,6 +72,25 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
+        if self.is_ambient_module_match(module_name) {
+            return;
+        }
+        if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+            let arena = self.ctx.get_arena_for_file(target_idx as u32);
+            if let Some(source_file) = arena.source_files.first()
+                && !source_file.is_declaration_file
+            {
+                let file_name = source_file.file_name.as_str();
+                let is_js_like = file_name.ends_with(".js")
+                    || file_name.ends_with(".jsx")
+                    || file_name.ends_with(".mjs")
+                    || file_name.ends_with(".cjs");
+                if is_js_like {
+                    return;
+                }
+            }
+        }
+
         let clause_node = match self.ctx.arena.get(import.import_clause) {
             Some(node) => node,
             None => return,
@@ -93,9 +112,60 @@ impl<'a> CheckerState<'a> {
                 None => return,
             };
 
-            let exports_table = match self.ctx.binder.module_exports.get(module_name) {
-                Some(table) => table,
-                None => return,
+            let exports_table = if let Some(table) = self.ctx.binder.module_exports.get(module_name)
+            {
+                Some(table)
+            } else if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+                let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                if let Some(source_file) = arena.source_files.first() {
+                    self.ctx.binder.module_exports.get(&source_file.file_name)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let Some(exports_table) = exports_table else {
+                for element_idx in &named_imports.elements.nodes {
+                    let element_node = match self.ctx.arena.get(*element_idx) {
+                        Some(node) => node,
+                        None => continue,
+                    };
+
+                    let specifier = match self.ctx.arena.get_specifier(element_node) {
+                        Some(s) => s,
+                        None => continue,
+                    };
+
+                    let name_idx = if specifier.property_name.is_none() {
+                        specifier.name
+                    } else {
+                        specifier.property_name
+                    };
+
+                    let name_node = match self.ctx.arena.get(name_idx) {
+                        Some(node) => node,
+                        None => continue,
+                    };
+
+                    let identifier = match self.ctx.arena.get_identifier(name_node) {
+                        Some(id) => id,
+                        None => continue,
+                    };
+
+                    let import_name = &identifier.escaped_text;
+                    let message = format_message(
+                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                        &[module_name, import_name],
+                    );
+                    self.error_at_node(
+                        specifier.name,
+                        &message,
+                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                    );
+                }
+                return;
             };
 
             for element_idx in &named_imports.elements.nodes {
@@ -717,6 +787,39 @@ impl<'a> CheckerState<'a> {
         };
 
         let module_name = &literal.text;
+        let is_type_only_import = self
+            .ctx
+            .arena
+            .get(import.import_clause)
+            .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
+            .map(|clause| clause.is_type_only)
+            .unwrap_or(false);
+        let mut emitted_dts_import_error = false;
+        if module_name.ends_with(".d.ts") && !is_type_only_import {
+            use crate::types::diagnostics::{
+                diagnostic_codes, diagnostic_messages, format_message,
+            };
+            let suggested = module_name.trim_end_matches(".d.ts");
+            let message = format_message(
+                diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+                &[suggested],
+            );
+            self.error_at_node(
+                import.module_specifier,
+                &message,
+                diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+            );
+            emitted_dts_import_error = true;
+        }
+
+        if let Some(binders) = &self.ctx.all_binders {
+            if binders.iter().any(|binder| {
+                binder.declared_modules.contains(module_name)
+                    || binder.shorthand_ambient_modules.contains(module_name)
+            }) {
+                return;
+            }
+        }
 
         if self.would_create_cycle(module_name) {
             let cycle_path: Vec<&str> = self
@@ -779,8 +882,46 @@ impl<'a> CheckerState<'a> {
             && resolved.contains(module_name)
         {
             if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+                let mut skip_export_checks = false;
+                let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                if let Some(source_file) = arena.source_files.first() {
+                    let file_name = source_file.file_name.as_str();
+                    let is_js_like = file_name.ends_with(".js")
+                        || file_name.ends_with(".jsx")
+                        || file_name.ends_with(".mjs")
+                        || file_name.ends_with(".cjs");
+                    if is_js_like && !source_file.is_declaration_file {
+                        skip_export_checks = true;
+                    }
+                    if source_file.is_declaration_file
+                        && !is_type_only_import
+                        && !emitted_dts_import_error
+                    {
+                        use crate::types::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+                        let suggested = if module_name.ends_with(".d.ts") {
+                            module_name.trim_end_matches(".d.ts")
+                        } else {
+                            module_name.as_str()
+                        };
+                        let message = format_message(
+                            diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+                            &[suggested],
+                        );
+                        self.error_at_node(
+                            import.module_specifier,
+                            &message,
+                            diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+                        );
+                    }
+                }
                 if let Some(binder) = self.ctx.get_binder_for_file(target_idx) {
-                    if !binder.is_external_module {
+                    let normalized_module_name = module_name.trim_matches('"').trim_matches('\'');
+                    if !binder.is_external_module
+                        && !self.is_ambient_module_match(module_name)
+                        && !binder.declared_modules.contains(normalized_module_name)
+                    {
                         let arena = self.ctx.get_arena_for_file(target_idx as u32);
                         if let Some(source_file) = arena.source_files.first()
                             && !source_file.is_declaration_file
@@ -809,8 +950,12 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+                if !skip_export_checks {
+                    self.check_imported_members(import, module_name);
+                }
+            } else {
+                self.check_imported_members(import, module_name);
             }
-            self.check_imported_members(import, module_name);
 
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
                 let mut visited = FxHashSet::default();
