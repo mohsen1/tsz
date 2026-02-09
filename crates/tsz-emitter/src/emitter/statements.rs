@@ -445,12 +445,13 @@ impl<'a> Printer<'a> {
         self.emit(try_stmt.try_block);
 
         if !try_stmt.catch_clause.is_none() {
-            self.write(" ");
+            self.write_line();
             self.emit(try_stmt.catch_clause);
         }
 
         if !try_stmt.finally_block.is_none() {
-            self.write(" finally ");
+            self.write_line();
+            self.write("finally ");
             self.emit(try_stmt.finally_block);
         }
     }
