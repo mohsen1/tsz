@@ -1818,19 +1818,17 @@ impl ModuleResolver {
             }
         }
         if let Some((base, extension)) = split_path_extension(path) {
-            if matches!(
-                self.resolution_kind,
-                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
-            ) && let Some(rewritten) = node16_extension_substitution(path, extension)
-            {
-                for candidate in rewritten {
-                    if let Some(resolved) = try_file_with_suffixes(&candidate, suffixes) {
+            // Try extension substitution (.js → .ts/.tsx/.d.ts) for all resolution modes.
+            // TypeScript resolves `.js` imports to `.ts` sources in all modes.
+            if let Some(rewritten) = node16_extension_substitution(path, extension) {
+                for candidate in &rewritten {
+                    if let Some(resolved) = try_file_with_suffixes(candidate, suffixes) {
                         return Some(resolved);
                     }
                 }
-                return None;
             }
 
+            // Fall back to the original extension (e.g., literal .js file)
             if let Some(resolved) = try_file_with_suffixes_and_extension(&base, extension, suffixes)
             {
                 return Some(resolved);
