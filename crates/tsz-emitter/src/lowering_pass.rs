@@ -1692,8 +1692,9 @@ impl<'a> LoweringPass<'a> {
                 return false;
             };
 
+            // Shorthand properties are ES2015+ syntax and don't need lowering for ES2015+ targets
+            // Only method declarations need lowering (computed property names are checked above)
             node.kind == syntax_kind_ext::METHOD_DECLARATION
-                || node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
         })
     }
 
