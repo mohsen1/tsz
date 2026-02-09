@@ -397,7 +397,16 @@ impl<'a> CheckerState<'a> {
 
         // TS1203: Check for export assignment when targeting ES modules
         // This must be checked first before TS2300/TS2309
-        if self.ctx.compiler_options.module.is_es_module() {
+        // Declaration files (.d.ts, .d.mts, .d.cts) are exempt: they describe
+        // the shape of CJS modules and `export = X` is valid in declarations.
+        let is_declaration_file = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .is_some_and(|sf| sf.is_declaration_file)
+            || self.ctx.file_name.contains(".d.");
+        if self.ctx.compiler_options.module.is_es_module() && !is_declaration_file {
             for &export_idx in &export_assignment_indices {
                 self.error_at_node(
                     export_idx,
@@ -420,10 +429,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2309: Check for export assignment with other exports
+        // Skip if already emitting TS1203 (ES module target) or TS2300 (duplicate)
         if let Some(&export_idx) = export_assignment_indices.first()
             && has_other_exports
             && export_assignment_indices.len() == 1
-        // Only emit TS2309 if not already emitting TS2300
+            && !self.ctx.compiler_options.module.is_es_module()
         {
             self.error_at_node(
                 export_idx,
