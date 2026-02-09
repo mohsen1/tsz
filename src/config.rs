@@ -267,6 +267,9 @@ pub struct ResolvedCompilerOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JsxEmit {
     Preserve,
+    React,
+    ReactJsx,
+    ReactJsxDev,
     ReactNative,
 }
 
@@ -362,14 +365,13 @@ pub fn resolve_compiler_options(
     }
     resolved.checker.target = checker_target_from_emitter(resolved.printer.target);
 
+    let module_explicitly_set = options.module.is_some();
     if let Some(module) = options.module.as_deref() {
         let kind = parse_module_kind(module)?;
         resolved.printer.module = kind;
         resolved.checker.module = kind;
     } else {
-        // Default to CommonJS if not specified (matches tsc behavior)
-        // Note: tsc only changes the default module kind when 'module' is explicitly set
-        // The target does NOT affect the default module kind
+        // Default to CommonJS initially; may be overridden below based on moduleResolution
         resolved.printer.module = ModuleKind::CommonJS;
         resolved.checker.module = ModuleKind::CommonJS;
     }
@@ -378,6 +380,22 @@ pub fn resolve_compiler_options(
         let value = module_resolution.trim();
         if !value.is_empty() {
             resolved.module_resolution = Some(parse_module_resolution(value)?);
+        }
+    }
+
+    // When module is not explicitly set, infer it from moduleResolution (matches tsc behavior).
+    // tsc infers module: node16 when moduleResolution: node16, etc.
+    if !module_explicitly_set {
+        if let Some(mr) = resolved.module_resolution {
+            let inferred = match mr {
+                ModuleResolutionKind::Node16 => Some(ModuleKind::Node16),
+                ModuleResolutionKind::NodeNext => Some(ModuleKind::NodeNext),
+                _ => None,
+            };
+            if let Some(kind) = inferred {
+                resolved.printer.module = kind;
+                resolved.checker.module = kind;
+            }
         }
     }
     let effective_resolution = resolved.effective_module_resolution();
@@ -823,8 +841,9 @@ fn parse_module_kind(value: &str) -> Result<ModuleKind> {
         "es2020" => ModuleKind::ES2020,
         "es2022" => ModuleKind::ES2022,
         "esnext" => ModuleKind::ESNext,
-        "node16" => ModuleKind::Node16,
+        "node16" | "node18" | "node20" => ModuleKind::Node16,
         "nodenext" => ModuleKind::NodeNext,
+        "preserve" => ModuleKind::Preserve,
         _ => bail!("unsupported compilerOptions.module '{}'", value),
     };
 
@@ -850,7 +869,10 @@ fn parse_jsx_emit(value: &str) -> Result<JsxEmit> {
     let normalized = normalize_option(value);
     let jsx = match normalized.as_str() {
         "preserve" => JsxEmit::Preserve,
-        "reactnative" => JsxEmit::ReactNative,
+        "react" => JsxEmit::React,
+        "react-jsx" | "reactjsx" => JsxEmit::ReactJsx,
+        "react-jsxdev" | "reactjsxdev" => JsxEmit::ReactJsxDev,
+        "reactnative" | "react-native" => JsxEmit::ReactNative,
         _ => bail!("unsupported compilerOptions.jsx '{}'", value),
     };
 
