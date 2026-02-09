@@ -198,3 +198,85 @@ function f01(x: string | undefined) {
         diagnostics
     );
 }
+
+/// Issue: Private identifiers in object literals
+///
+/// Expected: TS18016 (private identifiers not allowed outside class bodies)
+/// Status: FIXED (2026-02-09)
+///
+/// Root cause: Parser wasn't validating private identifier usage in object literals
+/// Fix: Added validation in state_expressions.rs parse_property_assignment
+#[test]
+fn test_private_identifier_in_object_literal() {
+    // TS18016 is a PARSER error, so we need to check parser diagnostics
+    let source = r#"
+const obj = {
+    #x: 1
+};
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parser_diagnostics: Vec<(u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|d| (d.code, d.message.clone()))
+        .collect();
+
+    assert!(
+        parser_diagnostics.iter().any(|(c, _)| *c == 18016),
+        "Should emit TS18016 for private identifier in object literal.\nActual errors: {:#?}",
+        parser_diagnostics
+    );
+}
+
+/// Issue: Private identifier access outside class
+///
+/// Expected: TS18013 (property not accessible outside class)
+/// Status: FIXED (2026-02-09)
+///
+/// Root cause: get_type_of_private_property_access didn't check class scope
+/// Fix: Added check in state_type_analysis.rs to emit TS18013 when !saw_class_scope
+#[test]
+fn test_private_identifier_access_outside_class() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Foo {
+    #bar = 42;
+}
+const f = new Foo();
+const x = f.#bar;  // Should error TS18013
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 18013),
+        "Should emit TS18013 for private identifier access outside class.\nActual errors: {:#?}",
+        diagnostics
+    );
+}
+
+/// Issue: Private identifier access from within class should work
+///
+/// Expected: No errors
+/// Status: VERIFIED (2026-02-09)
+#[test]
+fn test_private_identifier_access_inside_class() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Foo {
+    #bar = 42;
+    getBar() {
+        return this.#bar;  // Should NOT error
+    }
+}
+        "#,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 18013),
+        "Should NOT emit TS18013 when accessing private identifier inside class.\nActual errors: {:#?}",
+        diagnostics
+    );
+}

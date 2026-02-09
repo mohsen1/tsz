@@ -2207,7 +2207,23 @@ impl<'a> CheckerState<'a> {
                 .property_access_type(resolved_type, &property_name)
             {
                 PropertyAccessResult::Success { .. } => {
-                    // Property exists in the type, proceed with the access
+                    // Property exists in the type, but if we're outside a class, it's TS18013
+                    if !saw_class_scope {
+                        // TS18013: Private identifier accessed outside of class
+                        use crate::types::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+                        let class_name = self
+                            .get_class_name_from_type(original_object_type)
+                            .unwrap_or_else(|| "the class".to_string());
+                        let message = format_message(
+                            diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
+                            &[&property_name, &class_name],
+                        );
+                        self.error_at_node(name_idx, &message, diagnostic_codes::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER);
+                        return TypeId::ERROR;
+                    }
+                    // Property exists in the type and we're in a class scope, proceed with the access
                     return self.get_type_of_property_access_by_name(
                         idx,
                         access,
@@ -2226,6 +2242,22 @@ impl<'a> CheckerState<'a> {
                         for prop in &shape.properties {
                             if prop.name == prop_atom {
                                 // Property found in the callable's properties list!
+                                // But if we're outside a class, it's TS18013
+                                if !saw_class_scope {
+                                    // TS18013: Private identifier accessed outside of class
+                                    use crate::types::diagnostics::{
+                                        diagnostic_codes, diagnostic_messages, format_message,
+                                    };
+                                    let class_name = self
+                                        .get_class_name_from_type(original_object_type)
+                                        .unwrap_or_else(|| "the class".to_string());
+                                    let message = format_message(
+                                        diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
+                                        &[&property_name, &class_name],
+                                    );
+                                    self.error_at_node(name_idx, &message, diagnostic_codes::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER);
+                                    return TypeId::ERROR;
+                                }
                                 // Return the property type (handle optional and write_type)
                                 let prop_type = if prop.optional {
                                     self.ctx.types.union(vec![prop.type_id, TypeId::UNDEFINED])
@@ -2245,6 +2277,19 @@ impl<'a> CheckerState<'a> {
                             original_object_type,
                             name_idx,
                         );
+                    } else {
+                        // TS18013: Private identifier accessed outside of class
+                        use crate::types::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+                        let class_name = self
+                            .get_class_name_from_type(original_object_type)
+                            .unwrap_or_else(|| "the class".to_string());
+                        let message = format_message(
+                            diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
+                            &[&property_name, &class_name],
+                        );
+                        self.error_at_node(name_idx, &message, diagnostic_codes::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER);
                     }
                     return TypeId::ERROR;
                 }
@@ -2261,6 +2306,19 @@ impl<'a> CheckerState<'a> {
                         original_object_type,
                         name_idx,
                     );
+                } else {
+                    // TS18013: Private identifier accessed outside of class
+                    use crate::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let class_name = self
+                        .get_class_name_from_type(original_object_type)
+                        .unwrap_or_else(|| "the class".to_string());
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
+                        &[&property_name, &class_name],
+                    );
+                    self.error_at_node(name_idx, &message, diagnostic_codes::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER);
                 }
                 return TypeId::ERROR;
             }
