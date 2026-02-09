@@ -11,7 +11,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use crate::index_signatures::IndexSignatureResolver;
 //!
 //! let resolver = IndexSignatureResolver::new(db);
