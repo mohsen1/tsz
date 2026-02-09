@@ -9,6 +9,7 @@ use crate::flow_analysis::{ComputedKey, PropertyKey};
 use crate::state::CheckerState;
 use crate::statements::StatementChecker;
 use rustc_hash::FxHashSet;
+use std::time::Instant;
 use tracing::{Level, span};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -76,6 +77,17 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(sf) = self.ctx.arena.get_source_file(node) {
+            let perf_enabled = std::env::var_os("TSZ_PERF").is_some();
+            let perf_log = |phase: &'static str, start: Instant| {
+                if perf_enabled {
+                    tracing::info!(
+                        target: "wasm::perf",
+                        phase,
+                        ms = start.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+            };
+
             self.ctx.compiler_options.no_implicit_any =
                 self.resolve_no_implicit_any_from_source(&sf.text);
             self.ctx.compiler_options.no_implicit_returns =
@@ -106,7 +118,9 @@ impl<'a> CheckerState<'a> {
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
             // Without this, TypeKey::Ref(Error) returns ERROR, causing TS2339 false positives
+            let env_start = Instant::now();
             let populated_env = self.build_type_environment();
+            perf_log("build_type_environment", env_start);
             *self.ctx.type_env.borrow_mut() = populated_env.clone();
             // CRITICAL: Also populate type_environment (Rc-wrapped) for FlowAnalyzer
             // This ensures type alias narrowing works during control flow analysis
@@ -119,10 +133,13 @@ impl<'a> CheckerState<'a> {
             self.register_boxed_types();
 
             // Type check each top-level statement
+            let stmt_start = Instant::now();
             for &stmt_idx in &sf.statements.nodes {
                 self.check_statement(stmt_idx);
             }
+            perf_log("check_statements", stmt_start);
 
+            let post_start = Instant::now();
             // Check for function overload implementations (2389, 2391)
             self.check_function_implementations(&sf.statements.nodes);
 
@@ -143,6 +160,7 @@ impl<'a> CheckerState<'a> {
             if self.ctx.no_unused_locals() || self.ctx.no_unused_parameters() {
                 self.check_unused_declarations();
             }
+            perf_log("post_checks", post_start);
         }
     }
 
@@ -950,6 +968,11 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         use tsz_solver::{freshness, type_queries};
+
+        // Excess property checks do not apply to type parameters (even with constraints).
+        if type_queries::is_type_parameter(self.ctx.types, target) {
+            return;
+        }
 
         // Only check excess properties for FRESH object literals
         // This is the key TypeScript behavior:
