@@ -1498,7 +1498,7 @@ impl<'a> Printer<'a> {
     /// For ES3/ES5, use `var`.
     pub(super) fn write_var_or_const(&mut self) {
         if self.ctx.target_es5 {
-            self.write_var_or_const();
+            self.write("var ");
         } else {
             self.write("const ");
         }
