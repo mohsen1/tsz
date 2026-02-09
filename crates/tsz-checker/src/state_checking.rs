@@ -133,6 +133,10 @@ impl<'a> CheckerState<'a> {
             self.register_boxed_types();
 
             // Type check each top-level statement
+            // Mark that we're now in the checking phase. During build_type_environment,
+            // closures may be type-checked without contextual types, which would cause
+            // premature TS7006 errors. The checking phase ensures contextual types are available.
+            self.ctx.is_checking_statements = true;
             let stmt_start = Instant::now();
             for &stmt_idx in &sf.statements.nodes {
                 self.check_statement(stmt_idx);
@@ -590,6 +594,18 @@ impl<'a> CheckerState<'a> {
 
             // No type annotation - infer from initializer
             if !var_decl.initializer.is_none() {
+                // Clear cache for closure initializers so TS7006 is properly emitted.
+                // During build_type_environment, closures are typed without contextual info
+                // and TS7006 is deferred. Now that we're in the checking phase, re-evaluate
+                // so TS7006 can fire for closures that truly lack contextual types.
+                if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer) {
+                    if matches!(
+                        init_node.kind,
+                        syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
+                    ) {
+                        checker.clear_type_cache_recursive(var_decl.initializer);
+                    }
+                }
                 let init_type = checker.get_type_of_node(var_decl.initializer);
 
                 // When strictNullChecks is off, undefined and null widen to any

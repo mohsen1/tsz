@@ -922,3 +922,55 @@ fn test_contextual_union_param_preserves_literal() {
     let param_result = apply_contextual_type(&interner, literal, param_ctx.expected());
     assert_eq!(param_result, literal);
 }
+
+/// Test that contextual typing works for generic function types like <T>(x: T) => void
+/// The parameter should get the type parameter T as its contextual type.
+#[test]
+fn test_contextual_generic_function_parameter() {
+    let interner = TypeInterner::new();
+
+    // Create type parameter T
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+
+    // <T>(x: T) => void
+    let generic_fn = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let ctx = ContextualTypeContext::with_expected(&interner, generic_fn);
+
+    // First parameter should be T (the type parameter)
+    let param_type = ctx.get_parameter_type(0);
+    assert!(
+        param_type.is_some(),
+        "Generic function parameter should have a contextual type"
+    );
+    assert_ne!(
+        param_type.unwrap(),
+        TypeId::UNKNOWN,
+        "Generic function parameter type should not be UNKNOWN"
+    );
+    // The parameter type should be the type parameter T
+    assert_eq!(
+        param_type.unwrap(),
+        t_type,
+        "Generic function parameter should be contextually typed as T"
+    );
+}
