@@ -17,7 +17,17 @@ impl<'a> Printer<'a> {
 
         // Empty blocks: preserve original format (single-line vs multi-line)
         if block.statements.nodes.is_empty() {
-            if self.is_single_line(node) {
+            // Check for comments inside the empty block
+            let has_inner_comments = self.has_comments_in_range(node.pos, node.end);
+            if has_inner_comments {
+                // Emit block with comments inside
+                self.write("{");
+                self.write_line();
+                self.increase_indent();
+                self.emit_comments_in_range(node.pos, node.end);
+                self.decrease_indent();
+                self.write("}");
+            } else if self.is_single_line(node) {
                 // Single-line empty block: { }
                 self.write("{ }");
             } else {
