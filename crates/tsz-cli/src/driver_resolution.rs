@@ -97,6 +97,11 @@ pub(crate) fn resolve_type_package_from_roots(
     None
 }
 
+/// Public wrapper for `type_package_candidates`.
+pub(crate) fn type_package_candidates_pub(name: &str) -> Vec<String> {
+    type_package_candidates(name)
+}
+
 fn type_package_candidates(name: &str) -> Vec<String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -159,13 +164,90 @@ pub(crate) fn resolve_type_package_entry(
 ) -> Option<PathBuf> {
     let package_json = read_package_json(&package_root.join("package.json"));
     let package_type = package_type_from_json(package_json.as_ref());
-    let resolved =
-        resolve_package_root(package_root, package_json.as_ref(), options, package_type)?;
-    if is_declaration_file(&resolved) {
-        Some(resolved)
-    } else {
+
+    // In node10/classic module resolution, type package fallback resolution
+    // should NOT try .d.mts/.d.cts extensions (those require exports map).
+    // Only bundler/node16/nodenext try the full extension set.
+    let use_restricted_extensions = matches!(
+        options.effective_module_resolution(),
+        ModuleResolutionKind::Node | ModuleResolutionKind::Classic
+    );
+
+    if use_restricted_extensions {
+        // Use restricted resolution: only types/typings/main + index.d.ts fallback
+        let mut candidates = Vec::new();
+        if let Some(ref pj) = package_json {
+            candidates = collect_package_entry_candidates(pj);
+        }
+        if !candidates
+            .iter()
+            .any(|entry| entry == "index" || entry == "./index")
+        {
+            candidates.push("index".to_string());
+        }
+        // Only try .ts, .tsx, .d.ts extensions (no .d.mts/.d.cts)
+        let restricted_extensions = &["ts", "tsx", "d.ts"];
+        for entry_name in candidates {
+            let entry_name = entry_name.trim().trim_start_matches("./");
+            let path = package_root.join(entry_name);
+            for ext in restricted_extensions {
+                let candidate = path.with_extension(ext);
+                if candidate.is_file() && is_declaration_file(&candidate) {
+                    return Some(canonicalize_or_owned(&candidate));
+                }
+            }
+        }
         None
+    } else {
+        let resolved =
+            resolve_package_root(package_root, package_json.as_ref(), options, package_type)?;
+        if is_declaration_file(&resolved) {
+            Some(resolved)
+        } else {
+            None
+        }
     }
+}
+
+/// Resolve a type package entry using a specific resolution-mode condition.
+///
+/// When `resolution_mode` is "import" or "require", the exports map is consulted
+/// with the corresponding condition. This implements the `resolution-mode` attribute
+/// of `/// <reference types="..." resolution-mode="..." />` directives.
+pub(crate) fn resolve_type_package_entry_with_mode(
+    package_root: &Path,
+    resolution_mode: &str,
+    options: &ResolvedCompilerOptions,
+) -> Option<PathBuf> {
+    let package_json = read_package_json(&package_root.join("package.json"));
+    let package_json = package_json.as_ref()?;
+
+    // Build conditions based on resolution mode
+    let conditions: Vec<&str> = match resolution_mode {
+        "require" => vec!["require", "types", "default"],
+        "import" => vec!["import", "types", "default"],
+        _ => return None,
+    };
+
+    // Try the exports map first
+    if let Some(exports) = &package_json.exports {
+        if let Some(target) = resolve_exports_subpath(exports, ".", &conditions) {
+            let target_path = package_root.join(target.trim_start_matches("./"));
+            // Try to find a declaration file at the target
+            let package_type = package_type_from_json(Some(package_json));
+            for candidate in expand_module_path_candidates(&target_path, options, package_type) {
+                if candidate.is_file() && is_declaration_file(&candidate) {
+                    return Some(canonicalize_or_owned(&candidate));
+                }
+            }
+            // Try exact path
+            if target_path.is_file() && is_declaration_file(&target_path) {
+                return Some(canonicalize_or_owned(&target_path));
+            }
+        }
+    }
+
+    None
 }
 
 pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {

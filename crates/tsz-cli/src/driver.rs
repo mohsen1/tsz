@@ -1768,6 +1768,14 @@ fn read_source_files(
         } else {
             collect_module_specifiers_from_text(&path, &text)
         };
+
+        // Collect /// <reference types="..." /> directives
+        let type_refs = if is_binary {
+            vec![]
+        } else {
+            tsz::checker::triple_slash_validator::extract_reference_types(&text)
+        };
+
         sources.insert(path.clone(), (Some(text), is_binary));
         let entry = dependencies.entry(path.clone()).or_default();
 
@@ -1784,6 +1792,51 @@ fn read_source_files(
                 entry.insert(canonical.clone());
                 if seen.insert(canonical.clone()) {
                     pending.push_back(canonical);
+                }
+            }
+        }
+
+        // Resolve /// <reference types="..." /> directives
+        if !type_refs.is_empty() {
+            let type_roots = options
+                .type_roots
+                .clone()
+                .unwrap_or_else(|| default_type_roots(base_dir));
+            for (type_name, resolution_mode, _line) in type_refs {
+                let resolved =
+                    if let Some(ref mode) = resolution_mode {
+                        // With explicit resolution-mode, use exports map with the specified condition
+                        let candidates =
+                            crate::driver_resolution::type_package_candidates_pub(&type_name);
+                        let mut result = None;
+                        for root in &type_roots {
+                            for candidate in &candidates {
+                                let package_root = root.join(candidate);
+                                if package_root.is_dir() {
+                                    if let Some(entry) =
+                                    crate::driver_resolution::resolve_type_package_entry_with_mode(
+                                        &package_root, mode, options,
+                                    )
+                                {
+                                    result = Some(entry);
+                                    break;
+                                }
+                                }
+                            }
+                            if result.is_some() {
+                                break;
+                            }
+                        }
+                        result
+                    } else {
+                        resolve_type_package_from_roots(&type_name, &type_roots, options)
+                    };
+                if let Some(resolved) = resolved {
+                    let canonical = canonicalize_or_owned(&resolved);
+                    entry.insert(canonical.clone());
+                    if seen.insert(canonical.clone()) {
+                        pending.push_back(canonical);
+                    }
                 }
             }
         }
