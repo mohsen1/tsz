@@ -228,26 +228,31 @@ impl<'a> Printer<'a> {
         let needs_class_field_lowering =
             (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
 
-        // Collect non-static property initializers that need lowering
+        // Collect property initializers that need lowering
         let mut field_inits: Vec<(String, NodeIndex)> = Vec::new();
+        let mut static_field_inits: Vec<(String, NodeIndex)> = Vec::new();
         if needs_class_field_lowering {
             for &member_idx in &class.members.nodes {
                 if let Some(member_node) = self.arena.get(member_idx) {
                     if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
                         if let Some(prop) = self.arena.get_property_decl(member_node) {
-                            // Only lower non-static properties with initializers
-                            if !prop.initializer.is_none()
-                                && !self
-                                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16)
-                                && !self.has_modifier(
+                            if prop.initializer.is_none()
+                                || self.has_modifier(
                                     &prop.modifiers,
                                     SyntaxKind::AbstractKeyword as u16,
                                 )
                             {
-                                let name = self.get_identifier_text_idx(prop.name);
-                                if !name.is_empty() {
-                                    field_inits.push((name, prop.initializer));
-                                }
+                                continue;
+                            }
+                            let name = self.get_identifier_text_idx(prop.name);
+                            if name.is_empty() {
+                                continue;
+                            }
+                            if self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16)
+                            {
+                                static_field_inits.push((name, prop.initializer));
+                            } else {
+                                field_inits.push((name, prop.initializer));
                             }
                         }
                     }
@@ -283,10 +288,10 @@ impl<'a> Printer<'a> {
 
         if synthesize_constructor {
             if has_extends {
-                self.write("constructor(...args) {");
+                self.write("constructor() {");
                 self.write_line();
                 self.increase_indent();
-                self.write("super(...args);");
+                self.write("super(...arguments);");
                 self.write_line();
             } else {
                 self.write("constructor() {");
@@ -307,20 +312,18 @@ impl<'a> Printer<'a> {
         }
 
         for &member_idx in &class.members.nodes {
-            // Skip non-static property declarations that were lowered to constructor
+            // Skip property declarations that were lowered
             if needs_class_field_lowering {
                 if let Some(member_node) = self.arena.get(member_idx) {
                     if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
                         if let Some(prop) = self.arena.get_property_decl(member_node) {
                             if !prop.initializer.is_none()
-                                && !self
-                                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16)
                                 && !self.has_modifier(
                                     &prop.modifiers,
                                     SyntaxKind::AbstractKeyword as u16,
                                 )
                             {
-                                continue; // Skip - already in constructor
+                                continue; // Skip - lowered to constructor or after class
                             }
                         }
                     }
@@ -348,6 +351,22 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+
+        // Emit static field initializers after class body: ClassName.field = value;
+        if !static_field_inits.is_empty() {
+            let class_name = self.get_identifier_text_idx(class.name);
+            if !class_name.is_empty() {
+                self.write_line();
+                for (name, init_idx) in &static_field_inits {
+                    self.write(&class_name);
+                    self.write(".");
+                    self.write(name);
+                    self.write(" = ");
+                    self.emit_expression(*init_idx);
+                    self.write(";");
+                }
+            }
+        }
     }
 
     // =========================================================================
@@ -814,9 +833,9 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // For JavaScript: Skip property declarations that are TypeScript-only
-        // (declarations with type annotation but no initializer)
-        if prop.initializer.is_none() && !prop.type_annotation.is_none() {
+        // For JavaScript: Skip property declarations without initializers
+        // (they are TypeScript-only declarations: typed props, bare props)
+        if prop.initializer.is_none() {
             return;
         }
 
