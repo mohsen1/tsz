@@ -464,6 +464,25 @@ impl Runner {
                 all_codes.extend(compile_result.error_codes);
             }
 
+            // Filter out all error codes for JS files when checkJs is not enabled.
+            // In tsc, JS files are only type-checked when checkJs is true;
+            // without it, tsc produces no semantic errors for JS files.
+            let is_js_file = {
+                let p = path.to_string_lossy().to_lowercase();
+                p.ends_with(".js")
+                    || p.ends_with(".jsx")
+                    || p.ends_with(".mjs")
+                    || p.ends_with(".cjs")
+            };
+            let check_js = options
+                .get("checkJs")
+                .or_else(|| options.get("checkjs"))
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            if is_js_file && !check_js {
+                all_codes.clear();
+            }
+
             let compile_result = tsz_wrapper::CompilationResult {
                 error_codes: all_codes.into_iter().collect(),
                 crashed: false,
