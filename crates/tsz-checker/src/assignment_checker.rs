@@ -228,11 +228,13 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(right_type);
         self.ensure_application_symbols_resolved(left_type);
 
-        if !is_const {
-            self.check_readonly_assignment(left_idx, expr_idx);
-        }
+        let is_readonly = if !is_const {
+            self.check_readonly_assignment(left_idx, expr_idx)
+        } else {
+            false
+        };
 
-        if !is_const && left_type != TypeId::ANY {
+        if !is_const && !is_readonly && left_type != TypeId::ANY {
             if let Some((source_level, target_level)) =
                 self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
             {
@@ -408,13 +410,15 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(right_type);
         self.ensure_application_symbols_resolved(left_type);
 
-        if !is_const {
-            self.check_readonly_assignment(left_idx, expr_idx);
-        }
+        let is_readonly = if !is_const {
+            self.check_readonly_assignment(left_idx, expr_idx)
+        } else {
+            false
+        };
 
         // Track whether an operator error was emitted so we can suppress cascading TS2322.
         // TSC doesn't emit TS2322 when there's already an operator error (TS2447/TS2362/TS2363).
-        let mut emitted_operator_error = is_const;
+        let mut emitted_operator_error = is_const || is_readonly;
 
         // Check arithmetic operands for compound arithmetic assignments
         // Emit TS2362/TS2363 for -=, *=, /=, %=, **=
