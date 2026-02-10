@@ -3722,6 +3722,60 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // subsequent code blocks, but the error emission happens elsewhere.
     }
 
+    fn check_switch_case_comparable(
+        &mut self,
+        switch_type: TypeId,
+        case_type: TypeId,
+        case_expr: NodeIndex,
+    ) {
+        // Skip if either type is error/any/unknown to avoid cascade errors
+        if switch_type == TypeId::ERROR
+            || case_type == TypeId::ERROR
+            || switch_type == TypeId::ANY
+            || case_type == TypeId::ANY
+            || switch_type == TypeId::UNKNOWN
+            || case_type == TypeId::UNKNOWN
+        {
+            return;
+        }
+
+        // Use literal type for the case expression if available, since
+        // get_type_of_node widens literals (e.g., "c" -> string).
+        // tsc's checkExpression preserves literal types for comparability checks.
+        let effective_case_type = self
+            .literal_type_from_initializer(case_expr)
+            .unwrap_or(case_type);
+
+        // Check if the types are comparable (assignable in either direction)
+        // tsc uses: isTypeComparableTo(caseType, switchType) which checks both directions
+        if !self.is_assignable_to(effective_case_type, switch_type)
+            && !self.is_assignable_to(switch_type, effective_case_type)
+        {
+            // TS2678: Type 'X' is not comparable to type 'Y'
+            if let Some(loc) = self.get_source_location(case_expr) {
+                let case_str = self.format_type(effective_case_type);
+                let switch_str = self.format_type(switch_type);
+                use crate::types::diagnostics::{
+                    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages,
+                    format_message,
+                };
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_COMPARABLE_TO_TYPE,
+                    &[&case_str, &switch_str],
+                );
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::TYPE_IS_NOT_COMPARABLE_TO_TYPE,
+                    category: DiagnosticCategory::Error,
+                    message_text: message,
+                    start: loc.start,
+                    length: loc.length(),
+                    file: self.ctx.file_name.clone(),
+                    related_information: Vec::new(),
+                });
+            }
+        }
+    }
+
     fn check_with_statement(&mut self, stmt_idx: NodeIndex) {
         CheckerState::check_with_statement(self, stmt_idx)
     }
