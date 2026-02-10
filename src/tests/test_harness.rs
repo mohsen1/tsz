@@ -406,7 +406,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "flaky: catch_unwind behavior varies across test runners"]
     fn test_run_with_timeout_fails() {
         let result = run_with_timeout(Duration::from_secs(1), || {
             panic!("Intentional panic");
