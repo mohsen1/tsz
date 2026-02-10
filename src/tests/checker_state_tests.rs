@@ -1534,7 +1534,6 @@ let foo = 2;
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_duplicate_identifier_type_alias_2300() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -1818,7 +1817,6 @@ f(true);
 }
 
 #[test]
-#[ignore = "TODO: Overload compatibility check needs custom covariant parameter checking"]
 fn test_overload_call_resolves_basic_signatures() {
     use crate::parser::ParserState;
 
@@ -4644,7 +4642,6 @@ new cls2();
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_abstract_class_union_type_2511() {
     // Error 2511: Cannot create an instance of an abstract class - through union type
     use crate::parser::ParserState;
@@ -5136,7 +5133,6 @@ map["a"] = 2;
 }
 
 #[test]
-#[ignore = "TODO: Fix stack overflow - readonly index signature tests cause infinite recursion"]
 fn test_readonly_index_signature_variable_access_assignment_2540() {
     // Error 2540: Cannot assign via readonly index signature.
     use crate::parser::ParserState;
@@ -6956,7 +6952,6 @@ const value = obj.value;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_interface_extends_class_applies_type_arguments() {
     use crate::parser::ParserState;
 
@@ -10125,7 +10120,6 @@ const value = tup[idx];
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_checker_lowers_element_access_mixed_literal_key_union() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -10358,7 +10352,6 @@ const value = obj.a;
 }
 
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_checker_namespace_merges_with_class_exports() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -10789,7 +10782,6 @@ const direct = Merge.extra;
 }
 
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_checker_namespace_merges_with_function_type_exports() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -12179,7 +12171,6 @@ var p: foo.NotExist;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_namespace_value_member_missing_errors() {
     use crate::parser::ParserState;
 
@@ -13519,7 +13510,6 @@ const viaAlias = Alias["value"];
 }
 
 #[test]
-#[ignore]
 fn test_namespace_value_member_alias_missing_error() {
     use crate::parser::ParserState;
 
@@ -13567,7 +13557,6 @@ const bad = Alias.missing;
 }
 
 #[test]
-#[ignore]
 fn test_nested_namespace_value_member_missing_error() {
     use crate::parser::ParserState;
 
@@ -13617,7 +13606,6 @@ const badValue = Outer.Inner.missing;
 }
 
 #[test]
-#[ignore]
 fn test_namespace_value_member_not_exported_error() {
     use crate::parser::ParserState;
 
@@ -14547,7 +14535,6 @@ if (typeof Ns["value"] === "string") {
 }
 
 #[test]
-#[ignore]
 fn test_flow_narrowing_cleared_by_namespace_member_assignment() {
     use crate::parser::ParserState;
 
@@ -16072,7 +16059,6 @@ const n: number = s;
 /// Minimal repro: Mapped type over keyof with conditional extraction
 /// Pattern: `{ [K in keyof R]: ExtractState<R[K]> }`
 #[test]
-#[ignore]
 fn test_redux_pattern_state_from_reducers_mapped() {
     use crate::parser::ParserState;
 
@@ -20785,7 +20771,6 @@ const makeRequest: (req: API.Request) => API.Response = handleRequest;
 }
 
 #[test]
-#[ignore] // use-before-assignment not fully implemented yet
 fn test_use_before_assignment_basic_flow() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -20852,7 +20837,6 @@ function qux() {
 }
 
 #[test]
-#[ignore] // use-before-assignment not fully implemented yet
 fn test_use_before_assignment_try_catch() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -22863,7 +22847,6 @@ class D3 extends getBase() <string, number> {
 }
 
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_contextual_array_literal_uses_element_type() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -23342,7 +23325,6 @@ d.mixinMethod();
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_mixin_return_type_preserves_base_properties() {
     use crate::parser::ParserState;
 
@@ -24063,7 +24045,6 @@ class Foo {
 }
 
 #[test]
-#[ignore = "TODO: Fix stack overflow - interface extending class with private fields causes infinite recursion"]
 fn test_interface_extends_class_no_recursion_crash() {
     use crate::parser::ParserState;
 
@@ -24394,7 +24375,6 @@ aFn(), b;
 }
 
 #[test]
-#[ignore]
 fn test_ts2695_comma_operator_edge_cases() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -25236,7 +25216,6 @@ function identity<T>(x: T): T {
 }
 
 #[test]
-#[ignore = "TODO: Fix stack overflow - static private field access causes infinite recursion"]
 fn test_static_private_field_access_no_ts2339() {
     use crate::parser::ParserState;
 

@@ -135,7 +135,6 @@ function outer<T>() {
 }
 
 #[test]
-#[ignore = "TODO: Lib file loading behavior change - this test was passing with empty lib loading (load_lib_files_for_test returned empty Vec), but with embedded libs the behavior differs. The test expects TS2584 for console (DOM global not in ES5), but embedded libs may have different behavior. Need to investigate whether console should be found in embedded ES5 libs or if the error emission is different."]
 fn test_symbol_resolution_global_console_with_libs() {
     let diagnostics = collect_diagnostics_with_libs(r#"console.log("ok");"#);
     let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
