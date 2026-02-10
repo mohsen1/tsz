@@ -2131,13 +2131,12 @@ fn collect_diagnostics(
                             },
                         );
 
-                        if let Some(resolved_path) = resolved_override {
+                        if resolved_override.is_some() {
+                            // Mark as resolved to suppress TS2307, but don't map
+                            // to a target file. For JsxNotEnabled, the resolved
+                            // file shouldn't have its exports validated (which
+                            // would cause spurious TS1192/TS2306 errors).
                             resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                            let canonical = canonicalize_or_owned(&resolved_path);
-                            if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                                resolved_module_paths
-                                    .insert((file_idx, specifier.clone()), target_idx);
-                            }
                         }
                     }
                 }
