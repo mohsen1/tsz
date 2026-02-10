@@ -1695,21 +1695,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS18050: "The value 'X' cannot be used here" for null/undefined operands (STRICT mode only)
-        // TSC emits TS18050 for the null/undefined operand AND TS2362/TS2363 for any OTHER invalid operand
-        // IMPORTANT: TS18050 is only emitted for ARITHMETIC operators, not for comparison operators
+        // TS18050: "The value 'X' cannot be used here" for null/undefined operands.
+        // TSC emits TS18050 for the null/undefined operand AND TS2362/TS2363 for any OTHER invalid operand.
+        // IMPORTANT: TS18050 is only emitted for ARITHMETIC operators, not for comparison operators.
+        // NOTE: TSC emits TS18050 for literal null/undefined even WITHOUT strictNullChecks.
         let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
         let mut emitted_nullish_error = false;
 
         // TS18050 is only emitted for arithmetic and bitwise operators with null/undefined operands
         // Comparison operators (==, !=, ===, !==, <, >, <=, >=) are allowed to have null/undefined operands
-        let is_arithmetic_or_bitwise = matches!(
+        let should_emit_nullish_error = matches!(
             op,
             "+" | "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
         );
-        let should_emit_nullish_error =
-            is_arithmetic_or_bitwise && self.ctx.compiler_options.strict_null_checks;
 
         // Emit TS18050 for null/undefined operands in arithmetic operations
         if left_is_nullish && should_emit_nullish_error {
