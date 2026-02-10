@@ -76,6 +76,12 @@ impl<'a> CheckerState<'a> {
 
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
             if let Some(constraint) = param.constraint {
+                // Skip constraint checking when the type argument contains unresolved type parameters
+                // (they'll be checked later when fully instantiated)
+                if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_arg) {
+                    continue;
+                }
+
                 // Instantiate the constraint with already-validated type arguments
                 let instantiated_constraint = if i > 0 {
                     let mut subst = tsz_solver::TypeSubstitution::new();

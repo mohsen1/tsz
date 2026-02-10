@@ -1342,42 +1342,64 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Interface - get type parameters from first declaration
+        // Interface - get type parameters from merged declarations.
+        // When interfaces are merged (e.g., `interface Foo {}` + `interface Foo<T> {}`),
+        // we must check ALL declarations because the first one may not have type params.
+        // TypeScript considers the union of type parameters across all declarations.
         if flags & symbol_flags::INTERFACE != 0 {
-            let decl_idx = if !value_decl.is_none()
+            // First try value_decl, then search all declarations for one with type params
+            let mut decl_candidates = Vec::new();
+            if !value_decl.is_none()
                 && self
                     .ctx
                     .arena
                     .get(value_decl)
                     .is_some_and(|node| self.ctx.arena.get_interface(node).is_some())
             {
-                value_decl
-            } else {
-                declarations
-                    .iter()
-                    .copied()
-                    .find(|&decl| {
-                        self.ctx
-                            .arena
-                            .get(decl)
-                            .is_some_and(|node| self.ctx.arena.get_interface(node).is_some())
-                    })
-                    .unwrap_or_else(|| declarations.first().copied().unwrap_or(NodeIndex::NONE))
-            };
-            if !decl_idx.is_none()
-                && let Some(node) = self.ctx.arena.get(decl_idx)
-                && let Some(iface) = self.ctx.arena.get_interface(node)
-            {
-                let (params, updates) = self.push_type_parameters(&iface.type_parameters);
-                self.pop_type_parameters(updates);
-                if !params.is_empty() {
-                    self.ctx.insert_def_type_params(def_id, params.clone());
-                    self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
-                } else {
-                    self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+                decl_candidates.push(value_decl);
+            }
+            for &decl in &declarations {
+                if decl != value_decl
+                    && self
+                        .ctx
+                        .arena
+                        .get(decl)
+                        .is_some_and(|node| self.ctx.arena.get_interface(node).is_some())
+                {
+                    decl_candidates.push(decl);
                 }
-                self.ctx.leave_recursion();
-                return params;
+            }
+            // Try each interface declaration; use the first one that has type parameters
+            for decl_idx in &decl_candidates {
+                if let Some(node) = self.ctx.arena.get(*decl_idx)
+                    && let Some(iface) = self.ctx.arena.get_interface(node)
+                    && iface
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|tp| !tp.is_empty())
+                {
+                    let (params, updates) = self.push_type_parameters(&iface.type_parameters);
+                    self.pop_type_parameters(updates);
+                    if !params.is_empty() {
+                        self.ctx.insert_def_type_params(def_id, params.clone());
+                        self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
+                        self.ctx.leave_recursion();
+                        return params;
+                    }
+                }
+            }
+            // Fallback: if no declaration has type params, use the first declaration
+            if let Some(&decl_idx) = decl_candidates.first() {
+                if let Some(node) = self.ctx.arena.get(decl_idx)
+                    && let Some(iface) = self.ctx.arena.get_interface(node)
+                {
+                    let (params, updates) = self.push_type_parameters(&iface.type_parameters);
+                    self.pop_type_parameters(updates);
+                    // params will be empty - mark as no type params
+                    self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+                    self.ctx.leave_recursion();
+                    return params;
+                }
             }
         }
 
