@@ -92,28 +92,14 @@ pub fn compile_test(
 
     // Create tsconfig.json with test options unless provided by the test itself
     let tsconfig_path = dir_path.join("tsconfig.json");
-    let has_js_files = filenames.iter().any(|(name, _)| {
-        let normalized = name.replace('\\', "/");
-        // Don't count JS files in node_modules — they're external packages, not project sources.
-        // tsc doesn't auto-infer allowJs from node_modules contents.
-        if normalized.contains("/node_modules/") || normalized.starts_with("node_modules/") {
-            return false;
-        }
-        let lower = normalized.to_lowercase();
-        lower.ends_with(".js")
-            || lower.ends_with(".jsx")
-            || lower.ends_with(".mjs")
-            || lower.ends_with(".cjs")
-    });
     let has_tsconfig_file = filenames
         .iter()
         .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
-    // Only infer allowJs from JS file extensions when not explicitly set
+    // Only set allowJs when explicitly requested via @allowJs directive.
+    // tsc's test harness doesn't auto-infer allowJs from JS file presence —
+    // JS files on disk are resolution targets, not compilation sources.
     let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
-    let allow_js = match explicit_allow_js {
-        Some(v) => v == "true",
-        None => has_js_files,
-    };
+    let allow_js = matches!(explicit_allow_js, Some(v) if v == "true");
     // Include .cts/.mts (TypeScript CJS/ESM) alongside .ts/.tsx
     let include = if allow_js {
         serde_json::json!([
@@ -267,28 +253,14 @@ pub fn prepare_test_dir(
     }
 
     let tsconfig_path = dir_path.join("tsconfig.json");
-    let has_js_files = filenames.iter().any(|(name, _)| {
-        let normalized = name.replace('\\', "/");
-        // Don't count JS files in node_modules — they're external packages, not project sources.
-        // tsc doesn't auto-infer allowJs from node_modules contents.
-        if normalized.contains("/node_modules/") || normalized.starts_with("node_modules/") {
-            return false;
-        }
-        let lower = normalized.to_lowercase();
-        lower.ends_with(".js")
-            || lower.ends_with(".jsx")
-            || lower.ends_with(".mjs")
-            || lower.ends_with(".cjs")
-    });
     let has_tsconfig_file = filenames
         .iter()
         .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
-    // Only infer allowJs from JS file extensions when not explicitly set
+    // Only set allowJs when explicitly requested via @allowJs directive.
+    // tsc's test harness doesn't auto-infer allowJs from JS file presence —
+    // JS files on disk are resolution targets, not compilation sources.
     let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
-    let allow_js = match explicit_allow_js {
-        Some(v) => v == "true",
-        None => has_js_files,
-    };
+    let allow_js = matches!(explicit_allow_js, Some(v) if v == "true");
     // Include .cts/.mts (TypeScript CJS/ESM) alongside .ts/.tsx
     let include = if allow_js {
         serde_json::json!([
