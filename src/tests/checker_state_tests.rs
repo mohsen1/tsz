@@ -13235,7 +13235,6 @@ let useIt: T;
 }
 
 #[test]
-#[ignore]
 fn test_namespace_symbol_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13265,16 +13264,16 @@ let useIt: T;
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
+    // TS2709: "Cannot use namespace 'NS' as a type" (not 2749 which is for values)
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&2749),
-        "Expected error 2749 for namespace symbol used as type, got: {:?}",
+        codes.contains(&2709),
+        "Expected error 2709 for namespace used as type, got: {:?}",
         codes
     );
 }
 
 #[test]
-#[ignore]
 fn test_namespace_alias_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13305,10 +13304,11 @@ let useIt: T;
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
+    // TS2709: "Cannot use namespace 'Alias' as a type" (not 2749 which is for values)
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&2749),
-        "Expected error 2749 for namespace alias used as type, got: {:?}",
+        codes.contains(&2709),
+        "Expected error 2709 for namespace alias used as type, got: {:?}",
         codes
     );
 }
