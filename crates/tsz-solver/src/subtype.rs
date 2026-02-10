@@ -192,6 +192,14 @@ pub trait TypeResolver {
         None
     }
 
+    /// Check if a DefId corresponds to a boxed type for the given intrinsic kind.
+    /// This is needed because the same interface (e.g., Function) can produce
+    /// different TypeIds depending on the resolution path. DefId comparison
+    /// is more reliable for identifying boxed types.
+    fn is_boxed_def_id(&self, _def_id: DefId, _kind: IntrinsicKind) -> bool {
+        false
+    }
+
     /// Get the Array<T> interface type from lib.d.ts.
     /// This is used to resolve array methods via the official interface
     /// instead of hardcoding. Returns the generic Array interface type.
@@ -409,6 +417,10 @@ pub struct TypeEnvironment {
     /// When a class Lazy(DefId) is resolved in type position, the instance type
     /// (not the constructor type) should be returned.
     class_instance_types: FxHashMap<u32, TypeId>,
+    /// Maps IntrinsicKind to all DefIds that correspond to that boxed type.
+    /// Multiple DefIds can exist because the same type (e.g., Function) may
+    /// appear in multiple lib files. Used for DefId-based Function type detection.
+    boxed_def_ids: FxHashMap<IntrinsicKind, Vec<DefId>>,
 }
 
 impl TypeEnvironment {
@@ -427,6 +439,7 @@ impl TypeEnvironment {
             def_kinds: FxHashMap::default(),
             enum_parents: FxHashMap::default(),
             class_instance_types: FxHashMap::default(),
+            boxed_def_ids: FxHashMap::default(),
         }
     }
 
@@ -444,6 +457,19 @@ impl TypeEnvironment {
     /// Get the boxed type for a primitive.
     pub fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
         self.boxed_types.get(&kind).copied()
+    }
+
+    /// Register a DefId as belonging to a boxed type.
+    /// Multiple DefIds may be registered for the same kind (from different lib files).
+    pub fn register_boxed_def_id(&mut self, kind: IntrinsicKind, def_id: DefId) {
+        self.boxed_def_ids.entry(kind).or_default().push(def_id);
+    }
+
+    /// Check if a DefId corresponds to a boxed type of the given kind.
+    pub fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
+        self.boxed_def_ids
+            .get(&kind)
+            .is_some_and(|ids| ids.contains(&def_id))
     }
 
     /// Register the Array<T> interface type from lib.d.ts.
@@ -634,6 +660,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
         TypeEnvironment::get_boxed_type(self, kind)
+    }
+
+    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
+        TypeEnvironment::is_boxed_def_id(self, def_id, kind)
     }
 
     fn get_array_base_type(&self) -> Option<TypeId> {
@@ -2315,6 +2345,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
 
         // =========================================================================
+        // Pre-evaluation intrinsic checks
+        // =========================================================================
+        // Check if target is a Lazy(DefId) that resolves to a known intrinsic interface
+        // (like Function). We must check BEFORE evaluate_type() because evaluation
+        // resolves Lazy(DefId) → ObjectShape, losing the DefId identity needed to
+        // recognize the type as an intrinsic interface.
+        if !self.bypass_evaluation {
+            if let Some(t_def) = lazy_def_id(self.interner, target) {
+                if self
+                    .resolver
+                    .is_boxed_def_id(t_def, IntrinsicKind::Function)
+                {
+                    let source_eval = self.evaluate_type(source);
+                    if self.is_callable_type(source_eval) {
+                        if let Some(dp) = def_entered {
+                            self.def_guard.leave(dp);
+                        }
+                        self.guard.leave(pair);
+                        return SubtypeResult::True;
+                    }
+                }
+            }
+        }
+
+        // =========================================================================
         // Meta-type evaluation (after cycle detection is set up)
         // =========================================================================
         let result = if self.bypass_evaluation {
@@ -2616,7 +2671,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        if intrinsic_kind(self.interner, target) == Some(IntrinsicKind::Function) {
+        // Check if target is the Function intrinsic (TypeId::FUNCTION) or the
+        // Function interface from lib.d.ts. We check three ways:
+        // 1. Target is the Function intrinsic (TypeId::FUNCTION)
+        // 2. Target matches the registered boxed Function TypeId
+        // 3. Target was resolved from a Lazy(DefId) whose DefId is a known Function DefId
+        //    (handles the case where get_type_of_symbol and resolve_lib_type_by_name
+        //    produce different TypeIds for the same Function interface)
+        let is_function_target = intrinsic_kind(self.interner, target)
+            == Some(IntrinsicKind::Function)
+            || self
+                .resolver
+                .get_boxed_type(IntrinsicKind::Function)
+                .is_some_and(|boxed| boxed == target)
+            || lazy_def_id(self.interner, target).is_some_and(|def_id| {
+                self.resolver
+                    .is_boxed_def_id(def_id, IntrinsicKind::Function)
+            });
+        if is_function_target {
             if self.is_callable_type(source) {
                 return SubtypeResult::True;
             } else {

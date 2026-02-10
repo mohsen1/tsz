@@ -256,6 +256,24 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(source);
         self.ensure_application_symbols_resolved(target);
 
+        // Pre-check: Function interface accepts any callable type.
+        // Must check before evaluate_type_for_assignability resolves Lazy(DefId)
+        // to ObjectShape, losing the DefId identity needed to recognize it as Function.
+        {
+            use tsz_solver::visitor::lazy_def_id;
+            let is_function_target = lazy_def_id(self.ctx.types, target).is_some_and(|t_def| {
+                self.ctx.type_env.try_borrow().ok().is_some_and(|env| {
+                    env.is_boxed_def_id(t_def, tsz_solver::IntrinsicKind::Function)
+                })
+            });
+            if is_function_target {
+                let source_eval = self.evaluate_type_for_assignability(source);
+                if tsz_solver::type_queries::is_callable_type(self.ctx.types, source_eval) {
+                    return true;
+                }
+            }
+        }
+
         // Save original types for cache key before evaluation
         let original_source = source;
         let original_target = target;

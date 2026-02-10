@@ -902,16 +902,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .get_constraints(var)
                 .is_some_and(|c| !c.is_empty());
 
-            let param_name = self.interner.resolve_atom(tp.name);
-            // DEBUG: Check if type parameter has constraints
-            tracing::debug!(
-                param_name = %param_name.as_str(),
-                var = ?var,
-                has_constraints,
-                candidate_count = infer_ctx.get_constraints(var).map(|c| c.lower_bounds.len()).unwrap_or(0),
-                "Resolving param"
-            );
-
             let ty = if has_constraints {
                 match infer_ctx.resolve_with_constraints_by(var, |source, target| {
                     self.checker.is_assignable_to(source, target)
@@ -939,13 +929,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 TypeId::UNKNOWN
             };
 
-            let param_name2 = self.interner.resolve_atom(tp.name);
-            // DEBUG: See what was actually resolved
-            tracing::debug!(
-                param_name = %param_name2.as_str(),
-                type_id = ty.0,
-                "Resolved param"
-            );
             final_subst.insert(tp.name, ty);
 
             if let Some(constraint) = tp.constraint {
