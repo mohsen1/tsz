@@ -1276,6 +1276,14 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.no_implicit_any() || has_contextual_type {
             return;
         }
+        // TypeScript never emits TS7006 in JS/JSX files — there's no syntax for type annotations
+        let is_js_file = self.ctx.file_name.ends_with(".js")
+            || self.ctx.file_name.ends_with(".jsx")
+            || self.ctx.file_name.ends_with(".mjs")
+            || self.ctx.file_name.ends_with(".cjs");
+        if is_js_file {
+            return;
+        }
         // Skip parameters that have explicit type annotations
         if !param.type_annotation.is_none() {
             return;
