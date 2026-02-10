@@ -1261,6 +1261,12 @@ impl BinderState {
                             self.bind_node(arena, module.body);
                             self.in_module_augmentation = was_in_augmentation;
                             self.current_augmented_module = prev_module;
+                        } else {
+                            // Shorthand ambient module: `declare module "*.json";` (no body)
+                            // Even when classified as augmentation, a bodyless declaration
+                            // is a shorthand that makes matching imports resolve to `any`.
+                            self.shorthand_ambient_modules
+                                .insert(module_specifier.clone());
                         }
                         return;
                     }
