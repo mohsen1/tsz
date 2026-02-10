@@ -85,6 +85,8 @@ pub struct LoweringPass<'a> {
     in_static_context: bool,
     /// Current class alias name (e.g., "_a") for static members
     current_class_alias: Option<String>,
+    /// True when visiting the left side of a destructuring assignment
+    in_assignment_target: bool,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -104,6 +106,7 @@ impl<'a> LoweringPass<'a> {
             in_constructor: false,
             in_static_context: false,
             current_class_alias: None,
+            in_assignment_target: false,
         }
     }
 
@@ -251,7 +254,26 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 if let Some(bin) = self.arena.get_binary_expr(node) {
-                    self.visit(bin.left);
+                    // If this is an assignment (=) with an array/object literal on the left,
+                    // mark as assignment target so we don't treat it as spread-in-array-literal
+                    let is_destructuring_assignment = bin.operator_token
+                        == tsz_scanner::SyntaxKind::EqualsToken as u16
+                        && self
+                            .arena
+                            .get(bin.left)
+                            .map(|n| {
+                                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            })
+                            .unwrap_or(false);
+                    if is_destructuring_assignment {
+                        let prev = self.in_assignment_target;
+                        self.in_assignment_target = true;
+                        self.visit(bin.left);
+                        self.in_assignment_target = prev;
+                    } else {
+                        self.visit(bin.left);
+                    }
                     self.visit(bin.right);
                 }
             }
@@ -500,7 +522,9 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 if let Some(lit) = self.arena.get_literal_expr(node) {
-                    if self.ctx.target_es5
+                    // Skip transform if this is the left side of a destructuring assignment
+                    if !self.in_assignment_target
+                        && self.ctx.target_es5
                         && self.needs_es5_object_literal_transform(&lit.elements.nodes)
                     {
                         self.transforms.insert(
@@ -527,8 +551,11 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 if let Some(lit) = self.arena.get_literal_expr(node) {
-                    // Add ES5ArrayLiteral directive if targeting ES5 and spread elements are present
-                    let has_spread = self.needs_es5_array_literal_transform(&lit.elements.nodes);
+                    // Add ES5ArrayLiteral directive if targeting ES5 and spread elements are present.
+                    // Skip if this is the left side of a destructuring assignment
+                    // (e.g., [...rest] = arr) since that's not a real array literal.
+                    let has_spread = !self.in_assignment_target
+                        && self.needs_es5_array_literal_transform(&lit.elements.nodes);
                     if self.ctx.target_es5 && has_spread {
                         self.transforms.insert(
                             idx,

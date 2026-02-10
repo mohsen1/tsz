@@ -623,7 +623,7 @@ impl<'a> Printer<'a> {
                     self.emit_property_key_string(accessor.name);
                     self.write(", { get: function () ");
                     self.emit(accessor.body);
-                    self.write(", enumerable: true, configurable: true })");
+                    self.write(", enumerable: false, configurable: true })");
                 }
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
@@ -636,7 +636,7 @@ impl<'a> Printer<'a> {
                     self.emit_function_parameters_js(&accessor.parameters.nodes);
                     self.write(") ");
                     self.emit(accessor.body);
-                    self.write(", enumerable: true, configurable: true })");
+                    self.write(", enumerable: false, configurable: true })");
                 }
             }
             k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {

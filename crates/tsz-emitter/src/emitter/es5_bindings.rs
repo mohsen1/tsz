@@ -4,6 +4,10 @@ use tsz_parser::parser::node::{BindingElementData, BindingPatternData, ForInOfDa
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// Represents a segment of assignment destructuring output.
+/// When the right-hand side is a simple identifier, we access properties/elements directly.
+/// When complex, we create a temp variable first.
+
 impl<'a> Printer<'a> {
     pub(super) fn emit_variable_declaration_list_es5(&mut self, node: &Node) {
         let Some(decl_list) = self.arena.get_variable(node) else {
@@ -1848,5 +1852,467 @@ impl<'a> Printer<'a> {
             self.write(&element_expr);
             self.write_semicolon();
         }
+    }
+
+    // =========================================================================
+    // Assignment destructuring lowering (ES5)
+    // Lowers: [, nameA] = expr  →  nameA = expr[1]
+    //         { name: nameA } = expr  →  nameA = expr.name
+    // =========================================================================
+
+    /// Count the total number of elements (including holes) in an array destructuring pattern.
+    /// TypeScript creates a temp for non-identifier sources when there are 2+ elements
+    /// (including holes). With exactly 1 element (no holes), it inlines the source.
+    fn count_array_destructuring_elements(&self, elements: &[NodeIndex]) -> usize {
+        elements.len()
+    }
+
+    /// Lower an assignment destructuring pattern to ES5.
+    /// Called from emit_binary_expression when left side is array/object literal.
+    pub(super) fn emit_assignment_destructuring_es5(
+        &mut self,
+        left_node: &Node,
+        right_idx: NodeIndex,
+    ) {
+        // Determine if right side is a simple identifier (can be accessed directly)
+        let is_simple = self
+            .arena
+            .get(right_idx)
+            .map(|n| n.kind == SyntaxKind::Identifier as u16)
+            .unwrap_or(false);
+
+        // Count elements to determine if we need a temp for complex sources.
+        // TypeScript creates a temp for non-identifier sources when there are 2+ elements
+        // (including holes). With exactly 1 element (no holes), it inlines the source.
+        let element_count = if is_simple {
+            0 // doesn't matter for identifiers
+        } else {
+            match left_node.kind {
+                k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                    if let Some(lit) = self.arena.get_literal_expr(left_node) {
+                        self.count_array_destructuring_elements(&lit.elements.nodes)
+                    } else {
+                        2 // fallback: assume needs temp
+                    }
+                }
+                _ => 2, // object patterns always need temp for now
+            }
+        };
+
+        // For complex sources (function calls, array literals), we only need a temp
+        // if the pattern requires multiple accesses. Single-access patterns can
+        // inline the source expression directly.
+        let needs_temp = !is_simple && element_count > 1;
+
+        let source_name = if is_simple {
+            self.get_identifier_text(right_idx)
+        } else if needs_temp {
+            let temp = self.make_unique_name_hoisted();
+            self.write(&temp);
+            self.write(" = ");
+            self.emit(right_idx);
+            temp
+        } else {
+            // Single access: use empty string as source_name marker,
+            // and we'll inline the right_idx expression at the access point
+            String::new()
+        };
+
+        let use_inline_source = !is_simple && !needs_temp;
+        let mut first = !needs_temp;
+
+        match left_node.kind {
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                if let Some(lit) = self.arena.get_literal_expr(left_node) {
+                    self.emit_assignment_array_destructuring(
+                        &lit.elements.nodes,
+                        &source_name,
+                        &mut first,
+                        if use_inline_source {
+                            Some(right_idx)
+                        } else {
+                            None
+                        },
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                if let Some(lit) = self.arena.get_literal_expr(left_node) {
+                    self.emit_assignment_object_destructuring(
+                        &lit.elements.nodes,
+                        &source_name,
+                        &mut first,
+                    );
+                }
+            }
+            _ => {
+                // Fallback: emit as-is
+                self.emit_node_default(left_node, right_idx);
+            }
+        }
+    }
+
+    /// Emit lowered array assignment destructuring.
+    /// `[, nameA, [primaryB, secondaryB]] = source` →
+    /// `nameA = source[1], _a = source[2], primaryB = _a[0], secondaryB = _a[1]`
+    ///
+    /// When `inline_source` is Some, the source expression is emitted inline
+    /// instead of using the `source` string. Used when only one access is needed.
+    fn emit_assignment_array_destructuring(
+        &mut self,
+        elements: &[NodeIndex],
+        source: &str,
+        first: &mut bool,
+        inline_source: Option<NodeIndex>,
+    ) {
+        for (i, &elem_idx) in elements.iter().enumerate() {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+
+            // Check for spread element: [...rest]
+            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                if let Some(spread) = self.arena.get_spread(elem_node) {
+                    self.emit_assignment_separator(first);
+                    let target_node = self.arena.get(spread.expression);
+                    if let Some(tn) = target_node {
+                        if tn.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            || tn.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        {
+                            // Nested destructuring on rest
+                            let temp = self.make_unique_name_hoisted();
+                            self.write(&temp);
+                            self.write(" = ");
+                            self.write(source);
+                            self.write(".slice(");
+                            self.write_usize(i);
+                            self.write(")");
+                            self.emit_assignment_nested_destructuring(
+                                spread.expression,
+                                &temp,
+                                first,
+                            );
+                        } else {
+                            self.emit(spread.expression);
+                            self.write(" = ");
+                            if let Some(inline_src) = inline_source {
+                                self.emit(inline_src);
+                            } else {
+                                self.write(source);
+                            }
+                            self.write(".slice(");
+                            self.write_usize(i);
+                            self.write(")");
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Check if element has a default value (BinaryExpression with =)
+            if elem_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                if let Some(bin) = self.arena.get_binary_expr(elem_node) {
+                    if bin.operator_token == SyntaxKind::EqualsToken as u16 {
+                        // Element with default: target = source[i] === void 0 ? default : source[i]
+                        let target_node = self.arena.get(bin.left);
+                        let is_nested = target_node
+                            .map(|n| {
+                                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            })
+                            .unwrap_or(false);
+
+                        if is_nested {
+                            let extract_temp = self.make_unique_name_hoisted();
+                            let default_temp = self.make_unique_name_hoisted();
+                            self.emit_assignment_separator(first);
+                            self.write(&extract_temp);
+                            self.write(" = ");
+                            self.write(source);
+                            self.write("[");
+                            self.write_usize(i);
+                            self.write("], ");
+                            self.write(&default_temp);
+                            self.write(" = ");
+                            self.write(&extract_temp);
+                            self.write(" === void 0 ? ");
+                            self.emit(bin.right);
+                            self.write(" : ");
+                            self.write(&extract_temp);
+                            self.emit_assignment_nested_destructuring(
+                                bin.left,
+                                &default_temp,
+                                first,
+                            );
+                        } else {
+                            let temp = self.make_unique_name_hoisted();
+                            self.emit_assignment_separator(first);
+                            self.write(&temp);
+                            self.write(" = ");
+                            self.write(source);
+                            self.write("[");
+                            self.write_usize(i);
+                            self.write("], ");
+                            self.emit(bin.left);
+                            self.write(" = ");
+                            self.write(&temp);
+                            self.write(" === void 0 ? ");
+                            self.emit(bin.right);
+                            self.write(" : ");
+                            self.write(&temp);
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            // Check for nested array/object destructuring
+            if elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                let temp = self.make_unique_name_hoisted();
+                self.emit_assignment_separator(first);
+                self.write(&temp);
+                self.write(" = ");
+                self.write(source);
+                self.write("[");
+                self.write_usize(i);
+                self.write("]");
+                self.emit_assignment_nested_destructuring(elem_idx, &temp, first);
+                continue;
+            }
+
+            // Simple identifier target
+            self.emit_assignment_separator(first);
+            self.emit(elem_idx);
+            self.write(" = ");
+            if let Some(inline_src) = inline_source {
+                self.emit(inline_src);
+            } else {
+                self.write(source);
+            }
+            self.write("[");
+            self.write_usize(i);
+            self.write("]");
+        }
+    }
+
+    /// Emit lowered object assignment destructuring.
+    /// `{ name: nameA, skill: skillA } = source` →
+    /// `nameA = source.name, skillA = source.skill`
+    fn emit_assignment_object_destructuring(
+        &mut self,
+        elements: &[NodeIndex],
+        source: &str,
+        first: &mut bool,
+    ) {
+        for &elem_idx in elements {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+
+            match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    if let Some(prop) = self.arena.get_property_assignment(elem_node) {
+                        let key_text = self.get_property_key_text(prop.name);
+                        let key = key_text.unwrap_or_default();
+
+                        // Check if value is a nested pattern
+                        let value_node = self.arena.get(prop.initializer);
+                        let is_nested = value_node
+                            .map(|n| {
+                                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            })
+                            .unwrap_or(false);
+
+                        if is_nested {
+                            let temp = self.make_unique_name_hoisted();
+                            self.emit_assignment_separator(first);
+                            self.write(&temp);
+                            self.write(" = ");
+                            self.write(source);
+                            self.write(".");
+                            self.write(&key);
+                            self.emit_assignment_nested_destructuring(
+                                prop.initializer,
+                                &temp,
+                                first,
+                            );
+                        } else {
+                            // Check for default value: { name: nameA = "default" }
+                            let value_bin = value_node.and_then(|n| {
+                                if n.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                                    self.arena.get_binary_expr(n)
+                                } else {
+                                    None
+                                }
+                            });
+                            if let Some(bin) = value_bin {
+                                if bin.operator_token == SyntaxKind::EqualsToken as u16 {
+                                    let temp = self.make_unique_name_hoisted();
+                                    self.emit_assignment_separator(first);
+                                    self.write(&temp);
+                                    self.write(" = ");
+                                    self.write(source);
+                                    self.write(".");
+                                    self.write(&key);
+                                    self.write(", ");
+                                    self.emit(bin.left);
+                                    self.write(" = ");
+                                    self.write(&temp);
+                                    self.write(" === void 0 ? ");
+                                    self.emit(bin.right);
+                                    self.write(" : ");
+                                    self.write(&temp);
+                                    continue;
+                                }
+                            }
+                            self.emit_assignment_separator(first);
+                            self.emit(prop.initializer);
+                            self.write(" = ");
+                            self.write(source);
+                            self.write(".");
+                            self.write(&key);
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    // { name } → name = source.name
+                    if let Some(shorthand) = self.arena.get_shorthand_property(elem_node) {
+                        let name = self.get_identifier_text(shorthand.name);
+                        self.emit_assignment_separator(first);
+                        self.write(&name);
+                        self.write(" = ");
+                        self.write(source);
+                        self.write(".");
+                        self.write(&name);
+                    }
+                }
+                k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                    // { ...rest } → rest = __rest(source, ["prop1", "prop2"])
+                    if let Some(spread) = self.arena.get_spread(elem_node) {
+                        self.emit_assignment_separator(first);
+                        self.emit(spread.expression);
+                        self.write(" = __rest(");
+                        self.write(source);
+                        self.write(", [");
+                        // Collect non-rest property names
+                        let mut prop_first = true;
+                        for &other_idx in elements {
+                            if other_idx == elem_idx {
+                                continue;
+                            }
+                            if let Some(other_node) = self.arena.get(other_idx) {
+                                let key = match other_node.kind {
+                                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                                        .arena
+                                        .get_property_assignment(other_node)
+                                        .and_then(|p| self.get_property_key_text(p.name)),
+                                    k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                                        self.arena
+                                            .get_shorthand_property(other_node)
+                                            .map(|s| self.get_identifier_text(s.name))
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(k) = key {
+                                    if !prop_first {
+                                        self.write(", ");
+                                    }
+                                    self.write("\"");
+                                    self.write(&k);
+                                    self.write("\"");
+                                    prop_first = false;
+                                }
+                            }
+                        }
+                        self.write("])");
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Helper to emit nested destructuring from a source name.
+    fn emit_assignment_nested_destructuring(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source: &str,
+        first: &mut bool,
+    ) {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                if let Some(lit) = self.arena.get_literal_expr(node) {
+                    self.emit_assignment_array_destructuring(
+                        &lit.elements.nodes,
+                        source,
+                        first,
+                        None,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                if let Some(lit) = self.arena.get_literal_expr(node) {
+                    self.emit_assignment_object_destructuring(&lit.elements.nodes, source, first);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Emit separator for assignment destructuring (`, ` between parts).
+    fn emit_assignment_separator(&mut self, first: &mut bool) {
+        if !*first {
+            self.write(", ");
+        }
+        *first = false;
+    }
+
+    /// Get property key text from a property name node.
+    fn get_property_key_text(&self, name_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(name_idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            Some(self.get_identifier_text(name_idx))
+        } else if node.kind == SyntaxKind::StringLiteral as u16 {
+            // For string keys like { "name": value }
+            self.get_string_literal_text(name_idx)
+        } else if node.kind == SyntaxKind::NumericLiteral as u16 {
+            self.get_numeric_literal_text(name_idx)
+        } else {
+            None
+        }
+    }
+
+    fn get_string_literal_text(&self, idx: NodeIndex) -> Option<String> {
+        let source = self.source_text?;
+        let node = self.arena.get(idx)?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = node.end as usize;
+        let text = &source[start..end];
+        // Strip quotes
+        if text.len() >= 2 && (text.starts_with('"') || text.starts_with('\'')) {
+            Some(text[1..text.len() - 1].to_string())
+        } else {
+            Some(text.to_string())
+        }
+    }
+
+    fn get_numeric_literal_text(&self, idx: NodeIndex) -> Option<String> {
+        let source = self.source_text?;
+        let node = self.arena.get(idx)?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = node.end as usize;
+        Some(source[start..end].to_string())
     }
 }
