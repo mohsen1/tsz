@@ -1986,7 +1986,11 @@ impl<'a> Printer<'a> {
                             let temp = self.make_unique_name_hoisted();
                             self.write(&temp);
                             self.write(" = ");
-                            self.write(source);
+                            if let Some(inline_src) = inline_source {
+                                self.emit(inline_src);
+                            } else {
+                                self.write(source);
+                            }
                             self.write(".slice(");
                             self.write_usize(i);
                             self.write(")");
@@ -2031,7 +2035,11 @@ impl<'a> Printer<'a> {
                             self.emit_assignment_separator(first);
                             self.write(&extract_temp);
                             self.write(" = ");
-                            self.write(source);
+                            if let Some(inline_src) = inline_source {
+                                self.emit(inline_src);
+                            } else {
+                                self.write(source);
+                            }
                             self.write("[");
                             self.write_usize(i);
                             self.write("], ");
@@ -2052,7 +2060,11 @@ impl<'a> Printer<'a> {
                             self.emit_assignment_separator(first);
                             self.write(&temp);
                             self.write(" = ");
-                            self.write(source);
+                            if let Some(inline_src) = inline_source {
+                                self.emit(inline_src);
+                            } else {
+                                self.write(source);
+                            }
                             self.write("[");
                             self.write_usize(i);
                             self.write("], ");
@@ -2077,7 +2089,11 @@ impl<'a> Printer<'a> {
                 self.emit_assignment_separator(first);
                 self.write(&temp);
                 self.write(" = ");
-                self.write(source);
+                if let Some(inline_src) = inline_source {
+                    self.emit(inline_src);
+                } else {
+                    self.write(source);
+                }
                 self.write("[");
                 self.write_usize(i);
                 self.write("]");
