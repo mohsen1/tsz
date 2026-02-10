@@ -785,6 +785,17 @@ impl<'a> CheckerState<'a> {
                 && let Some(exports) = base_symbol.exports.as_ref()
                 && let Some(member_sym_id) = exports.get(property_name)
             {
+                // TS2450: Check if enum is used before its declaration (TDZ violation).
+                // Only non-const enums are flagged (const enums are always hoisted).
+                if let Some(base_node) = self.ctx.arena.get(access.expression) {
+                    if let Some(base_ident) = self.ctx.arena.get_identifier(base_node) {
+                        let base_name = &base_ident.escaped_text;
+                        if self.check_tdz_violation(base_sym_id, access.expression, base_name) {
+                            return TypeId::ERROR;
+                        }
+                    }
+                }
+
                 // Check if the member is an enum member or a namespace export
                 let member_symbol = self.ctx.binder.get_symbol(member_sym_id);
                 let is_enum_member = member_symbol

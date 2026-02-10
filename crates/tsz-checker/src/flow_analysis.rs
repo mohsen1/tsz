@@ -2094,15 +2094,26 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Walk up the AST from usage: if we encounter a function-like boundary,
-        // the code is deferred and not a TDZ violation. TSC only flags class
-        // usage before declaration in immediately executing code.
+        // Find the declaration's enclosing function-like container (or source file).
+        // This is the scope that "owns" both the declaration and (potentially) the usage.
+        let decl_container = self.find_enclosing_function_or_source_file(decl_idx);
+
+        // Walk up from usage: if we hit a function-like boundary BEFORE reaching
+        // the declaration's container, the usage is in deferred code (a nested
+        // function/arrow/method) and is NOT a TDZ violation.
+        // If we reach the declaration's container without crossing a function
+        // boundary, the usage executes immediately and IS a violation.
         let mut current = usage_idx;
         while !current.is_none() {
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
-            // If we reach a function-like boundary, the usage is deferred
+            // If we reached the declaration container, stop - same scope means TDZ
+            if current == decl_container {
+                break;
+            }
+            // If we reach a function-like boundary before the decl container,
+            // the usage is deferred and not a TDZ violation
             if node.is_function_like() {
                 return false;
             }
@@ -2121,6 +2132,29 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    /// Find the enclosing function-like node or source file for a given node.
+    fn find_enclosing_function_or_source_file(&self, idx: NodeIndex) -> NodeIndex {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = idx;
+        while !current.is_none() {
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if node.is_function_like() || node.kind == syntax_kind_ext::SOURCE_FILE {
+                return current;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        current
     }
 
     // =========================================================================
