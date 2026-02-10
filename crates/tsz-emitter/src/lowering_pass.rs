@@ -668,7 +668,24 @@ impl<'a> LoweringPass<'a> {
             }
         }
 
-        self.visit(for_in_of.initializer);
+        // Set in_assignment_target when visiting initializer that's a destructuring pattern
+        // to prevent spread in destructuring patterns from triggering __spreadArray
+        let init_is_destructuring = self
+            .arena
+            .get(for_in_of.initializer)
+            .map(|n| {
+                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            })
+            .unwrap_or(false);
+        if init_is_destructuring {
+            let prev = self.in_assignment_target;
+            self.in_assignment_target = true;
+            self.visit(for_in_of.initializer);
+            self.in_assignment_target = prev;
+        } else {
+            self.visit(for_in_of.initializer);
+        }
         self.visit(for_in_of.expression);
         self.visit(for_in_of.statement);
     }
