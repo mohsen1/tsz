@@ -613,6 +613,9 @@ impl<'a> Printer<'a> {
                             continue;
                         };
 
+                        // Emit leading comments before this statement
+                        self.emit_comments_before_pos(stmt_node.pos);
+
                         if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                             // Strip "export" and handle inner clause
                             if let Some(export) = self.arena.get_export_decl(stmt_node) {

@@ -365,6 +365,34 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Emit all pending comments from `all_comments` whose end position is before `pos`.
+    /// Uses the `comment_emit_idx` cursor to advance through comments.
+    /// Similar to the top-level statement comment emission logic.
+    pub(super) fn emit_comments_before_pos(&mut self, pos: u32) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+        let actual_start = self.skip_whitespace_forward(pos, pos + 1024);
+        if let Some(text) = self.source_text {
+            while self.comment_emit_idx < self.all_comments.len() {
+                let c_end = self.all_comments[self.comment_emit_idx].end;
+                if c_end <= actual_start {
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                    let comment_text =
+                        crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                    self.write(comment_text);
+                    if c_trailing {
+                        self.write_line();
+                    }
+                    self.comment_emit_idx += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
     /// Emit comments in the gap between last_processed_pos and the given position.
     /// This handles comments that appear between AST nodes.
     #[allow(dead_code)] // Infrastructure for comment preservation
