@@ -727,6 +727,10 @@ impl ParserState {
             } else if self.is_token(SyntaxKind::StringLiteral) {
                 self.parse_string_literal()
             } else if self.is_token(SyntaxKind::PrivateIdentifier) {
+                self.parse_error_at_current_token(
+                    "An enum member cannot be named with a private identifier.",
+                    diagnostic_codes::AN_ENUM_MEMBER_CANNOT_BE_NAMED_WITH_A_PRIVATE_IDENTIFIER,
+                );
                 self.parse_private_identifier()
             } else {
                 self.parse_identifier_name()
@@ -2558,6 +2562,7 @@ impl ParserState {
 
         // Parse case clauses
         let mut clauses = Vec::new();
+        let mut seen_default = false;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -2596,6 +2601,14 @@ impl ParserState {
                 ));
             } else if self.is_token(SyntaxKind::DefaultKeyword) {
                 let clause_start = self.token_pos();
+                if seen_default {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "A 'default' clause cannot appear more than once in a 'switch' statement.",
+                        diagnostic_codes::A_DEFAULT_CLAUSE_CANNOT_APPEAR_MORE_THAN_ONCE_IN_A_SWITCH_STATEMENT,
+                    );
+                }
+                seen_default = true;
                 self.next_token();
                 self.parse_expected(SyntaxKind::ColonToken);
 
@@ -2684,7 +2697,9 @@ impl ParserState {
                 let decl = if self.is_token(SyntaxKind::CloseParenToken) {
                     NodeIndex::NONE
                 } else {
-                    self.parse_variable_declaration()
+                    // Pass flag 0x8 (CATCH_CLAUSE_BINDING) to suppress TS1182
+                    // since catch bindings are destructuring without initializers
+                    self.parse_variable_declaration_with_flags(0x8)
                 };
                 self.parse_expected(SyntaxKind::CloseParenToken);
                 decl

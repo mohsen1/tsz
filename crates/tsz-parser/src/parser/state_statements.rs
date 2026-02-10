@@ -915,12 +915,8 @@ impl ParserState {
         )
     }
 
-    /// Parse variable declaration
-    pub(crate) fn parse_variable_declaration(&mut self) -> NodeIndex {
-        self.parse_variable_declaration_with_flags(0)
-    }
-
     /// Parse variable declaration with declaration flags (for using/await using checks)
+    /// Flags: bits 0-2 used for LET/CONST/USING, bit 3 for catch-clause binding (suppresses TS1182)
     pub(crate) fn parse_variable_declaration_with_flags(&mut self, flags: u16) -> NodeIndex {
         use crate::parser::node_flags;
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -999,6 +995,28 @@ impl ParserState {
         } else {
             NodeIndex::NONE
         };
+
+        // TS1182: A destructuring declaration must have an initializer
+        // Skip for catch clause bindings (flags bit 3 = CATCH_CLAUSE_BINDING)
+        // and for-in/for-of loop variables, which are destructuring without initializers.
+        let is_catch_clause = (flags & 0x8) != 0;
+        if !is_catch_clause && initializer.is_none() {
+            if let Some(name_node) = self.arena.get(name) {
+                use crate::parser::syntax_kind_ext::{
+                    ARRAY_BINDING_PATTERN, OBJECT_BINDING_PATTERN,
+                };
+                if name_node.kind == OBJECT_BINDING_PATTERN
+                    || name_node.kind == ARRAY_BINDING_PATTERN
+                {
+                    self.parse_error_at(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        "A destructuring declaration must have an initializer.",
+                        diagnostic_codes::A_DESTRUCTURING_DECLARATION_MUST_HAVE_AN_INITIALIZER,
+                    );
+                }
+            }
+        }
 
         // Calculate end position from the last component present (child node, not token)
         let end_pos = if !initializer.is_none() {
@@ -3314,6 +3332,22 @@ impl ParserState {
             self.next_token();
             return NodeIndex::NONE;
         };
+
+        // TS18012: '#constructor' is a reserved word
+        if let Some(name_node) = self.arena.get(name) {
+            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                if let Some(ident) = self.arena.get_identifier(name_node) {
+                    if ident.escaped_text == "#constructor" {
+                        self.parse_error_at(
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                            "'#constructor' is a reserved word.",
+                            diagnostic_codes::CONSTRUCTOR_IS_A_RESERVED_WORD,
+                        );
+                    }
+                }
+            }
+        }
 
         // Parse optional ? or ! after property name
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
