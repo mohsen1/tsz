@@ -31,8 +31,6 @@ impl<'a> Printer<'a> {
         }
 
         // Parameters (without types for JavaScript)
-        // TypeScript always emits parentheses in output, even for single simple parameters
-        // Source: `x => x` is emitted as `(x) => x`
         self.write("(");
         self.emit_function_parameters_js(&func.parameters.nodes);
         self.write(")");
