@@ -2150,7 +2150,6 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_class_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::class_inheritance::ClassInheritanceChecker;
         use crate::types::diagnostics::diagnostic_codes;
-
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
         };

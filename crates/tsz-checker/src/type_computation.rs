@@ -1175,6 +1175,27 @@ impl<'a> CheckerState<'a> {
         };
 
         let index_type = self.get_type_of_node(access.name_or_argument);
+
+        // TS2538: Type cannot be used as an index type
+        // Check if index_type contains an array type
+        let contains_array_type = self.type_contains_array_type(index_type);
+        if contains_array_type {
+            use crate::types::diagnostics::{
+                diagnostic_codes, diagnostic_messages, format_message,
+            };
+            let index_type_str = self.format_type(index_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                &[&index_type_str],
+            );
+            self.error_at_node(
+                access.name_or_argument,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+            );
+            return TypeId::ERROR;
+        }
+
         let literal_string_is_none = literal_string.is_none();
 
         let mut result_type = None;
