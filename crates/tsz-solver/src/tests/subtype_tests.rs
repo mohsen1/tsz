@@ -1094,7 +1094,8 @@ fn test_readonly_property_subtyping() {
         parent_id: None,
     }]);
 
-    assert!(!checker.is_subtype_of(readonly_obj, mutable_obj));
+    // TypeScript allows readonly property → mutable property assignment
+    assert!(checker.is_subtype_of(readonly_obj, mutable_obj));
     assert!(checker.is_subtype_of(mutable_obj, readonly_obj));
 }
 
@@ -5316,7 +5317,8 @@ fn test_mapped_type_over_number_keys_optional_readonly_add_subtyping() {
 
     assert!(checker.is_subtype_of(mapped, optional_readonly));
     assert!(!checker.is_subtype_of(mapped, required_readonly));
-    assert!(!checker.is_subtype_of(mapped, optional_mutable));
+    // TypeScript allows readonly → mutable property assignment
+    assert!(checker.is_subtype_of(mapped, optional_mutable));
 }
 
 #[test]
@@ -5597,7 +5599,8 @@ fn test_mapped_type_readonly_modifier_add_subtyping() {
     ]);
 
     assert!(checker.is_subtype_of(mapped, readonly_target));
-    assert!(!checker.is_subtype_of(mapped, mutable_target));
+    // TypeScript allows readonly → mutable property assignment
+    assert!(checker.is_subtype_of(mapped, mutable_target));
 }
 
 #[test]
@@ -5786,7 +5789,8 @@ fn test_mapped_type_readonly_remove_from_readonly_keyof() {
 
     assert!(checker.is_subtype_of(mapped, mutable_target));
     assert!(checker.is_subtype_of(mapped, readonly_target));
-    assert!(!checker.is_subtype_of(readonly_target, mapped));
+    // TypeScript allows readonly → mutable property assignment
+    assert!(checker.is_subtype_of(readonly_target, mapped));
 }
 
 #[test]
@@ -5817,7 +5821,8 @@ fn test_mapped_type_readonly_modifier_remove_subtyping() {
 
     assert!(checker.is_subtype_of(mapped, mutable_target));
     assert!(checker.is_subtype_of(mapped, readonly_target));
-    assert!(!checker.is_subtype_of(readonly_target, mapped));
+    // TypeScript allows readonly → mutable property assignment
+    assert!(checker.is_subtype_of(readonly_target, mapped));
 }
 
 #[test]
@@ -6013,7 +6018,8 @@ fn test_mapped_type_key_remap_optional_readonly_add_subtyping() {
 
     assert!(checker.is_subtype_of(mapped, optional_readonly_b));
     assert!(!checker.is_subtype_of(mapped, required_readonly_b));
-    assert!(!checker.is_subtype_of(mapped, optional_mutable_b));
+    // TypeScript allows readonly → mutable property assignment
+    assert!(checker.is_subtype_of(mapped, optional_mutable_b));
 }
 
 #[test]
@@ -6119,7 +6125,8 @@ fn test_mapped_type_key_remap_readonly_add_subtyping() {
     let mutable_b = interner.object(vec![PropertyInfo::new(prop_b.name, TypeId::NUMBER)]);
 
     assert!(checker.is_subtype_of(mapped, readonly_b));
-    assert!(!checker.is_subtype_of(mapped, mutable_b));
+    // TypeScript allows readonly → mutable property assignment
+    assert!(checker.is_subtype_of(mapped, mutable_b));
 }
 
 #[test]
@@ -6166,7 +6173,8 @@ fn test_mapped_type_key_remap_readonly_remove_subtyping() {
 
     assert!(checker.is_subtype_of(mapped, mutable_b));
     assert!(checker.is_subtype_of(mapped, readonly_b));
-    assert!(!checker.is_subtype_of(readonly_b, mapped));
+    // TypeScript allows readonly → mutable property assignment
+    assert!(checker.is_subtype_of(readonly_b, mapped));
 }
 
 #[test]
@@ -20687,8 +20695,8 @@ fn test_readonly_vs_mutable_property() {
     // Mutable is subtype of readonly (can assign mutable to readonly)
     assert!(checker.is_subtype_of(mutable_obj, readonly_obj));
 
-    // Readonly is NOT subtype of mutable (can't write to readonly)
-    assert!(!checker.is_subtype_of(readonly_obj, mutable_obj));
+    // TypeScript allows readonly property → mutable property assignment
+    assert!(checker.is_subtype_of(readonly_obj, mutable_obj));
 }
 
 #[test]
