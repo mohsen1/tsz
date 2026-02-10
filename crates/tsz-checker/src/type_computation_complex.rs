@@ -1444,10 +1444,25 @@ impl<'a> CheckerState<'a> {
         //   class C<U> { method(u: U) {} }  // U should be found in the class body
         //   type Pair<T> = [T, T];  // T should be found in the type alias definition
         if let Some(type_id) = self.lookup_type_parameter(name) {
-            // TS2693: Type parameters cannot be used as values
-            // Example: function f<T>() { return T; }  // Error: T is a type, not a value
-            self.error_type_parameter_used_as_value(name, idx);
-            return type_id;
+            // Before emitting TS2693, check if the binder also has a value symbol
+            // with the same name. In cases like `function f<A>(A: A)`, the parameter
+            // `A` shadows the type parameter `A` in value position.
+            let has_value_shadow = self
+                .resolve_identifier_symbol(idx)
+                .and_then(|sym_id| {
+                    self.ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .map(|s| s.flags & tsz_binder::symbol_flags::VALUE != 0)
+                })
+                .unwrap_or(false);
+            if !has_value_shadow {
+                // TS2693: Type parameters cannot be used as values
+                // Example: function f<T>() { return T; }  // Error: T is a type, not a value
+                self.error_type_parameter_used_as_value(name, idx);
+                return type_id;
+            }
+            // Fall through to binder resolution — the value symbol takes precedence
         }
 
         // Resolve via binder persistent scopes for stateless lookup.
