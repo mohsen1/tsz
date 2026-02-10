@@ -535,7 +535,13 @@ impl<'a> Printer<'a> {
 
         // Only emit var/let declaration if not already declared
         if !self.declared_namespace_names.contains(&name) {
-            let keyword = "var";
+            // Nested namespaces inside a namespace body use `let`
+            // Dotted namespaces (Foo.Bar) use `var` for the inner part
+            let keyword = if self.in_namespace_iife && parent_name.is_none() {
+                "let"
+            } else {
+                "var"
+            };
             self.write(keyword);
             self.write(" ");
             self.write(&name);
@@ -648,9 +654,8 @@ impl<'a> Printer<'a> {
                             self.in_namespace_iife = prev;
                             self.write_line();
                         } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                            // Nested namespace: recurse
+                            // Nested namespace: recurse (emit_namespace_iife adds its own newline)
                             self.emit(stmt_idx);
-                            self.write_line();
                         } else {
                             // Regular statement
                             self.emit(stmt_idx);
