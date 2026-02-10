@@ -3196,7 +3196,6 @@ declare module "dep" {
 
 /// Test TS2307 for relative import that cannot be resolved
 #[test]
-#[ignore]
 fn test_ts2307_relative_import_not_found() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3226,6 +3225,7 @@ import { foo } from "./non-existent-module";
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3239,7 +3239,6 @@ import { foo } from "./non-existent-module";
 
 /// Test TS2307 for bare module specifier (npm package) that cannot be resolved
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2307_bare_specifier_not_found() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3269,6 +3268,7 @@ import { something } from "nonexistent-npm-package";
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3381,7 +3381,6 @@ import data from "./file.json";
 
 /// Test TS2307 for scoped npm package import that cannot be resolved
 #[test]
-#[ignore]
 fn test_ts2307_scoped_package_not_found() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3411,6 +3410,7 @@ import { Component } from "@angular/core";
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3424,7 +3424,7 @@ import { Component } from "@angular/core";
 
 /// Test multiple unresolved imports each emit TS2307
 #[test]
-#[ignore] // TODO: Fix this test
+#[ignore] // TODO: only 1 of 3 TS2307 emitted for multiple unresolved imports
 fn test_ts2307_multiple_unresolved_imports() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3456,6 +3456,7 @@ import * as pkg from "nonexistent-pkg";
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let ts2307_count = checker
@@ -3476,7 +3477,6 @@ import * as pkg from "nonexistent-pkg";
 
 /// Test that TS2307 includes correct module specifier in message
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2307_diagnostic_message_contains_specifier() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3501,6 +3501,7 @@ import { foo } from "./specific-missing-module";
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let ts2307_diag = checker.ctx.diagnostics.iter().find(|d| {
@@ -3518,7 +3519,7 @@ import { foo } from "./specific-missing-module";
 
 /// Test that TS2307 is emitted for dynamic imports with unresolved module specifiers
 #[test]
-#[ignore] // TODO: Fix this test
+#[ignore] // TODO: dynamic import() expressions do not emit TS2307 yet
 fn test_ts2307_dynamic_import_unresolved() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3546,6 +3547,7 @@ async function loadModule() {
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let ts2307_diag = checker.ctx.diagnostics.iter().find(|d| {
@@ -29315,7 +29317,6 @@ module MyModule {
 /// When we have `import * as ts from "typescript"` and the module is unresolved,
 /// we should emit TS2307 for the module, but NOT emit TS2304 for uses of `ts.SomeType`.
 #[test]
-#[ignore]
 fn test_unresolved_namespace_import_no_extra_ts2304() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -29355,6 +29356,7 @@ function process(node: ts.Node): void {}
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
