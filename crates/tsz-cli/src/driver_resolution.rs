@@ -163,7 +163,6 @@ pub(crate) fn resolve_type_package_entry(
     options: &ResolvedCompilerOptions,
 ) -> Option<PathBuf> {
     let package_json = read_package_json(&package_root.join("package.json"));
-    let package_type = package_type_from_json(package_json.as_ref());
 
     // In node10/classic module resolution, type package fallback resolution
     // should NOT try .d.mts/.d.cts extensions (those require exports map).
@@ -199,8 +198,17 @@ pub(crate) fn resolve_type_package_entry(
         }
         None
     } else {
-        let resolved =
-            resolve_package_root(package_root, package_json.as_ref(), options, package_type)?;
+        // For bundler/node16/nodenext, use resolve_package_specifier which respects
+        // the exports map. This is needed for type packages that use conditional exports
+        // (e.g. `"exports": { ".": { "import": "./index.d.mts", "require": "./index.d.cts" } }`)
+        let conditions = export_conditions(options);
+        let resolved = resolve_package_specifier(
+            package_root,
+            None,
+            package_json.as_ref(),
+            &conditions,
+            options,
+        )?;
         if is_declaration_file(&resolved) {
             Some(resolved)
         } else {
