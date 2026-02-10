@@ -820,6 +820,8 @@ impl<'a> CheckerState<'a> {
                     type_stack.push(TypeId::ERROR);
                     continue;
                 }
+                // TS2872: This kind of expression is always truthy.
+                self.check_always_truthy(left_idx, left_type);
                 type_stack.push(self.ctx.types.union2(left_type, right_type));
                 continue;
             }
@@ -831,6 +833,8 @@ impl<'a> CheckerState<'a> {
                     type_stack.push(TypeId::ERROR);
                     continue;
                 }
+                // TS2872: This kind of expression is always truthy.
+                self.check_always_truthy(left_idx, left_type);
 
                 let (non_nullish, cause) = self.split_nullish_type(left_type);
                 if cause.is_none() {
