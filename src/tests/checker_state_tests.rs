@@ -11287,15 +11287,11 @@ interface Bar {
 
 /// Test typeof with namespace alias member access
 ///
-/// NOTE: Currently ignored - the test uses `import Alias = Ns` syntax which triggers
-/// TS1202 error about import assignments in ES modules. The module system needs
-/// to be updated to handle this case correctly, or the test needs to use a
-/// different syntax.
+/// Test that `typeof Alias.value` resolves to the correct type through
+/// namespace import aliases (`import Alias = Ns`).
 #[test]
-#[ignore = "Import assignment syntax triggers ES module error (TS1202)"]
 fn test_checker_typeof_namespace_alias_member() {
     use crate::parser::ParserState;
-    use crate::solver::{SymbolRef, TypeKey};
 
     let source = r#"
 namespace Ns {
@@ -11328,20 +11324,14 @@ type T = typeof Alias.value;
         checker.ctx.diagnostics
     );
 
-    let ns_sym = binder.file_locals.get("Ns").expect("Ns should exist");
-    let value_sym = binder
-        .get_symbol(ns_sym)
-        .and_then(|symbol| symbol.exports.as_ref())
-        .and_then(|exports| exports.get("value"))
-        .expect("Ns.value should exist");
-
+    // typeof Alias.value should resolve to the literal type 1 (const value = 1)
     let t_sym = binder.file_locals.get("T").expect("T should exist");
     let t_type = checker.get_type_of_symbol(t_sym);
-    let t_key = types.lookup(t_type).expect("T type should exist");
-    match t_key {
-        TypeKey::TypeQuery(SymbolRef(sym_id)) => assert_eq!(sym_id, value_sym.0),
-        other => panic!("Expected T to be typeof Alias.value, got {:?}", other),
-    }
+    assert_eq!(
+        t_type,
+        types.literal_number(1.0),
+        "typeof Alias.value should resolve to literal type 1"
+    );
 }
 
 #[test]
