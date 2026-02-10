@@ -991,7 +991,21 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
     ) -> Option<Vec<Atom>> {
         self.discriminant_property_info(expr, target)
-            .and_then(|(path, is_optional, _base)| if is_optional { None } else { Some(path) })
+            .and_then(|(path, is_optional, base)| {
+                if is_optional {
+                    return None;
+                }
+                // Only apply discriminant narrowing if the base of the property
+                // access matches the target being narrowed. For example, if narrowing
+                // `x` based on `x.kind`, the base `x` must match target `x`.
+                // Without this check, narrowing `x.prop` based on `x.kind` would
+                // incorrectly try to find `kind` on the type of `x.prop`.
+                if self.is_matching_reference(base, target) {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
     }
 
     pub(crate) fn discriminant_property_info(
