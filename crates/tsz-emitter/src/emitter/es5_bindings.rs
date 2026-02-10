@@ -852,9 +852,30 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_param_prologue(&mut self, transforms: &ParamTransformPlan) {
         for param in &transforms.params {
             if let Some(initializer) = param.initializer {
-                self.emit_param_default_assignment(&param.name, initializer);
-            }
-            if let Some(pattern) = param.pattern {
+                if let Some(pattern) = param.pattern {
+                    // Has both default and binding pattern: use ternary in a single var statement.
+                    // TypeScript: var _b = _a === void 0 ? default : _a, _c = _b[1], ...
+                    let mut started = false;
+                    let temp = self.get_temp_var_name();
+                    self.emit_param_assignment_prefix(&mut started);
+                    self.write(&temp);
+                    self.write(" = ");
+                    self.write(&param.name);
+                    self.write(" === void 0 ? ");
+                    self.emit_expression(initializer);
+                    self.write(" : ");
+                    self.write(&param.name);
+
+                    self.emit_param_binding_assignments(pattern, &temp, &mut started);
+                    if started {
+                        self.write(";");
+                        self.write_line();
+                    }
+                } else {
+                    // Only default, no pattern: use if statement
+                    self.emit_param_default_assignment(&param.name, initializer);
+                }
+            } else if let Some(pattern) = param.pattern {
                 let mut started = false;
                 self.emit_param_binding_assignments(pattern, &param.name, &mut started);
                 if started {
@@ -1065,18 +1086,23 @@ impl<'a> Printer<'a> {
             self.write_usize(index);
             self.write("]");
 
-            if !elem.initializer.is_none() {
+            let source_name = if !elem.initializer.is_none() {
+                // Allocate a NEW temp for the defaulted value
+                let default_name = self.get_temp_var_name();
                 self.write(", ");
-                self.write(&value_name);
+                self.write(&default_name);
                 self.write(" = ");
                 self.write(&value_name);
                 self.write(" === void 0 ? ");
                 self.emit_expression(elem.initializer);
                 self.write(" : ");
                 self.write(&value_name);
-            }
+                default_name
+            } else {
+                value_name
+            };
 
-            self.emit_param_binding_assignments(elem.name, &value_name, started);
+            self.emit_param_binding_assignments(elem.name, &source_name, started);
             return;
         }
 
