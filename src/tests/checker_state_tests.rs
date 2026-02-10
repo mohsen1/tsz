@@ -3334,7 +3334,6 @@ declare module "my-external-lib" {
 
 /// Test that shorthand_ambient_modules prevents TS2307 when module is declared without body
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_shorthand_ambient_module_prevents_ts2307() {
     use crate::parser::ParserState;
 
