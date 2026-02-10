@@ -417,6 +417,15 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(member_idx);
                 (name, node)
             }
+            Some(k) if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let accessor = self.ctx.arena.get_accessor(member_node.unwrap());
+                let name = accessor.and_then(|a| self.get_member_name_text(a.name));
+                let node = accessor
+                    .map(|a| a.name)
+                    .filter(|idx| !idx.is_none())
+                    .unwrap_or(member_idx);
+                (name, node)
+            }
             _ => return,
         };
 
@@ -451,6 +460,10 @@ impl<'a> CheckerState<'a> {
         // Track accessor occurrences for duplicate detection
         // Key: "get:name" or "set:name" (with "static:" prefix for static members)
         let mut seen_accessors: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
+
+        // Track accessor plain names (without get/set prefix) for cross-checking
+        // against properties/methods. Key: "name" or "static:name"
+        let mut accessor_plain_names: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
 
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -497,6 +510,17 @@ impl<'a> CheckerState<'a> {
                                 format!("{}:{}", kind, name)
                             };
                             seen_accessors.entry(key).or_default().push(member_idx);
+
+                            // Also track plain name for cross-checking with properties/methods
+                            let plain_key = if is_static {
+                                format!("static:{}", name)
+                            } else {
+                                name.clone()
+                            };
+                            accessor_plain_names
+                                .entry(plain_key)
+                                .or_default()
+                                .push(member_idx);
                         }
                     }
                     continue;
@@ -532,7 +556,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Report errors for duplicates
-        for (_key, info) in seen_names {
+        for (_key, info) in &seen_names {
             if info.indices.len() <= 1 {
                 continue;
             }
@@ -594,28 +618,23 @@ impl<'a> CheckerState<'a> {
         }
 
         // Report TS2300 for duplicate accessors (e.g., two getters or two setters with same name)
-        for (_key, indices) in seen_accessors {
+        for (_key, indices) in &seen_accessors {
             if indices.len() <= 1 {
                 continue;
             }
             // Emit errors for ALL duplicate declarations (matching tsc behavior)
             for &idx in indices.iter() {
-                let Some(member_node) = self.ctx.arena.get(idx) else {
-                    continue;
-                };
-                if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
-                    if let Some(name) = self.get_member_name_text(accessor.name) {
-                        let error_node = if accessor.name.is_none() {
-                            idx
-                        } else {
-                            accessor.name
-                        };
-                        self.error_at_node_msg(
-                            error_node,
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                            &[&name],
-                        );
-                    }
+                self.report_duplicate_class_member_ts2300(idx);
+            }
+        }
+
+        // Cross-check accessors against properties/methods for TS2300
+        // A field+getter, field+setter, or method+getter/setter conflict is TS2300
+        for (key, accessor_indices) in &accessor_plain_names {
+            if seen_names.contains_key(key) {
+                // Report TS2300 on the accessor declarations
+                for &idx in accessor_indices {
+                    self.report_duplicate_class_member_ts2300(idx);
                 }
             }
         }

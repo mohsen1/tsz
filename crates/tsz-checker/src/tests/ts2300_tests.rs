@@ -233,3 +233,57 @@ export = server;
         ts2300_errors
     );
 }
+
+/// Test that field + getter with same name emits TS2300.
+#[test]
+fn test_field_and_getter_with_same_name() {
+    let source = r#"
+export class C {
+    x: number;
+    get x(): number { return 1; }
+}
+"#;
+    let diagnostics = check(source);
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+    assert!(
+        !ts2300_errors.is_empty(),
+        "Should emit TS2300 for field + getter with same name"
+    );
+}
+
+/// Test that method + getter with same name emits TS2300.
+#[test]
+fn test_method_and_getter_with_same_name() {
+    let source = r#"
+class C65 {
+    public aaaaa() { }
+    public get aaaaa() {
+        return 1;
+    }
+}
+"#;
+    let diagnostics = check(source);
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+    assert!(
+        !ts2300_errors.is_empty(),
+        "Should emit TS2300 for method + getter with same name"
+    );
+}
+
+/// Test that getter + setter pair does NOT emit TS2300 (they're complementary).
+#[test]
+fn test_getter_setter_pair_allowed() {
+    let source = r#"
+class C {
+    get x(): number { return 1; }
+    set x(val: number) { }
+}
+"#;
+    let diagnostics = check(source);
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+    assert!(
+        ts2300_errors.is_empty(),
+        "Should NOT emit TS2300 for getter + setter pair, got: {:?}",
+        ts2300_errors
+    );
+}
