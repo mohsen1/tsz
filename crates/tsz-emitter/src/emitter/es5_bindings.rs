@@ -213,6 +213,111 @@ impl<'a> Printer<'a> {
         true
     }
 
+    /// Inline a single-element array pattern at index 0 from a string expression.
+    /// [x] from expr → x = expr[0]
+    fn try_emit_single_inline_from_expr(
+        &mut self,
+        pattern_node: &Node,
+        expr: &str,
+        first: &mut bool,
+    ) -> bool {
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+        // Must be first element, not omitted
+        let first_elem = pattern.elements.nodes.first().copied();
+        let Some(first_elem_idx) = first_elem else {
+            return false;
+        };
+        if first_elem_idx.is_none() {
+            return false;
+        }
+        let Some(first_elem_node) = self.arena.get(first_elem_idx) else {
+            return false;
+        };
+        let Some(first_elem_data) = self.arena.get_binding_element(first_elem_node) else {
+            return false;
+        };
+        if first_elem_data.dot_dot_dot_token || self.is_binding_pattern(first_elem_data.name) {
+            return false;
+        }
+        if !self.has_identifier_text(first_elem_data.name) {
+            return false;
+        }
+
+        if first_elem_data.initializer.is_none() {
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write_identifier_text(first_elem_data.name);
+            self.write(" = ");
+            self.write(expr);
+            self.write("[0]");
+        } else {
+            let value_name = self.get_temp_var_name();
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write(&value_name);
+            self.write(" = ");
+            self.write(expr);
+            self.write("[0]");
+            self.write(", ");
+            self.write_identifier_text(first_elem_data.name);
+            self.write(" = ");
+            self.write(&value_name);
+            self.write(" === void 0 ? ");
+            self.emit_expression(first_elem_data.initializer);
+            self.write(" : ");
+            self.write(&value_name);
+        }
+        true
+    }
+
+    /// Inline a rest-only array pattern from a string expression.
+    /// [...rest] from expr → rest = expr.slice(0)
+    fn try_emit_rest_only_from_expr(
+        &mut self,
+        pattern_node: &Node,
+        expr: &str,
+        first: &mut bool,
+    ) -> bool {
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+        for &elem_idx in &pattern.elements.nodes {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if elem.dot_dot_dot_token && self.has_identifier_text(elem.name) {
+                if !*first {
+                    self.write(", ");
+                }
+                *first = false;
+                self.write_identifier_text(elem.name);
+                self.write(" = ");
+                self.write(expr);
+                self.write(".slice(0)");
+                return true;
+            }
+        }
+        false
+    }
+
     /// Emit ES5 destructuring: { x, y } = obj → _a = obj, x = _a.x, y = _a.y
     /// When the initializer is a simple identifier, TypeScript skips the temp variable
     /// and uses the identifier directly: var [, name] = robot → var name = robot[1]
@@ -1391,20 +1496,28 @@ impl<'a> Printer<'a> {
         };
 
         // Derive array name from expression:
-        // - Simple identifier `arr` -> `arr_1` (doesn't consume counter)
+        // - Simple identifier `arr` -> `arr_1`, `arr_2`, etc. (doesn't consume counter)
         // - Complex expression -> `_a`, `_b`, etc. (from global counter)
         let array_name = if let Some(expr_node) = self.arena.get(for_in_of.expression) {
             if expr_node.kind == SyntaxKind::Identifier as u16 {
                 if let Some(ident) = self.arena.get_identifier(expr_node) {
                     let name = self.arena.resolve_identifier_text(ident).to_string();
-                    let candidate = format!("{}_1", name);
-                    if self.file_identifiers.contains(&candidate)
-                        || self.generated_temp_names.contains(&candidate)
-                    {
-                        self.make_unique_name()
-                    } else {
+                    // Try incrementing suffixes: name_1, name_2, name_3, ...
+                    let mut found = None;
+                    for suffix in 1..=100 {
+                        let candidate = format!("{}_{}", name, suffix);
+                        if !self.file_identifiers.contains(&candidate)
+                            && !self.generated_temp_names.contains(&candidate)
+                        {
+                            found = Some(candidate);
+                            break;
+                        }
+                    }
+                    if let Some(candidate) = found {
                         self.generated_temp_names.insert(candidate.clone());
                         candidate
+                    } else {
+                        self.make_unique_name()
                     }
                 } else {
                     self.make_unique_name()
@@ -1601,13 +1714,54 @@ impl<'a> Printer<'a> {
                     if let Some(decl_node) = self.arena.get(decl_idx)
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
-                        if !first {
-                            self.write(", ");
+                        if self.is_binding_pattern(decl.name) {
+                            if let Some(pattern_node) = self.arena.get(decl.name) {
+                                let (effective_count, has_rest) =
+                                    self.count_effective_bindings(pattern_node);
+
+                                // Single element at index 0: inline as name = arr[idx][0]
+                                if effective_count == 1 && !has_rest {
+                                    if self.try_emit_single_inline_from_expr(
+                                        pattern_node,
+                                        &element_expr,
+                                        &mut first,
+                                    ) {
+                                        continue;
+                                    }
+                                }
+
+                                // Rest-only: inline as name = arr[idx].slice(0)
+                                if effective_count == 0 && has_rest {
+                                    if self.try_emit_rest_only_from_expr(
+                                        pattern_node,
+                                        &element_expr,
+                                        &mut first,
+                                    ) {
+                                        continue;
+                                    }
+                                }
+
+                                // Multi-binding or complex: create temp and lower
+                                // e.g., var [, nameA] = robots_1[_i] → var _a = robots_1[_i], nameA = _a[1]
+                                let temp_name = self.get_temp_var_name();
+                                if !first {
+                                    self.write(", ");
+                                }
+                                first = false;
+                                self.write(&temp_name);
+                                self.write(" = ");
+                                self.write(&element_expr);
+                                self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
+                            }
+                        } else {
+                            if !first {
+                                self.write(", ");
+                            }
+                            first = false;
+                            self.emit(decl.name);
+                            self.write(" = ");
+                            self.write(&element_expr);
                         }
-                        first = false;
-                        self.emit(decl.name);
-                        self.write(" = ");
-                        self.write(&element_expr);
                     }
                 }
             }
