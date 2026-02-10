@@ -265,6 +265,12 @@ impl<'a> CheckerState<'a> {
                 let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
                     continue;
                 };
+                // Skip private fields (#name) - they are not subject to index signature checks
+                if let Some(name_node) = self.ctx.arena.get(prop.name) {
+                    if name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16 {
+                        continue;
+                    }
+                }
                 let name = self.get_member_name_text(prop.name).unwrap_or_default();
                 (name, prop.name)
             } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
@@ -272,6 +278,12 @@ impl<'a> CheckerState<'a> {
                 let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
                     continue;
                 };
+                // Skip private methods (#name)
+                if let Some(name_node) = self.ctx.arena.get(method.name) {
+                    if name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16 {
+                        continue;
+                    }
+                }
                 let name = self.get_member_name_text(method.name).unwrap_or_default();
                 (name, method.name)
             } else {

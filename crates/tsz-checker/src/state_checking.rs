@@ -433,7 +433,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS1100: Invalid use of 'arguments'/'eval' in strict mode
-        if self.ctx.compiler_options.always_strict {
+        // Only applies when targeting ES5 or below; ES2015+ relaxed these restrictions
+        if self.ctx.compiler_options.always_strict && self.ctx.compiler_options.target.is_es5() {
             if let Some(ref name) = var_name {
                 if name == "arguments" || name == "eval" {
                     use crate::types::diagnostics::diagnostic_codes;
