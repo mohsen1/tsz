@@ -837,12 +837,32 @@ impl BinderState {
     }
 
     /// Collect visible symbol names for diagnostics and suggestions.
+    /// If `meaning_flags` is non-zero, only include symbols whose flags overlap with meaning_flags.
     pub fn collect_visible_symbol_names(
         &self,
         arena: &NodeArena,
         node_idx: NodeIndex,
     ) -> Vec<String> {
+        self.collect_visible_symbol_names_filtered(arena, node_idx, 0)
+    }
+
+    /// Collect visible symbol names filtered by meaning flags.
+    /// If `meaning_flags` is non-zero, only include symbols whose flags overlap with meaning_flags.
+    pub fn collect_visible_symbol_names_filtered(
+        &self,
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+        meaning_flags: u32,
+    ) -> Vec<String> {
         let mut names = FxHashSet::default();
+
+        let passes_filter = |sym_id: &SymbolId| -> bool {
+            if meaning_flags == 0 {
+                return true;
+            }
+            self.get_symbol(*sym_id)
+                .is_none_or(|sym| sym.flags & meaning_flags != 0)
+        };
 
         if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
             let mut iterations = 0;
@@ -854,15 +874,19 @@ impl BinderState {
                 let Some(scope) = self.scopes.get(scope_id.0 as usize) else {
                     break;
                 };
-                for (symbol_name, _) in scope.table.iter() {
-                    names.insert(symbol_name.clone());
+                for (symbol_name, sym_id) in scope.table.iter() {
+                    if passes_filter(sym_id) {
+                        names.insert(symbol_name.clone());
+                    }
                 }
                 scope_id = scope.parent;
             }
         }
 
-        for (symbol_name, _) in self.file_locals.iter() {
-            names.insert(symbol_name.clone());
+        for (symbol_name, sym_id) in self.file_locals.iter() {
+            if passes_filter(sym_id) {
+                names.insert(symbol_name.clone());
+            }
         }
 
         names.into_iter().collect()

@@ -1,7 +1,5 @@
 //! Tests for spread and rest operator type checking
 
-#![allow(clippy::print_stderr)]
-
 use crate::state::CheckerState;
 use crate::types::Diagnostic;
 use tsz_binder::BinderState;
@@ -26,15 +24,6 @@ fn check_source(source: &str) -> Vec<Diagnostic> {
     );
 
     checker.check_source_file(root);
-
-    // Debug: print all diagnostics
-    eprintln!("=== All diagnostics for source ===");
-    eprintln!("{}", source);
-    eprintln!("Diagnostics count: {}", checker.ctx.diagnostics.len());
-    for d in &checker.ctx.diagnostics {
-        eprintln!("  Code: {}, Message: {}", d.code, d.message_text);
-    }
-
     checker.ctx.diagnostics.clone()
 }
 
@@ -272,12 +261,6 @@ add(...args);  // Should emit TS2345
 "#;
 
     let diagnostics = check_source(source);
-
-    // Debug: print all diagnostics
-    eprintln!("=== test_spread_in_function_call_with_wrong_types diagnostics ===");
-    for d in &diagnostics {
-        eprintln!("  code: {}, message: {}", d.code, d.message_text);
-    }
 
     // TypeScript emits TS2556 for this case: "A spread argument must either have a tuple type or be passed to a rest parameter."
     // The spread array has type (string | number)[] which is not a tuple type.

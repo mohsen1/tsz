@@ -1229,10 +1229,13 @@ impl<'a> CheckerState<'a> {
     ) -> Option<Vec<String>> {
         let mut suggestions = Vec::new();
 
-        let visible_names = self
-            .ctx
-            .binder
-            .collect_visible_symbol_names(self.ctx.arena, idx);
+        // Only suggest value-scope symbols (not type-only like interfaces/type aliases)
+        // to match tsc behavior: "Cannot find name 'X'. Did you mean 'Y'?" only suggests values
+        let visible_names = self.ctx.binder.collect_visible_symbol_names_filtered(
+            self.ctx.arena,
+            idx,
+            tsz_binder::symbol_flags::VALUE,
+        );
         for symbol_name in visible_names {
             if symbol_name != name {
                 let similarity = self.calculate_string_similarity(name, &symbol_name);
