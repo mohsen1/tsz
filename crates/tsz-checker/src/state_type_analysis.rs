@@ -1813,6 +1813,61 @@ impl<'a> CheckerState<'a> {
             return (function_type, Vec::new());
         }
 
+        // When a symbol is BOTH an interface AND a variable (e.g., `interface Symbol` +
+        // `declare var Symbol: SymbolConstructor`), the variable type takes precedence
+        // because the value declaration's type annotation defines what the symbol
+        // actually is when used in value position. The interface is for type position.
+        if flags & symbol_flags::INTERFACE != 0
+            && flags
+                & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE)
+                != 0
+            && !value_decl.is_none()
+        {
+            // Find the arena where the value declaration lives and resolve
+            // the variable's type annotation.
+            // Use declaration_arenas (populated during lib merging) to locate
+            // which arena owns this NodeIndex.
+            if let Some(decl_arena) = self
+                .ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, value_decl))
+            {
+                let arena = decl_arena.as_ref();
+                if let Some(node) = arena.get(value_decl)
+                    && let Some(var_decl) = arena.get_variable_declaration(node)
+                    && !var_decl.type_annotation.is_none()
+                {
+                    // Extract the type annotation name and resolve via lib types
+                    // e.g., `declare var Symbol: SymbolConstructor` -> resolve "SymbolConstructor"
+                    let type_name_text = arena
+                        .get(var_decl.type_annotation)
+                        .and_then(|type_node| arena.get_type_ref(type_node))
+                        .and_then(|type_ref| {
+                            arena
+                                .get(type_ref.type_name)
+                                .and_then(|n| arena.get_identifier(n))
+                                .map(|id| arena.resolve_identifier_text(id))
+                        });
+                    if let Some(type_name) = type_name_text {
+                        if let Some(type_id) = self.resolve_lib_type_by_name(type_name) {
+                            return (type_id, Vec::new());
+                        }
+                    }
+                }
+            } else if let Some(node) = self.ctx.arena.get(value_decl)
+                && let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
+                && !var_decl.type_annotation.is_none()
+            {
+                // Value declaration is in the main arena - resolve directly
+                return (
+                    self.get_type_from_type_node(var_decl.type_annotation),
+                    Vec::new(),
+                );
+            }
+            // Fall through to interface handling if variable type couldn't be resolved
+        }
+
         // Interface - return interface type with call signatures
         if flags & symbol_flags::INTERFACE != 0 {
             // Merged lib symbols can live in the main binder but still carry
