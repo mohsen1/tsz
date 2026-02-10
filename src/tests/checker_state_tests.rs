@@ -3423,7 +3423,6 @@ import { Component } from "@angular/core";
 
 /// Test multiple unresolved imports each emit TS2307
 #[test]
-#[ignore] // TODO: only 1 of 3 TS2307 emitted for multiple unresolved imports
 fn test_ts2307_multiple_unresolved_imports() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;

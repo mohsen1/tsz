@@ -959,9 +959,15 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let Some(spec_node) = self.ctx.arena.get(import.module_specifier) else {
+        // Extract module specifier data eagerly to avoid borrow issues later
+        let module_specifier_idx = import.module_specifier;
+        let import_clause_idx = import.import_clause;
+
+        let Some(spec_node) = self.ctx.arena.get(module_specifier_idx) else {
             return;
         };
+        let spec_start = spec_node.pos;
+        let spec_length = spec_node.end.saturating_sub(spec_node.pos);
 
         let Some(literal) = self.ctx.arena.get_literal(spec_node) else {
             return;
@@ -971,7 +977,7 @@ impl<'a> CheckerState<'a> {
         let is_type_only_import = self
             .ctx
             .arena
-            .get(import.import_clause)
+            .get(import_clause_idx)
             .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
             .map(|clause| clause.is_type_only)
             .unwrap_or(false);
@@ -998,11 +1004,13 @@ impl<'a> CheckerState<'a> {
                 binder.declared_modules.contains(module_name)
                     || binder.shorthand_ambient_modules.contains(module_name)
             }) {
+                tracing::trace!(%module_name, "check_import_declaration: found in declared/shorthand modules, returning");
                 return;
             }
         }
 
         if self.would_create_cycle(module_name) {
+            tracing::trace!(%module_name, "check_import_declaration: cycle detected");
             let cycle_path: Vec<&str> = self
                 .ctx
                 .import_resolution_stack
@@ -1032,6 +1040,7 @@ impl<'a> CheckerState<'a> {
         // `declare module "x"` in .d.ts files should suppress TS2307 even when
         // file-based resolution fails (matching check_import_equals_declaration).
         if self.is_ambient_module_match(module_name) {
+            tracing::trace!(%module_name, "check_import_declaration: ambient module match, returning");
             self.ctx.import_resolution_stack.pop();
             return;
         }
@@ -1043,6 +1052,7 @@ impl<'a> CheckerState<'a> {
             // Extract error values before mutable borrow
             let error_code = error.code;
             let error_message = error.message.clone();
+            tracing::trace!(%module_name, error_code, "check_import_declaration: resolution error found");
             // Check if we've already emitted an error for this module (prevents duplicate emissions)
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                 self.ctx
@@ -1150,6 +1160,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.ctx.binder.module_exports.contains_key(module_name) {
+            tracing::trace!(%module_name, "check_import_declaration: found in module_exports, checking members");
             self.check_imported_members(import, module_name);
 
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
@@ -1163,6 +1174,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        tracing::trace!(%module_name, "check_import_declaration: fallback - emitting module-not-found error");
         // Fallback: Emit module-not-found error if no specific error was found
         // Check if we've already emitted for this module (prevents duplicate emissions)
         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
@@ -1170,7 +1182,9 @@ impl<'a> CheckerState<'a> {
                 .modules_with_ts2307_emitted
                 .insert(module_key.clone());
             let (message, code) = self.module_not_found_diagnostic(module_name);
-            self.error_at_node(import.module_specifier, &message, code);
+            // Use pre-extracted position instead of error_at_node to avoid
+            // silent failures when get_node_span returns None
+            self.error_at_position(spec_start, spec_length, &message, code);
         }
 
         self.ctx.import_resolution_stack.pop();
