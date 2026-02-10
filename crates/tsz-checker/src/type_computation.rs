@@ -342,28 +342,35 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::PlusPlusToken as u16
                 || k == SyntaxKind::MinusMinusToken as u16 =>
             {
+                // TS2588: Cannot assign to 'x' because it is a constant.
+                let is_const = self.check_const_assignment(unary.operand);
+
                 // Get operand type for validation
                 let operand_type = self.get_type_of_node(unary.operand);
 
                 // Check if operand is valid for increment/decrement (number, bigint, any, or enum)
-                use tsz_solver::BinaryOpEvaluator;
-                let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-                let is_valid = evaluator.is_arithmetic_operand(operand_type);
+                if !is_const {
+                    use tsz_solver::BinaryOpEvaluator;
+                    let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                    let is_valid = evaluator.is_arithmetic_operand(operand_type);
 
-                if !is_valid {
-                    // Emit TS2356 for invalid increment/decrement operand type
-                    if let Some(loc) = self.get_source_location(unary.operand) {
-                        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
-                            category: DiagnosticCategory::Error,
-                            message_text: diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE
-                                .to_string(),
-                            file: self.ctx.file_name.clone(),
-                            start: loc.start,
-                            length: loc.length(),
-                            related_information: Vec::new(),
-                        });
+                    if !is_valid {
+                        // Emit TS2356 for invalid increment/decrement operand type
+                        if let Some(loc) = self.get_source_location(unary.operand) {
+                            use crate::types::diagnostics::{
+                                diagnostic_codes, diagnostic_messages,
+                            };
+                            self.ctx.diagnostics.push(Diagnostic {
+                                code: diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
+                                category: DiagnosticCategory::Error,
+                                message_text: diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE
+                                    .to_string(),
+                                file: self.ctx.file_name.clone(),
+                                start: loc.start,
+                                length: loc.length(),
+                                related_information: Vec::new(),
+                            });
+                        }
                     }
                 }
 

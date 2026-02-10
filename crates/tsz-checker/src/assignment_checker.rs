@@ -13,7 +13,10 @@
 
 use crate::state::CheckerState;
 use crate::types::diagnostics::{Diagnostic, DiagnosticCategory, diagnostic_codes};
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::flags::node_flags;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -101,6 +104,66 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if an identifier node refers to a const variable.
+    ///
+    /// Returns `Some(name)` if the identifier refers to a const, `None` otherwise.
+    fn get_const_variable_name(&self, ident_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(ident_idx)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let ident = self.ctx.arena.get_identifier(node)?;
+        let name = ident.escaped_text.clone();
+
+        let sym_id = self.resolve_identifier_symbol(ident_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+        if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE == 0 {
+            return None;
+        }
+
+        let value_decl = symbol.value_declaration;
+        if value_decl.is_none() {
+            return None;
+        }
+
+        let decl_node = self.ctx.arena.get(value_decl)?;
+        let mut decl_flags = decl_node.flags as u32;
+
+        // If CONST/LET not directly on node, check parent (VariableDeclarationList)
+        if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0 {
+            if let Some(ext) = self.ctx.arena.get_extended(value_decl)
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            {
+                decl_flags |= parent_node.flags as u32;
+            }
+        }
+
+        if decl_flags & node_flags::CONST != 0 {
+            Some(name)
+        } else {
+            None
+        }
+    }
+
+    /// Check if the assignment target (LHS) is a const variable and emit TS2588 if so.
+    ///
+    /// Resolves through parenthesized expressions to find the underlying identifier.
+    /// Returns `true` if a TS2588 error was emitted (caller should skip further type checks).
+    pub(crate) fn check_const_assignment(&mut self, target_idx: NodeIndex) -> bool {
+        let inner = self.skip_parenthesized_expression(target_idx);
+        if let Some(name) = self.get_const_variable_name(inner) {
+            self.error_at_node_msg(
+                inner,
+                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_CONSTANT,
+                &[&name],
+            );
+            return true;
+        }
+        false
+    }
+
     /// Check an assignment expression (=).
     ///
     /// ## Contextual Typing:
@@ -127,14 +190,16 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS2588: Cannot assign to 'x' because it is a constant.
+        // Check early - if this fires, skip type assignability checks (tsc behavior).
+        let is_const = self.check_const_assignment(left_idx);
+
         // Set destructuring flag when LHS is an object/array pattern to suppress
         // TS1117 (duplicate property) checks in destructuring targets.
         let (is_destructuring, is_array_destructuring) =
             if let Some(left_node) = self.ctx.arena.get(left_idx) {
-                let is_obj = left_node.kind
-                    == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION;
-                let is_arr =
-                    left_node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
+                let is_obj = left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION;
+                let is_arr = left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
                 (is_obj || is_arr, is_arr)
             } else {
                 (false, false)
@@ -163,9 +228,11 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(right_type);
         self.ensure_application_symbols_resolved(left_type);
 
-        self.check_readonly_assignment(left_idx, expr_idx);
+        if !is_const {
+            self.check_readonly_assignment(left_idx, expr_idx);
+        }
 
-        if left_type != TypeId::ANY {
+        if !is_const && left_type != TypeId::ANY {
             if let Some((source_level, target_level)) =
                 self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
             {
@@ -188,7 +255,7 @@ impl<'a> CheckerState<'a> {
 
             if left_type != TypeId::UNKNOWN
                 && let Some(right_node) = self.ctx.arena.get(right_idx)
-                && right_node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                && right_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 self.check_object_literal_excess_properties(right_type, left_type, right_idx);
             }
@@ -319,6 +386,9 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS2588: Cannot assign to 'x' because it is a constant.
+        let is_const = self.check_const_assignment(left_idx);
+
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);
 
@@ -338,11 +408,13 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(right_type);
         self.ensure_application_symbols_resolved(left_type);
 
-        self.check_readonly_assignment(left_idx, expr_idx);
+        if !is_const {
+            self.check_readonly_assignment(left_idx, expr_idx);
+        }
 
         // Track whether an operator error was emitted so we can suppress cascading TS2322.
         // TSC doesn't emit TS2322 when there's already an operator error (TS2447/TS2362/TS2363).
-        let mut emitted_operator_error = false;
+        let mut emitted_operator_error = is_const;
 
         // Check arithmetic operands for compound arithmetic assignments
         // Emit TS2362/TS2363 for -=, *=, /=, %=, **=
@@ -357,7 +429,7 @@ impl<'a> CheckerState<'a> {
         if is_arithmetic_compound {
             // Don't emit arithmetic errors if either operand is ERROR - prevents cascading errors
             if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
-                emitted_operator_error =
+                emitted_operator_error |=
                     self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
             }
         }
@@ -389,11 +461,11 @@ impl<'a> CheckerState<'a> {
                 self.emit_boolean_operator_error(left_idx, op_str, suggestion);
                 emitted_operator_error = true;
             } else if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
-                emitted_operator_error =
+                emitted_operator_error |=
                     self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
             }
         } else if is_shift_compound && left_type != TypeId::ERROR && right_type != TypeId::ERROR {
-            emitted_operator_error =
+            emitted_operator_error |=
                 self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
         }
 
