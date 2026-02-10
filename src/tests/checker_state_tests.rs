@@ -27335,12 +27335,15 @@ const obj = {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    // TS1117 is only emitted for ES5 and below
+    let mut options = crate::checker::context::CheckerOptions::default();
+    options.target = tsz_common::common::ScriptTarget::ES5;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        options,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -27390,12 +27393,15 @@ const obj2 = {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    // TS1117 is only emitted for ES5 and below
+    let mut options = crate::checker::context::CheckerOptions::default();
+    options.target = tsz_common::common::ScriptTarget::ES5;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        options,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
