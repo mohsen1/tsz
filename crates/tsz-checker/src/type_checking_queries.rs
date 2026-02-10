@@ -1167,6 +1167,61 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
+    // Truthiness Checks
+    // =========================================================================
+
+    /// TS2872: "This kind of expression is always truthy."
+    ///
+    /// Emitted when the left operand of `||` or `??` is always truthy,
+    /// making the right operand unreachable (e.g., function expressions,
+    /// object literals, non-empty string literals).
+    pub(crate) fn check_always_truthy(&mut self, node_idx: NodeIndex, type_id: TypeId) {
+        use tsz_solver::judge::TruthinessKind;
+        let is_always_truthy = self.judge_classify_truthiness(type_id)
+            == TruthinessKind::AlwaysTruthy
+            || self.is_always_truthy_syntax(node_idx);
+        if is_always_truthy {
+            use crate::types::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                node_idx,
+                "This kind of expression is always truthy.",
+                diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_TRUTHY,
+            );
+        }
+    }
+
+    /// Check if a node is syntactically always truthy.
+    ///
+    /// This handles cases where the type was widened (e.g., string literal `"str"` widened
+    /// to `string`) but the expression itself is always truthy based on its syntax.
+    /// Uses `literal_type_from_initializer` to get the un-widened literal type,
+    /// then checks its truthiness via the Judge.
+    ///
+    /// Note: Boolean literals (`true`/`false`) are excluded because TSC widens them to
+    /// `boolean` (which is "sometimes" truthy) and doesn't emit TS2872 for `true || x`.
+    fn is_always_truthy_syntax(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        // Exclude boolean literals — TSC widens them to `boolean` for this check
+        if node.kind == SyntaxKind::TrueKeyword as u16
+            || node.kind == SyntaxKind::FalseKeyword as u16
+        {
+            return false;
+        }
+        // Regex literals are always truthy (objects)
+        if node.kind == SyntaxKind::RegularExpressionLiteral as u16 {
+            return true;
+        }
+        // For string/number literals, get the un-widened literal type and check truthiness
+        use tsz_solver::judge::TruthinessKind;
+        if let Some(literal_type) = self.literal_type_from_initializer(node_idx) {
+            return self.judge_classify_truthiness(literal_type) == TruthinessKind::AlwaysTruthy;
+        }
+        false
+    }
+
+    // =========================================================================
     // Section 38: Index Signature Utilities
     // =========================================================================
 
