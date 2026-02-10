@@ -1991,7 +1991,12 @@ impl<'a> CheckerState<'a> {
     /// used before its declaration anywhere in the same scope.
     /// Emits TS2448 (variable), TS2449 (class), or TS2450 (enum) and returns
     /// `true` if a violation is found.
-    fn check_tdz_violation(&mut self, sym_id: SymbolId, idx: NodeIndex, name: &str) -> bool {
+    pub(crate) fn check_tdz_violation(
+        &mut self,
+        sym_id: SymbolId,
+        idx: NodeIndex,
+        name: &str,
+    ) -> bool {
         let is_tdz = self.is_variable_used_before_declaration_in_static_block(sym_id, idx)
             || self.is_variable_used_before_declaration_in_computed_property(sym_id, idx)
             || self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx)
