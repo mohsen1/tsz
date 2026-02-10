@@ -12,6 +12,18 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // ES5: lower assignment destructuring patterns
+        if self.ctx.target_es5 && binary.operator_token == SyntaxKind::EqualsToken as u16 {
+            if let Some(left_node) = self.arena.get(binary.left) {
+                if left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    || left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                {
+                    self.emit_assignment_destructuring_es5(left_node, binary.right);
+                    return;
+                }
+            }
+        }
+
         self.emit(binary.left);
 
         // Check if there's a line break between the operator and the right operand
