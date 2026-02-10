@@ -567,23 +567,43 @@ impl<'a> TypeInstantiator<'a> {
                 let shadowed_len = self.shadowed.len();
                 self.shadowed.push(mapped.type_param.name);
 
+                let new_constraint = self.instantiate(mapped.constraint);
+                let new_template = self.instantiate(mapped.template);
+                let new_name_type = mapped.name_type.map(|t| self.instantiate(t));
+                let new_param_constraint =
+                    mapped.type_param.constraint.map(|c| self.instantiate(c));
+                let new_param_default = mapped.type_param.default.map(|d| self.instantiate(d));
+
+                self.shadowed.truncate(shadowed_len);
+
+                // If the mapped type is unchanged after substitution (e.g., because
+                // the mapped type's own type parameter shadowed the outer substitution),
+                // return the original to avoid eager evaluation that would collapse it.
+                let unchanged = new_constraint == mapped.constraint
+                    && new_template == mapped.template
+                    && new_name_type == mapped.name_type
+                    && new_param_constraint == mapped.type_param.constraint
+                    && new_param_default == mapped.type_param.default;
+
+                if unchanged {
+                    return self.interner.mapped((*mapped).clone());
+                }
+
                 let instantiated = MappedType {
                     type_param: TypeParamInfo {
                         is_const: false,
                         name: mapped.type_param.name,
-                        constraint: mapped.type_param.constraint.map(|c| self.instantiate(c)),
-                        default: mapped.type_param.default.map(|d| self.instantiate(d)),
+                        constraint: new_param_constraint,
+                        default: new_param_default,
                     },
-                    constraint: self.instantiate(mapped.constraint),
-                    name_type: mapped.name_type.map(|t| self.instantiate(t)),
-                    template: self.instantiate(mapped.template),
+                    constraint: new_constraint,
+                    name_type: new_name_type,
+                    template: new_template,
                     readonly_modifier: mapped.readonly_modifier,
                     optional_modifier: mapped.optional_modifier,
                 };
 
-                self.shadowed.truncate(shadowed_len);
-
-                // FIX: Trigger evaluation immediately.
+                // Trigger evaluation immediately for changed mapped types.
                 // This converts MappedType { constraint: "host"|"port", ... }
                 // into Object { host?: string, port?: number }
                 // Without this, the MappedType is returned unevaluated, causing subtype checks to fail.

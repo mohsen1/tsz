@@ -3196,7 +3196,6 @@ declare module "dep" {
 
 /// Test TS2307 for relative import that cannot be resolved
 #[test]
-#[ignore]
 fn test_ts2307_relative_import_not_found() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3226,6 +3225,7 @@ import { foo } from "./non-existent-module";
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3239,7 +3239,6 @@ import { foo } from "./non-existent-module";
 
 /// Test TS2307 for bare module specifier (npm package) that cannot be resolved
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2307_bare_specifier_not_found() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3269,6 +3268,7 @@ import { something } from "nonexistent-npm-package";
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3334,7 +3334,6 @@ declare module "my-external-lib" {
 
 /// Test that shorthand_ambient_modules prevents TS2307 when module is declared without body
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_shorthand_ambient_module_prevents_ts2307() {
     use crate::parser::ParserState;
 
@@ -3381,7 +3380,6 @@ import data from "./file.json";
 
 /// Test TS2307 for scoped npm package import that cannot be resolved
 #[test]
-#[ignore]
 fn test_ts2307_scoped_package_not_found() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3411,6 +3409,7 @@ import { Component } from "@angular/core";
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3424,7 +3423,7 @@ import { Component } from "@angular/core";
 
 /// Test multiple unresolved imports each emit TS2307
 #[test]
-#[ignore] // TODO: Fix this test
+#[ignore] // TODO: only 1 of 3 TS2307 emitted for multiple unresolved imports
 fn test_ts2307_multiple_unresolved_imports() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3456,6 +3455,7 @@ import * as pkg from "nonexistent-pkg";
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let ts2307_count = checker
@@ -3476,7 +3476,6 @@ import * as pkg from "nonexistent-pkg";
 
 /// Test that TS2307 includes correct module specifier in message
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2307_diagnostic_message_contains_specifier() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3501,6 +3500,7 @@ import { foo } from "./specific-missing-module";
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let ts2307_diag = checker.ctx.diagnostics.iter().find(|d| {
@@ -3518,7 +3518,7 @@ import { foo } from "./specific-missing-module";
 
 /// Test that TS2307 is emitted for dynamic imports with unresolved module specifiers
 #[test]
-#[ignore] // TODO: Fix this test
+#[ignore] // TODO: dynamic import() expressions do not emit TS2307 yet
 fn test_ts2307_dynamic_import_unresolved() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -3546,6 +3546,7 @@ async function loadModule() {
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let ts2307_diag = checker.ctx.diagnostics.iter().find(|d| {
@@ -11286,15 +11287,11 @@ interface Bar {
 
 /// Test typeof with namespace alias member access
 ///
-/// NOTE: Currently ignored - the test uses `import Alias = Ns` syntax which triggers
-/// TS1202 error about import assignments in ES modules. The module system needs
-/// to be updated to handle this case correctly, or the test needs to use a
-/// different syntax.
+/// Test that `typeof Alias.value` resolves to the correct type through
+/// namespace import aliases (`import Alias = Ns`).
 #[test]
-#[ignore = "Import assignment syntax triggers ES module error (TS1202)"]
 fn test_checker_typeof_namespace_alias_member() {
     use crate::parser::ParserState;
-    use crate::solver::{SymbolRef, TypeKey};
 
     let source = r#"
 namespace Ns {
@@ -11327,20 +11324,14 @@ type T = typeof Alias.value;
         checker.ctx.diagnostics
     );
 
-    let ns_sym = binder.file_locals.get("Ns").expect("Ns should exist");
-    let value_sym = binder
-        .get_symbol(ns_sym)
-        .and_then(|symbol| symbol.exports.as_ref())
-        .and_then(|exports| exports.get("value"))
-        .expect("Ns.value should exist");
-
+    // typeof Alias.value should resolve to the literal type 1 (const value = 1)
     let t_sym = binder.file_locals.get("T").expect("T should exist");
     let t_type = checker.get_type_of_symbol(t_sym);
-    let t_key = types.lookup(t_type).expect("T type should exist");
-    match t_key {
-        TypeKey::TypeQuery(SymbolRef(sym_id)) => assert_eq!(sym_id, value_sym.0),
-        other => panic!("Expected T to be typeof Alias.value, got {:?}", other),
-    }
+    assert_eq!(
+        t_type,
+        types.literal_number(1.0),
+        "typeof Alias.value should resolve to literal type 1"
+    );
 }
 
 #[test]
@@ -13174,7 +13165,6 @@ let useIt: T;
 }
 
 #[test]
-#[ignore]
 fn test_value_symbol_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13211,7 +13201,6 @@ let useIt: T;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_function_symbol_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13327,7 +13316,6 @@ let useIt: T;
 }
 
 #[test]
-#[ignore]
 fn test_namespace_value_member_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13366,7 +13354,6 @@ let useIt: T;
 }
 
 #[test]
-#[ignore]
 fn test_namespace_value_member_via_alias_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -16614,11 +16601,8 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
 /// Property access on T where T extends SomeType should resolve properties
 /// from the constraint during access.
 ///
-/// NOTE: Currently ignored - cross-scope generic constraint resolution is not fully
-/// implemented. The checker doesn't correctly resolve constraint properties for generic
-/// types in all cases.
+/// Cross-scope generic constraint resolution: basic constraints, alias chains, and union constraints.
 #[test]
-#[ignore]
 fn test_cross_scope_generic_constraints() {
     use crate::parser::ParserState;
 
@@ -16642,13 +16626,6 @@ function identify<T extends Identifiable>(item: T): number {
 type Entity = { kind: "user"; name: string } | { kind: "bot"; version: number };
 function getKind<T extends Entity>(entity: T): "user" | "bot" {
     return entity.kind; // Should work: both union members have .kind
-}
-
-// Generic with conditional constraint (relates to Application expansion)
-type ExtractId<T> = T extends { id: infer I } ? I : never;
-function extractId<T extends { id: number }>(item: T): ExtractId<T> {
-    // The return type ExtractId<T> should resolve when T is known
-    return item.id as ExtractId<T>; // Cast needed due to conditional complexity
 }
 "#;
 
@@ -16675,16 +16652,53 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Cross-Scope Generic Constraints Diagnostics ===");
-        for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
-        }
-    }
-
     assert!(
         checker.ctx.diagnostics.is_empty(),
         "Constraint property lookup should work: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Cross-scope generic constraint with conditional type using `infer`.
+/// TODO: `infer I` in conditional types doesn't resolve the inferred type parameter correctly.
+#[test]
+#[ignore = "TODO: infer keyword in conditional types not fully implemented"]
+fn test_cross_scope_generic_constraints_conditional_infer() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+type ExtractId<T> = T extends { id: infer I } ? I : never;
+function extractId<T extends { id: number }>(item: T): ExtractId<T> {
+    return item.id as ExtractId<T>;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    assert!(
+        checker.ctx.diagnostics.is_empty(),
+        "Constraint property lookup with infer should work: {:?}",
         checker.ctx.diagnostics
     );
 }
@@ -20874,7 +20888,6 @@ function foo() {
 }
 
 #[test]
-#[ignore]
 fn test_use_before_assignment_for_of_initializer() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -20920,6 +20933,57 @@ function foo(items: number[]) {
     assert_eq!(
         count, 0,
         "Expected no use-before-assignment errors, got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+// Test for-in with external variable: `let k: string; for (k in obj) { k; }`
+#[test]
+fn test_use_before_assignment_for_in_initializer() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+function foo(obj: Record<string, number>) {
+    let k: string;
+    for (k in obj) {
+        k;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED)
+        .count();
+    assert_eq!(
+        count, 0,
+        "Expected no use-before-assignment errors for for-in, got: {:?}",
         checker.ctx.diagnostics
     );
 }
@@ -27314,7 +27378,7 @@ class DuplicateProperties {
 fn test_duplicate_object_literal_properties() {
     use crate::parser::ParserState;
 
-    // Test duplicate properties in object literal
+    // Test duplicate properties in object literal (TS1117 only fires for ES5 target)
     let source = r#"
 const obj = {
     x: 1,
@@ -27335,15 +27399,14 @@ const obj = {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    // TS1117 is only emitted for ES5 and below
-    let mut options = crate::checker::context::CheckerOptions::default();
-    options.target = tsz_common::common::ScriptTarget::ES5;
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.target = tsz_common::common::ScriptTarget::ES5;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        options,
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -27364,6 +27427,7 @@ fn test_duplicate_object_literal_mixed_properties() {
     use crate::parser::ParserState;
 
     // Test duplicate properties with different syntax (shorthand, method)
+    // TS1117 only fires for ES5 target
     let source = r#"
 const obj1 = {
     x: 1,
@@ -27393,15 +27457,14 @@ const obj2 = {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    // TS1117 is only emitted for ES5 and below
-    let mut options = crate::checker::context::CheckerOptions::default();
-    options.target = tsz_common::common::ScriptTarget::ES5;
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.target = tsz_common::common::ScriptTarget::ES5;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        options,
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -29270,7 +29333,6 @@ module MyModule {
 /// When we have `import * as ts from "typescript"` and the module is unresolved,
 /// we should emit TS2307 for the module, but NOT emit TS2304 for uses of `ts.SomeType`.
 #[test]
-#[ignore]
 fn test_unresolved_namespace_import_no_extra_ts2304() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -29310,6 +29372,7 @@ function process(node: ts.Node): void {}
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29346,7 +29409,6 @@ function process(node: ts.Node): void {}
 /// Note: We don't include `console.log` as that would emit TS2304 since console
 /// isn't available without lib.d.ts
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_apisample_pattern_errors() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -29384,14 +29446,17 @@ function createProgram(
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.no_implicit_any = true;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29406,11 +29471,6 @@ function createProgram(
         })
         .count();
     let ts7006_count = codes.iter().filter(|&&c| c == 7006).count();
-
-    println!("Error codes produced: {:?}", codes);
-    println!("  TS2304 (cannot find name): {}", ts2304_count);
-    println!("  TS2307 (cannot find module): {}", ts2307_count);
-    println!("  TS7006 (implicit any param): {}", ts7006_count);
 
     // Should have exactly 1 TS2307 for the unresolved module
     assert_eq!(

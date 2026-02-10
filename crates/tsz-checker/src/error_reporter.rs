@@ -2185,19 +2185,13 @@ impl<'a> CheckerState<'a> {
 
     /// Report TS2749: Symbol refers to a value, but is used as a type.
     pub fn error_value_only_type_at(&mut self, name: &str, idx: NodeIndex) {
-        // In single-file mode, type/value classification can be incomplete
-        // (e.g., class from another file resolves as value-only).
-        // Suppress to prevent false positives.
-        if !self.ctx.report_unresolved_imports {
-            return;
-        }
         if let Some(loc) = self.get_source_location(idx) {
             let message = format_message(
-                diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                diagnostic_messages::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF,
                 &[name],
             );
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                code: diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,

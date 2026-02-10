@@ -310,6 +310,20 @@ impl SourceWriter {
         self.output.is_empty()
     }
 
+    /// Insert a complete line (text + newline) at the given byte offset and line number.
+    /// Shifts all source map mappings at or after the given line by 1.
+    /// The inserted text should NOT include a trailing newline (it's added automatically).
+    pub fn insert_line_at(&mut self, byte_offset: usize, at_line: u32, text: &str) {
+        let line_with_newline = format!("{}{}", text, self.new_line);
+        self.output.insert_str(byte_offset, &line_with_newline);
+        self.line += 1; // Current line shifted by 1
+
+        // Shift all source map mappings at or after the insertion line
+        if let Some(ref mut sm) = self.source_map {
+            sm.shift_generated_lines(at_line, 1);
+        }
+    }
+
     /// Take the source map generator (if any)
     pub fn take_source_map(self) -> Option<SourceMapGenerator> {
         self.source_map
