@@ -13,12 +13,41 @@ impl<'a> Printer<'a> {
         };
 
         self.emit(binary.left);
+
+        // Check if there's a line break between the operator and the right operand
+        // in the source. TypeScript preserves these line breaks.
+        let has_newline_before_right = self.source_text.is_some_and(|text| {
+            if let (Some(left_node), Some(right_node)) =
+                (self.arena.get(binary.left), self.arena.get(binary.right))
+            {
+                let left_end = left_node.end as usize;
+                let right_start = right_node.pos as usize;
+                let end = std::cmp::min(right_start, text.len());
+                let start = std::cmp::min(left_end, end);
+                text[start..end].contains('\n')
+            } else {
+                false
+            }
+        });
+
         // Comma operator: no space before, space after (e.g., `(1, 2, 3)`)
         if binary.operator_token == SyntaxKind::CommaToken as u16 {
-            self.write(", ");
+            if has_newline_before_right {
+                self.write(",");
+                self.write_line();
+            } else {
+                self.write(", ");
+            }
         } else {
             self.write_space();
             self.write(get_operator_text(binary.operator_token));
+            if has_newline_before_right {
+                self.write_line();
+                self.increase_indent();
+                self.emit(binary.right);
+                self.decrease_indent();
+                return;
+            }
             self.write_space();
         }
         self.emit(binary.right);
@@ -291,17 +320,53 @@ impl<'a> Printer<'a> {
             self.emit_comma_separated(&array.elements.nodes);
             self.write("]");
         } else {
-            // TypeScript style: first element on same line as [, subsequent indented
-            self.write("[");
-            self.emit(array.elements.nodes[0]);
-            self.increase_indent();
-            for &elem in &array.elements.nodes[1..] {
-                self.write(",");
+            // Check if the first element is on a new line after '[' in the source.
+            // TypeScript preserves the source formatting:
+            // - `[elem1,\n  elem2]` -> first element on same line
+            // - `[\n  elem1,\n  elem2\n]` -> first element on new line
+            let first_elem_on_new_line = self.source_text.is_some_and(|text| {
+                if let Some(first_elem) = array.elements.nodes.first() {
+                    if let Some(first_node) = self.arena.get(*first_elem) {
+                        let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
+                        let first_pos = first_node.pos as usize;
+                        let end = std::cmp::min(first_pos, text.len());
+                        let start = std::cmp::min(bracket_pos, end);
+                        text[start..end].contains('\n')
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            });
+
+            if first_elem_on_new_line {
+                // Format: [\n  elem1,\n  elem2\n]
+                self.write("[");
+                self.increase_indent();
+                for (i, &elem) in array.elements.nodes.iter().enumerate() {
+                    if i > 0 {
+                        self.write(",");
+                    }
+                    self.write_line();
+                    self.emit(elem);
+                }
                 self.write_line();
-                self.emit(elem);
+                self.decrease_indent();
+                self.write("]");
+            } else {
+                // Format: [elem1,\n  elem2,\n  elem3]
+                self.write("[");
+                self.emit(array.elements.nodes[0]);
+                self.increase_indent();
+                for &elem in &array.elements.nodes[1..] {
+                    self.write(",");
+                    self.write_line();
+                    self.emit(elem);
+                }
+                self.decrease_indent();
+                self.write("]");
             }
-            self.decrease_indent();
-            self.write("]");
         }
     }
 
