@@ -3148,39 +3148,59 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let source_is_callable = function_shape_id(self.interner, source).is_some()
             || callable_shape_id(self.interner, source).is_some();
         if source_is_callable {
+            // Build a source ObjectShape from callable properties for structural comparison
+            let source_props = if let Some(callable_id) = callable_shape_id(self.interner, source) {
+                let callable = self.interner.callable_shape(callable_id);
+                Some(ObjectShape {
+                    flags: ObjectFlags::empty(),
+                    properties: callable.properties.clone(),
+                    string_index: callable.string_index.clone(),
+                    number_index: callable.number_index.clone(),
+                    symbol: callable.symbol,
+                })
+            } else {
+                None
+            };
+
             if let Some(t_shape_id) = object_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 if t_shape.properties.is_empty() {
                     return SubtypeResult::True;
-                } else {
-                    // Trace: Callable not assignable to object with non-empty properties
-                    if let Some(tracer) = &mut self.tracer {
-                        if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                            source_type: source,
-                            target_type: target,
-                        }) {
-                            return SubtypeResult::False;
-                        }
-                    }
-                    return SubtypeResult::False;
                 }
+                // If source is a CallableShape with properties, check structural compatibility
+                if let Some(ref s_shape) = source_props {
+                    return self.check_object_subtype(s_shape, None, &t_shape);
+                }
+                // FunctionShape has no properties - not assignable to non-empty object
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    }) {
+                        return SubtypeResult::False;
+                    }
+                }
+                return SubtypeResult::False;
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 if t_shape.properties.is_empty() {
                     return SubtypeResult::True;
-                } else {
-                    // Trace: Callable not assignable to indexed object with non-empty properties
-                    if let Some(tracer) = &mut self.tracer {
-                        if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                            source_type: source,
-                            target_type: target,
-                        }) {
-                            return SubtypeResult::False;
-                        }
-                    }
-                    return SubtypeResult::False;
                 }
+                // If source is a CallableShape with properties, check structural compatibility
+                if let Some(ref s_shape) = source_props {
+                    return self.check_object_subtype(s_shape, None, &t_shape);
+                }
+                // FunctionShape has no properties - not assignable to non-empty indexed object
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    }) {
+                        return SubtypeResult::False;
+                    }
+                }
+                return SubtypeResult::False;
             }
         }
 
