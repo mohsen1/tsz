@@ -2050,6 +2050,24 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         self.get_def_type_params(def_id)
     }
 
+    fn is_boxed_def_id(&self, def_id: tsz_solver::DefId, kind: tsz_solver::IntrinsicKind) -> bool {
+        if let Ok(env) = self.type_env.try_borrow() {
+            env.is_boxed_def_id(def_id, kind)
+        } else {
+            false
+        }
+    }
+
+    /// Get the boxed interface type for a primitive intrinsic.
+    /// Delegates to the type environment which stores boxed types registered from lib.d.ts.
+    fn get_boxed_type(&self, kind: tsz_solver::IntrinsicKind) -> Option<tsz_solver::TypeId> {
+        if let Ok(env) = self.type_env.try_borrow() {
+            env.get_boxed_type(kind)
+        } else {
+            None
+        }
+    }
+
     /// Get the base class type for a class/interface type.
     ///
     /// This implements the TypeResolver trait method for Best Common Type (BCT) algorithm.

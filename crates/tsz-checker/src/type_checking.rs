@@ -2911,6 +2911,43 @@ impl<'a> CheckerState<'a> {
             if let Some(ty) = array_instance_type {
                 env.set_array_base_type(ty, array_type_params);
             }
+
+            // 3. Register DefId mappings for non-generic boxed types.
+            // When user code writes `a: Function`, the type annotation creates a
+            // Lazy(DefId) referencing the global Function symbol. The CallEvaluator
+            // uses TypeEnvironment as its resolver, which resolves Lazy types via
+            // def_types. Without this registration, Lazy(DefId) for Function can't
+            // be resolved, causing false TS2345/TS2322 errors.
+            let boxed_names: &[(&str, Option<TypeId>, IntrinsicKind)] = &[
+                ("String", string_type, IntrinsicKind::String),
+                ("Number", number_type, IntrinsicKind::Number),
+                ("Boolean", boolean_type, IntrinsicKind::Boolean),
+                ("Symbol", symbol_type, IntrinsicKind::Symbol),
+                ("BigInt", bigint_type, IntrinsicKind::Bigint),
+                ("Object", object_type, IntrinsicKind::Object),
+                ("Function", function_type, IntrinsicKind::Function),
+            ];
+            for &(name, type_opt, kind) in boxed_names {
+                if let Some(ty) = type_opt {
+                    // Register DefIds from ALL lib contexts, not just the first.
+                    // Multiple lib files (es5, es2015, etc.) each have their own
+                    // symbol for types like Function, String, etc. User code can
+                    // reference any of them, so all must resolve to the same type.
+                    for ctx in self.ctx.lib_contexts.iter() {
+                        if let Some(sym_id) = ctx.binder.file_locals.get(name) {
+                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            env.insert_def(def_id, ty);
+                            env.register_boxed_def_id(kind, def_id);
+                        }
+                    }
+                    // Also register from current file's binder (for global augmentations)
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        env.insert_def(def_id, ty);
+                        env.register_boxed_def_id(kind, def_id);
+                    }
+                }
+            }
         }
     }
 
