@@ -433,8 +433,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS1100: Invalid use of 'arguments'/'eval' in strict mode
-        // Only applies when targeting ES5 or below; ES2015+ relaxed these restrictions
-        if self.ctx.compiler_options.always_strict && self.ctx.compiler_options.target.is_es5() {
+        // Applies regardless of target when alwaysStrict is enabled
+        if self.ctx.compiler_options.always_strict {
             if let Some(ref name) = var_name {
                 if name == "arguments" || name == "eval" {
                     use crate::types::diagnostics::diagnostic_codes;
@@ -1291,14 +1291,15 @@ impl<'a> CheckerState<'a> {
 
     /// Check if an assignment target is a readonly property.
     /// Reports error TS2540 if trying to assign to a readonly property.
+    /// Returns `true` if a readonly error was emitted (caller should skip further type checks).
     #[tracing::instrument(skip(self), fields(target_idx = target_idx.0))]
     pub(crate) fn check_readonly_assignment(
         &mut self,
         target_idx: NodeIndex,
         _expr_idx: NodeIndex,
-    ) {
+    ) -> bool {
         let Some(target_node) = self.ctx.arena.get(target_idx) else {
-            return;
+            return false;
         };
 
         match target_node.kind {
@@ -1310,7 +1311,7 @@ impl<'a> CheckerState<'a> {
                         || object_type == TypeId::UNKNOWN
                         || object_type == TypeId::ERROR
                     {
-                        return;
+                        return false;
                     }
 
                     let index_type = self.get_type_of_node(access.name_or_argument);
@@ -1320,20 +1321,28 @@ impl<'a> CheckerState<'a> {
                         index_type,
                     ) {
                         self.error_readonly_property_at(&name, target_idx);
+                        return true;
+                    }
+                    // Also check namespace const exports via element access (M["x"])
+                    if let Some(name) = self.get_literal_string_from_node(access.name_or_argument) {
+                        if self.is_namespace_const_property(access.expression, &name) {
+                            self.error_readonly_property_at(&name, target_idx);
+                            return true;
+                        }
                     }
                 }
-                return;
+                return false;
             }
-            _ => return,
+            _ => return false,
         }
 
         let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
-            return;
+            return false;
         };
 
         // Get the property name
         let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
-            return;
+            return false;
         };
 
         // Check if this is a private identifier (method or field)
@@ -1342,7 +1351,7 @@ impl<'a> CheckerState<'a> {
             let prop_name = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 ident.escaped_text.clone()
             } else {
-                return;
+                return false;
             };
 
             // Check if this private identifier is a method (not a field)
@@ -1364,13 +1373,13 @@ impl<'a> CheckerState<'a> {
 
                 if is_method {
                     self.error_private_method_not_writable(&prop_name, target_idx);
-                    return;
+                    return true;
                 }
             }
         }
 
         let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-            return;
+            return false;
         };
 
         let prop_name = ident.escaped_text.clone();
@@ -1389,7 +1398,7 @@ impl<'a> CheckerState<'a> {
         if !property_exists {
             // Property doesn't exist on this type - skip readonly check
             // The property existence error (TS2339) is reported elsewhere
-            return;
+            return false;
         }
 
         // Check if the property is readonly in the object type (solver types)
@@ -1397,11 +1406,11 @@ impl<'a> CheckerState<'a> {
             // Special case: readonly properties can be assigned in constructors
             // if the property is declared in the current class (not inherited)
             if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression) {
-                return;
+                return false;
             }
 
             self.error_readonly_property_at(&prop_name, target_idx);
-            return;
+            return true;
         }
 
         // Also check AST-level readonly on class properties
@@ -1412,11 +1421,78 @@ impl<'a> CheckerState<'a> {
             // Special case: readonly properties can be assigned in constructors
             // if the property is declared in the current class (not inherited)
             if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression) {
-                return;
+                return false;
             }
 
             self.error_readonly_property_at(&prop_name, target_idx);
+            return true;
         }
+
+        // Check if the property is a const export from a namespace/module (TS2540).
+        // For `M.x = 1` where `export const x = 0` in namespace M.
+        if self.is_namespace_const_property(access.expression, &prop_name) {
+            self.error_readonly_property_at(&prop_name, target_idx);
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if a property access refers to a `const` export from a namespace or module.
+    ///
+    /// For expressions like `M.x` where `namespace M { export const x = 0; }`,
+    /// the property `x` should be treated as readonly (TS2540).
+    fn is_namespace_const_property(&self, object_expr: NodeIndex, prop_name: &str) -> bool {
+        self.is_namespace_const_property_inner(object_expr, prop_name)
+            .unwrap_or(false)
+    }
+
+    fn is_namespace_const_property_inner(
+        &self,
+        object_expr: NodeIndex,
+        prop_name: &str,
+    ) -> Option<bool> {
+        use tsz_binder::symbol_flags;
+
+        // Resolve the object expression to a symbol (e.g., M -> namespace symbol)
+        let sym_id = self.resolve_identifier_symbol(object_expr)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+        // Must be a namespace/module symbol
+        if symbol.flags & symbol_flags::MODULE == 0 {
+            return Some(false);
+        }
+
+        // Look up the property in the namespace's exports
+        let member_sym_id = symbol.exports.as_ref()?.get(prop_name)?;
+        let member_symbol = self.ctx.binder.get_symbol(member_sym_id)?;
+
+        // Check if the member is a block-scoped variable (const/let)
+        if member_symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE == 0 {
+            return Some(false);
+        }
+
+        // Check if its value declaration has the CONST flag
+        let value_decl = member_symbol.value_declaration;
+        if value_decl.is_none() {
+            return Some(false);
+        }
+
+        let decl_node = self.ctx.arena.get(value_decl)?;
+        let mut decl_flags = decl_node.flags as u32;
+
+        // If CONST flag not directly on node, check parent (VariableDeclarationList)
+        use tsz_parser::parser::flags::node_flags;
+        if (decl_flags & node_flags::CONST) == 0 {
+            if let Some(ext) = self.ctx.arena.get_extended(value_decl)
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            {
+                decl_flags |= parent_node.flags as u32;
+            }
+        }
+
+        Some(decl_flags & node_flags::CONST != 0)
     }
 
     /// Check if a readonly property assignment is allowed in the current constructor context.
