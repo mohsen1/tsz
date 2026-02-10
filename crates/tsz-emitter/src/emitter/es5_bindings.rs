@@ -1846,6 +1846,66 @@ impl<'a> Printer<'a> {
                 }
             }
             self.write_semicolon();
+        } else if init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        {
+            // Assignment destructuring pattern in for-of: {name: nameA} or [, nameA]
+            // Lower to: nameA = element_expr.name or nameA = element_expr[1]
+            let mut first = true;
+            match init_node.kind {
+                k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                    if let Some(lit) = self.arena.get_literal_expr(init_node) {
+                        let elem_count = lit.elements.nodes.len();
+                        if elem_count > 1 {
+                            // Multi-element: need temp
+                            let temp = self.make_unique_name_hoisted();
+                            self.write(&temp);
+                            self.write(" = ");
+                            self.write(&element_expr);
+                            first = false;
+                            self.emit_assignment_array_destructuring(
+                                &lit.elements.nodes,
+                                &temp,
+                                &mut first,
+                                None,
+                            );
+                        } else {
+                            // Single element: inline
+                            self.emit_assignment_array_destructuring(
+                                &lit.elements.nodes,
+                                &element_expr,
+                                &mut first,
+                                None,
+                            );
+                        }
+                    }
+                }
+                _ => {
+                    // Object pattern
+                    if let Some(lit) = self.arena.get_literal_expr(init_node) {
+                        let elem_count = lit.elements.nodes.len();
+                        if elem_count > 1 {
+                            let temp = self.make_unique_name_hoisted();
+                            self.write(&temp);
+                            self.write(" = ");
+                            self.write(&element_expr);
+                            first = false;
+                            self.emit_assignment_object_destructuring(
+                                &lit.elements.nodes,
+                                &temp,
+                                &mut first,
+                            );
+                        } else {
+                            self.emit_assignment_object_destructuring(
+                                &lit.elements.nodes,
+                                &element_expr,
+                                &mut first,
+                            );
+                        }
+                    }
+                }
+            }
+            self.write_semicolon();
         } else {
             self.emit_expression(initializer);
             self.write(" = ");
