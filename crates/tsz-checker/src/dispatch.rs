@@ -341,6 +341,38 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             expr_type
                         } else {
                             // `expr as T` / `<T>expr` yields `T`.
+                            // TS2352: Check if conversion may be a mistake (types don't sufficiently overlap)
+                            self.checker.ensure_application_symbols_resolved(expr_type);
+                            self.checker
+                                .ensure_application_symbols_resolved(asserted_type);
+
+                            // Don't check if either type is error, any, unknown, or never
+                            let should_check = !self.checker.type_contains_error(expr_type)
+                                && !self.checker.type_contains_error(asserted_type)
+                                && expr_type != TypeId::ANY
+                                && asserted_type != TypeId::ANY
+                                && expr_type != TypeId::UNKNOWN
+                                && asserted_type != TypeId::UNKNOWN
+                                && expr_type != TypeId::NEVER
+                                && asserted_type != TypeId::NEVER;
+
+                            if should_check {
+                                // TS2352 is emitted if neither type is assignable to the other
+                                // (i.e., the types don't "sufficiently overlap")
+                                let source_to_target =
+                                    self.checker.is_assignable_to(expr_type, asserted_type);
+                                let target_to_source =
+                                    self.checker.is_assignable_to(asserted_type, expr_type);
+
+                                if !source_to_target && !target_to_source {
+                                    self.checker.error_type_assertion_no_overlap(
+                                        expr_type,
+                                        asserted_type,
+                                        idx,
+                                    );
+                                }
+                            }
+
                             asserted_type
                         }
                     }

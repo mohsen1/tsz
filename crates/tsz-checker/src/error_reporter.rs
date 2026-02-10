@@ -2365,6 +2365,33 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS2352: Conversion of type 'X' to type 'Y' may be a mistake because neither type
+    /// sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+    pub fn error_type_assertion_no_overlap(
+        &mut self,
+        source_type: TypeId,
+        target_type: TypeId,
+        idx: NodeIndex,
+    ) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let source_str = self.format_type(source_type);
+            let target_str = self.format_type(target_type);
+            let message = format_message(
+                diagnostic_messages::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
+                &[&source_str, &target_str],
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                start: loc.start,
+                length: loc.length(),
+                file: self.ctx.file_name.clone(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
     // =========================================================================
     // Diagnostic Utilities
     // =========================================================================
