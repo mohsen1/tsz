@@ -261,38 +261,18 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // ES5: Transform enum to IIFE pattern
-        // ES6+: Emit TypeScript-style enum (valid in ES6+ targets)
-        if self.ctx.target_es5 {
-            let mut transformer = EnumES5Transformer::new(self.arena);
-            if let Some(ir) = transformer.transform_enum(idx) {
-                let mut printer = IRPrinter::with_arena(self.arena);
-                printer.set_indent_level(self.writer.indent_level());
-                if let Some(source_text) = self.source_text_for_map() {
-                    printer.set_source_text(source_text);
-                }
-                self.write(&printer.emit(&ir));
-                return;
+        // Always transform enum to IIFE pattern (enums are TypeScript syntax,
+        // not valid JavaScript, so they must be lowered for all targets)
+        let mut transformer = EnumES5Transformer::new(self.arena);
+        if let Some(ir) = transformer.transform_enum(idx) {
+            let mut printer = IRPrinter::with_arena(self.arena);
+            printer.set_indent_level(self.writer.indent_level());
+            if let Some(source_text) = self.source_text_for_map() {
+                printer.set_source_text(source_text);
             }
-            // If transformer returns None (e.g., const enum), emit nothing
-            return;
+            self.write(&printer.emit(&ir));
         }
-
-        // ES6+: Emit TypeScript-style enum
-        self.write("enum ");
-        self.emit(enum_decl.name);
-        self.write(" {");
-        self.write_line();
-        self.increase_indent();
-
-        for &member_idx in &enum_decl.members.nodes {
-            self.emit(member_idx);
-            self.write(",");
-            self.write_line();
-        }
-
-        self.decrease_indent();
-        self.write("}");
+        // If transformer returns None (e.g., const enum), emit nothing
     }
 
     pub(super) fn emit_enum_member(&mut self, node: &Node) {
@@ -400,8 +380,9 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // ES5 target: Transform namespace to IIFE pattern
-        if self.ctx.target_es5 {
+        // Always transform namespace/module to IIFE pattern (namespace is
+        // TypeScript syntax, not valid JavaScript, must be lowered for all targets)
+        {
             use crate::transforms::NamespaceES5Emitter;
             let mut es5_emitter = NamespaceES5Emitter::new(self.arena);
             es5_emitter.set_indent_level(self.writer.indent_level());
@@ -410,14 +391,7 @@ impl<'a> Printer<'a> {
             }
             let output = es5_emitter.emit_namespace(idx);
             self.write(output.trim_end_matches('\n'));
-            return;
         }
-
-        // ES6 target: Emit namespace keyword directly
-        self.write("namespace ");
-        self.emit(module.name);
-        self.write(" ");
-        self.emit(module.body);
     }
 
     // =========================================================================
