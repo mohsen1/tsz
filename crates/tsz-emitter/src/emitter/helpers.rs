@@ -132,16 +132,24 @@ impl<'a> Printer<'a> {
     /// or any previously generated temp name. Uses a single global counter like TypeScript.
     ///
     /// Generates names: _a, _b, _c, ..., _z, _0, _1, ...
-    /// Skips names that appear in `file_identifiers` or `generated_temp_names`.
+    /// Skips counts 8 (_i) and 13 (_n) which TypeScript reserves for dedicated TempFlags.
+    /// Also skips names that appear in `file_identifiers` or `generated_temp_names`.
     pub(super) fn make_unique_name(&mut self) -> String {
         loop {
             let counter = self.ctx.destructuring_state.temp_var_counter;
+            self.ctx.destructuring_state.temp_var_counter += 1;
+
+            // TypeScript skips counts 8 (_i) and 13 (_n) - these are reserved for
+            // dedicated TempFlags._i and TempFlags._n used by specific transforms
+            if counter < 26 && (counter == 8 || counter == 13) {
+                continue;
+            }
+
             let name = if counter < 26 {
                 format!("_{}", (b'a' + counter as u8) as char)
             } else {
                 format!("_{}", counter - 26)
             };
-            self.ctx.destructuring_state.temp_var_counter += 1;
 
             if !self.file_identifiers.contains(&name) && !self.generated_temp_names.contains(&name)
             {

@@ -33,7 +33,294 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Count effective (non-omitted) bindings in a destructuring pattern
+    fn count_effective_bindings(&self, pattern_node: &Node) -> (usize, bool) {
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return (0, false);
+        };
+        let mut count = 0;
+        let mut has_rest = false;
+        for &elem_idx in &pattern.elements.nodes {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if elem.dot_dot_dot_token {
+                has_rest = true;
+            } else {
+                count += 1;
+            }
+        }
+        (count, has_rest)
+    }
+
+    /// For single-binding array patterns with complex expressions,
+    /// find the single effective binding's index and emit inline.
+    fn emit_single_array_binding_inline(
+        &mut self,
+        pattern_node: &Node,
+        initializer: NodeIndex,
+        first: &mut bool,
+    ) -> bool {
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+
+        // TypeScript only inlines when the single binding is at index 0
+        // (no preceding omitted elements). For [, x] it uses a temp.
+        let first_elem = pattern.elements.nodes.first().copied();
+        let Some(first_elem_idx) = first_elem else {
+            return false;
+        };
+        if first_elem_idx.is_none() {
+            return false; // First element is omitted, can't inline
+        }
+        let Some(first_elem_node) = self.arena.get(first_elem_idx) else {
+            return false;
+        };
+        let Some(first_elem_data) = self.arena.get_binding_element(first_elem_node) else {
+            return false;
+        };
+        if first_elem_data.dot_dot_dot_token {
+            return false;
+        }
+        if self.is_binding_pattern(first_elem_data.name) {
+            return false;
+        }
+        if !self.has_identifier_text(first_elem_data.name) {
+            return false;
+        }
+
+        let binding_idx = Some((first_elem_idx, 0usize, first_elem_data.initializer));
+        let binding_array_index = 0;
+
+        let Some((_elem_idx, _idx, initializer_default)) = binding_idx else {
+            return false;
+        };
+
+        // Find the binding element data again
+        let elem_idx = pattern
+            .elements
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(i, n)| *i == binding_array_index && !n.is_none())
+            .map(|(_, &n)| n);
+        let Some(elem_idx) = elem_idx else {
+            return false;
+        };
+        let Some(elem_node) = self.arena.get(elem_idx) else {
+            return false;
+        };
+        let Some(elem) = self.arena.get_binding_element(elem_node) else {
+            return false;
+        };
+
+        if initializer_default.is_none() {
+            // Simple case: name = expr[index]
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write_identifier_text(elem.name);
+            self.write(" = ");
+            self.emit(initializer);
+            self.write("[");
+            self.write_usize(binding_array_index);
+            self.write("]");
+        } else {
+            // Default value case: _a = expr[index], name = _a === void 0 ? default : _a
+            let value_name = self.get_temp_var_name();
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write(&value_name);
+            self.write(" = ");
+            self.emit(initializer);
+            self.write("[");
+            self.write_usize(binding_array_index);
+            self.write("]");
+            self.write(", ");
+            self.write_identifier_text(elem.name);
+            self.write(" = ");
+            self.write(&value_name);
+            self.write(" === void 0 ? ");
+            self.emit_expression(initializer_default);
+            self.write(" : ");
+            self.write(&value_name);
+        }
+        true
+    }
+
+    /// For rest-only array patterns [...rest] = expr, emit: rest = expr.slice(0)
+    /// TypeScript inlines this without a temp variable for any expression type.
+    fn emit_rest_only_array_inline(
+        &mut self,
+        pattern_node: &Node,
+        initializer: NodeIndex,
+        first: &mut bool,
+    ) -> bool {
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+
+        // Find the rest element (should be the only element)
+        let mut rest_name_idx = NodeIndex::NONE;
+        for &elem_idx in &pattern.elements.nodes {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if elem.dot_dot_dot_token {
+                rest_name_idx = elem.name;
+                break;
+            }
+        }
+
+        if rest_name_idx.is_none() {
+            return false;
+        }
+        if !self.has_identifier_text(rest_name_idx) {
+            return false;
+        }
+
+        // Emit: rest = expr.slice(0)
+        if !*first {
+            self.write(", ");
+        }
+        *first = false;
+        self.write_identifier_text(rest_name_idx);
+        self.write(" = ");
+        self.emit(initializer);
+        self.write(".slice(0)");
+        true
+    }
+
+    /// Inline a single-element array pattern at index 0 from a string expression.
+    /// [x] from expr → x = expr[0]
+    fn try_emit_single_inline_from_expr(
+        &mut self,
+        pattern_node: &Node,
+        expr: &str,
+        first: &mut bool,
+    ) -> bool {
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+        // Must be first element, not omitted
+        let first_elem = pattern.elements.nodes.first().copied();
+        let Some(first_elem_idx) = first_elem else {
+            return false;
+        };
+        if first_elem_idx.is_none() {
+            return false;
+        }
+        let Some(first_elem_node) = self.arena.get(first_elem_idx) else {
+            return false;
+        };
+        let Some(first_elem_data) = self.arena.get_binding_element(first_elem_node) else {
+            return false;
+        };
+        if first_elem_data.dot_dot_dot_token || self.is_binding_pattern(first_elem_data.name) {
+            return false;
+        }
+        if !self.has_identifier_text(first_elem_data.name) {
+            return false;
+        }
+
+        if first_elem_data.initializer.is_none() {
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write_identifier_text(first_elem_data.name);
+            self.write(" = ");
+            self.write(expr);
+            self.write("[0]");
+        } else {
+            let value_name = self.get_temp_var_name();
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write(&value_name);
+            self.write(" = ");
+            self.write(expr);
+            self.write("[0]");
+            self.write(", ");
+            self.write_identifier_text(first_elem_data.name);
+            self.write(" = ");
+            self.write(&value_name);
+            self.write(" === void 0 ? ");
+            self.emit_expression(first_elem_data.initializer);
+            self.write(" : ");
+            self.write(&value_name);
+        }
+        true
+    }
+
+    /// Inline a rest-only array pattern from a string expression.
+    /// [...rest] from expr → rest = expr.slice(0)
+    fn try_emit_rest_only_from_expr(
+        &mut self,
+        pattern_node: &Node,
+        expr: &str,
+        first: &mut bool,
+    ) -> bool {
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+        for &elem_idx in &pattern.elements.nodes {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if elem.dot_dot_dot_token && self.has_identifier_text(elem.name) {
+                if !*first {
+                    self.write(", ");
+                }
+                *first = false;
+                self.write_identifier_text(elem.name);
+                self.write(" = ");
+                self.write(expr);
+                self.write(".slice(0)");
+                return true;
+            }
+        }
+        false
+    }
+
     /// Emit ES5 destructuring: { x, y } = obj → _a = obj, x = _a.x, y = _a.y
+    /// When the initializer is a simple identifier, TypeScript skips the temp variable
+    /// and uses the identifier directly: var [, name] = robot → var name = robot[1]
     fn emit_es5_destructuring(&mut self, decl_idx: NodeIndex, first: &mut bool) {
         let Some(decl_node) = self.arena.get(decl_idx) else {
             return;
@@ -45,19 +332,51 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Get temp variable name
-        let temp_name = self.get_temp_var_name();
+        // Check if the initializer is a simple identifier - if so, skip temp variable
+        let is_simple_ident = self
+            .arena
+            .get(decl.initializer)
+            .map(|n| n.kind == SyntaxKind::Identifier as u16)
+            .unwrap_or(false);
 
-        // Emit temp variable assignment: _a = initializer
-        if !*first {
-            self.write(", ");
+        if is_simple_ident {
+            // Use the identifier directly without temp variable
+            let ident_text = self.get_identifier_text(decl.initializer);
+            self.emit_es5_destructuring_pattern_direct(pattern_node, &ident_text, first);
+        } else {
+            // For complex expressions: check if single binding at index 0 → inline
+            // TypeScript only inlines [x] = expr → x = expr[0], not [, x] = expr
+            let (effective_count, has_rest) = self.count_effective_bindings(pattern_node);
+            if effective_count == 1
+                && !has_rest
+                && self.emit_single_array_binding_inline(pattern_node, decl.initializer, first)
+            {
+                return;
+            }
+
+            // Rest-only array pattern: [...rest] = expr → rest = expr.slice(0)
+            // TypeScript inlines this without a temp variable for any expression
+            if effective_count == 0
+                && has_rest
+                && self.emit_rest_only_array_inline(pattern_node, decl.initializer, first)
+            {
+                return;
+            }
+
+            // Complex expression with multiple bindings: need temp variable
+            let temp_name = self.get_temp_var_name();
+
+            // Emit temp variable assignment: _a = initializer
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write(&temp_name);
+            self.write(" = ");
+            self.emit(decl.initializer);
+
+            self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
         }
-        *first = false;
-        self.write(&temp_name);
-        self.write(" = ");
-        self.emit(decl.initializer);
-
-        self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
     }
 
     #[allow(dead_code)]
@@ -129,18 +448,23 @@ impl<'a> Printer<'a> {
             self.write(" = ");
             self.emit_assignment_target_es5(key_idx, temp_name);
 
-            if !elem.initializer.is_none() {
+            // When there's a default, create a NEW temp for the defaulted value
+            let pattern_temp = if !elem.initializer.is_none() {
+                let defaulted_name = self.get_temp_var_name();
                 self.write(", ");
-                self.write(&value_name);
+                self.write(&defaulted_name);
                 self.write(" = ");
                 self.write(&value_name);
                 self.write(" === void 0 ? ");
                 self.emit_expression(elem.initializer);
                 self.write(" : ");
                 self.write(&value_name);
-            }
+                defaulted_name
+            } else {
+                value_name
+            };
 
-            self.emit_es5_destructuring_pattern_idx(elem.name, &value_name);
+            self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
             return;
         }
 
@@ -200,18 +524,23 @@ impl<'a> Printer<'a> {
             self.write_usize(index);
             self.write("]");
 
-            if !elem.initializer.is_none() {
+            // When there's a default, create a NEW temp for the defaulted value
+            let pattern_temp = if !elem.initializer.is_none() {
+                let defaulted_name = self.get_temp_var_name();
                 self.write(", ");
-                self.write(&value_name);
+                self.write(&defaulted_name);
                 self.write(" = ");
                 self.write(&value_name);
                 self.write(" === void 0 ? ");
                 self.emit_expression(elem.initializer);
                 self.write(" : ");
                 self.write(&value_name);
-            }
+                defaulted_name
+            } else {
+                value_name
+            };
 
-            self.emit_es5_destructuring_pattern_idx(elem.name, &value_name);
+            self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
             return;
         }
 
@@ -231,6 +560,204 @@ impl<'a> Printer<'a> {
         } else {
             let value_name = self.get_temp_var_name();
             self.write(", ");
+            self.write(&value_name);
+            self.write(" = ");
+            self.write(temp_name);
+            self.write("[");
+            self.write_usize(index);
+            self.write("]");
+            self.write(", ");
+            self.write_identifier_text(elem.name);
+            self.write(" = ");
+            self.write(&value_name);
+            self.write(" === void 0 ? ");
+            self.emit_expression(elem.initializer);
+            self.write(" : ");
+            self.write(&value_name);
+        }
+    }
+
+    /// Like emit_es5_binding_element but with first flag for separator control
+    fn emit_es5_binding_element_direct(
+        &mut self,
+        elem_idx: NodeIndex,
+        temp_name: &str,
+        first: &mut bool,
+    ) {
+        let Some(elem_node) = self.arena.get(elem_idx) else {
+            return;
+        };
+        let Some(elem) = self.arena.get_binding_element(elem_node) else {
+            return;
+        };
+        if elem.dot_dot_dot_token {
+            return;
+        }
+
+        let Some(key_idx) = self.get_binding_element_property_key(elem) else {
+            return;
+        };
+
+        if self.is_binding_pattern(elem.name) {
+            let value_name = self.get_temp_var_name();
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write(&value_name);
+            self.write(" = ");
+            self.emit_assignment_target_es5(key_idx, temp_name);
+
+            // When there's a default, create a NEW temp for the defaulted value
+            let pattern_temp = if !elem.initializer.is_none() {
+                let defaulted_name = self.get_temp_var_name();
+                self.write(", ");
+                self.write(&defaulted_name);
+                self.write(" = ");
+                self.write(&value_name);
+                self.write(" === void 0 ? ");
+                self.emit_expression(elem.initializer);
+                self.write(" : ");
+                self.write(&value_name);
+                defaulted_name
+            } else {
+                value_name
+            };
+
+            self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
+            return;
+        }
+
+        if !self.has_identifier_text(elem.name) {
+            return;
+        }
+
+        if elem.initializer.is_none() {
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write_identifier_text(elem.name);
+            self.write(" = ");
+            self.emit_assignment_target_es5(key_idx, temp_name);
+        } else {
+            let value_name = self.get_temp_var_name();
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write(&value_name);
+            self.write(" = ");
+            self.emit_assignment_target_es5(key_idx, temp_name);
+            self.write(", ");
+            self.write_identifier_text(elem.name);
+            self.write(" = ");
+            self.write(&value_name);
+            self.write(" === void 0 ? ");
+            self.emit_expression(elem.initializer);
+            self.write(" : ");
+            self.write(&value_name);
+        }
+    }
+
+    /// Like emit_es5_array_binding_element but with first flag for separator control
+    fn emit_es5_array_binding_element_direct(
+        &mut self,
+        elem_idx: NodeIndex,
+        temp_name: &str,
+        index: usize,
+        first: &mut bool,
+    ) {
+        let Some(elem_node) = self.arena.get(elem_idx) else {
+            return;
+        };
+        let Some(elem) = self.arena.get_binding_element(elem_node) else {
+            return;
+        };
+
+        if elem.dot_dot_dot_token {
+            // Rest element: , restName = temp.slice(index)
+            if !self.has_identifier_text(elem.name) && !self.is_binding_pattern(elem.name) {
+                return;
+            }
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            if self.is_binding_pattern(elem.name) {
+                let value_name = self.get_temp_var_name();
+                self.write(&value_name);
+                self.write(" = ");
+                self.write(temp_name);
+                self.write(".slice(");
+                self.write_usize(index);
+                self.write(")");
+                self.emit_es5_destructuring_pattern_idx(elem.name, &value_name);
+            } else {
+                self.write_identifier_text(elem.name);
+                self.write(" = ");
+                self.write(temp_name);
+                self.write(".slice(");
+                self.write_usize(index);
+                self.write(")");
+            }
+            return;
+        }
+
+        if self.is_binding_pattern(elem.name) {
+            let value_name = self.get_temp_var_name();
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write(&value_name);
+            self.write(" = ");
+            self.write(temp_name);
+            self.write("[");
+            self.write_usize(index);
+            self.write("]");
+
+            // When there's a default, create a NEW temp for the defaulted value
+            let pattern_temp = if !elem.initializer.is_none() {
+                let defaulted_name = self.get_temp_var_name();
+                self.write(", ");
+                self.write(&defaulted_name);
+                self.write(" = ");
+                self.write(&value_name);
+                self.write(" === void 0 ? ");
+                self.emit_expression(elem.initializer);
+                self.write(" : ");
+                self.write(&value_name);
+                defaulted_name
+            } else {
+                value_name
+            };
+
+            self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
+            return;
+        }
+
+        if !self.has_identifier_text(elem.name) {
+            return;
+        }
+
+        if elem.initializer.is_none() {
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write_identifier_text(elem.name);
+            self.write(" = ");
+            self.write(temp_name);
+            self.write("[");
+            self.write_usize(index);
+            self.write("]");
+        } else {
+            let value_name = self.get_temp_var_name();
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
             self.write(&value_name);
             self.write(" = ");
             self.write(temp_name);
@@ -275,6 +802,49 @@ impl<'a> Printer<'a> {
         {
             for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
                 self.emit_es5_array_binding_element(elem_idx, temp_name, i);
+            }
+        }
+    }
+
+    /// Like emit_es5_destructuring_pattern but handles the `first` flag for the first
+    /// non-omitted element, allowing it to be emitted without a `, ` prefix.
+    /// Used when the initializer is a simple identifier and no temp variable is needed.
+    fn emit_es5_destructuring_pattern_direct(
+        &mut self,
+        pattern_node: &Node,
+        ident_name: &str,
+        first: &mut bool,
+    ) {
+        if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+                return;
+            };
+            let rest_props = self.collect_object_rest_props(pattern);
+            for &elem_idx in &pattern.elements.nodes {
+                if elem_idx.is_none() {
+                    continue;
+                }
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    continue;
+                };
+                let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                    continue;
+                };
+                if elem.dot_dot_dot_token {
+                    if !*first {
+                        // rest element always needs separator
+                    }
+                    self.emit_es5_object_rest_element(elem, &rest_props, ident_name);
+                    *first = false;
+                } else {
+                    self.emit_es5_binding_element_direct(elem_idx, ident_name, first);
+                }
+            }
+        } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            && let Some(pattern) = self.arena.get_binding_pattern(pattern_node)
+        {
+            for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+                self.emit_es5_array_binding_element_direct(elem_idx, ident_name, i, first);
             }
         }
     }
@@ -946,20 +1516,28 @@ impl<'a> Printer<'a> {
         };
 
         // Derive array name from expression:
-        // - Simple identifier `arr` -> `arr_1` (doesn't consume counter)
+        // - Simple identifier `arr` -> `arr_1`, `arr_2`, etc. (doesn't consume counter)
         // - Complex expression -> `_a`, `_b`, etc. (from global counter)
         let array_name = if let Some(expr_node) = self.arena.get(for_in_of.expression) {
             if expr_node.kind == SyntaxKind::Identifier as u16 {
                 if let Some(ident) = self.arena.get_identifier(expr_node) {
                     let name = self.arena.resolve_identifier_text(ident).to_string();
-                    let candidate = format!("{}_1", name);
-                    if self.file_identifiers.contains(&candidate)
-                        || self.generated_temp_names.contains(&candidate)
-                    {
-                        self.make_unique_name()
-                    } else {
+                    // Try incrementing suffixes: name_1, name_2, name_3, ...
+                    let mut found = None;
+                    for suffix in 1..=100 {
+                        let candidate = format!("{}_{}", name, suffix);
+                        if !self.file_identifiers.contains(&candidate)
+                            && !self.generated_temp_names.contains(&candidate)
+                        {
+                            found = Some(candidate);
+                            break;
+                        }
+                    }
+                    if let Some(candidate) = found {
                         self.generated_temp_names.insert(candidate.clone());
                         candidate
+                    } else {
+                        self.make_unique_name()
                     }
                 } else {
                     self.make_unique_name()
@@ -1156,13 +1734,84 @@ impl<'a> Printer<'a> {
                     if let Some(decl_node) = self.arena.get(decl_idx)
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
-                        if !first {
-                            self.write(", ");
+                        if self.is_binding_pattern(decl.name) {
+                            if let Some(pattern_node) = self.arena.get(decl.name) {
+                                // Object patterns: for single-property patterns, use element_expr
+                                // directly. For multi-property, create a temp.
+                                if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+                                    let (obj_count, obj_rest) =
+                                        self.count_effective_bindings(pattern_node);
+                                    if obj_count <= 1 && !obj_rest {
+                                        // Single property: var nameA = robots_1[_i].name
+                                        self.emit_es5_destructuring_pattern_direct(
+                                            pattern_node,
+                                            &element_expr,
+                                            &mut first,
+                                        );
+                                    } else {
+                                        // Multi property: var _p = robots_1[_o], nameA = _p.name, skillA = _p.skill
+                                        let temp_name = self.get_temp_var_name();
+                                        if !first {
+                                            self.write(", ");
+                                        }
+                                        first = false;
+                                        self.write(&temp_name);
+                                        self.write(" = ");
+                                        self.write(&element_expr);
+                                        self.emit_es5_destructuring_pattern(
+                                            pattern_node,
+                                            &temp_name,
+                                        );
+                                    }
+                                    continue;
+                                }
+
+                                let (effective_count, has_rest) =
+                                    self.count_effective_bindings(pattern_node);
+
+                                // Single element at index 0: inline as name = arr[idx][0]
+                                if effective_count == 1 && !has_rest {
+                                    if self.try_emit_single_inline_from_expr(
+                                        pattern_node,
+                                        &element_expr,
+                                        &mut first,
+                                    ) {
+                                        continue;
+                                    }
+                                }
+
+                                // Rest-only: inline as name = arr[idx].slice(0)
+                                if effective_count == 0 && has_rest {
+                                    if self.try_emit_rest_only_from_expr(
+                                        pattern_node,
+                                        &element_expr,
+                                        &mut first,
+                                    ) {
+                                        continue;
+                                    }
+                                }
+
+                                // Multi-binding or complex: create temp and lower
+                                // e.g., var [, nameA] = robots_1[_i] → var _a = robots_1[_i], nameA = _a[1]
+                                let temp_name = self.get_temp_var_name();
+                                if !first {
+                                    self.write(", ");
+                                }
+                                first = false;
+                                self.write(&temp_name);
+                                self.write(" = ");
+                                self.write(&element_expr);
+                                self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
+                            }
+                        } else {
+                            if !first {
+                                self.write(", ");
+                            }
+                            first = false;
+                            self.emit(decl.name);
+                            self.write(" = ");
+                            self.write(&element_expr);
                         }
-                        first = false;
-                        self.emit(decl.name);
-                        self.write(" = ");
-                        self.write(&element_expr);
                     }
                 }
             }
