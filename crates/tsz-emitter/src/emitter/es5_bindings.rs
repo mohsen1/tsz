@@ -74,33 +74,33 @@ impl<'a> Printer<'a> {
             return false;
         };
 
-        // Find the single non-omitted element and its index
-        let mut binding_idx = None;
-        let mut binding_array_index = 0;
-        for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
-            if elem_idx.is_none() {
-                continue;
-            }
-            let Some(elem_node) = self.arena.get(elem_idx) else {
-                continue;
-            };
-            let Some(elem) = self.arena.get_binding_element(elem_node) else {
-                continue;
-            };
-            if elem.dot_dot_dot_token {
-                return false; // rest element, can't inline
-            }
-            // Skip nested patterns - can't inline
-            if self.is_binding_pattern(elem.name) {
-                return false;
-            }
-            if !self.has_identifier_text(elem.name) {
-                continue;
-            }
-            binding_idx = Some((elem_idx, i, elem.initializer));
-            binding_array_index = i;
-            break;
+        // TypeScript only inlines when the single binding is at index 0
+        // (no preceding omitted elements). For [, x] it uses a temp.
+        let first_elem = pattern.elements.nodes.first().copied();
+        let Some(first_elem_idx) = first_elem else {
+            return false;
+        };
+        if first_elem_idx.is_none() {
+            return false; // First element is omitted, can't inline
         }
+        let Some(first_elem_node) = self.arena.get(first_elem_idx) else {
+            return false;
+        };
+        let Some(first_elem_data) = self.arena.get_binding_element(first_elem_node) else {
+            return false;
+        };
+        if first_elem_data.dot_dot_dot_token {
+            return false;
+        }
+        if self.is_binding_pattern(first_elem_data.name) {
+            return false;
+        }
+        if !self.has_identifier_text(first_elem_data.name) {
+            return false;
+        }
+
+        let binding_idx = Some((first_elem_idx, 0usize, first_elem_data.initializer));
+        let binding_array_index = 0;
 
         let Some((_elem_idx, _idx, initializer_default)) = binding_idx else {
             return false;
@@ -161,6 +161,58 @@ impl<'a> Printer<'a> {
         true
     }
 
+    /// For rest-only array patterns [...rest] = expr, emit: rest = expr.slice(0)
+    /// TypeScript inlines this without a temp variable for any expression type.
+    fn emit_rest_only_array_inline(
+        &mut self,
+        pattern_node: &Node,
+        initializer: NodeIndex,
+        first: &mut bool,
+    ) -> bool {
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+
+        // Find the rest element (should be the only element)
+        let mut rest_name_idx = NodeIndex::NONE;
+        for &elem_idx in &pattern.elements.nodes {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if elem.dot_dot_dot_token {
+                rest_name_idx = elem.name;
+                break;
+            }
+        }
+
+        if rest_name_idx.is_none() {
+            return false;
+        }
+        if !self.has_identifier_text(rest_name_idx) {
+            return false;
+        }
+
+        // Emit: rest = expr.slice(0)
+        if !*first {
+            self.write(", ");
+        }
+        *first = false;
+        self.write_identifier_text(rest_name_idx);
+        self.write(" = ");
+        self.emit(initializer);
+        self.write(".slice(0)");
+        true
+    }
+
     /// Emit ES5 destructuring: { x, y } = obj → _a = obj, x = _a.x, y = _a.y
     /// When the initializer is a simple identifier, TypeScript skips the temp variable
     /// and uses the identifier directly: var [, name] = robot → var name = robot[1]
@@ -187,11 +239,21 @@ impl<'a> Printer<'a> {
             let ident_text = self.get_identifier_text(decl.initializer);
             self.emit_es5_destructuring_pattern_direct(pattern_node, &ident_text, first);
         } else {
-            // For complex expressions: check if single binding → inline
+            // For complex expressions: check if single binding at index 0 → inline
+            // TypeScript only inlines [x] = expr → x = expr[0], not [, x] = expr
             let (effective_count, has_rest) = self.count_effective_bindings(pattern_node);
             if effective_count == 1
                 && !has_rest
                 && self.emit_single_array_binding_inline(pattern_node, decl.initializer, first)
+            {
+                return;
+            }
+
+            // Rest-only array pattern: [...rest] = expr → rest = expr.slice(0)
+            // TypeScript inlines this without a temp variable for any expression
+            if effective_count == 0
+                && has_rest
+                && self.emit_rest_only_array_inline(pattern_node, decl.initializer, first)
             {
                 return;
             }
