@@ -513,9 +513,23 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
             }
         }
 
+        if node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+            || node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+        {
+            if let Some(for_in_of) = self.ctx.arena.get_for_in_of(node) {
+                self.collect_return_types(for_in_of.statement, types);
+            }
+        }
+
         if node.kind == syntax_kind_ext::WHILE_STATEMENT {
             if let Some(while_stmt) = self.ctx.arena.get_while_statement(node) {
                 self.collect_return_types(while_stmt.statement, types);
+            }
+        }
+
+        if node.kind == syntax_kind_ext::DO_STATEMENT {
+            if let Some(do_stmt) = self.ctx.arena.get_loop(node) {
+                self.collect_return_types(do_stmt.statement, types);
             }
         }
 
@@ -524,6 +538,18 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
                 self.collect_return_types(try_stmt.try_block, types);
                 self.collect_return_types(try_stmt.catch_clause, types);
                 self.collect_return_types(try_stmt.finally_block, types);
+            }
+        }
+
+        if node.kind == syntax_kind_ext::LABELED_STATEMENT {
+            if let Some(labeled_data) = self.ctx.arena.get_labeled_statement(node) {
+                self.collect_return_types(labeled_data.statement, types);
+            }
+        }
+
+        if node.kind == syntax_kind_ext::CATCH_CLAUSE {
+            if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
+                self.collect_return_types(catch_data.block, types);
             }
         }
     }

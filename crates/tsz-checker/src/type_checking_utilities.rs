@@ -67,8 +67,9 @@ impl<'a> CheckerState<'a> {
             } else if !param.type_annotation.is_none() {
                 Some(self.get_type_from_type_node(param.type_annotation))
             } else {
-                // Return UNKNOWN instead of ANY for parameter without type annotation
-                Some(TypeId::UNKNOWN)
+                // Parameters without type annotations get implicit 'any' type.
+                // TypeScript uses 'any' (with TS7006 when noImplicitAny is enabled).
+                Some(TypeId::ANY)
             };
             self.pop_symbol_dependency();
 
@@ -1113,12 +1114,30 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::WHILE_STATEMENT
             | syntax_kind_ext::DO_STATEMENT
-            | syntax_kind_ext::FOR_STATEMENT
-            | syntax_kind_ext::FOR_IN_STATEMENT
-            | syntax_kind_ext::FOR_OF_STATEMENT => {
+            | syntax_kind_ext::FOR_STATEMENT => {
                 if let Some(loop_data) = self.ctx.arena.get_loop(node) {
                     self.collect_return_types_in_statement(
                         loop_data.statement,
+                        return_types,
+                        saw_empty,
+                        return_context,
+                    );
+                }
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(for_in_of_data) = self.ctx.arena.get_for_in_of(node) {
+                    self.collect_return_types_in_statement(
+                        for_in_of_data.statement,
+                        return_types,
+                        saw_empty,
+                        return_context,
+                    );
+                }
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled_data) = self.ctx.arena.get_labeled_statement(node) {
+                    self.collect_return_types_in_statement(
+                        labeled_data.statement,
                         return_types,
                         saw_empty,
                         return_context,
@@ -1254,11 +1273,21 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::WHILE_STATEMENT
             | syntax_kind_ext::DO_STATEMENT
-            | syntax_kind_ext::FOR_STATEMENT
-            | syntax_kind_ext::FOR_IN_STATEMENT
-            | syntax_kind_ext::FOR_OF_STATEMENT => {
+            | syntax_kind_ext::FOR_STATEMENT => {
                 if let Some(loop_data) = self.ctx.arena.get_loop(node) {
                     return self.statement_has_return_with_value(loop_data.statement);
+                }
+                false
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(for_in_of_data) = self.ctx.arena.get_for_in_of(node) {
+                    return self.statement_has_return_with_value(for_in_of_data.statement);
+                }
+                false
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled_data) = self.ctx.arena.get_labeled_statement(node) {
+                    return self.statement_has_return_with_value(labeled_data.statement);
                 }
                 false
             }
