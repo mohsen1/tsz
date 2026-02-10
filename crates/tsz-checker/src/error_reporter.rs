@@ -1855,78 +1855,10 @@ impl<'a> CheckerState<'a> {
         let right_is_valid_arithmetic =
             !right_is_symbol && evaluator.is_arithmetic_operand(right_type);
 
-        // For + operator, check if we should emit TS2362/TS2363 or TS2365
-        // TS2362/TS2363 are emitted when the operation cannot be string concatenation
-        // (i.e., when one operand is clearly not compatible with the other)
+        // For + operator, TSC always emits TS2365 ("Operator '+' cannot be applied to types"),
+        // never TS2362/TS2363. This is because + can be either string concatenation or arithmetic,
+        // so TSC uses the general error regardless of the operand types.
         if op == "+" {
-            // Check if + could be string concatenation
-            let left_could_be_string = left_type == TypeId::STRING
-                || left_type == TypeId::ANY
-                || self.type_has_string_union_member(left_type);
-            let right_could_be_string = right_type == TypeId::STRING
-                || right_type == TypeId::ANY
-                || self.type_has_string_union_member(right_type);
-
-            // If neither operand can be a string, this must be arithmetic - emit TS2362/TS2363
-            let is_arithmetic_context = !left_could_be_string && !right_could_be_string;
-
-            if is_arithmetic_context {
-                // Treat as arithmetic operation
-                // Skip operands that already got TS18050 (null/undefined with strictNullChecks)
-                let mut emitted_specific_error = emitted_nullish_error;
-                if !left_is_valid_arithmetic && (!left_is_nullish || !emitted_nullish_error) {
-                    if let Some(loc) = self.get_source_location(left_idx) {
-                        let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                        self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                            category: DiagnosticCategory::Error,
-                            message_text: message,
-                            file: self.ctx.file_name.clone(),
-                            start: loc.start,
-                            length: loc.length(),
-                            related_information: Vec::new(),
-                        });
-                        emitted_specific_error = true;
-                    }
-                }
-                if !right_is_valid_arithmetic && (!right_is_nullish || !emitted_nullish_error) {
-                    if let Some(loc) = self.get_source_location(right_idx) {
-                        let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                        self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                            category: DiagnosticCategory::Error,
-                            message_text: message,
-                            file: self.ctx.file_name.clone(),
-                            start: loc.start,
-                            length: loc.length(),
-                            related_information: Vec::new(),
-                        });
-                        emitted_specific_error = true;
-                    }
-                }
-                // If both operands are valid arithmetic types but the operation still failed
-                // (e.g., mixing number and bigint), emit TS2365
-                if !emitted_specific_error {
-                    if let Some(loc) = self.get_source_location(node_idx) {
-                        let message = format!(
-                            "Operator '{}' cannot be applied to types '{}' and '{}'.",
-                            op, left_str, right_str
-                        );
-                        self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                            category: DiagnosticCategory::Error,
-                            message_text: message,
-                            file: self.ctx.file_name.clone(),
-                            start: loc.start,
-                            length: loc.length(),
-                            related_information: Vec::new(),
-                        });
-                    }
-                }
-                return;
-            }
-
-            // For string concatenation context or ambiguous, emit TS2365
             if let Some(loc) = self.get_source_location(node_idx) {
                 let message = format!(
                     "Operator '{}' cannot be applied to types '{}' and '{}'.",
@@ -2451,46 +2383,6 @@ impl<'a> CheckerState<'a> {
         for diag in collector.to_checker_diagnostics() {
             self.ctx.diagnostics.push(diag);
         }
-    }
-
-    /// Check if a type has string as a union member (directly or nested).
-    /// Used to determine if + operator could be string concatenation.
-    fn type_has_string_union_member(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries::{
-            LiteralTypeKind, UnionMembersKind, classify_for_union_members, classify_literal_type,
-            is_template_literal_type,
-        };
-
-        if type_id == TypeId::STRING {
-            return true;
-        }
-
-        // Check if this is a string literal
-        if let LiteralTypeKind::String(_) = classify_literal_type(self.ctx.types, type_id) {
-            return true;
-        }
-
-        // Check if this is a template literal type
-        if is_template_literal_type(self.ctx.types, type_id) {
-            return true;
-        }
-
-        // Check if this is a union type containing string
-        if let UnionMembersKind::Union(members) =
-            classify_for_union_members(self.ctx.types, type_id)
-        {
-            for member in members {
-                if member == TypeId::STRING {
-                    return true;
-                }
-                // Recursively check nested unions
-                if self.type_has_string_union_member(member) {
-                    return true;
-                }
-            }
-        }
-
-        false
     }
 }
 
