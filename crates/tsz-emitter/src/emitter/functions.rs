@@ -21,32 +21,21 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit_arrow_function_native(node, func);
+        self.emit_arrow_function_native(func);
     }
 
     /// Emit native ES6+ arrow function syntax
-    fn emit_arrow_function_native(
-        &mut self,
-        node: &Node,
-        func: &tsz_parser::parser::node::FunctionData,
-    ) {
+    fn emit_arrow_function_native(&mut self, func: &tsz_parser::parser::node::FunctionData) {
         if func.is_async {
             self.write("async ");
         }
 
         // Parameters (without types for JavaScript)
-        // TypeScript preserves parentheses from source for single simple parameters.
-        // If the source had `(x) => ...`, emit `(x) => ...`.
-        // If the source had `x => ...`, emit `x => ...`.
-        let needs_parens = self.arrow_function_needs_parens(node, &func.parameters.nodes);
-
-        if needs_parens {
-            self.write("(");
-        }
+        // TypeScript always emits parentheses in output, even for single simple parameters
+        // Source: `x => x` is emitted as `(x) => x`
+        self.write("(");
         self.emit_function_parameters_js(&func.parameters.nodes);
-        if needs_parens {
-            self.write(")");
-        }
+        self.write(")");
 
         // Skip return type for JavaScript
 
@@ -54,56 +43,6 @@ impl<'a> Printer<'a> {
 
         // Body
         self.emit(func.body);
-    }
-
-    /// Check if arrow function parameters need parentheses.
-    /// TypeScript preserves parentheses from the original source.
-    fn arrow_function_needs_parens(&self, node: &Node, params: &[NodeIndex]) -> bool {
-        // Need parens if not exactly one parameter
-        if params.len() != 1 {
-            return true;
-        }
-
-        // Get the single parameter
-        let Some(param_node) = self.arena.get(params[0]) else {
-            return true;
-        };
-
-        // Need parens if not a parameter declaration
-        if param_node.kind != syntax_kind_ext::PARAMETER {
-            return true;
-        }
-
-        let Some(param) = self.arena.get_parameter(param_node) else {
-            return true;
-        };
-
-        // Need parens if the parameter name is not a simple identifier
-        // (e.g., destructuring patterns like {x}, [x], ...rest)
-        let Some(name_node) = self.arena.get(param.name) else {
-            return true;
-        };
-
-        use tsz_scanner::SyntaxKind;
-        if name_node.kind != SyntaxKind::Identifier as u16 {
-            return true; // Destructuring or other complex pattern
-        }
-
-        // Check source text: if the source had parentheses, preserve them
-        if let Some(text) = self.source_text {
-            let start = node.pos as usize;
-            let param_start = param_node.pos as usize;
-            if param_start > start && param_start <= text.len() {
-                // Scan from node start to parameter start for '('
-                let slice = &text[start..param_start];
-                if slice.contains('(') {
-                    return true;
-                }
-            }
-        }
-
-        // Simple identifier parameter without source parens - no parens needed
-        false
     }
 
     pub(super) fn emit_function_expression(&mut self, node: &Node, _idx: NodeIndex) {
