@@ -27,15 +27,15 @@ const __filename = fileURLToPath(import.meta.url);
 const DIRECTIVE_RE = /^\s*\/\/\s*@(\w+)\s*:\s*([^\r\n]*)/;
 
 const HARNESS_ONLY_DIRECTIVES = new Set([
-  'filename', 'allowNonTsExtensions', 'useCaseSensitiveFileNames',
-  'baselineFile', 'noErrorTruncation', 'suppressOutputPathCheck',
-  'noImplicitReferences', 'currentDirectory', 'symlink', 'link',
-  'noTypesAndSymbols', 'fullEmitPaths', 'noCheck', 'nocheck',
-  'reportDiagnostics', 'captureSuggestions', 'typeScriptVersion', 'skip',
+  'filename', 'allownontsextensions', 'usecasesensitivefilenames',
+  'baselinefile', 'noerrortruncation', 'suppressoutputpathcheck',
+  'noimplicitreferences', 'currentdirectory', 'symlink', 'link',
+  'notypesandsymbols', 'fullemitpaths', 'nocheck',
+  'reportdiagnostics', 'capturesuggestions', 'typescriptversion', 'skip',
 ]);
 
 const LIST_OPTIONS = new Set([
-  'lib', 'types', 'typeRoots', 'rootDirs', 'moduleSuffixes', 'customConditions',
+  'lib', 'types', 'typeroots', 'rootdirs', 'modulesuffixes', 'customconditions',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -119,25 +119,52 @@ function calculateTestHash(content, options) {
 // ---------------------------------------------------------------------------
 // Options conversion (mirrors Rust convert_options_to_tsconfig)
 // ---------------------------------------------------------------------------
+
+// Build canonical option name mapping from TypeScript's own option declarations.
+// The test directive parser lowercases all keys, but ts.convertCompilerOptionsFromJson
+// requires proper casing (e.g., "noImplicitAny" not "noimplicitany").
+let CANONICAL_OPTION_NAMES = null;
+
+function buildCanonicalOptionNames(ts) {
+  if (CANONICAL_OPTION_NAMES) return;
+  CANONICAL_OPTION_NAMES = new Map();
+  if (ts.optionDeclarations) {
+    for (const opt of ts.optionDeclarations) {
+      const lower = opt.name.toLowerCase();
+      if (lower !== opt.name) {
+        CANONICAL_OPTION_NAMES.set(lower, opt.name);
+      }
+    }
+  }
+}
+
+function canonicalOptionName(key) {
+  if (CANONICAL_OPTION_NAMES && CANONICAL_OPTION_NAMES.has(key)) {
+    return CANONICAL_OPTION_NAMES.get(key);
+  }
+  return key;
+}
+
 function convertOptionsToJson(options) {
   const result = {};
   for (const [key, value] of Object.entries(options)) {
-    if (HARNESS_ONLY_DIRECTIVES.has(key.toLowerCase()) || HARNESS_ONLY_DIRECTIVES.has(key)) {
+    if (HARNESS_ONLY_DIRECTIVES.has(key)) {
       continue;
     }
+    const canonKey = canonicalOptionName(key);
     if (value === 'true') {
-      result[key] = true;
+      result[canonKey] = true;
     } else if (value === 'false') {
-      result[key] = false;
-    } else if (LIST_OPTIONS.has(key.toLowerCase()) || LIST_OPTIONS.has(key)) {
-      result[key] = value.split(',').map(s => s.trim());
+      result[canonKey] = false;
+    } else if (LIST_OPTIONS.has(key)) {
+      result[canonKey] = value.split(',').map(s => s.trim());
     } else {
       // For non-list options, take only the first comma-separated value
       const effectiveValue = value.split(',')[0].trim();
       if (/^\d+$/.test(effectiveValue)) {
-        result[key] = parseInt(effectiveValue, 10);
+        result[canonKey] = parseInt(effectiveValue, 10);
       } else {
-        result[key] = effectiveValue;
+        result[canonKey] = effectiveValue;
       }
     }
   }
@@ -300,6 +327,9 @@ if (!IS_WORKER) {
       process.exit(1);
     }
   }
+
+  // Build canonical option name mapping from TypeScript's option declarations
+  buildCanonicalOptionNames(ts);
 
   // Lib source file cache — persists across all files this worker processes
   const libSourceFileCache = new Map();
