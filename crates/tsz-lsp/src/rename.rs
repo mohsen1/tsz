@@ -541,13 +541,17 @@ impl<'a> RenameProvider<'a> {
                     // Shorthand property assignment: `{ x }` => when renaming
                     // x to y, we need `{ x: y }` (insert old name as property
                     // key prefix).
-                    //
-                    // NOTE: The parser creates PROPERTY_ASSIGNMENT nodes for both
-                    // regular properties and shorthand properties. We detect shorthand
-                    // by checking if `name == initializer` in PropertyAssignmentData.
+                    if parent_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                        return RenameTextEdit::with_prefix(
+                            range,
+                            new_name.to_string(),
+                            format!("{}: ", old_name),
+                        );
+                    }
+                    // Also handle PROPERTY_ASSIGNMENT where name == initializer
+                    // (legacy shorthand detection)
                     if parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
                         if let Some(prop) = self.arena.get_property_assignment(parent_node) {
-                            // Shorthand property: name and initializer are the same node
                             if prop.name == prop.initializer {
                                 return RenameTextEdit::with_prefix(
                                     range,
