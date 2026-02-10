@@ -95,11 +95,15 @@ pub fn compile_test(
     let has_tsconfig_file = filenames
         .iter()
         .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
-    // Only set allowJs when explicitly requested via @allowJs directive.
-    // tsc's test harness doesn't auto-infer allowJs from JS file presence —
-    // JS files on disk are resolution targets, not compilation sources.
+    // Set allowJs when explicitly requested via @allowJs directive,
+    // or when @checkJs is true (checkJs implies allowJs, matching tsc's test harness behavior).
     let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
-    let allow_js = matches!(explicit_allow_js, Some(v) if v == "true");
+    let check_js = options
+        .get("checkJs")
+        .or_else(|| options.get("checkjs"))
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let allow_js = matches!(explicit_allow_js, Some(v) if v == "true") || check_js;
     // Include .cts/.mts (TypeScript CJS/ESM) alongside .ts/.tsx
     let include = if allow_js {
         serde_json::json!([
@@ -256,11 +260,15 @@ pub fn prepare_test_dir(
     let has_tsconfig_file = filenames
         .iter()
         .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
-    // Only set allowJs when explicitly requested via @allowJs directive.
-    // tsc's test harness doesn't auto-infer allowJs from JS file presence —
-    // JS files on disk are resolution targets, not compilation sources.
+    // Set allowJs when explicitly requested via @allowJs directive,
+    // or when @checkJs is true (checkJs implies allowJs, matching tsc's test harness behavior).
     let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
-    let allow_js = matches!(explicit_allow_js, Some(v) if v == "true");
+    let check_js = options
+        .get("checkJs")
+        .or_else(|| options.get("checkjs"))
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let allow_js = matches!(explicit_allow_js, Some(v) if v == "true") || check_js;
     // Include .cts/.mts (TypeScript CJS/ESM) alongside .ts/.tsx
     let include = if allow_js {
         serde_json::json!([
