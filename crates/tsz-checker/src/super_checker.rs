@@ -342,6 +342,10 @@ impl<'a> CheckerState<'a> {
     /// This function correctly handles arrow functions which capture the class context.
     fn find_enclosing_class(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
+        // Track if we entered through a computed property name.
+        // super in a computed property key `[super.foo()]() {}` of an inner class
+        // refers to the OUTER class, so we skip the inner class.
+        let mut in_computed_property = false;
 
         while let Some(ext) = self.ctx.arena.get_extended(current) {
             let parent_idx = ext.parent;
@@ -351,6 +355,10 @@ impl<'a> CheckerState<'a> {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;
             };
+
+            if parent_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                in_computed_property = true;
+            }
 
             // Arrow functions capture the class context, so skip them
             if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
@@ -362,6 +370,13 @@ impl<'a> CheckerState<'a> {
             if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
             {
+                if in_computed_property {
+                    // super in computed property name of this class's member
+                    // refers to the outer class, not this one — keep walking
+                    in_computed_property = false;
+                    current = parent_idx;
+                    continue;
+                }
                 return Some(parent_idx);
             }
 
