@@ -426,22 +426,15 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        // TS1100/TS1101: Invalid use of 'arguments'/'eval' in strict mode
+        // TS1100: Invalid use of 'arguments'/'eval' in strict mode
         if self.ctx.compiler_options.always_strict {
             if let Some(ref name) = var_name {
-                if name == "arguments" {
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    self.error_at_node(
+                if name == "arguments" || name == "eval" {
+                    use crate::types::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
                         var_decl.name,
-                        diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
-                        diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
-                    );
-                } else if name == "eval" {
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    self.error_at_node(
-                        var_decl.name,
-                        diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
-                        diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                        diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                        &[name],
                     );
                 }
             }
