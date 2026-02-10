@@ -2487,7 +2487,6 @@ export * from './services/user-service';
 }
 
 #[test]
-#[ignore = "TODO: Multi-file compilation needs refinement"]
 fn compile_multi_file_project_with_default_and_named_imports() {
     // Test default and named import styles
     let temp = TempDir::new().expect("temp dir");
