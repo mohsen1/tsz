@@ -93,7 +93,13 @@ pub fn compile_test(
     // Create tsconfig.json with test options unless provided by the test itself
     let tsconfig_path = dir_path.join("tsconfig.json");
     let has_js_files = filenames.iter().any(|(name, _)| {
-        let lower = name.to_lowercase();
+        let normalized = name.replace('\\', "/");
+        // Don't count JS files in node_modules — they're external packages, not project sources.
+        // tsc doesn't auto-infer allowJs from node_modules contents.
+        if normalized.contains("/node_modules/") || normalized.starts_with("node_modules/") {
+            return false;
+        }
+        let lower = normalized.to_lowercase();
         lower.ends_with(".js")
             || lower.ends_with(".jsx")
             || lower.ends_with(".mjs")
@@ -262,7 +268,13 @@ pub fn prepare_test_dir(
 
     let tsconfig_path = dir_path.join("tsconfig.json");
     let has_js_files = filenames.iter().any(|(name, _)| {
-        let lower = name.to_lowercase();
+        let normalized = name.replace('\\', "/");
+        // Don't count JS files in node_modules — they're external packages, not project sources.
+        // tsc doesn't auto-infer allowJs from node_modules contents.
+        if normalized.contains("/node_modules/") || normalized.starts_with("node_modules/") {
+            return false;
+        }
+        let lower = normalized.to_lowercase();
         lower.ends_with(".js")
             || lower.ends_with(".jsx")
             || lower.ends_with(".mjs")

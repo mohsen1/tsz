@@ -718,6 +718,7 @@ impl ModuleResolver {
             importing_module_kind,
             import_kind,
         );
+
         if let Ok(resolved) = &result {
             if matches!(
                 resolved.extension,
@@ -2127,6 +2128,55 @@ impl ModuleResolver {
 
         serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+    }
+
+    /// Probe for a JS file that would resolve for this specifier.
+    ///
+    /// Used for TS7016: when normal resolution fails but a JS file exists,
+    /// we can report "Could not find declaration file" instead of "Cannot find module".
+    /// Returns the resolved JS file path if found.
+    pub fn probe_js_file(
+        &mut self,
+        specifier: &str,
+        containing_file: &Path,
+        specifier_span: Span,
+        import_kind: ImportKind,
+    ) -> Option<PathBuf> {
+        if self.allow_js {
+            return None; // Already tried JS in normal resolution
+        }
+        let containing_dir = containing_file
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        let containing_file_str = containing_file.display().to_string();
+        let importing_module_kind = self.get_importing_module_kind(containing_file);
+
+        self.allow_js = true;
+        let result = self.resolve_uncached(
+            specifier,
+            &containing_dir,
+            &containing_file_str,
+            specifier_span,
+            importing_module_kind,
+            import_kind,
+        );
+        self.allow_js = false;
+
+        match result {
+            Ok(resolved)
+                if matches!(
+                    resolved.extension,
+                    ModuleExtension::Js
+                        | ModuleExtension::Jsx
+                        | ModuleExtension::Mjs
+                        | ModuleExtension::Cjs
+                ) =>
+            {
+                Some(resolved.resolved_path)
+            }
+            _ => None,
+        }
     }
 
     /// Clear the resolution cache
