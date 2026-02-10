@@ -210,22 +210,29 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
             // Postfix unary expression - ++ and -- require numeric operand
             k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
-                if let Some(unary) = self.checker.ctx.arena.get_unary_expr_ex(node) {
+                if let Some(unary) = self.checker.ctx.arena.get_unary_expr(node) {
+                    // TS2588: Cannot assign to 'x' because it is a constant.
+                    let is_const = self.checker.check_const_assignment(unary.operand);
+
                     // Get operand type for validation
-                    let operand_type = self.checker.get_type_of_node(unary.expression);
+                    let operand_type = self.checker.get_type_of_node(unary.operand);
 
-                    // Check if operand is valid for increment/decrement
-                    use tsz_solver::BinaryOpEvaluator;
-                    let evaluator = BinaryOpEvaluator::new(self.checker.ctx.types);
-                    let is_valid = evaluator.is_arithmetic_operand(operand_type);
+                    if !is_const {
+                        // Check if operand is valid for increment/decrement
+                        use tsz_solver::BinaryOpEvaluator;
+                        let evaluator = BinaryOpEvaluator::new(self.checker.ctx.types);
+                        let is_valid = evaluator.is_arithmetic_operand(operand_type);
 
-                    if !is_valid {
-                        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        self.checker.error_at_node(
-                            unary.expression,
-                            diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
-                            diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
-                        );
+                        if !is_valid {
+                            use crate::types::diagnostics::{
+                                diagnostic_codes, diagnostic_messages,
+                            };
+                            self.checker.error_at_node(
+                                unary.operand,
+                                diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
+                                diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
+                            );
+                        }
                     }
                 }
 
