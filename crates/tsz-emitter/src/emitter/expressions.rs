@@ -276,21 +276,29 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Preserve multi-line formatting from source
-        if self.is_single_line(node) || array.elements.nodes.len() == 1 {
+        // Preserve multi-line formatting from source.
+        // Note: We use a direct newline check instead of is_single_line() because
+        // is_single_line uses brace-matching which fails for arrays containing objects.
+        let is_multiline = array.elements.nodes.len() > 1
+            && self.source_text.is_some_and(|text| {
+                let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+                let end = std::cmp::min(node.end as usize, text.len());
+                start < end && text[start..end].contains('\n')
+            });
+
+        if !is_multiline {
             self.write("[");
             self.emit_comma_separated(&array.elements.nodes);
             self.write("]");
         } else {
+            // TypeScript style: first element on same line as [, subsequent indented
             self.write("[");
-            self.write_line();
+            self.emit(array.elements.nodes[0]);
             self.increase_indent();
-            for (i, &elem) in array.elements.nodes.iter().enumerate() {
-                self.emit(elem);
-                if i < array.elements.nodes.len() - 1 {
-                    self.write(",");
-                }
+            for &elem in &array.elements.nodes[1..] {
+                self.write(",");
                 self.write_line();
+                self.emit(elem);
             }
             self.decrease_indent();
             self.write("]");
