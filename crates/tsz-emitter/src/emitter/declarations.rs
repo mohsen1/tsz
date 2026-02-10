@@ -1,4 +1,4 @@
-use super::Printer;
+use super::{Printer, ScriptTarget};
 use crate::transforms::ClassES5Emitter;
 use crate::transforms::enum_es5::EnumES5Transformer;
 use crate::transforms::ir_printer::IRPrinter;
@@ -224,7 +224,109 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        // Check if we need to lower class fields to constructor (for targets < ES2022)
+        let needs_class_field_lowering =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+
+        // Collect non-static property initializers that need lowering
+        let mut field_inits: Vec<(String, NodeIndex)> = Vec::new();
+        if needs_class_field_lowering {
+            for &member_idx in &class.members.nodes {
+                if let Some(member_node) = self.arena.get(member_idx) {
+                    if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                        if let Some(prop) = self.arena.get_property_decl(member_node) {
+                            // Only lower non-static properties with initializers
+                            if !prop.initializer.is_none()
+                                && !self
+                                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16)
+                                && !self.has_modifier(
+                                    &prop.modifiers,
+                                    SyntaxKind::AbstractKeyword as u16,
+                                )
+                            {
+                                let name = self.get_identifier_text_idx(prop.name);
+                                if !name.is_empty() {
+                                    field_inits.push((name, prop.initializer));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check if class has an explicit constructor
+        let has_constructor = class.members.nodes.iter().any(|&idx| {
+            self.arena
+                .get(idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CONSTRUCTOR)
+        });
+
+        // Check if class has extends clause
+        let has_extends = class.heritage_clauses.as_ref().is_some_and(|clauses| {
+            clauses.nodes.iter().any(|&idx| {
+                self.arena
+                    .get(idx)
+                    .and_then(|n| self.arena.get_heritage(n))
+                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+            })
+        });
+
+        // Store field inits for constructor emission
+        let prev_field_inits = std::mem::take(&mut self.pending_class_field_inits);
+        if !field_inits.is_empty() {
+            self.pending_class_field_inits = field_inits.clone();
+        }
+
+        // If no constructor but we have field inits, synthesize one
+        let synthesize_constructor = !has_constructor && !field_inits.is_empty();
+
+        if synthesize_constructor {
+            if has_extends {
+                self.write("constructor(...args) {");
+                self.write_line();
+                self.increase_indent();
+                self.write("super(...args);");
+                self.write_line();
+            } else {
+                self.write("constructor() {");
+                self.write_line();
+                self.increase_indent();
+            }
+            for (name, init_idx) in &field_inits {
+                self.write("this.");
+                self.write(name);
+                self.write(" = ");
+                self.emit_expression(*init_idx);
+                self.write(";");
+                self.write_line();
+            }
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+        }
+
         for &member_idx in &class.members.nodes {
+            // Skip non-static property declarations that were lowered to constructor
+            if needs_class_field_lowering {
+                if let Some(member_node) = self.arena.get(member_idx) {
+                    if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                        if let Some(prop) = self.arena.get_property_decl(member_node) {
+                            if !prop.initializer.is_none()
+                                && !self
+                                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16)
+                                && !self.has_modifier(
+                                    &prop.modifiers,
+                                    SyntaxKind::AbstractKeyword as u16,
+                                )
+                            {
+                                continue; // Skip - already in constructor
+                            }
+                        }
+                    }
+                }
+            }
+
             let before_len = self.writer.len();
             self.emit(member_idx);
             // Only add newline if something was actually emitted
@@ -240,6 +342,9 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+
+        // Restore field inits
+        self.pending_class_field_inits = prev_field_inits;
 
         self.decrease_indent();
         self.write("}");
@@ -411,11 +516,7 @@ impl<'a> Printer<'a> {
 
         // Only emit var/let declaration if not already declared
         if !self.declared_namespace_names.contains(&name) {
-            let keyword = if parent_name.is_some() || self.in_namespace_iife {
-                "let"
-            } else {
-                "var"
-            };
+            let keyword = "var";
             self.write(keyword);
             self.write(" ");
             self.write(&name);
@@ -521,29 +622,12 @@ impl<'a> Printer<'a> {
                                 }
                             }
                         } else if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
-                            // Class with possible export modifier
-                            let export_names = self.get_export_names_from_clause(stmt_idx);
+                            // Non-exported class in namespace: just emit it
                             let prev = self.in_namespace_iife;
                             self.in_namespace_iife = true;
                             self.emit(stmt_idx);
                             self.in_namespace_iife = prev;
-
-                            if !export_names.is_empty() {
-                                if !self.writer.is_at_line_start() {
-                                    self.write_line();
-                                }
-                                for export_name in &export_names {
-                                    self.write(&ns_name);
-                                    self.write(".");
-                                    self.write(export_name);
-                                    self.write(" = ");
-                                    self.write(export_name);
-                                    self.write(";");
-                                    self.write_line();
-                                }
-                            } else {
-                                self.write_line();
-                            }
+                            self.write_line();
                         } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
                             // Nested namespace: recurse
                             self.emit(stmt_idx);
@@ -770,8 +854,9 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit modifiers (public, protected, private) - skip for JS emit
-        // self.emit_class_member_modifiers(&ctor.modifiers);
+        // Collect parameter property names (public/private/protected/readonly params)
+        let param_props = self.collect_parameter_properties(&ctor.parameters.nodes);
+        let field_inits = std::mem::take(&mut self.pending_class_field_inits);
 
         self.write("constructor(");
         self.emit_function_parameters_js(&ctor.parameters.nodes);
@@ -779,8 +864,101 @@ impl<'a> Printer<'a> {
 
         if !ctor.body.is_none() {
             self.write(" ");
-            self.emit(ctor.body);
+            if param_props.is_empty() && field_inits.is_empty() {
+                self.emit(ctor.body);
+            } else {
+                self.emit_constructor_body_with_prologue(ctor.body, &param_props, &field_inits);
+            }
         }
+    }
+
+    /// Collect parameter property names from constructor parameters.
+    /// Returns names of parameters that have accessibility modifiers (public/private/protected/readonly).
+    fn collect_parameter_properties(&self, params: &[NodeIndex]) -> Vec<String> {
+        let mut names = Vec::new();
+        for &param_idx in params {
+            if let Some(param_node) = self.arena.get(param_idx)
+                && let Some(param) = self.arena.get_parameter(param_node)
+            {
+                if self.has_parameter_property_modifier(&param.modifiers) {
+                    let name = self.get_identifier_text_idx(param.name);
+                    if !name.is_empty() {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    /// Check if parameter modifiers include an accessibility or readonly modifier.
+    fn has_parameter_property_modifier(&self, modifiers: &Option<NodeList>) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.arena.get(mod_idx) {
+                    let kind = mod_node.kind as u32;
+                    if kind == SyntaxKind::PublicKeyword as u32
+                        || kind == SyntaxKind::PrivateKeyword as u32
+                        || kind == SyntaxKind::ProtectedKeyword as u32
+                        || kind == SyntaxKind::ReadonlyKeyword as u32
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Emit constructor body block with parameter property and field initializer assignments.
+    fn emit_constructor_body_with_prologue(
+        &mut self,
+        block_idx: NodeIndex,
+        param_props: &[String],
+        field_inits: &[(String, NodeIndex)],
+    ) {
+        let Some(block_node) = self.arena.get(block_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(block_node) else {
+            return;
+        };
+
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+
+        // Emit parameter property assignments: this.<name> = <name>;
+        for name in param_props {
+            self.write("this.");
+            self.write(name);
+            self.write(" = ");
+            self.write(name);
+            self.write(";");
+            self.write_line();
+        }
+
+        // Emit class field initializer assignments: this.<name> = <init>;
+        for (name, init_idx) in field_inits {
+            self.write("this.");
+            self.write(name);
+            self.write(" = ");
+            self.emit_expression(*init_idx);
+            self.write(";");
+            self.write_line();
+        }
+
+        // Emit original body statements
+        for &stmt_idx in &block.statements.nodes {
+            let before_len = self.writer.len();
+            self.emit(stmt_idx);
+            if self.writer.len() > before_len {
+                self.write_line();
+            }
+        }
+
+        self.decrease_indent();
+        self.write("}");
     }
 
     pub(super) fn emit_get_accessor(&mut self, node: &Node) {

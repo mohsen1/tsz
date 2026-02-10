@@ -271,6 +271,10 @@ pub struct Printer<'a> {
 
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(super) declared_namespace_names: FxHashSet<String>,
+
+    /// Pending class field initializers to inject into constructor body.
+    /// Each entry is (field_name, initializer_node_index).
+    pub(super) pending_class_field_inits: Vec<(String, NodeIndex)>,
 }
 
 impl<'a> Printer<'a> {
@@ -320,6 +324,7 @@ impl<'a> Printer<'a> {
             first_for_of_emitted: false,
             in_namespace_iife: false,
             declared_namespace_names: FxHashSet::default(),
+            pending_class_field_inits: Vec::new(),
         }
     }
 
