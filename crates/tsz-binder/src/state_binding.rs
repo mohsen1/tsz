@@ -1098,6 +1098,15 @@ impl BinderState {
                                         .or_else(|| self.file_locals.get(orig));
 
                                     if let Some(sym_id) = resolved_sym_id {
+                                        // Mark the original symbol as exported so it appears
+                                        // in module_exports for cross-file import resolution
+                                        if let Some(orig_sym) = self.symbols.get_mut(sym_id) {
+                                            orig_sym.is_exported = true;
+                                            if spec_type_only {
+                                                orig_sym.is_type_only = true;
+                                            }
+                                        }
+
                                         // Create export symbol (EXPORT_VALUE for value exports)
                                         let export_sym_id = self
                                             .symbols
