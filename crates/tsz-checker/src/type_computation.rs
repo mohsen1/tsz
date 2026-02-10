@@ -369,6 +369,41 @@ impl<'a> CheckerState<'a> {
 
                 TypeId::NUMBER
             }
+            // delete returns boolean and checks that operand is a property reference
+            k if k == SyntaxKind::DeleteKeyword as u16 => {
+                // Evaluate operand for side effects / flow analysis
+                self.get_type_of_node(unary.operand);
+
+                // TS2703: The operand of a 'delete' operator must be a property reference.
+                // Valid operands: property access (obj.prop), element access (obj["prop"]),
+                // or optional chain (obj?.prop). All other expressions are invalid.
+                let is_property_reference = unary.operand.is_some()
+                    && self
+                        .ctx
+                        .arena
+                        .get(unary.operand)
+                        .is_some_and(|operand_node| {
+                            use tsz_parser::parser::syntax_kind_ext;
+                            operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                                || operand_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                        });
+
+                if !is_property_reference {
+                    self.error_at_node(
+                        idx,
+                        crate::types::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
+                        crate::types::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
+                    );
+                }
+
+                TypeId::BOOLEAN
+            }
+            // void returns undefined
+            k if k == SyntaxKind::VoidKeyword as u16 => {
+                // Evaluate operand for side effects / flow analysis
+                self.get_type_of_node(unary.operand);
+                TypeId::UNDEFINED
+            }
             _ => TypeId::ANY,
         }
     }
