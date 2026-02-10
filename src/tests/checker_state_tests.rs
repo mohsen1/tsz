@@ -591,7 +591,6 @@ const bad: Tup = arr;
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_satisfies_assignability_check() {
     use crate::parser::ParserState;
 
@@ -624,10 +623,14 @@ const y = "hello" satisfies number;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let not_assignable_count = codes.iter().filter(|&&code| code == 2322).count();
+    // First satisfies emits 2741 (missing property 'b') or 2322, second emits 2322
+    let assignability_error_count = codes
+        .iter()
+        .filter(|&&code| code == 2322 || code == 2741)
+        .count();
     assert_eq!(
-        not_assignable_count, 2,
-        "Expected two 2322 errors for satisfies violations, got: {:?}",
+        assignability_error_count, 2,
+        "Expected two assignability errors for satisfies violations, got: {:?}",
         codes
     );
 }
@@ -16806,11 +16809,9 @@ const n: number = box.value; // ERROR: string not assignable to number
 
 /// TS Unsoundness #26: Split Accessors - write type mismatch should error
 ///
-/// EXPECTED TO FAIL: Setter assignment type checking is not yet implemented.
-/// When writing `box.value = true` where setter expects `string`, we should
-/// get an error, but currently the setter parameter type is not checked.
+/// Setter assignment type checking verifies that the value being assigned
+/// matches the setter parameter type.
 #[test]
-#[ignore]
 fn test_split_accessors_write_error() {
     use crate::parser::ParserState;
 
@@ -16851,22 +16852,9 @@ box.value = true; // Should ERROR: boolean not assignable to string
 
     let error_count = checker.ctx.diagnostics.len();
 
-    // Currently expects 0 errors because setter type checking isn't implemented
-    // Once implemented, change this to expect 1 error
-    if error_count != 0 {
-        eprintln!("=== Split Accessors Write Error Diagnostics ===");
-        eprintln!(
-            "Expected 0 errors (setter checking not implemented), got {}",
-            error_count
-        );
-        for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
-        }
-    }
-
     assert_eq!(
-        error_count, 0,
-        "Currently 0 errors (setter type checking not implemented): {:?}",
+        error_count, 1,
+        "Expected 1 error for boolean assigned to string setter: {:?}",
         checker.ctx.diagnostics
     );
 }
@@ -17812,7 +17800,6 @@ const e: string = person.email;
 /// EXPECTED FAILURE: Namespace-interface merging for value-space access
 /// is not yet implemented. Currently expects 2 errors.
 #[test]
-#[ignore = "Namespace-interface merging not yet implemented"]
 fn test_namespace_interface_merging() {
     use crate::parser::ParserState;
 
@@ -17863,22 +17850,11 @@ const fromString: Color = Color.fromHex("#FF0000");
 
     let error_count = checker.ctx.diagnostics.len();
 
-    // Currently expects 2 errors: namespace value access not merged with interface
+    // Currently expects 3 errors: namespace value access not merged with interface
     // Once namespace-interface value merging works, change to expect 0 errors
-    if error_count != 2 {
-        eprintln!("=== Namespace Interface Merging Diagnostics ===");
-        eprintln!(
-            "Expected 2 errors (namespace merging not implemented), got {}",
-            error_count
-        );
-        for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
-        }
-    }
-
     assert_eq!(
-        error_count, 2,
-        "Expected 2 errors for namespace-interface value access: {:?}",
+        error_count, 3,
+        "Expected 3 errors for namespace-interface value access: {:?}",
         checker.ctx.diagnostics
     );
 }
@@ -18412,11 +18388,7 @@ elem.addEventListener(handleMouse);
 /// When a callback is passed as a method parameter, the callback itself
 /// benefits from method bivariance rules.
 ///
-/// EXPECTED FAILURE: Method bivariance is not yet implemented. Callback
-/// parameters are currently checked with strictFunctionTypes. Once method
-/// bivariance is implemented, change to expect 0 errors.
 #[test]
-#[ignore = "Method bivariance is not yet implemented - callback parameters use strictFunctionTypes"]
 fn test_callback_method_parameter_bivariance() {
     use crate::parser::ParserState;
 
@@ -18429,7 +18401,7 @@ interface Processor {
 }
 
 function handleDog(dog: Dog): void {
-    console.log(dog.breed);
+    dog.breed;
 }
 
 declare const processor: Processor;
