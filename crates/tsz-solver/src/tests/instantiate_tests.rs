@@ -488,7 +488,6 @@ fn test_instantiate_conditional() {
 }
 
 #[test]
-#[ignore = "TODO: Mapped type instantiation with shadowed type parameter"]
 fn test_instantiate_mapped_type_shadowed_param() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
