@@ -676,9 +676,21 @@ impl<'a> IRPrinter<'a> {
             } => {
                 self.write("Object.defineProperty(");
                 self.emit_node(target);
-                self.write(", \"");
-                self.write(property_name);
-                self.write("\", {");
+                self.write(", ");
+                match property_name {
+                    IRMethodName::Identifier(name) | IRMethodName::StringLiteral(name) => {
+                        self.write("\"");
+                        self.write(name);
+                        self.write("\"");
+                    }
+                    IRMethodName::NumericLiteral(name) => {
+                        self.write(name);
+                    }
+                    IRMethodName::Computed(expr) => {
+                        self.emit_node(expr);
+                    }
+                }
+                self.write(", {");
                 self.write_line();
                 self.increase_indent();
 
