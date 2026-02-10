@@ -9618,10 +9618,8 @@ const value = obj["x"];
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_checker_lowers_element_access_array_length() {
     use crate::parser::ParserState;
-    use crate::test_fixtures::load_lib_files_for_test;
 
     let source = r#"
 const arr = [1, 2];
@@ -9631,19 +9629,8 @@ const length = arr["length"];
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    // Load lib files for global types (Array, etc.)
-    let lib_files = load_lib_files_for_test();
     let mut binder = BinderState::new();
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::binder::state::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&lib_contexts);
-    }
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9654,17 +9641,7 @@ const length = arr["length"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
-    // Set lib contexts for global type resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9677,7 +9654,21 @@ const length = arr["length"];
         .get("length")
         .expect("length should exist");
     let length_type = checker.get_type_of_symbol(length_sym);
-    assert_eq!(length_type, TypeId::NUMBER);
+    // Array.length resolves to the number type from lib.d.ts declaration.
+    // It may be a reference type that is structurally number but not TypeId::NUMBER.
+    let is_number = length_type == TypeId::NUMBER
+        || matches!(
+            types.lookup(length_type),
+            Some(TypeKey::Intrinsic(
+                crate::solver::types::IntrinsicKind::Number
+            ))
+        );
+    assert!(
+        is_number,
+        "Expected number type for arr['length'], got {:?}, key: {:?}",
+        length_type,
+        types.lookup(length_type)
+    );
 }
 
 #[test]
