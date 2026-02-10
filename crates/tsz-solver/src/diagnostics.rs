@@ -534,6 +534,10 @@ pub mod codes {
 
     // Function/call errors
     pub use dc::CANNOT_FIND_NAME;
+    pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB as CANNOT_FIND_NAME_TARGET_LIB;
+    pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2 as CANNOT_FIND_NAME_DOM;
+    pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N as CANNOT_FIND_NAME_TEST_RUNNER;
+    pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE as CANNOT_FIND_NAME_NODE;
     pub use dc::EXPECTED_ARGUMENTS_BUT_GOT as ARG_COUNT_MISMATCH;
     pub use dc::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE as NEVER_ASYNC_RETURN;
     pub use dc::THIS_EXPRESSION_IS_NOT_CALLABLE as NOT_CALLABLE;
@@ -552,6 +556,32 @@ pub mod codes {
 
     // Type instantiation errors
     pub use dc::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE as INSTANTIATION_TOO_DEEP;
+}
+
+/// Map well-known names to their specialized "cannot find name" diagnostic codes.
+///
+/// TypeScript emits different error codes for well-known globals that are missing
+/// because they require specific type definitions or target library changes:
+/// - Node.js globals (require, process, Buffer, etc.) → TS2580
+/// - Test runner globals (describe, it, test, etc.) → TS2582
+/// - Target library types (Promise, Symbol, Map, etc.) → TS2583
+/// - DOM globals (document, console) → TS2584
+fn cannot_find_name_code(name: &str) -> u32 {
+    match name {
+        // Node.js globals → TS2580
+        "require" | "exports" | "module" | "process" | "Buffer" | "__filename" | "__dirname" => {
+            codes::CANNOT_FIND_NAME_NODE
+        }
+        // Test runner globals → TS2582
+        "describe" | "suite" | "it" | "test" => codes::CANNOT_FIND_NAME_TEST_RUNNER,
+        // Target library types → TS2583
+        "Promise" | "Symbol" | "Map" | "Set" | "Reflect" | "Iterator" | "AsyncIterator"
+        | "SharedArrayBuffer" => codes::CANNOT_FIND_NAME_TARGET_LIB,
+        // DOM globals → TS2584
+        "document" | "console" => codes::CANNOT_FIND_NAME_DOM,
+        // Everything else → TS2304
+        _ => codes::CANNOT_FIND_NAME,
+    }
 }
 
 // =============================================================================
@@ -715,10 +745,8 @@ impl<'a> DiagnosticBuilder<'a> {
             return TypeDiagnostic::error("", 0);
         }
 
-        TypeDiagnostic::error(
-            format!("Cannot find name '{}'.", name),
-            codes::CANNOT_FIND_NAME,
-        )
+        let code = cannot_find_name_code(name);
+        TypeDiagnostic::error(format!("Cannot find name '{}'.", name), code)
     }
 
     /// Create a "Type X is not callable" diagnostic.
@@ -1256,7 +1284,8 @@ impl PendingDiagnosticBuilder {
 
     /// Create a "Cannot find name" pending diagnostic.
     pub fn cannot_find_name(name: &str) -> PendingDiagnostic {
-        PendingDiagnostic::error(codes::CANNOT_FIND_NAME, vec![name.into()])
+        let code = cannot_find_name_code(name);
+        PendingDiagnostic::error(code, vec![name.into()])
     }
 
     /// Create a "Type is not callable" pending diagnostic.
