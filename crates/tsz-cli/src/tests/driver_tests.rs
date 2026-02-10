@@ -3463,7 +3463,6 @@ fn compile_missing_tsconfig_uses_defaults() {
 // =============================================================================
 
 #[test]
-#[ignore = "TODO: Fix stack overflow - generic utility library tests cause infinite recursion"]
 fn compile_generic_utility_library_array_utils() {
     // Test compilation of generic array utility functions
     let temp = TempDir::new().expect("temp dir");
