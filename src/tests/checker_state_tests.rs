@@ -20874,7 +20874,6 @@ function foo() {
 }
 
 #[test]
-#[ignore]
 fn test_use_before_assignment_for_of_initializer() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -20920,6 +20919,57 @@ function foo(items: number[]) {
     assert_eq!(
         count, 0,
         "Expected no use-before-assignment errors, got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+// Test for-in with external variable: `let k: string; for (k in obj) { k; }`
+#[test]
+fn test_use_before_assignment_for_in_initializer() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+function foo(obj: Record<string, number>) {
+    let k: string;
+    for (k in obj) {
+        k;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED)
+        .count();
+    assert_eq!(
+        count, 0,
+        "Expected no use-before-assignment errors for for-in, got: {:?}",
         checker.ctx.diagnostics
     );
 }
