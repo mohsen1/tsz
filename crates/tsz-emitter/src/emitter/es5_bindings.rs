@@ -448,18 +448,23 @@ impl<'a> Printer<'a> {
             self.write(" = ");
             self.emit_assignment_target_es5(key_idx, temp_name);
 
-            if !elem.initializer.is_none() {
+            // When there's a default, create a NEW temp for the defaulted value
+            let pattern_temp = if !elem.initializer.is_none() {
+                let defaulted_name = self.get_temp_var_name();
                 self.write(", ");
-                self.write(&value_name);
+                self.write(&defaulted_name);
                 self.write(" = ");
                 self.write(&value_name);
                 self.write(" === void 0 ? ");
                 self.emit_expression(elem.initializer);
                 self.write(" : ");
                 self.write(&value_name);
-            }
+                defaulted_name
+            } else {
+                value_name
+            };
 
-            self.emit_es5_destructuring_pattern_idx(elem.name, &value_name);
+            self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
             return;
         }
 
@@ -519,18 +524,23 @@ impl<'a> Printer<'a> {
             self.write_usize(index);
             self.write("]");
 
-            if !elem.initializer.is_none() {
+            // When there's a default, create a NEW temp for the defaulted value
+            let pattern_temp = if !elem.initializer.is_none() {
+                let defaulted_name = self.get_temp_var_name();
                 self.write(", ");
-                self.write(&value_name);
+                self.write(&defaulted_name);
                 self.write(" = ");
                 self.write(&value_name);
                 self.write(" === void 0 ? ");
                 self.emit_expression(elem.initializer);
                 self.write(" : ");
                 self.write(&value_name);
-            }
+                defaulted_name
+            } else {
+                value_name
+            };
 
-            self.emit_es5_destructuring_pattern_idx(elem.name, &value_name);
+            self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
             return;
         }
 
@@ -598,18 +608,23 @@ impl<'a> Printer<'a> {
             self.write(" = ");
             self.emit_assignment_target_es5(key_idx, temp_name);
 
-            if !elem.initializer.is_none() {
+            // When there's a default, create a NEW temp for the defaulted value
+            let pattern_temp = if !elem.initializer.is_none() {
+                let defaulted_name = self.get_temp_var_name();
                 self.write(", ");
-                self.write(&value_name);
+                self.write(&defaulted_name);
                 self.write(" = ");
                 self.write(&value_name);
                 self.write(" === void 0 ? ");
                 self.emit_expression(elem.initializer);
                 self.write(" : ");
                 self.write(&value_name);
-            }
+                defaulted_name
+            } else {
+                value_name
+            };
 
-            self.emit_es5_destructuring_pattern_idx(elem.name, &value_name);
+            self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
             return;
         }
 
@@ -702,18 +717,23 @@ impl<'a> Printer<'a> {
             self.write_usize(index);
             self.write("]");
 
-            if !elem.initializer.is_none() {
+            // When there's a default, create a NEW temp for the defaulted value
+            let pattern_temp = if !elem.initializer.is_none() {
+                let defaulted_name = self.get_temp_var_name();
                 self.write(", ");
-                self.write(&value_name);
+                self.write(&defaulted_name);
                 self.write(" = ");
                 self.write(&value_name);
                 self.write(" === void 0 ? ");
                 self.emit_expression(elem.initializer);
                 self.write(" : ");
                 self.write(&value_name);
-            }
+                defaulted_name
+            } else {
+                value_name
+            };
 
-            self.emit_es5_destructuring_pattern_idx(elem.name, &value_name);
+            self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
             return;
         }
 
