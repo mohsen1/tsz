@@ -430,9 +430,10 @@ impl<'a> CheckerState<'a> {
     /// - `export = X` is not used when there are also other exported elements (TS2309)
     /// - There are not multiple `export = X` statements (TS2300)
     pub(crate) fn check_export_assignment(&mut self, statements: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let mut export_assignment_indices: Vec<NodeIndex> = Vec::new();
+        let mut export_default_indices: Vec<NodeIndex> = Vec::new();
         let mut has_other_exports = false;
 
         for &stmt_idx in statements {
@@ -449,7 +450,15 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 syntax_kind_ext::EXPORT_DECLARATION => {
-                    has_other_exports = true;
+                    if let Some(export_data) = self.ctx.arena.get_export_decl(node) {
+                        if export_data.is_default_export {
+                            export_default_indices.push(stmt_idx);
+                        } else {
+                            has_other_exports = true;
+                        }
+                    } else {
+                        has_other_exports = true;
+                    }
                 }
                 _ => {
                     if self.has_export_modifier(stmt_idx) {
@@ -504,6 +513,17 @@ impl<'a> CheckerState<'a> {
                 "An export assignment cannot be used in a module with other exported elements.",
                 diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_MODULE_WITH_OTHER_EXPORTED_ELEMENTS,
             );
+        }
+
+        // TS2528: Check for multiple default exports
+        if export_default_indices.len() > 1 {
+            for &export_idx in &export_default_indices {
+                self.error_at_node(
+                    export_idx,
+                    diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                    diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                );
+            }
         }
     }
 
