@@ -6592,9 +6592,10 @@ fn test_mutable_property_invariant_same_type() {
 }
 
 #[test]
-#[ignore = "Mutable property invariance with different types not fully implemented"]
 fn test_mutable_property_invariant_different_types() {
-    // Mutable properties with different types should fail (invariant)
+    // tsc uses covariant (not invariant) checking for mutable properties.
+    // {value: string} IS assignable to {value: string | number} (covariant)
+    // {value: string | number} is NOT assignable to {value: string} (narrowing)
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -6605,9 +6606,9 @@ fn test_mutable_property_invariant_different_types() {
 
     let obj_wide = interner.object(vec![PropertyInfo::new(prop_name, wide_type)]);
 
-    // Mutable properties are invariant - neither direction should work
-    // because writes to the wide type could violate the narrow type
-    assert!(!checker.is_subtype_of(obj_narrow, obj_wide));
+    // Narrow -> wide: OK (covariant property checking)
+    assert!(checker.is_subtype_of(obj_narrow, obj_wide));
+    // Wide -> narrow: NOT OK (string|number is not assignable to string)
     assert!(!checker.is_subtype_of(obj_wide, obj_narrow));
 }
 
@@ -7742,10 +7743,11 @@ fn test_invariant_generic_mutable_box() {
 }
 
 #[test]
-#[ignore = "Invariant RefCell pattern (mixed variance) not fully implemented"]
 fn test_invariant_ref_cell_pattern() {
     // RefCell<T> = { get(): T, set(v: T): void }
-    // T appears in both covariant (return) and contravariant (param) positions = invariant
+    // tsc uses bivariant method parameter checking, so methods are NOT
+    // checked contravariantly — this means RefCell<string> IS assignable
+    // to RefCell<string|number>, even though set() would be unsound.
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -7847,9 +7849,9 @@ fn test_invariant_ref_cell_pattern() {
         },
     ]);
 
-    // Neither should be subtype (invariant due to mixed variance)
-    // get() is covariant, set() is contravariant
-    assert!(!checker.is_subtype_of(refcell_string, refcell_union));
+    // tsc bivariant method checking: RefCell<string> -> RefCell<string|number> IS allowed
+    assert!(checker.is_subtype_of(refcell_string, refcell_union));
+    // RefCell<string|number> -> RefCell<string> is NOT allowed (get returns wider type)
     assert!(!checker.is_subtype_of(refcell_union, refcell_string));
 }
 
@@ -18194,9 +18196,9 @@ fn test_intersection_two_index_signatures() {
 }
 
 #[test]
-#[ignore = "Array intersection with incompatible element types not fully implemented"]
 fn test_array_intersection() {
-    // string[] & number[] = never (element types incompatible)
+    // string[] & number[] — tsc does NOT eagerly reduce this to never.
+    // The intersection remains a valid (albeit uninhabitable) type.
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -18205,8 +18207,8 @@ fn test_array_intersection() {
 
     let intersection = interner.intersection(vec![string_array, number_array]);
 
-    // Should be never (no value can be both string[] and number[])
-    assert!(checker.is_subtype_of(intersection, TypeId::NEVER));
+    // tsc does not reduce array intersections with incompatible elements to never
+    assert!(!checker.is_subtype_of(intersection, TypeId::NEVER));
 }
 
 #[test]
@@ -18238,9 +18240,8 @@ fn test_tuple_intersection_compatible() {
 }
 
 #[test]
-#[ignore = "Tuple intersection with incompatible elements not fully implemented"]
 fn test_tuple_intersection_incompatible() {
-    // [string, number] & [number, string] = never
+    // [string, number] & [number, string] — tsc does NOT reduce to never
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -18276,8 +18277,8 @@ fn test_tuple_intersection_incompatible() {
 
     let intersection = interner.intersection(vec![tuple1, tuple2]);
 
-    // Should be never (element types don't match)
-    assert!(checker.is_subtype_of(intersection, TypeId::NEVER));
+    // tsc does not eagerly reduce tuple intersections with incompatible elements to never
+    assert!(!checker.is_subtype_of(intersection, TypeId::NEVER));
 }
 
 #[test]
