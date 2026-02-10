@@ -182,6 +182,14 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Like make_unique_name but also records the temp for hoisting as a `var` declaration.
+    /// Used for assignment destructuring temps which need `var _a, _b, ...;` at scope top.
+    pub(super) fn make_unique_name_hoisted(&mut self) -> String {
+        let name = self.make_unique_name();
+        self.hoisted_assignment_temps.push(name.clone());
+        name
+    }
+
     // =========================================================================
     // Emitter Helpers
     // =========================================================================

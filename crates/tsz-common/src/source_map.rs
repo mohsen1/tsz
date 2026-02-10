@@ -147,6 +147,17 @@ impl SourceMapGenerator {
         );
     }
 
+    /// Shift all mappings at or after `from_line` by `delta` lines.
+    /// Used when inserting generated lines (e.g., hoisted temp var declarations)
+    /// into the output after emit is complete.
+    pub fn shift_generated_lines(&mut self, from_line: u32, delta: u32) {
+        for mapping in &mut self.mappings {
+            if mapping.generated_line >= from_line {
+                mapping.generated_line += delta;
+            }
+        }
+    }
+
     /// Generate the source map
     pub fn generate(&mut self) -> SourceMap {
         // Sort mappings by generated position
