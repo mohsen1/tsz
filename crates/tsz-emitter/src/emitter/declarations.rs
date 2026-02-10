@@ -230,7 +230,7 @@ impl<'a> Printer<'a> {
 
         // Collect property initializers that need lowering
         let mut field_inits: Vec<(String, NodeIndex)> = Vec::new();
-        let mut static_field_inits: Vec<(String, NodeIndex)> = Vec::new();
+        let mut static_field_inits: Vec<(String, NodeIndex, u32)> = Vec::new(); // (name, init, member_pos)
         if needs_class_field_lowering {
             for &member_idx in &class.members.nodes {
                 if let Some(member_node) = self.arena.get(member_idx) {
@@ -250,7 +250,7 @@ impl<'a> Printer<'a> {
                             }
                             if self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16)
                             {
-                                static_field_inits.push((name, prop.initializer));
+                                static_field_inits.push((name, prop.initializer, member_node.pos));
                             } else {
                                 field_inits.push((name, prop.initializer));
                             }
@@ -362,7 +362,9 @@ impl<'a> Printer<'a> {
             let class_name = self.get_identifier_text_idx(class.name);
             if !class_name.is_empty() {
                 self.write_line();
-                for (name, init_idx) in &static_field_inits {
+                for (name, init_idx, member_pos) in &static_field_inits {
+                    // Emit leading comment from the original static property declaration
+                    self.emit_comments_before_pos(*member_pos);
                     self.write(&class_name);
                     self.write(".");
                     self.write(name);
@@ -617,6 +619,31 @@ impl<'a> Printer<'a> {
                         let Some(stmt_node) = self.arena.get(stmt_idx) else {
                             continue;
                         };
+
+                        // Skip erased declarations (interface, type alias) and their comments
+                        if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                            || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                        {
+                            self.skip_comments_for_erased_node(stmt_node);
+                            continue;
+                        }
+
+                        // Also handle export { interface/type } by checking export clause
+                        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                            if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                                let inner_kind = self
+                                    .arena
+                                    .get(export.export_clause)
+                                    .map(|n| n.kind)
+                                    .unwrap_or(0);
+                                if inner_kind == syntax_kind_ext::INTERFACE_DECLARATION
+                                    || inner_kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                {
+                                    self.skip_comments_for_erased_node(stmt_node);
+                                    continue;
+                                }
+                            }
+                        }
 
                         // Emit leading comments before this statement
                         self.emit_comments_before_pos(stmt_node.pos);

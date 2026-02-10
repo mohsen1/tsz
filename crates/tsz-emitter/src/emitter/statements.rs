@@ -17,17 +17,19 @@ impl<'a> Printer<'a> {
 
         // Empty blocks: check for comments inside, then preserve original format
         if block.statements.nodes.is_empty() {
-            // Check if there are comments inside the block
+            // Find the actual closing `}` position (not node.end which includes trailing trivia)
+            let closing_brace_pos = self.find_token_end_before_trivia(node.pos, node.end);
+            // Check if there are comments inside the block (between { and })
             let has_inner_comments = !self.ctx.options.remove_comments
                 && self
                     .all_comments
                     .get(self.comment_emit_idx)
-                    .is_some_and(|c| c.end <= node.end);
+                    .is_some_and(|c| c.end <= closing_brace_pos);
             if has_inner_comments {
                 self.write("{");
                 self.write_line();
                 self.increase_indent();
-                self.emit_comments_before_pos(node.end);
+                self.emit_comments_before_pos(closing_brace_pos);
                 self.decrease_indent();
                 self.write("}");
             } else if self.is_single_line(node) {
