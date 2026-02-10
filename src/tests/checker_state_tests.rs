@@ -16612,11 +16612,8 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
 /// Property access on T where T extends SomeType should resolve properties
 /// from the constraint during access.
 ///
-/// NOTE: Currently ignored - cross-scope generic constraint resolution is not fully
-/// implemented. The checker doesn't correctly resolve constraint properties for generic
-/// types in all cases.
+/// Cross-scope generic constraint resolution: basic constraints, alias chains, and union constraints.
 #[test]
-#[ignore]
 fn test_cross_scope_generic_constraints() {
     use crate::parser::ParserState;
 
@@ -16640,13 +16637,6 @@ function identify<T extends Identifiable>(item: T): number {
 type Entity = { kind: "user"; name: string } | { kind: "bot"; version: number };
 function getKind<T extends Entity>(entity: T): "user" | "bot" {
     return entity.kind; // Should work: both union members have .kind
-}
-
-// Generic with conditional constraint (relates to Application expansion)
-type ExtractId<T> = T extends { id: infer I } ? I : never;
-function extractId<T extends { id: number }>(item: T): ExtractId<T> {
-    // The return type ExtractId<T> should resolve when T is known
-    return item.id as ExtractId<T>; // Cast needed due to conditional complexity
 }
 "#;
 
@@ -16673,16 +16663,53 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Cross-Scope Generic Constraints Diagnostics ===");
-        for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
-        }
-    }
-
     assert!(
         checker.ctx.diagnostics.is_empty(),
         "Constraint property lookup should work: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Cross-scope generic constraint with conditional type using `infer`.
+/// TODO: `infer I` in conditional types doesn't resolve the inferred type parameter correctly.
+#[test]
+#[ignore = "TODO: infer keyword in conditional types not fully implemented"]
+fn test_cross_scope_generic_constraints_conditional_infer() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+type ExtractId<T> = T extends { id: infer I } ? I : never;
+function extractId<T extends { id: number }>(item: T): ExtractId<T> {
+    return item.id as ExtractId<T>;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    assert!(
+        checker.ctx.diagnostics.is_empty(),
+        "Constraint property lookup with infer should work: {:?}",
         checker.ctx.diagnostics
     );
 }
