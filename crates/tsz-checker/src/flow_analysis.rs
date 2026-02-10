@@ -1706,11 +1706,19 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn should_check_definite_assignment(
         &mut self,
         sym_id: SymbolId,
-        _idx: NodeIndex,
+        idx: NodeIndex,
     ) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::node::NodeAccess;
         use tsz_scanner::SyntaxKind;
+
+        // Skip definite assignment check if this identifier is a for-in/for-of
+        // initializer — it's an assignment target, not a usage.
+        // e.g., `let x: number; for (x of items) { ... }` — the `x` in `for (x of ...)`
+        // is being written to, not read from.
+        if self.is_for_in_of_initializer(idx) {
+            return false;
+        }
 
         // Get the symbol
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -1832,6 +1840,29 @@ impl<'a> CheckerState<'a> {
 
         // Variable without initializer inside function scope - should be checked
         true
+    }
+
+    /// Check if a node is a for-in/for-of initializer (assignment target).
+    /// For `for (x of items)`, the identifier `x` is the initializer and is
+    /// being assigned to, not read from.
+    fn is_for_in_of_initializer(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::node::NodeAccess;
+
+        let Some(info) = self.ctx.arena.node_info(idx) else {
+            return false;
+        };
+        let parent = info.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        if (parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+            || parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+            && let Some(for_data) = self.ctx.arena.get_for_in_of(parent_node)
+            && for_data.initializer == idx
+        {
+            return true;
+        }
+        false
     }
 
     /// Check if a variable is definitely assigned at a given point.

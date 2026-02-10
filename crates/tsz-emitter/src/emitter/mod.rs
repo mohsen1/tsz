@@ -279,6 +279,10 @@ pub struct Printer<'a> {
     /// Pending class field initializers to inject into constructor body.
     /// Each entry is (field_name, initializer_node_index).
     pub(super) pending_class_field_inits: Vec<(String, NodeIndex)>,
+
+    /// Temp variable names that need to be hoisted to the top of the current scope
+    /// as `var _a, _b, ...;`. Used for assignment destructuring in ES5 mode.
+    pub(super) hoisted_assignment_temps: Vec<String>,
 }
 
 impl<'a> Printer<'a> {
@@ -330,6 +334,7 @@ impl<'a> Printer<'a> {
             in_namespace_iife: false,
             declared_namespace_names: FxHashSet::default(),
             pending_class_field_inits: Vec::new(),
+            hoisted_assignment_temps: Vec::new(),
         }
     }
 
@@ -2096,6 +2101,12 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Save position for hoisted temp var declarations (assignment destructuring).
+        // After emitting all statements, we'll insert `var _a, _b, ...;` here if needed.
+        self.hoisted_assignment_temps.clear();
+        let hoisted_var_byte_offset = self.writer.len();
+        let hoisted_var_line = self.writer.current_line();
+
         // Emit statements with their leading comments.
         // In this parser, node.pos includes leading trivia (whitespace + comments).
         // Between-statement comments are part of the next node's leading trivia.
@@ -2185,6 +2196,14 @@ impl<'a> Printer<'a> {
                 }
                 self.comment_emit_idx += 1;
             }
+        }
+
+        // Insert hoisted temp var declarations for assignment destructuring.
+        // These are generated during emit and need to be inserted at the saved position.
+        if !self.hoisted_assignment_temps.is_empty() {
+            let var_decl = format!("var {};", self.hoisted_assignment_temps.join(", "));
+            self.writer
+                .insert_line_at(hoisted_var_byte_offset, hoisted_var_line, &var_decl);
         }
 
         // Ensure output ends with a newline (matching tsc behavior)
