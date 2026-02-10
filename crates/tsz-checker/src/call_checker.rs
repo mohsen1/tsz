@@ -171,15 +171,46 @@ impl<'a> CheckerState<'a> {
                         // But first, emit TS2556 error: spread must be tuple or rest parameter
                         // Only emit when the target function does NOT have a rest parameter.
                         // We detect rest parameters by checking if the expected type at the current
-                        // effective_index is an array type (rest params are typed as arrays).
+                        // effective_index is an array type (rest params are typed as arrays),
+                        // a type parameter with an array constraint (generic rest params like
+                        // `<T extends unknown[]>(...args: T)`), or `any`.
                         if get_array_element_type(self.ctx.types, spread_type).is_some() {
                             let current_expected =
                                 expected_for_index(effective_index, expanded_count);
-                            let target_has_rest = current_expected.is_some_and(|t| {
-                                get_array_element_type(self.ctx.types, t).is_some()
-                                    || get_tuple_elements(self.ctx.types, t).is_some()
+                            let is_array_like = |ty: TypeId| -> bool {
+                                let ty =
+                                    tsz_solver::type_queries::unwrap_readonly(self.ctx.types, ty);
+                                get_array_element_type(self.ctx.types, ty).is_some()
+                                    || get_tuple_elements(self.ctx.types, ty).is_some()
+                            };
+                            // Only emit TS2556 when we positively know the target
+                            // does NOT have a rest parameter. If we can't resolve
+                            // the target parameter type (None), don't emit.
+                            let target_lacks_rest = current_expected.is_some_and(|t| {
+                                // `any` accepts all spreads
+                                if t == TypeId::ANY {
+                                    return false;
+                                }
+                                // Direct array/tuple types (incl. readonly) → rest parameter
+                                if is_array_like(t) {
+                                    return false;
+                                }
+                                // Type parameter with array-like constraint →
+                                // generic rest param (e.g. `<T extends readonly unknown[]>(...args: T)`)
+                                if let Some(constraint) =
+                                    tsz_solver::type_queries::get_type_parameter_constraint(
+                                        self.ctx.types,
+                                        t,
+                                    )
+                                {
+                                    if is_array_like(constraint) {
+                                        return false;
+                                    }
+                                }
+                                // Target parameter is a concrete non-array type → no rest
+                                true
                             });
-                            if !target_has_rest {
+                            if target_lacks_rest {
                                 // This is a spread of a non-tuple array type
                                 // TypeScript emits TS2556: "A spread argument must either have a tuple type or be passed to a rest parameter."
                                 self.error_spread_must_be_tuple_or_rest_at(arg_idx);
