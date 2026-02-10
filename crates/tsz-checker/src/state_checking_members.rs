@@ -2335,7 +2335,10 @@ impl<'a> CheckerState<'a> {
 
         // For setters, check parameter constraints (1052, 1053)
         if node.kind == syntax_kind_ext::SET_ACCESSOR {
-            self.check_setter_parameter(&accessor.parameters.nodes);
+            // Check if a paired getter exists — if so, setter parameter type is
+            // inferred from the getter return type (contextually typed, no TS7006)
+            let has_paired_getter = self.setter_has_paired_getter(member_idx, &accessor);
+            self.check_setter_parameter(&accessor.parameters.nodes, has_paired_getter);
         }
 
         // Check accessor body
@@ -2422,10 +2425,38 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check setter parameter constraints (1052, 1053).
-    /// - A 'set' accessor parameter cannot have an initializer
-    /// - A 'set' accessor cannot have rest parameter
+    /// Check if a setter has a paired getter with the same name in the class.
     ///
+    /// TSC infers setter parameter types from the getter return type, so a setter
+    /// with a paired getter has contextually typed parameters (no TS7006).
+    fn setter_has_paired_getter(
+        &self,
+        _setter_idx: NodeIndex,
+        setter_accessor: &tsz_parser::parser::node::AccessorData,
+    ) -> bool {
+        let Some(setter_name) = self.get_property_name(setter_accessor.name) else {
+            return false;
+        };
+        let Some(ref class_info) = self.ctx.enclosing_class else {
+            return false;
+        };
+        for &member_idx in &class_info.member_nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                if let Some(getter) = self.ctx.arena.get_accessor(member_node) {
+                    if let Some(getter_name) = self.get_property_name(getter.name) {
+                        if getter_name == setter_name {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Promise/async type checking methods moved to promise_checker.rs
     /// The lower_type_with_bindings helper remains here as it requires
     /// access to private resolver methods.
