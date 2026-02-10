@@ -26371,13 +26371,16 @@ mixed(42, 99, 100);
 fn test_ts2555_expected_at_least_arguments() {
     use crate::parser::ParserState;
 
-    // Test TS2555: Expected at least N arguments, but got M.
-    // This error should be emitted when a function has optional parameters
-    // and fewer arguments are provided than the minimum required.
+    // Test TS2554 vs TS2555: tsc uses TS2554 ("Expected N-M arguments") for
+    // functions with optional params, and TS2555 ("Expected at least N") only
+    // for rest params. This test verifies that behavior.
+
+    // Case 1: Optional params → TS2554
     let code = r#"
 function foo(a: number, b: string, c?: boolean): void {}
 
-// Too few arguments - should emit TS2555 because there are optional params
+// Too few arguments - should emit TS2554 (not TS2555) because tsc uses
+// TS2554 with range format for optional params
 foo(1);
 "#;
 
@@ -26400,17 +26403,17 @@ foo(1);
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    let ts2555_errors: Vec<_> = checker
+    let ts2554_errors: Vec<_> = checker
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == 2555)
+        .filter(|d| d.code == 2554)
         .collect();
 
-    // Should have TS2555 (expected at least)
+    // Should have TS2554 (not TS2555) for optional params
     assert!(
-        !ts2555_errors.is_empty(),
-        "Should emit TS2555 when too few arguments provided to function with optional params, got diagnostics: {:?}",
+        !ts2554_errors.is_empty(),
+        "Should emit TS2554 for too few args with optional params, got diagnostics: {:?}",
         checker
             .ctx
             .diagnostics
@@ -26419,12 +26422,20 @@ foo(1);
             .collect::<Vec<_>>()
     );
 
-    // Verify TS2555 message format
-    let first_error_msg = &ts2555_errors[0].message_text;
+    // Should NOT have TS2555
+    let ts2555_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2555)
+        .collect();
     assert!(
-        first_error_msg.contains("Expected at least"),
-        "TS2555 message should say 'Expected at least', got: {}",
-        first_error_msg
+        ts2555_errors.is_empty(),
+        "Should NOT emit TS2555 for optional params (only for rest params), got: {:?}",
+        ts2555_errors
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
     );
 }
 
