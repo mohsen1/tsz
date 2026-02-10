@@ -10,11 +10,13 @@
  *   4. No temp directory creation per file
  *
  * Uses child_process.fork for full process-level parallelism.
+ *
+ * Cache keys are relative file paths (e.g., "compiler/foo.ts").
  */
 
 import { fork } from 'node:child_process';
 import { readFileSync, writeFileSync, statSync, readdirSync } from 'node:fs';
-import { join, extname, resolve } from 'node:path';
+import { join, extname, resolve, relative } from 'node:path';
 import { cpus } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
@@ -88,35 +90,6 @@ function stripDirectiveComments(content) {
 }
 
 // ---------------------------------------------------------------------------
-// Hash computation — blake3 compatible with Rust implementation
-// ---------------------------------------------------------------------------
-let blake3Module;
-
-async function initHash() {
-  try {
-    blake3Module = await import('blake3');
-    console.log('🔑 Using blake3 hashing (compatible with Rust runner)');
-  } catch (err) {
-    console.error('ERROR: blake3 npm package is required for cache compatibility with the Rust conformance runner.');
-    console.error('Install it with: cd scripts && npm install blake3');
-    console.error(`(import error: ${err.message})`);
-    process.exit(1);
-  }
-}
-
-function calculateTestHash(content, options) {
-  const sorted = Object.entries(options).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  const hasher = blake3Module.createHash();
-  hasher.update(Buffer.from(content, 'utf-8'));
-  for (const [k, v] of sorted) {
-    hasher.update(Buffer.from(k, 'utf-8'));
-    hasher.update(Buffer.from('=', 'utf-8'));
-    hasher.update(Buffer.from(v, 'utf-8'));
-  }
-  return hasher.digest('hex');
-}
-
-// ---------------------------------------------------------------------------
 // Options conversion (mirrors Rust convert_options_to_tsconfig)
 // ---------------------------------------------------------------------------
 
@@ -182,6 +155,9 @@ if (!IS_WORKER) {
   // ===========================================================================
   const args = parseArgs(process.argv.slice(2));
 
+  // Resolve testDir to an absolute path for consistent relative path computation
+  const testDirAbs = resolve(args.testDir);
+
   console.log(`🔍 Discovering test files in: ${args.testDir}`);
   const testFiles = discoverTests(args.testDir, args.max);
   console.log(`✓ Found ${testFiles.length} test files`);
@@ -190,9 +166,7 @@ if (!IS_WORKER) {
   console.log(`\n🔨 Processing ${testFiles.length} tests with ${numWorkers} workers...`);
   const start = performance.now();
 
-  await initHash();
-
-  // Pre-read all files, parse directives, calculate hashes
+  // Pre-read all files, parse directives, compute cache keys (relative paths)
   console.log('📖 Reading and parsing files...');
   const fileQueue = [];
   let skippedCount = 0;
@@ -208,14 +182,15 @@ if (!IS_WORKER) {
       }
 
       const stat = statSync(filePath);
-      const hash = calculateTestHash(content, directives.options);
+      // Cache key is relative file path from test directory
+      const key = relative(testDirAbs, resolve(filePath));
 
       fileQueue.push({
         path: filePath,
         content,
         options: directives.options,
         filenames: directives.filenames,
-        hash,
+        key,
         mtimeMs: Math.floor(stat.mtimeMs),
         size: stat.size,
       });
@@ -267,7 +242,7 @@ if (!IS_WORKER) {
             if (r.error) {
               errors++;
             } else {
-              cache[r.hash] = {
+              cache[r.key] = {
                 metadata: { mtime_ms: r.mtimeMs, size: r.size },
                 error_codes: r.errorCodes,
               };
@@ -348,13 +323,13 @@ if (!IS_WORKER) {
         try {
           const errorCodes = processFile(ts, file, libSourceFileCache);
           results.push({
-            hash: file.hash,
+            key: file.key,
             mtimeMs: file.mtimeMs,
             size: file.size,
             errorCodes,
           });
         } catch (err) {
-          results.push({ hash: file.hash, error: err.message });
+          results.push({ key: file.key, error: err.message });
         }
       }
       process.send({ type: 'results', results });

@@ -1,13 +1,14 @@
 //! TSC cache module
 //!
-//! Handles loading, hashing, and fast lookup of TSC results from cache file.
+//! Handles loading and fast lookup of TSC results from cache file.
+//! Cache keys are relative file paths (e.g., "compiler/foo.ts") since each
+//! conformance test is a single file (multi-file tests use @filename directives).
 
 use crate::tsc_results::TscResult;
-use blake3::Hasher;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// TSC cache type: hash -> TSC result
+/// TSC cache type: relative file path -> TSC result
 pub type TscCache = HashMap<String, TscResult>;
 
 /// Load TSC cache from JSON file
@@ -25,62 +26,61 @@ pub fn load_cache(cache_path: &Path) -> anyhow::Result<TscCache> {
     Ok(cache)
 }
 
-/// Calculate deterministic hash for a test file
+/// Compute cache key for a test file: its path relative to the test directory.
 ///
-/// Hash includes: file content + all options (sorted deterministically)
-pub fn calculate_test_hash(content: &str, options: &HashMap<String, String>) -> String {
-    let mut hasher = Hasher::new();
-
-    // Hash content
-    hasher.update(content.as_bytes());
-
-    // Hash options in sorted order for determinism
-    let mut sorted_options: Vec<_> = options.iter().collect();
-    sorted_options.sort_by_key(|(k, _)| *k);
-    for (key, value) in sorted_options {
-        hasher.update(key.as_bytes());
-        hasher.update(b"=");
-        hasher.update(value.as_bytes());
+/// Both paths are canonicalized before computing the relative path to handle
+/// symlinks, `./` prefixes, and other path normalization differences.
+///
+/// Returns `None` if the path cannot be made relative to `test_dir`.
+pub fn cache_key(path: &Path, test_dir: &Path) -> Option<String> {
+    // Try direct strip first (fast path)
+    if let Ok(rel) = path.strip_prefix(test_dir) {
+        return Some(rel.to_string_lossy().to_string());
     }
-
-    // Return hex string
-    hasher.finalize().to_hex().to_string()
+    // Canonicalize both to handle symlinks and relative paths
+    let canon_path = path.canonicalize().ok()?;
+    let canon_dir = test_dir.canonicalize().ok()?;
+    canon_path
+        .strip_prefix(&canon_dir)
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
 }
 
-/// Check if file is cached based on hash
-///
-/// Returns Some(result) if cached, None if not found.
-/// Note: We don't check mtime/size since the hash already encodes the file content.
-/// This makes the cache resilient to git operations that change file timestamps.
-pub fn check_cache_metadata<'a>(
-    cache: &'a TscCache,
-    hash: &str,
-    _mtime_ms: u64,
-    _size: u64,
-) -> Option<&'a TscResult> {
-    cache.get(hash)
+/// Look up a test in the cache by its relative path key.
+pub fn lookup<'a>(cache: &'a TscCache, key: &str) -> Option<&'a TscResult> {
+    cache.get(key)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
-    fn test_calculate_test_hash() {
-        let content = "function foo() {}";
-        let mut options = HashMap::new();
-        options.insert("strict".to_string(), "true".to_string());
+    fn test_cache_key() {
+        let test_dir = PathBuf::from("/repo/TypeScript/tests/cases");
+        let path = PathBuf::from("/repo/TypeScript/tests/cases/compiler/foo.ts");
+        assert_eq!(
+            cache_key(&path, &test_dir),
+            Some("compiler/foo.ts".to_string())
+        );
+    }
 
-        let hash1 = calculate_test_hash(content, &options);
-        let hash2 = calculate_test_hash(content, &options);
+    #[test]
+    fn test_cache_key_nested() {
+        let test_dir = PathBuf::from("/repo/TypeScript/tests/cases");
+        let path =
+            PathBuf::from("/repo/TypeScript/tests/cases/conformance/types/intersection/bar.ts");
+        assert_eq!(
+            cache_key(&path, &test_dir),
+            Some("conformance/types/intersection/bar.ts".to_string())
+        );
+    }
 
-        // Same input should produce same hash
-        assert_eq!(hash1, hash2);
-
-        // Different order of options should produce same hash
-        let mut options2 = HashMap::new();
-        options2.insert("strict".to_string(), "true".to_string());
-        let hash3 = calculate_test_hash(content, &options2);
-        assert_eq!(hash1, hash3);
+    #[test]
+    fn test_cache_key_outside_test_dir() {
+        let test_dir = PathBuf::from("/repo/TypeScript/tests/cases");
+        let path = PathBuf::from("/somewhere/else/foo.ts");
+        assert_eq!(cache_key(&path, &test_dir), None);
     }
 }
