@@ -2484,17 +2484,12 @@ impl<'a> CheckerState<'a> {
 
         let (symbols, saw_class_scope) = self.resolve_private_identifier_symbols(name_idx);
 
-        // TS18016: Grammar check - private identifiers not allowed outside class bodies
-        // This is a grammar error that can co-occur with TS18013 (semantic error)
-        if !saw_class_scope {
-            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.error_at_node(
-                name_idx,
-                diagnostic_messages::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
-                diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
-            );
-            // Don't return - continue processing to potentially emit TS18013 as well
-        }
+        // NOTE: Do NOT emit TS18016 here for property access expressions.
+        // `obj.#prop` is always valid syntax — the private identifier in a property
+        // access position is grammatically correct. TSC only emits TS18016 for truly
+        // invalid positions (object literals, standalone expressions). For property
+        // access, the error is always semantic (TS18013: can't access private member),
+        // which is handled below based on the object's type.
 
         // Evaluate for type checking but preserve original for error messages
         // This preserves nominal identity (e.g., D<string>) in error messages
