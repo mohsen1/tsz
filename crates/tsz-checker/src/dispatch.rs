@@ -53,6 +53,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Identifiers
             k if k == SyntaxKind::Identifier as u16 => self.checker.get_type_of_identifier(idx),
             k if k == SyntaxKind::ThisKeyword as u16 => {
+                // TS2331: 'this' cannot be referenced in a module or namespace body
+                if self.checker.is_this_in_namespace_body(idx) {
+                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.checker.error_at_node(
+                        idx,
+                        diagnostic_messages::THIS_CANNOT_BE_REFERENCED_IN_A_MODULE_OR_NAMESPACE_BODY,
+                        diagnostic_codes::THIS_CANNOT_BE_REFERENCED_IN_A_MODULE_OR_NAMESPACE_BODY,
+                    );
+                    return TypeId::ANY;
+                }
                 if let Some(this_type) = self.checker.current_this_type() {
                     this_type
                 } else if let Some(ref class_info) = self.checker.ctx.enclosing_class {

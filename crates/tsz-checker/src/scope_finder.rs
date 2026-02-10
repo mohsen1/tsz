@@ -140,6 +140,81 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
+    // Namespace Context Detection
+    // =========================================================================
+
+    /// Check if a `this` expression is in a module/namespace body context
+    /// where it cannot be referenced (TS2331).
+    ///
+    /// Walks up the AST from the `this` node:
+    /// - Arrow functions are transparent (they inherit `this` from outer scope)
+    /// - Regular functions/methods/constructors create their own `this` scope,
+    ///   so `this` inside them is valid (stops the search)
+    /// - For methods/constructors, only the body creates a `this` scope —
+    ///   decorator expressions and computed property names execute in the outer scope
+    /// - If we reach a MODULE_DECLARATION without hitting a function boundary,
+    ///   `this` is in the namespace body → return true
+    pub(crate) fn is_this_in_namespace_body(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::*;
+        let mut current = idx;
+        let mut in_decorator = false;
+        let mut iterations = 0;
+
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            // Track decorator context — decorators execute in the outer scope,
+            // not inside the method they decorate
+            if node.kind == DECORATOR {
+                in_decorator = true;
+            }
+
+            match node.kind {
+                // Arrow functions don't create their own `this` scope
+                k if k == ARROW_FUNCTION => continue,
+
+                // Regular functions always create their own `this` scope
+                k if k == FUNCTION_DECLARATION || k == FUNCTION_EXPRESSION => return false,
+
+                // Methods/constructors create `this` scope for their body,
+                // but NOT for decorators applied to them
+                k if k == METHOD_DECLARATION
+                    || k == CONSTRUCTOR
+                    || k == GET_ACCESSOR
+                    || k == SET_ACCESSOR =>
+                {
+                    if in_decorator {
+                        // `this` is in a decorator on this method — not inside
+                        // the method body. Continue searching upward.
+                        in_decorator = false;
+                        continue;
+                    }
+                    // `this` is inside the method body → has its own scope
+                    return false;
+                }
+
+                // Reached a namespace/module declaration → TS2331
+                k if k == MODULE_DECLARATION => return true,
+
+                _ => continue,
+            }
+        }
+    }
+
+    // =========================================================================
     // Variable Enclosure
     // =========================================================================
 
