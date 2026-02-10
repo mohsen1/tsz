@@ -646,6 +646,10 @@ impl<'a> Printer<'a> {
                 } else {
                     self.write(&es5_output);
                 }
+                // Skip comments within the class range - the ES5 class emitter
+                // doesn't use the main comment system, so we must advance past them
+                // to prevent them from being dumped at end of file.
+                self.skip_comments_for_erased_node(node);
             }
             EmitDirective::ES5ClassExpression { class_node } => {
                 self.emit_class_expression_es5(class_node);
@@ -664,6 +668,10 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_should_declare_var(should_declare_var);
                 let output = ns_emitter.emit_namespace(namespace_node);
                 self.write(output.trim_end_matches('\n'));
+                // Skip comments within the namespace range - the ES5 namespace emitter
+                // doesn't use the main comment system, so we must advance past them
+                // to prevent them from being dumped at end of file.
+                self.skip_comments_for_erased_node(node);
             }
 
             EmitDirective::ES5Enum { enum_node } => {
