@@ -271,7 +271,7 @@ pub enum IRNode {
     /// Object.defineProperty for getters/setters
     DefineProperty {
         target: Box<IRNode>,
-        property_name: String,
+        property_name: IRMethodName,
         descriptor: IRPropertyDescriptor,
     },
 
