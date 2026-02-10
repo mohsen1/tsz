@@ -37,6 +37,7 @@ Commands:
   generate    Generate TSC cache locally (required if download unavailable)
   run         Run conformance tests against TSC cache
   analyze     Analyze failures: categorize, rank by impact, find easy wins
+              Shows which error codes to implement for maximum conformance gain
   all         Download/generate cache and run tests (default)
   clean       Remove cache file
 
@@ -59,9 +60,17 @@ Examples:
   ./scripts/conformance.sh run --max 100              # Test first 100 files
   ./scripts/conformance.sh run --filter "strict"      # Run tests matching "strict"
   ./scripts/conformance.sh run --error-code 2304      # Only show tests with TS2304
+  ./scripts/conformance.sh analyze                    # Full analysis with impact report
   ./scripts/conformance.sh analyze --offset 0 --max 3101  # Analyze slice failures
   ./scripts/conformance.sh analyze --category false-positive  # Show only false positives
   ./scripts/conformance.sh analyze --category close    # Tests closest to passing
+  ./scripts/conformance.sh analyze --top 30            # Show top 30 items per section
+
+Analysis output includes:
+  - Error codes NOT IMPLEMENTED (never emitted by tsz) - highest priority!
+  - Error codes that appear TOGETHER in tests - implement groups for more impact
+  - QUICK WINS - tests missing just one error code
+  - Impact estimation - how many tests each code affects
 
 Note: Binaries are automatically built if not found.
       Cache is downloaded from GitHub artifacts when available (per TypeScript version).
