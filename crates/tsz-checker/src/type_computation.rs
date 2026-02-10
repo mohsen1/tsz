@@ -1445,6 +1445,22 @@ impl<'a> CheckerState<'a> {
             self.ctx.this_type_stack.push(this_type);
         }
 
+        // Pre-scan: collect getter property names so setter TS7006 checks can
+        // detect paired getters regardless of declaration order.
+        let obj_getter_names: rustc_hash::FxHashSet<String> = obj
+            .elements
+            .nodes
+            .iter()
+            .filter_map(|&elem_idx| {
+                let elem_node = self.ctx.arena.get(elem_idx)?;
+                if elem_node.kind != syntax_kind_ext::GET_ACCESSOR {
+                    return None;
+                }
+                let accessor = self.ctx.arena.get_accessor(elem_node)?;
+                self.get_property_name(accessor.name)
+            })
+            .collect();
+
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
@@ -1665,12 +1681,17 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // For setters, check implicit any on parameters (error 7006)
+                // When a paired getter exists, the setter parameter type is inferred
+                // from the getter return type (contextually typed, suppress TS7006).
                 if elem_node.kind == syntax_kind_ext::SET_ACCESSOR {
+                    let has_paired_getter = self
+                        .get_property_name(accessor.name)
+                        .is_some_and(|name| obj_getter_names.contains(&name));
                     for &param_idx in &accessor.parameters.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         {
-                            self.maybe_report_implicit_any_parameter(param, false);
+                            self.maybe_report_implicit_any_parameter(param, has_paired_getter);
                         }
                     }
                 }

@@ -101,10 +101,17 @@ impl<'a> CheckerState<'a> {
     /// - TS1053: Setter cannot have rest parameters
     /// - TS7006: Parameters without type annotations are implicitly 'any'
     ///
+    /// When a setter has a paired getter, the setter parameter type is inferred
+    /// from the getter return type, so TS7006 is suppressed.
+    ///
     /// ## Error Messages:
     /// - TS1052: "A 'set' accessor parameter cannot have an initializer."
     /// - TS1053: "A 'set' accessor cannot have rest parameter."
-    pub(crate) fn check_setter_parameter(&mut self, parameters: &[NodeIndex]) {
+    pub(crate) fn check_setter_parameter(
+        &mut self,
+        parameters: &[NodeIndex],
+        has_paired_getter: bool,
+    ) {
         for &param_idx in parameters {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -132,8 +139,9 @@ impl<'a> CheckerState<'a> {
             }
 
             // Check for implicit any (error 7006)
-            // Setter parameters without type annotation implicitly have 'any' type
-            self.maybe_report_implicit_any_parameter(param, false);
+            // When a setter has a paired getter, the parameter type is inferred from
+            // the getter return type, so it's contextually typed (suppress TS7006).
+            self.maybe_report_implicit_any_parameter(param, has_paired_getter);
         }
     }
 }
