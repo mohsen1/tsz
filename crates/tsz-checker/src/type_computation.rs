@@ -898,6 +898,35 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             }
+            // TS17006: Unary expression not allowed as left-hand side of `**`.
+            // `-x ** y` is ambiguous, so TSC forbids it. The parser produces
+            // Binary(PrefixUnary(-, x), **, y), so check if left_idx is a unary.
+            if op_kind == SyntaxKind::AsteriskAsteriskToken as u16 {
+                if let Some(left_node) = self.ctx.arena.get(left_idx) {
+                    if left_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+                        if let Some(left_unary) = self.ctx.arena.get_unary_expr(left_node) {
+                            let op_name = match left_unary.operator {
+                                k if k == SyntaxKind::MinusToken as u16 => Some("-"),
+                                k if k == SyntaxKind::PlusToken as u16 => Some("+"),
+                                k if k == SyntaxKind::TildeToken as u16 => Some("~"),
+                                k if k == SyntaxKind::ExclamationToken as u16 => Some("!"),
+                                k if k == SyntaxKind::TypeOfKeyword as u16 => Some("typeof"),
+                                k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
+                                k if k == SyntaxKind::DeleteKeyword as u16 => Some("delete"),
+                                _ => None,
+                            };
+                            if let Some(op_name) = op_name {
+                                self.error_at_node_msg(
+                                    left_idx,
+                                    crate::types::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
+                                    &[op_name],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
             let op_str = match op_kind {
                 k if k == SyntaxKind::PlusToken as u16 => "+",
                 k if k == SyntaxKind::MinusToken as u16 => "-",
