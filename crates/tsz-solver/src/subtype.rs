@@ -2448,7 +2448,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if source == TypeId::NUMBER {
                 let member_list = self.interner.type_list(members);
                 for &member in member_list.iter() {
-                    if let Some(def_id) = lazy_def_id(self.interner, member) {
+                    let def_id = lazy_def_id(self.interner, member)
+                        .or_else(|| enum_components(self.interner, member).map(|(d, _)| d));
+                    if let Some(def_id) = def_id {
                         if self.resolver.is_numeric_enum(def_id) {
                             return SubtypeResult::True;
                         }
@@ -2832,8 +2834,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_subtype(s_members, target);
         }
 
-        // Target is Enum, Source is not - check structural member type
-        if let Some((_t_def_id, t_members)) = enum_components(self.interner, target) {
+        // Target is Enum, Source is not - check Rule #7 first, then structural member type
+        if let Some((t_def_id, t_members)) = enum_components(self.interner, target) {
+            // Rule #7: number is assignable to numeric enums
+            if source == TypeId::NUMBER && self.resolver.is_numeric_enum(t_def_id) {
+                return SubtypeResult::True;
+            }
+            if matches!(
+                self.interner.lookup(source),
+                Some(TypeKey::Literal(LiteralValue::Number(_)))
+            ) && self.resolver.is_numeric_enum(t_def_id)
+            {
+                return SubtypeResult::True;
+            }
             return self.check_subtype(source, t_members);
         }
 
