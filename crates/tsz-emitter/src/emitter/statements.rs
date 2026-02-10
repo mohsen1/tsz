@@ -15,9 +15,22 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Empty blocks: preserve original format (single-line vs multi-line)
+        // Empty blocks: check for comments inside, then preserve original format
         if block.statements.nodes.is_empty() {
-            if self.is_single_line(node) {
+            // Check if there are comments inside the block
+            let has_inner_comments = !self.ctx.options.remove_comments
+                && self
+                    .all_comments
+                    .get(self.comment_emit_idx)
+                    .is_some_and(|c| c.end <= node.end);
+            if has_inner_comments {
+                self.write("{");
+                self.write_line();
+                self.increase_indent();
+                self.emit_comments_before_pos(node.end);
+                self.decrease_indent();
+                self.write("}");
+            } else if self.is_single_line(node) {
                 // Single-line empty block: { }
                 self.write("{ }");
             } else {
@@ -554,6 +567,10 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         for &stmt in &statements.nodes {
+            // Emit leading comments before this statement
+            if let Some(stmt_node) = self.arena.get(stmt) {
+                self.emit_comments_before_pos(stmt_node.pos);
+            }
             self.emit(stmt);
             self.write_line();
         }
