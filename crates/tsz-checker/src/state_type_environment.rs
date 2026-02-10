@@ -1602,6 +1602,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Check for unused type parameters (TS6133) in function/constructor type nodes
+        let type_params = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|n| self.ctx.arena.get_function_type(n))
+            .and_then(|fd| fd.type_parameters.clone());
+        if let Some(tp) = type_params {
+            self.check_unused_type_params(&Some(tp), idx);
+        }
+
         // For other type nodes, delegate to TypeNodeChecker
         let mut checker = crate::TypeNodeChecker::new(&mut self.ctx);
         checker.check(idx)

@@ -396,6 +396,8 @@ impl<'a> CheckerState<'a> {
                     CALL_SIGNATURE => {
                         let (type_params, type_param_updates) =
                             self.push_type_parameters(&sig.type_parameters);
+                        // Check for unused type parameters (TS6133)
+                        self.check_unused_type_params(&sig.type_parameters, member_idx);
                         let (params, this_type) =
                             self.extract_params_from_signature_in_type_literal(sig);
                         let (return_type, type_predicate) =
@@ -413,6 +415,8 @@ impl<'a> CheckerState<'a> {
                     CONSTRUCT_SIGNATURE => {
                         let (type_params, type_param_updates) =
                             self.push_type_parameters(&sig.type_parameters);
+                        // Check for unused type parameters (TS6133)
+                        self.check_unused_type_params(&sig.type_parameters, member_idx);
                         let (params, this_type) =
                             self.extract_params_from_signature_in_type_literal(sig);
                         let (return_type, type_predicate) =

@@ -372,6 +372,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 || k == syntax_kind_ext::INTERSECTION_TYPE
                 || k == syntax_kind_ext::ARRAY_TYPE
                 || k == syntax_kind_ext::FUNCTION_TYPE
+                || k == syntax_kind_ext::CONSTRUCTOR_TYPE
                 || k == syntax_kind_ext::TYPE_LITERAL
                 || k == syntax_kind_ext::TYPE_QUERY
                 || k == syntax_kind_ext::TYPE_OPERATOR =>
