@@ -441,7 +441,6 @@ fn test_union_containing_never_simplifies() {
 // =============================================================================
 
 #[test]
-#[ignore = "Discriminated union narrowing not fully implemented"]
 fn test_discriminated_union_narrowing() {
     // Unions with discriminant properties allow narrowing
     // { kind: 'circle', radius: number } | { kind: 'square', side: number }
@@ -486,7 +485,6 @@ fn test_discriminated_union_narrowing() {
 }
 
 #[test]
-#[ignore = "Discriminated union narrowing not fully implemented"]
 fn test_union_with_common_discriminant_property() {
     // { type: 'a', a: string } | { type: 'b', b: number }
     // Should be assignable to { type: 'a' | 'b', a?: string, b?: number }

@@ -7041,9 +7041,10 @@ interface Derived extends Base {
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    // TypeScript allows `readonly x: number` to satisfy `x: number` in interface extends
     assert!(
-        codes.contains(&2430),
-        "Expected error 2430 for readonly property mismatch, got: {:?}",
+        codes.is_empty(),
+        "Expected no errors for readonly property in interface extends, got: {:?}",
         codes
     );
 }
