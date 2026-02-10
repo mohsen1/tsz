@@ -3800,7 +3800,6 @@ export { identity, constant, noop } from "./function";
 }
 
 #[test]
-#[ignore = "TODO: Generic utility library compilation with constraints"]
 fn compile_generic_utility_library_with_constraints() {
     // Test generic functions with complex constraints
     let temp = TempDir::new().expect("temp dir");
