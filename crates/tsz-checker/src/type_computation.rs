@@ -158,8 +158,13 @@ impl<'a> CheckerState<'a> {
                 if let Some(spread_data) = self.ctx.arena.get_spread(elem_node) {
                     let spread_expr_type = self.get_type_of_node(spread_data.expression);
                     let spread_expr_type = self.resolve_lazy_type(spread_expr_type);
-                    // Check if spread argument is iterable, emit TS2488 if not
-                    self.check_spread_iterability(spread_expr_type, spread_data.expression);
+                    // Check if spread argument is iterable, emit TS2488 if not.
+                    // Skip this check when the array is a destructuring target
+                    // (e.g., `[...c] = expr`), since the spread element is an assignment
+                    // target, not a value being spread into a new array.
+                    if !self.ctx.in_destructuring_target {
+                        self.check_spread_iterability(spread_expr_type, spread_data.expression);
+                    }
 
                     // If it's a tuple type, expand its elements
                     if let Some(elems) = tsz_solver::type_queries::get_tuple_elements(
