@@ -1728,12 +1728,18 @@ impl<'a> Printer<'a> {
                 // Interface declarations are TypeScript-only - emit only in declaration mode (.d.ts)
                 if self.ctx.flags.in_declaration_emit {
                     self.emit_interface_declaration(node);
+                } else {
+                    // Skip comments belonging to erased declarations so they don't
+                    // get emitted later by gap/before-pos comment handling.
+                    self.skip_comments_for_erased_node(node);
                 }
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 // Type alias declarations are TypeScript-only - emit only in declaration mode (.d.ts)
                 if self.ctx.flags.in_declaration_emit {
                     self.emit_type_alias_declaration(node);
+                } else {
+                    self.skip_comments_for_erased_node(node);
                 }
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
@@ -1912,6 +1918,35 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
+        // Filter out comments that are leading trivia for erased declarations
+        // (interfaces, type aliases). These should not appear in JS output.
+        // Node positions in tsz don't include leading trivia (node.pos is at the
+        // actual token start), so we find comments between the previous statement's
+        // end and the erased node's pos.
+        if !self.ctx.flags.in_declaration_emit && !self.all_comments.is_empty() {
+            let mut erased_ranges: Vec<(u32, u32)> = Vec::new();
+            let mut prev_end: u32 = 0;
+            for &stmt_idx in &source.statements.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                        || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    {
+                        // Comments between prev_end and this node's pos are leading
+                        // trivia for this erased declaration
+                        erased_ranges.push((prev_end, stmt_node.pos));
+                    }
+                    prev_end = stmt_node.end;
+                }
+            }
+            if !erased_ranges.is_empty() {
+                self.all_comments.retain(|c| {
+                    !erased_ranges
+                        .iter()
+                        .any(|&(start, end)| c.pos >= start && c.end <= end)
+                });
+            }
+        }
+
         self.comment_emit_idx = 0;
 
         // Emit "use strict" FIRST (before comments and helpers)
@@ -1971,7 +2006,7 @@ impl<'a> Printer<'a> {
                     let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
                     let comment_text =
                         crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                    self.write(comment_text);
+                    self.write_comment(comment_text);
                     if c_trailing {
                         self.write_line();
                     }
@@ -2063,11 +2098,23 @@ impl<'a> Printer<'a> {
         // trivia, then emit all comments before that position.
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                // For erased declarations (interface, type alias) in JS emit mode,
+                // skip their leading comments entirely - they should not appear in output.
+                let is_erased = !self.ctx.flags.in_declaration_emit
+                    && (stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                        || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION);
+
                 // Find the actual start of the statement's first token by
                 // scanning forward from node.pos past whitespace only.
                 // We preserve comments here - they're handled either as leading
                 // comments (if truly before the statement) or by nested expression emitters.
                 let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
+
+                if is_erased {
+                    // Skip erased declarations. Their leading comments were already
+                    // filtered out of all_comments during initialization.
+                    continue;
+                }
 
                 // Emit comments whose end position is at or before the actual token start.
                 // These are truly "leading" comments for this statement.
