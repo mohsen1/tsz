@@ -273,14 +273,13 @@ impl<'a> CheckerState<'a> {
                 actual,
             } => {
                 // Determine which error to emit:
-                // - TS2555: "Expected at least N arguments" when got < min and there's a range
-                // - TS2554: "Expected N arguments" otherwise
-                if actual < expected_min && expected_max != Some(expected_min) {
-                    // Too few arguments with rest/optional parameters - use TS2555
-                    // expected_max is None (rest params) or Some(max) where max > min (optional params)
+                // - TS2555: "Expected at least N arguments" only for rest params (unbounded)
+                // - TS2554: "Expected N arguments" or "Expected N-M arguments" otherwise
+                if actual < expected_min && expected_max.is_none() {
+                    // Too few arguments with rest parameters (unbounded) - use TS2555
                     self.error_expected_at_least_arguments_at(expected_min, actual, idx);
                 } else {
-                    // Either too many, or exact count expected - use TS2554
+                    // Use TS2554 for exact count, range, or too many args
                     let expected = expected_max.unwrap_or(expected_min);
                     self.error_argument_count_mismatch_at(expected, actual, idx);
                 }
@@ -1324,9 +1323,11 @@ impl<'a> CheckerState<'a> {
                 expected_max,
                 actual,
             } => {
-                if actual < expected_min && expected_max != Some(expected_min) {
+                if actual < expected_min && expected_max.is_none() {
+                    // Too few arguments with rest parameters (unbounded) - use TS2555
                     self.error_expected_at_least_arguments_at(expected_min, actual, call_idx);
                 } else {
+                    // Use TS2554 for exact count, range, or too many args
                     let expected = expected_max.unwrap_or(expected_min);
                     self.error_argument_count_mismatch_at(expected, actual, call_idx);
                 }

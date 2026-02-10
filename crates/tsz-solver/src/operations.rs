@@ -2975,6 +2975,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut all_arg_count_mismatches = true;
         let mut min_expected = usize::MAX;
         let mut max_expected = 0;
+        let mut any_has_rest = false;
         let actual_count = arg_types.len();
 
         for sig in &callable.call_signatures {
@@ -3008,6 +3009,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     expected_max,
                     actual,
                 } => {
+                    if expected_max.is_none() {
+                        any_has_rest = true;
+                    }
                     let expected = expected_max.unwrap_or(expected_min);
                     min_expected = min_expected.min(expected_min);
                     max_expected = max_expected.max(expected);
@@ -3027,10 +3031,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if all_arg_count_mismatches && !failures.is_empty() {
             return CallResult::ArgumentCountMismatch {
                 expected_min: min_expected,
-                expected_max: if max_expected > min_expected {
+                expected_max: if any_has_rest {
+                    None
+                } else if max_expected > min_expected {
                     Some(max_expected)
                 } else {
-                    None
+                    Some(min_expected)
                 },
                 actual: actual_count,
             };
@@ -3134,6 +3140,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut all_arg_count_mismatches = true;
         let mut min_expected = usize::MAX;
         let mut max_expected = 0;
+        let mut any_has_rest = false;
         let actual_count = arg_types.len();
 
         for sig in &shape.construct_signatures {
@@ -3166,6 +3173,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     expected_max,
                     actual,
                 } => {
+                    if expected_max.is_none() {
+                        any_has_rest = true;
+                    }
                     let expected = expected_max.unwrap_or(expected_min);
                     min_expected = min_expected.min(expected_min);
                     max_expected = max_expected.max(expected);
@@ -3184,10 +3194,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if all_arg_count_mismatches && !failures.is_empty() {
             return CallResult::ArgumentCountMismatch {
                 expected_min: min_expected,
-                expected_max: if max_expected > min_expected {
+                expected_max: if any_has_rest {
+                    None
+                } else if max_expected > min_expected {
                     Some(max_expected)
                 } else {
-                    None
+                    Some(min_expected)
                 },
                 actual: actual_count,
             };
