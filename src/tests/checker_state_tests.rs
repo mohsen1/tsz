@@ -9297,47 +9297,54 @@ const arrow = (...items) => items;
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    // Should have 4 errors:
-    // 1. args in foo (rest param, any[])
-    // 2. a in bar (regular param, any)
-    // 3. rest in bar (rest param, any[])
-    // 4. items in arrow (rest param, any[])
+    // Should have 4 implicit-any errors:
+    // 1. args in foo (rest param) -> TS7019
+    // 2. a in bar (regular param) -> TS7006
+    // 3. rest in bar (rest param) -> TS7019
+    // 4. items in arrow (rest param) -> TS7019
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Rest parameters use TS7019, regular parameters use TS7006
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 7019).count(),
+        3,
+        "Expected three TS7019 (rest param implicit any[]) errors, got codes: {:?}",
+        codes
+    );
     assert_eq!(
         codes.iter().filter(|&&c| c == 7006).count(),
-        4,
-        "Expected four 7006 errors, got codes: {:?}",
+        1,
+        "Expected one TS7006 (regular param implicit any) error, got codes: {:?}",
         codes
     );
 
-    // Check that rest parameters get 'any[]' in the message
-    let messages: Vec<&str> = checker
+    // Check TS7019 messages contain "Rest parameter"
+    let rest_messages: Vec<&str> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 7019)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        rest_messages.iter().all(|m| m.contains("Rest parameter")),
+        "TS7019 messages should say 'Rest parameter', got: {:?}",
+        rest_messages
+    );
+
+    // Check TS7006 message for regular parameter
+    let regular_messages: Vec<&str> = checker
         .ctx
         .diagnostics
         .iter()
         .filter(|d| d.code == 7006)
         .map(|d| d.message_text.as_str())
         .collect();
-
-    // Find messages containing "any[]" (rest parameters)
-    let rest_param_errors: Vec<_> = messages.iter().filter(|m| m.contains("any[]")).collect();
-    assert_eq!(
-        rest_param_errors.len(),
-        3,
-        "Expected three rest parameter errors with 'any[]', got: {:?}",
-        messages
-    );
-
-    // Find messages containing just "any" but not "any[]" (regular parameters)
-    let regular_param_errors: Vec<_> = messages
-        .iter()
-        .filter(|m| m.contains("'any'") && !m.contains("any[]"))
-        .collect();
-    assert_eq!(
-        regular_param_errors.len(),
-        1,
-        "Expected one regular parameter error with 'any', got: {:?}",
-        messages
+    assert_eq!(regular_messages.len(), 1);
+    assert!(
+        regular_messages[0].contains("'any'") && !regular_messages[0].contains("any[]"),
+        "TS7006 message should say 'any' not 'any[]', got: {:?}",
+        regular_messages[0]
     );
 }
 
