@@ -25,6 +25,7 @@ struct ClassMemberInfo {
     is_method: bool,
     is_static: bool,
     is_accessor: bool,
+    is_abstract: bool,
 }
 
 // =============================================================================
@@ -56,6 +57,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     TypeId::ANY
                 };
+                let is_abstract = self.has_abstract_modifier(&prop.modifiers);
                 Some(ClassMemberInfo {
                     name,
                     type_id: prop_type,
@@ -63,6 +65,7 @@ impl<'a> CheckerState<'a> {
                     is_method: false,
                     is_static,
                     is_accessor: false,
+                    is_abstract,
                 })
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -83,6 +86,7 @@ impl<'a> CheckerState<'a> {
                     is_constructor: false,
                     is_method: true,
                 });
+                let is_abstract = self.has_abstract_modifier(&method.modifiers);
                 Some(ClassMemberInfo {
                     name,
                     type_id: method_type,
@@ -90,6 +94,7 @@ impl<'a> CheckerState<'a> {
                     is_method: true,
                     is_static,
                     is_accessor: false,
+                    is_abstract,
                 })
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
@@ -104,6 +109,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.infer_getter_return_type(accessor.body)
                 };
+                let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
                 Some(ClassMemberInfo {
                     name,
                     type_id: accessor_type,
@@ -111,6 +117,7 @@ impl<'a> CheckerState<'a> {
                     is_method: false,
                     is_static,
                     is_accessor: true,
+                    is_abstract,
                 })
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
@@ -133,6 +140,7 @@ impl<'a> CheckerState<'a> {
                         }
                     })
                     .unwrap_or(TypeId::ANY);
+                let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
                 Some(ClassMemberInfo {
                     name,
                     type_id: accessor_type,
@@ -140,6 +148,7 @@ impl<'a> CheckerState<'a> {
                     is_method: false,
                     is_static,
                     is_accessor: true,
+                    is_abstract,
                 })
             }
             _ => None,
@@ -333,6 +342,7 @@ impl<'a> CheckerState<'a> {
             // Only applies to non-method members. Fires regardless of types (even ANY).
             if !is_method
                 && !base_info.is_method
+                && !base_info.is_abstract
                 && !accessor_mismatch_reported.contains(&member_name)
             {
                 if !is_accessor && base_info.is_accessor {
