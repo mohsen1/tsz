@@ -2029,9 +2029,11 @@ impl ModuleResolver {
                 }
             }
             ModuleResolutionKind::Classic => {
-                // Classic resolution only looks for TypeScript extensions,
-                // never .js/.jsx even with allowJs
-                &CLASSIC_EXTENSION_CANDIDATES
+                if self.allow_js {
+                    &TS_JS_EXTENSION_CANDIDATES
+                } else {
+                    &CLASSIC_EXTENSION_CANDIDATES
+                }
             }
             _ => {
                 if self.allow_js {
