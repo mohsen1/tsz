@@ -771,7 +771,7 @@ impl<'a> CheckerState<'a> {
                 // TypeScript suppresses this diagnostic when allowUnreachableCode is enabled
                 // or when the file has parse errors (e.g., JSON files parsed as TypeScript)
                 // TypeScript DOES emit this even when left operand has type errors or is typed as any
-                if !self.ctx.compiler_options.allow_unreachable_code
+                if self.ctx.compiler_options.allow_unreachable_code != Some(true)
                     && !self.has_parse_errors()
                     && self.is_side_effect_free(left_idx)
                     && !self.is_indirect_call(node_idx, left_idx, right_idx)

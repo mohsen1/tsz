@@ -4486,7 +4486,7 @@ impl Server {
             allow_synthetic_default_imports: options
                 .allow_synthetic_default_imports
                 .unwrap_or(options.es_module_interop),
-            allow_unreachable_code: options.allow_unreachable_code.unwrap_or(false),
+            allow_unreachable_code: options.allow_unreachable_code,
             no_property_access_from_index_signature: options
                 .no_property_access_from_index_signature,
             sound_mode: false, // Sound mode not yet exposed in server protocol

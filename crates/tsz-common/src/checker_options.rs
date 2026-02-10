@@ -44,8 +44,11 @@ pub struct CheckerOptions {
     /// Allow 'import x from y' when a module doesn't have a default export.
     /// Implied by esModuleInterop.
     pub allow_synthetic_default_imports: bool,
-    /// When true, disable error reporting for unreachable code (TS7027).
-    pub allow_unreachable_code: bool,
+    /// Controls reporting of unreachable code (TS7027).
+    /// - `None` (default): tsc emits TS7027 as a suggestion, not an error
+    /// - `Some(false)`: tsc emits TS7027 as an error
+    /// - `Some(true)`: tsc does not emit TS7027 at all
+    pub allow_unreachable_code: Option<bool>,
     /// When true, require bracket notation for index signature property access (TS4111).
     pub no_property_access_from_index_signature: bool,
     /// When true, enable Sound Mode for stricter type checking beyond TypeScript's defaults.
