@@ -1647,7 +1647,13 @@ impl ParserState {
             }
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
-                break;
+                if self.is_token(SyntaxKind::CloseBraceToken)
+                    || self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    break;
+                }
+                // Missing comma - emit error and continue parsing for recovery
+                self.parse_expected(SyntaxKind::CommaToken);
             }
         }
 
