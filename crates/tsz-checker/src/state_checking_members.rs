@@ -1337,17 +1337,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Rest parameters implicitly have 'any[]' type, regular parameters have 'any'
-        let implicit_type = if param.dot_dot_dot_token {
-            "any[]"
+        // Rest parameters use TS7019, regular parameters use TS7006
+        if param.dot_dot_dot_token {
+            self.error_at_node_msg(
+                param.name,
+                diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE,
+                &[&param_name],
+            );
         } else {
-            "any"
-        };
-        self.error_at_node_msg(
-            param.name,
-            diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
-            &[&param_name, implicit_type],
-        );
+            self.error_at_node_msg(
+                param.name,
+                diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+                &[&param_name, "any"],
+            );
+        }
     }
 
     /// Emit TS7006 errors for nested binding elements in destructuring parameters.
