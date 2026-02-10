@@ -1718,7 +1718,9 @@ impl<'a> LoweringPass<'a> {
         })
     }
 
-    /// Check if function parameters have rest that needs __rest helper
+    /// Check if function parameters have rest that needs __rest helper.
+    /// Only object rest patterns need __rest. Function rest params use arguments loop,
+    /// and array rest elements use .slice().
     fn function_parameters_need_rest_helper(&self, params: &NodeList) -> bool {
         params.nodes.iter().any(|&param_idx| {
             let Some(param_node) = self.arena.get(param_idx) else {
@@ -1728,22 +1730,21 @@ impl<'a> LoweringPass<'a> {
                 return false;
             };
 
-            // Rest parameters in function declarations need __rest helper
-            if param.dot_dot_dot_token {
-                return true;
-            }
+            // Function rest parameters (...args) do NOT need __rest helper.
+            // They are lowered using an arguments loop, not __rest.
 
-            // Check if binding patterns contain rest
+            // Check if binding patterns contain object rest
             if self.is_binding_pattern_idx(param.name) {
-                self.binding_pattern_has_rest(param.name)
+                self.binding_pattern_has_object_rest(param.name)
             } else {
                 false
             }
         })
     }
 
-    /// Check if a binding pattern has a rest element
-    fn binding_pattern_has_rest(&self, idx: NodeIndex) -> bool {
+    /// Check if a binding pattern (recursively) has an object rest element.
+    /// Only object rest patterns need the __rest helper. Array rest uses .slice().
+    fn binding_pattern_has_object_rest(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
         };
@@ -1758,12 +1759,21 @@ impl<'a> LoweringPass<'a> {
             return false;
         };
 
+        let is_object = node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN;
+
         pattern.elements.nodes.iter().any(|&elem_idx| {
-            self.arena
-                .get(elem_idx)
-                .and_then(|elem_node| self.arena.get_binding_element(elem_node))
-                .map(|elem| elem.dot_dot_dot_token)
-                .unwrap_or(false)
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                return false;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                return false;
+            };
+            // Rest in object pattern needs __rest
+            if is_object && elem.dot_dot_dot_token {
+                return true;
+            }
+            // Recursively check nested binding patterns
+            self.binding_pattern_has_object_rest(elem.name)
         })
     }
 

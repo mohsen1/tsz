@@ -260,6 +260,7 @@ impl<'a> Printer<'a> {
         } else {
             self.emit(method.body);
         }
+        self.pop_temp_scope();
     }
 
     /// Check if a property member has a computed property name
@@ -828,6 +829,7 @@ impl<'a> Printer<'a> {
                     self.emit(func.body);
                     self.write("; }");
                 }
+                self.pop_temp_scope();
             } else {
                 // Simple capture case: just emit the body directly
                 // (function (_arguments) { return arguments.length; })
@@ -905,6 +907,7 @@ impl<'a> Printer<'a> {
         } else {
             self.emit(func.body);
         }
+        self.pop_temp_scope();
     }
 
     pub(super) fn emit_function_declaration_es5_params(&mut self, node: &Node) {
@@ -947,6 +950,7 @@ impl<'a> Printer<'a> {
         } else {
             self.emit(func.body);
         }
+        self.pop_temp_scope();
     }
 
     /// Emit an async function transformed to ES5 __awaiter/__generator pattern
@@ -1023,6 +1027,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("}");
+        self.pop_temp_scope();
     }
 
     #[allow(dead_code)] // Infrastructure for ES5 parameter transforms
@@ -1045,6 +1050,11 @@ impl<'a> Printer<'a> {
         &mut self,
         params: &[NodeIndex],
     ) -> ParamTransformPlan {
+        // Push a fresh temp scope for this function.
+        // Each function has its own temp naming starting from _a.
+        // Caller MUST call pop_temp_scope() after emitting the function body.
+        self.push_temp_scope();
+
         let mut plan = ParamTransformPlan::default();
         let mut first = true;
 

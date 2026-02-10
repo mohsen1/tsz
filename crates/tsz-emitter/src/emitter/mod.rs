@@ -263,6 +263,10 @@ pub struct Printer<'a> {
     /// Tracks ALL generated temp names across destructuring and for-of lowering.
     pub(super) generated_temp_names: FxHashSet<String>,
 
+    /// Stack for saving/restoring temp naming state when entering function scopes.
+    /// Each entry is (temp_var_counter, generated_temp_names, first_for_of_emitted).
+    pub(super) temp_scope_stack: Vec<(u32, FxHashSet<String>, bool)>,
+
     /// Whether the first for-of loop has been emitted (uses special `_i` index name).
     pub(super) first_for_of_emitted: bool,
 
@@ -321,6 +325,7 @@ impl<'a> Printer<'a> {
             comment_emit_idx: 0,
             file_identifiers: FxHashSet::default(),
             generated_temp_names: FxHashSet::default(),
+            temp_scope_stack: Vec::new(),
             first_for_of_emitted: false,
             in_namespace_iife: false,
             declared_namespace_names: FxHashSet::default(),
