@@ -1875,7 +1875,13 @@ impl<'a> CheckerState<'a> {
     /// Tries binder file_locals and lib binders, then falls back to error reporting.
     fn resolve_known_global(&mut self, idx: NodeIndex, name: &str) -> TypeId {
         if self.is_nodejs_runtime_global(name) {
-            return TypeId::ANY;
+            // In CommonJS module mode, these globals are implicitly available
+            if self.ctx.compiler_options.module.is_commonjs() {
+                return TypeId::ANY;
+            }
+            // Otherwise, emit TS2580 suggesting @types/node installation
+            self.error_cannot_find_name_install_node_types(name, idx);
+            return TypeId::ERROR;
         }
 
         let lib_binders = self.get_lib_binders();
