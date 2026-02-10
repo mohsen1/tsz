@@ -307,8 +307,11 @@ impl<'a> CheckerState<'a> {
         };
 
         match unary.operator {
-            // ! returns boolean
-            k if k == SyntaxKind::ExclamationToken as u16 => TypeId::BOOLEAN,
+            // ! returns boolean — also check operand for always-truthy/falsy (TS2872/TS2873)
+            k if k == SyntaxKind::ExclamationToken as u16 => {
+                self.check_truthy_or_falsy(unary.operand);
+                TypeId::BOOLEAN
+            }
             // typeof returns string but still type-check operand for flow/node types.
             k if k == SyntaxKind::TypeOfKeyword as u16 => {
                 self.get_type_of_node(unary.operand);
