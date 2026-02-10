@@ -719,6 +719,47 @@ fn rewrite_absolute_imports(content: &str) -> String {
 /// - `require("foo")` → `require("./foo")`
 ///
 /// Does NOT rewrite:
+/// Parse @symlink associations from test content.
+///
+/// Format: `// @filename: /path/to/file` followed by `// @symlink: /link1,/link2`
+fn parse_symlink_associations(content: &str) -> Vec<(String, Vec<String>)> {
+    let mut result = Vec::new();
+    let mut current_filename: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if let Some(rest) = trimmed
+            .strip_prefix("// @filename:")
+            .or_else(|| trimmed.strip_prefix("// @Filename:"))
+            .or_else(|| trimmed.strip_prefix("//@filename:"))
+            .or_else(|| trimmed.strip_prefix("//@Filename:"))
+        {
+            current_filename = Some(rest.trim().to_string());
+        }
+
+        if let Some(rest) = trimmed
+            .strip_prefix("// @symlink:")
+            .or_else(|| trimmed.strip_prefix("// @Symlink:"))
+            .or_else(|| trimmed.strip_prefix("//@symlink:"))
+            .or_else(|| trimmed.strip_prefix("//@Symlink:"))
+        {
+            if let Some(ref filename) = current_filename {
+                let links: Vec<String> = rest
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !links.is_empty() {
+                    result.push((filename.clone(), links));
+                }
+            }
+        }
+    }
+
+    result
+}
+
 /// - Relative paths (already start with `.` or `..`)
 /// - Absolute paths (start with `/`)
 /// - Scoped packages (start with `@`)
