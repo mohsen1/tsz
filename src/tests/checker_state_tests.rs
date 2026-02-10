@@ -29393,7 +29393,6 @@ function process(node: ts.Node): void {}
 /// Note: We don't include `console.log` as that would emit TS2304 since console
 /// isn't available without lib.d.ts
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_apisample_pattern_errors() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -29431,14 +29430,17 @@ function createProgram(
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.no_implicit_any = true;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29453,11 +29455,6 @@ function createProgram(
         })
         .count();
     let ts7006_count = codes.iter().filter(|&&c| c == 7006).count();
-
-    println!("Error codes produced: {:?}", codes);
-    println!("  TS2304 (cannot find name): {}", ts2304_count);
-    println!("  TS2307 (cannot find module): {}", ts2307_count);
-    println!("  TS7006 (implicit any param): {}", ts7006_count);
 
     // Should have exactly 1 TS2307 for the unresolved module
     assert_eq!(
