@@ -35,6 +35,10 @@ impl<'a> Printer<'a> {
             if has_newline_before_right {
                 self.write(",");
                 self.write_line();
+                self.increase_indent();
+                self.emit(binary.right);
+                self.decrease_indent();
+                return;
             } else {
                 self.write(", ");
             }
