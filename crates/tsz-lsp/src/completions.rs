@@ -3140,20 +3140,21 @@ mod completions_tests {
     }
 
     #[test]
-    #[ignore = "TODO: Completions default sort text for functions"]
     fn test_completions_default_sort_text_function() {
         // default_sort_text should return correct categories for each kind.
+        // Variables, functions, and parameters use LOCATION_PRIORITY ("11")
+        // matching tsc's LocationPriority for most items in scope.
         assert_eq!(
             default_sort_text(CompletionItemKind::Variable),
-            sort_priority::LOCAL_DECLARATION
+            sort_priority::LOCATION_PRIORITY
         );
         assert_eq!(
             default_sort_text(CompletionItemKind::Function),
-            sort_priority::LOCAL_DECLARATION
+            sort_priority::LOCATION_PRIORITY
         );
         assert_eq!(
             default_sort_text(CompletionItemKind::Parameter),
-            sort_priority::LOCAL_DECLARATION
+            sort_priority::LOCATION_PRIORITY
         );
         assert_eq!(
             default_sort_text(CompletionItemKind::Property),
