@@ -247,7 +247,6 @@ switch (x) {
 }
 
 #[test]
-#[ignore = "TODO: instanceof narrowing with union types - pre-existing issue"]
 fn test_instanceof_narrows_to_object_union_members() {
     let source = r#"
 let x: string | { a: number };

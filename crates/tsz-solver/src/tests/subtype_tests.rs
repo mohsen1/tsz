@@ -18154,7 +18154,6 @@ fn test_intersection_index_signature_with_properties() {
 }
 
 #[test]
-#[ignore = "Intersection of index signatures not fully implemented"]
 fn test_intersection_two_index_signatures() {
     // { [key: string]: number } & { [key: string]: 1 | 2 }
     let interner = TypeInterner::new();
@@ -18282,7 +18281,6 @@ fn test_tuple_intersection_incompatible() {
 }
 
 #[test]
-#[ignore = "Intersection union distribution not fully implemented"]
 fn test_intersection_union_distribution() {
     // (A | B) & C = (A & C) | (B & C) in terms of assignability
     let interner = TypeInterner::new();
