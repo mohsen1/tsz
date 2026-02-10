@@ -1590,6 +1590,16 @@ impl<'a> CheckerState<'a> {
                 self.ctx.node_types.insert(idx.0, result);
                 return result;
             }
+            if node.kind == syntax_kind_ext::ARRAY_TYPE {
+                // Route array types through CheckerState so the element type reference
+                // goes through get_type_from_type_node (which checks TS2314 for generics).
+                if let Some(array_type) = self.ctx.arena.get_array_type(node) {
+                    let elem_type = self.get_type_from_type_node(array_type.element_type);
+                    let result = self.ctx.types.array(elem_type);
+                    self.ctx.node_types.insert(idx.0, result);
+                    return result;
+                }
+            }
         }
 
         // For other type nodes, delegate to TypeNodeChecker

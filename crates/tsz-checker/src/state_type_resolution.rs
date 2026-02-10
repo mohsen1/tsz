@@ -342,6 +342,8 @@ impl<'a> CheckerState<'a> {
 
             // Handle Array/ReadonlyArray without type arguments
             if name == "Array" || name == "ReadonlyArray" {
+                // TS2314: Array<T> and ReadonlyArray<T> require 1 type argument
+                self.error_generic_type_requires_type_arguments_at(name, 1, idx);
                 return self.resolve_array_type_reference(name, type_name_idx, type_ref);
             }
 

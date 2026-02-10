@@ -1675,6 +1675,26 @@ impl<'a> CheckerState<'a> {
 
                 // Try to resolve the heritage symbol
                 if let Some(heritage_sym) = self.resolve_heritage_symbol(expr_idx) {
+                    // TS2314: Check if generic type is used without required type arguments
+                    let has_type_args = self
+                        .ctx
+                        .arena
+                        .get_expr_type_args(type_node)
+                        .and_then(|e| e.type_arguments.as_ref())
+                        .is_some_and(|args| !args.nodes.is_empty());
+                    if !has_type_args {
+                        let required_count = self.count_required_type_params(heritage_sym);
+                        if required_count > 0 {
+                            if let Some(name) = self.heritage_name_text(expr_idx) {
+                                self.error_generic_type_requires_type_arguments_at(
+                                    &name,
+                                    required_count,
+                                    type_idx,
+                                );
+                            }
+                        }
+                    }
+
                     // TS2449/TS2450: Check if class/enum is used before its declaration
                     if is_extends_clause && is_class_declaration {
                         self.check_heritage_class_before_declaration(heritage_sym, expr_idx);
