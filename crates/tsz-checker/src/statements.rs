@@ -112,6 +112,17 @@ pub trait StatementCheckCallbacks {
         // Default: no exhaustiveness checking
     }
 
+    /// Check that a case expression type is comparable to the switch expression type.
+    /// Emits TS2678 if the types have no overlap.
+    fn check_switch_case_comparable(
+        &mut self,
+        _switch_type: TypeId,
+        _case_type: TypeId,
+        _case_expr: NodeIndex,
+    ) {
+        // Default: no comparability checking
+    }
+
     /// Check a break statement for validity.
     /// TS1105: A 'break' statement can only be used within an enclosing iteration statement.
     fn check_break_statement(&mut self, stmt_idx: NodeIndex);
@@ -378,7 +389,7 @@ impl StatementChecker {
                 };
 
                 if let Some((expression, case_block)) = switch_data {
-                    state.get_type_of_node(expression);
+                    let switch_type = state.get_type_of_node(expression);
 
                     // Extract case clauses
                     let clauses = {
@@ -419,8 +430,13 @@ impl StatementChecker {
                                 if clause_expr.is_none() {
                                     has_default = true;
                                 } else {
-                                    // Check case expression
-                                    state.get_type_of_node(clause_expr);
+                                    // Check case expression and comparability with switch expression
+                                    let case_type = state.get_type_of_node(clause_expr);
+                                    state.check_switch_case_comparable(
+                                        switch_type,
+                                        case_type,
+                                        clause_expr,
+                                    );
                                 }
                                 // Check statements in the case
                                 for inner_stmt_idx in clause_stmts {
