@@ -1966,25 +1966,46 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check for TDZ violations: variable used before its declaration in a
-    /// static block, computed property, or heritage clause.
-    /// Emits TS2448 and returns `true` if a violation is found.
+    /// static block, computed property, or heritage clause; or class/enum
+    /// used before its declaration anywhere in the same scope.
+    /// Emits TS2448 (variable), TS2449 (class), or TS2450 (enum) and returns
+    /// `true` if a violation is found.
     fn check_tdz_violation(&mut self, sym_id: SymbolId, idx: NodeIndex, name: &str) -> bool {
         let is_tdz = self.is_variable_used_before_declaration_in_static_block(sym_id, idx)
             || self.is_variable_used_before_declaration_in_computed_property(sym_id, idx)
-            || self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx);
+            || self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx)
+            || self.is_class_or_enum_used_before_declaration(sym_id, idx);
         if is_tdz {
             use crate::types::diagnostics::{
                 diagnostic_codes, diagnostic_messages, format_message,
             };
-            let message = format_message(
-                diagnostic_messages::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION,
-                &[name],
-            );
-            self.error_at_node(
-                idx,
-                &message,
-                diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION,
-            );
+            // Emit the correct diagnostic based on symbol kind:
+            // TS2449 for classes, TS2450 for enums, TS2448 for variables
+            let (msg_template, code) = if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
+                if sym.flags & tsz_binder::symbol_flags::CLASS != 0 {
+                    (
+                        diagnostic_messages::CLASS_USED_BEFORE_ITS_DECLARATION,
+                        diagnostic_codes::CLASS_USED_BEFORE_ITS_DECLARATION,
+                    )
+                } else if sym.flags & tsz_binder::symbol_flags::REGULAR_ENUM != 0 {
+                    (
+                        diagnostic_messages::ENUM_USED_BEFORE_ITS_DECLARATION,
+                        diagnostic_codes::ENUM_USED_BEFORE_ITS_DECLARATION,
+                    )
+                } else {
+                    (
+                        diagnostic_messages::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION,
+                        diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION,
+                    )
+                }
+            } else {
+                (
+                    diagnostic_messages::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION,
+                    diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION,
+                )
+            };
+            let message = format_message(msg_template, &[name]);
+            self.error_at_node(idx, &message, code);
         }
         is_tdz
     }
