@@ -36,7 +36,7 @@ use crate::driver_resolution::{
 pub(crate) use crate::driver_resolution::{
     normalize_base_url, normalize_output_dir, normalize_root_dir,
 };
-use crate::fs::{FileDiscoveryOptions, discover_ts_files};
+use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file};
 use crate::incremental::{BuildInfo, default_build_info_path};
 use rustc_hash::FxHasher;
 use tsz::parallel::{self, BindResult, BoundFile, MergedProgram};
@@ -2233,6 +2233,7 @@ fn collect_diagnostics(
 
         let work_items: Vec<usize> = work_queue.into_iter().collect();
         let no_check = options.no_check;
+        let check_js = options.check_js;
         let compiler_options = options.checker.clone();
         let lib_ctx_for_parallel = lib_contexts.to_vec();
 
@@ -2259,6 +2260,7 @@ fn collect_diagnostics(
                         &resolved_module_errors,
                         &is_external_module_by_file,
                         no_check,
+                        check_js,
                     )
                 })
                 .collect()
@@ -2283,6 +2285,7 @@ fn collect_diagnostics(
                     &resolved_module_errors,
                     &is_external_module_by_file,
                     no_check,
+                    check_js,
                 )
             })
             .collect();
@@ -2418,7 +2421,11 @@ fn collect_diagnostics(
                     parse_diagnostic,
                 ));
             }
-            if !options.no_check {
+            // Skip type-checking for JS files when checkJs is not enabled.
+            // TypeScript only reports semantic diagnostics for JS files with checkJs.
+            let is_js = is_js_file(Path::new(&file.file_name));
+            let skip_check = is_js && !options.check_js;
+            if !options.no_check && !skip_check {
                 let _check_span =
                     tracing::info_span!("check_file", file = %file.file_name).entered();
                 checker.check_source_file(file.source_file);
@@ -2497,6 +2504,7 @@ fn check_file_for_parallel(
     >,
     is_external_module_by_file: &Arc<FxHashMap<String, bool>>,
     no_check: bool,
+    check_js: bool,
 ) -> Vec<Diagnostic> {
     let file = &program.files[file_idx];
     let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
@@ -2545,7 +2553,11 @@ fn check_file_for_parallel(
         .map(|d| parse_diagnostic_to_checker(&file.file_name, d))
         .collect();
 
-    if !no_check {
+    // Skip type-checking for JS files when checkJs is not enabled.
+    // TypeScript only reports semantic diagnostics for JS files with checkJs.
+    let is_js = is_js_file(Path::new(&file.file_name));
+    let skip_check = is_js && !check_js;
+    if !no_check && !skip_check {
         checker.check_source_file(file.source_file);
         file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
     }
