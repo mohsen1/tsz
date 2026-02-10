@@ -175,8 +175,8 @@ impl<'a> Printer<'a> {
         if let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
-                    // Skip export/default modifiers in CommonJS mode
-                    if self.ctx.is_commonjs()
+                    // Skip export/default modifiers in CommonJS mode or namespace IIFE
+                    if (self.ctx.is_commonjs() || self.in_namespace_iife)
                         && (mod_node.kind == SyntaxKind::ExportKeyword as u16
                             || mod_node.kind == SyntaxKind::DefaultKeyword as u16)
                     {
@@ -261,18 +261,20 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Always transform enum to IIFE pattern (enums are TypeScript syntax,
-        // not valid JavaScript, so they must be lowered for all targets)
-        let mut transformer = EnumES5Transformer::new(self.arena);
-        if let Some(ir) = transformer.transform_enum(idx) {
-            let mut printer = IRPrinter::with_arena(self.arena);
-            printer.set_indent_level(self.writer.indent_level());
-            if let Some(source_text) = self.source_text_for_map() {
-                printer.set_source_text(source_text);
+        // Transform enum to IIFE pattern for all targets
+        {
+            let mut transformer = EnumES5Transformer::new(self.arena);
+            if let Some(ir) = transformer.transform_enum(idx) {
+                let mut printer = IRPrinter::with_arena(self.arena);
+                printer.set_indent_level(self.writer.indent_level());
+                if let Some(source_text) = self.source_text_for_map() {
+                    printer.set_source_text(source_text);
+                }
+                self.write(&printer.emit(&ir));
+                return;
             }
-            self.write(&printer.emit(&ir));
+            // If transformer returns None (e.g., const enum), emit nothing
         }
-        // If transformer returns None (e.g., const enum), emit nothing
     }
 
     pub(super) fn emit_enum_member(&mut self, node: &Node) {
@@ -380,9 +382,8 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Always transform namespace/module to IIFE pattern (namespace is
-        // TypeScript syntax, not valid JavaScript, must be lowered for all targets)
-        {
+        // ES5 target: Transform namespace to IIFE pattern
+        if self.ctx.target_es5 {
             use crate::transforms::NamespaceES5Emitter;
             let mut es5_emitter = NamespaceES5Emitter::new(self.arena);
             es5_emitter.set_indent_level(self.writer.indent_level());
@@ -391,7 +392,259 @@ impl<'a> Printer<'a> {
             }
             let output = es5_emitter.emit_namespace(idx);
             self.write(output.trim_end_matches('\n'));
+            return;
         }
+
+        // ES6+: Emit namespace as IIFE, preserving ES6+ syntax inside
+        let module = module.clone();
+        self.emit_namespace_iife(&module, None);
+    }
+
+    /// Emit a namespace/module as an IIFE for ES6+ targets.
+    /// `parent_name` is set when this is a nested namespace (e.g., Bar inside Foo).
+    fn emit_namespace_iife(
+        &mut self,
+        module: &tsz_parser::parser::node::ModuleData,
+        parent_name: Option<&str>,
+    ) {
+        let name = self.get_identifier_text_idx(module.name);
+
+        // Only emit var/let declaration if not already declared
+        if !self.declared_namespace_names.contains(&name) {
+            let keyword = if parent_name.is_some() || self.in_namespace_iife {
+                "let"
+            } else {
+                "var"
+            };
+            self.write(keyword);
+            self.write(" ");
+            self.write(&name);
+            self.write(";");
+            self.write_line();
+            self.declared_namespace_names.insert(name.clone());
+        }
+
+        // Emit: (function (<name>) {
+        self.write("(function (");
+        self.write(&name);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+
+        // Check if body is another MODULE_DECLARATION (nested: namespace Foo.Bar)
+        if let Some(body_node) = self.arena.get(module.body) {
+            if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                // Nested namespace
+                if let Some(inner_module) = self.arena.get_module(body_node) {
+                    let inner_module = inner_module.clone();
+                    self.emit_namespace_iife(&inner_module, Some(&name));
+                }
+            } else {
+                // MODULE_BLOCK: emit body statements
+                let prev = self.in_namespace_iife;
+                self.in_namespace_iife = true;
+                self.emit_namespace_body_statements(module, &name);
+                self.in_namespace_iife = prev;
+            }
+        }
+
+        self.decrease_indent();
+        // Closing: })(name || (name = {})); or
+        // })(name = parent.name || (parent.name = {}));
+        self.write("})(");
+        if let Some(parent) = parent_name {
+            self.write(&name);
+            self.write(" = ");
+            self.write(parent);
+            self.write(".");
+            self.write(&name);
+            self.write(" || (");
+            self.write(parent);
+            self.write(".");
+            self.write(&name);
+            self.write(" = {}));");
+        } else {
+            self.write(&name);
+            self.write(" || (");
+            self.write(&name);
+            self.write(" = {}));");
+        }
+        self.write_line();
+    }
+
+    /// Emit body statements of a namespace IIFE, handling exports.
+    fn emit_namespace_body_statements(
+        &mut self,
+        module: &tsz_parser::parser::node::ModuleData,
+        ns_name: &str,
+    ) {
+        let ns_name = ns_name.to_string();
+        if let Some(body_node) = self.arena.get(module.body) {
+            if let Some(block) = self.arena.get_module_block(body_node) {
+                if let Some(ref stmts) = block.statements {
+                    for &stmt_idx in &stmts.nodes {
+                        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                            continue;
+                        };
+
+                        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                            // Strip "export" and handle inner clause
+                            if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                                let inner_idx = export.export_clause;
+                                let inner_kind =
+                                    self.arena.get(inner_idx).map(|n| n.kind).unwrap_or(0);
+
+                                if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                                    // export var x = 10; → ns.x = 10;
+                                    self.emit_namespace_exported_variable(inner_idx, &ns_name);
+                                } else {
+                                    // class/function/enum: emit without export, then add assignment
+                                    let export_names = self.get_export_names_from_clause(inner_idx);
+                                    self.emit(inner_idx);
+
+                                    if !export_names.is_empty() {
+                                        if !self.writer.is_at_line_start() {
+                                            self.write_line();
+                                        }
+                                        for export_name in &export_names {
+                                            self.write(&ns_name);
+                                            self.write(".");
+                                            self.write(export_name);
+                                            self.write(" = ");
+                                            self.write(export_name);
+                                            self.write(";");
+                                            self.write_line();
+                                        }
+                                    } else {
+                                        self.write_line();
+                                    }
+                                }
+                            }
+                        } else if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                            // Class with possible export modifier
+                            let export_names = self.get_export_names_from_clause(stmt_idx);
+                            let prev = self.in_namespace_iife;
+                            self.in_namespace_iife = true;
+                            self.emit(stmt_idx);
+                            self.in_namespace_iife = prev;
+
+                            if !export_names.is_empty() {
+                                if !self.writer.is_at_line_start() {
+                                    self.write_line();
+                                }
+                                for export_name in &export_names {
+                                    self.write(&ns_name);
+                                    self.write(".");
+                                    self.write(export_name);
+                                    self.write(" = ");
+                                    self.write(export_name);
+                                    self.write(";");
+                                    self.write_line();
+                                }
+                            } else {
+                                self.write_line();
+                            }
+                        } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                            // Nested namespace: recurse
+                            self.emit(stmt_idx);
+                            self.write_line();
+                        } else {
+                            // Regular statement
+                            self.emit(stmt_idx);
+                            self.write_line();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Emit exported variable as namespace property assignment.
+    /// `export var x = 10;` → `ns.x = 10;`
+    fn emit_namespace_exported_variable(&mut self, var_stmt_idx: NodeIndex, ns_name: &str) {
+        let Some(var_node) = self.arena.get(var_stmt_idx) else {
+            return;
+        };
+        let Some(var_stmt) = self.arena.get_variable(var_node) else {
+            return;
+        };
+
+        // Iterate declaration lists → declarations
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+
+                let mut names = Vec::new();
+                self.collect_binding_names(decl.name, &mut names);
+
+                for name in &names {
+                    self.write(ns_name);
+                    self.write(".");
+                    self.write(name);
+                    if !decl.initializer.is_none() {
+                        self.write(" = ");
+                        self.emit_expression(decl.initializer);
+                    }
+                    self.write(";");
+                    self.write_line();
+                }
+            }
+        }
+    }
+
+    /// Get export names from a declaration clause (function, class, variable, enum)
+    fn get_export_names_from_clause(&self, clause_idx: NodeIndex) -> Vec<String> {
+        let Some(node) = self.arena.get(clause_idx) else {
+            return Vec::new();
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if let Some(var_stmt) = self.arena.get_variable(node) {
+                    return self.collect_variable_names(&var_stmt.declarations);
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = self.arena.get_function(node) {
+                    if let Some(name_node) = self.arena.get(func.name) {
+                        if let Some(ident) = self.arena.get_identifier(name_node) {
+                            return vec![ident.escaped_text.clone()];
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = self.arena.get_class(node) {
+                    if let Some(name_node) = self.arena.get(class.name) {
+                        if let Some(ident) = self.arena.get_identifier(name_node) {
+                            return vec![ident.escaped_text.clone()];
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_decl) = self.arena.get_enum(node) {
+                    if let Some(name_node) = self.arena.get(enum_decl.name) {
+                        if let Some(ident) = self.arena.get_identifier(name_node) {
+                            return vec![ident.escaped_text.clone()];
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
     }
 
     // =========================================================================

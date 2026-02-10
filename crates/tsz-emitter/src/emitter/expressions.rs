@@ -1,5 +1,4 @@
 use super::{Printer, get_operator_text};
-use tracing::trace;
 use tsz_parser::parser::{node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -341,20 +340,13 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_property_assignment(&mut self, node: &Node) {
-        trace!("emit_property_assignment called");
         let Some(prop) = self.arena.get_property_assignment(node) else {
             return;
         };
 
-        trace!(
-            "Emitting property assignment: name={:?}, initializer={:?}",
-            prop.name, prop.initializer
-        );
-
-        // Detect shorthand properties: parser creates PROPERTY_ASSIGNMENT with
-        // name == initializer (same NodeIndex) for shorthand `{ name }` syntax.
+        // Shorthand property: parser creates PROPERTY_ASSIGNMENT with name == initializer
+        // (same NodeIndex) for { name } instead of SHORTHAND_PROPERTY_ASSIGNMENT
         if prop.name == prop.initializer {
-            // Shorthand: just emit the name
             self.emit(prop.name);
             return;
         }
@@ -365,9 +357,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_shorthand_property(&mut self, node: &Node) {
-        trace!("emit_shorthand_property called");
         let Some(shorthand) = self.arena.get_shorthand_property(node) else {
-            trace!("Failed to get shorthand property data");
             // Fallback: try to get identifier data directly
             if let Some(ident) = self.arena.get_identifier(node) {
                 self.write(&ident.escaped_text);
@@ -375,7 +365,6 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        trace!("Emitting shorthand property: {:?}", shorthand.name);
         self.emit(shorthand.name);
         if shorthand.equals_token {
             self.write(" = ");
