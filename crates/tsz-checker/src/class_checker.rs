@@ -963,11 +963,17 @@ impl<'a> CheckerState<'a> {
                     // Check that all interface members are implemented with compatible types
                     let mut missing_members: Vec<String> = Vec::new();
                     let mut incompatible_members: Vec<(String, String, String)> = Vec::new(); // (name, expected_type, actual_type)
+                    let mut interface_has_index_signature = false;
 
                     for &member_idx in &interface_decl.members.nodes {
                         let Some(member_node) = self.ctx.arena.get(member_idx) else {
                             continue;
                         };
+
+                        if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                            interface_has_index_signature = true;
+                            continue;
+                        }
 
                         // Skip non-property/method signatures
                         if member_node.kind != METHOD_SIGNATURE
@@ -1009,6 +1015,29 @@ impl<'a> CheckerState<'a> {
                             }
                         } else {
                             missing_members.push(member_name);
+                        }
+                    }
+
+                    // Check if interface has index signature but class doesn't
+                    if interface_has_index_signature {
+                        let class_has_index_signature =
+                            class_data.members.nodes.iter().any(|&member_idx| {
+                                if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                                    member_node.kind == syntax_kind_ext::INDEX_SIGNATURE
+                                } else {
+                                    false
+                                }
+                            });
+
+                        if !class_has_index_signature {
+                            self.error_at_node(
+                                clause_idx,
+                                &format!(
+                                    "Class '{}' incorrectly implements interface '{}'. Index signature for type 'number' is missing in type '{}'.",
+                                    class_name, interface_name, class_name
+                                ),
+                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                            );
                         }
                     }
 
