@@ -67,6 +67,9 @@ pub trait StatementCheckCallbacks {
     /// Check an await expression (TS1359: await outside async).
     fn check_await_expression(&mut self, expr_idx: NodeIndex);
 
+    /// Check if a condition expression is always truthy/falsy (TS2872/TS2873).
+    fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex);
+
     /// Assign types for for-in/for-of initializers.
     /// `is_for_in` should be true for for-in loops (to emit TS2404 on type annotations).
     fn assign_for_in_of_initializer_types(
@@ -242,6 +245,8 @@ impl StatementChecker {
                     // Check condition
                     state.check_await_expression(expression);
                     state.get_type_of_node(expression);
+                    // TS2872/TS2873: check if condition is always truthy/falsy
+                    state.check_truthy_or_falsy(expression);
                     // Check then branch
                     state.check_declaration_in_statement_position(then_stmt);
                     state.check_statement(then_stmt);

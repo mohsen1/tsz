@@ -1189,6 +1189,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Emitted when a truthy-checked expression is syntactically always truthy.
     /// Matches tsc's `getSyntacticTruthySemantics` — purely syntactic, never type-based.
+    /// TS2872: Check if expression is syntactically always truthy.
+    /// Used for left side of `||` and `??` operators.
     pub(crate) fn check_always_truthy(&mut self, node_idx: NodeIndex, _type_id: TypeId) {
         if self.get_syntactic_truthy_semantics(node_idx) == SyntacticTruthiness::AlwaysTruthy {
             use crate::types::diagnostics::diagnostic_codes;
@@ -1197,6 +1199,29 @@ impl<'a> CheckerState<'a> {
                 "This kind of expression is always truthy.",
                 diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_TRUTHY,
             );
+        }
+    }
+
+    /// TS2872/TS2873: Check if condition is syntactically always truthy or falsy.
+    /// Used for if-conditions and `!` operands.
+    pub(crate) fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex) {
+        use crate::types::diagnostics::diagnostic_codes;
+        match self.get_syntactic_truthy_semantics(node_idx) {
+            SyntacticTruthiness::AlwaysTruthy => {
+                self.error_at_node(
+                    node_idx,
+                    "This kind of expression is always truthy.",
+                    diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_TRUTHY,
+                );
+            }
+            SyntacticTruthiness::AlwaysFalsy => {
+                self.error_at_node(
+                    node_idx,
+                    "This kind of expression is always falsy.",
+                    diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_FALSY,
+                );
+            }
+            SyntacticTruthiness::Sometimes => {}
         }
     }
 
@@ -1241,8 +1266,19 @@ impl<'a> CheckerState<'a> {
                 SyntacticTruthiness::AlwaysTruthy
             }
             // void and null are always falsy
+            // Note: Our parser represents `void expr` as PREFIX_UNARY_EXPRESSION
+            // with VoidKeyword operator, not as a separate VOID_EXPRESSION node.
             k if k == syntax_kind_ext::VOID_EXPRESSION || k == SyntaxKind::NullKeyword as u16 => {
                 SyntacticTruthiness::AlwaysFalsy
+            }
+            // Handle void as a prefix unary (our parser emits void as PREFIX_UNARY_EXPRESSION)
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                    if unary.operator == SyntaxKind::VoidKeyword as u16 {
+                        return SyntacticTruthiness::AlwaysFalsy;
+                    }
+                }
+                SyntacticTruthiness::Sometimes
             }
             // String/template literals: truthy if non-empty, falsy if empty
             k if k == SyntaxKind::StringLiteral as u16

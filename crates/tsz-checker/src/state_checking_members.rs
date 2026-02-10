@@ -3663,6 +3663,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_await_expression(self, expr_idx)
     }
 
+    fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex) {
+        CheckerState::check_truthy_or_falsy(self, node_idx)
+    }
+
     fn assign_for_in_of_initializer_types(
         &mut self,
         decl_list_idx: NodeIndex,
