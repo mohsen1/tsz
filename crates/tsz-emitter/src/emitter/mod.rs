@@ -265,6 +265,12 @@ pub struct Printer<'a> {
 
     /// Whether the first for-of loop has been emitted (uses special `_i` index name).
     pub(super) first_for_of_emitted: bool,
+
+    /// Whether we're inside a namespace IIFE (strip export/default modifiers from classes).
+    pub(super) in_namespace_iife: bool,
+
+    /// Names of namespaces already declared with `var name;` to avoid duplicates.
+    pub(super) declared_namespace_names: FxHashSet<String>,
 }
 
 impl<'a> Printer<'a> {
@@ -312,6 +318,8 @@ impl<'a> Printer<'a> {
             file_identifiers: FxHashSet::default(),
             generated_temp_names: FxHashSet::default(),
             first_for_of_emitted: false,
+            in_namespace_iife: false,
+            declared_namespace_names: FxHashSet::default(),
         }
     }
 
