@@ -1282,16 +1282,19 @@ impl<'a> CheckerState<'a> {
                     .or_insert(cached_ty);
             }
 
+            Self::leave_cross_arena_delegation();
+
             if !result.is_empty() {
                 self.ctx.insert_def_type_params(def_id, result.clone());
                 self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
-            } else {
-                self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+                self.ctx.leave_recursion();
+                return result;
             }
-
-            self.ctx.leave_recursion();
-            Self::leave_cross_arena_delegation();
-            return result;
+            // Cross-arena delegation returned no type params. This can happen when
+            // a user-defined generic type (e.g., `interface Tag<T>`) is merged with
+            // a non-generic lib symbol of the same name. The lib arena doesn't have
+            // the user's declaration, so it finds no type params. Fall through to
+            // check the current arena's declarations below.
         }
 
         // Type alias - get type parameters from declaration

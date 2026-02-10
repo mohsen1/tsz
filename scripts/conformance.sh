@@ -72,6 +72,16 @@ Test directory: TypeScript/tests/cases/conformance
 EOF
 }
 
+# Cross-platform file modification time (seconds since epoch)
+# Linux: stat -c %Y, macOS: stat -f %m
+file_mtime() {
+    if stat -c %Y /dev/null >/dev/null 2>&1; then
+        stat -c %Y "$1" 2>/dev/null
+    else
+        stat -f %m "$1" 2>/dev/null
+    fi
+}
+
 # Check if binaries are up-to-date with source code
 # Returns 0 if binaries are fresh (up-to-date), 1 if they need rebuilding
 binaries_are_fresh() {
@@ -86,7 +96,7 @@ binaries_are_fresh() {
     fi
     
     # Find the newest binary modification time
-    local newest_binary_mtime=$(stat -f %m "$tsz_bin" "$conformance_bin" "$cache_gen_bin" 2>/dev/null | sort -n | tail -1)
+    local newest_binary_mtime=$(for f in "$tsz_bin" "$conformance_bin" "$cache_gen_bin"; do file_mtime "$f"; done | sort -n | tail -1)
     
     # Check if any Rust source file in the relevant crates is newer than the binaries
     # These are all the workspace crates that tsz-cli and tsz-conformance depend on
@@ -112,7 +122,7 @@ binaries_are_fresh() {
         # Check source files
         if [ -d "$crate_dir/src" ]; then
             while IFS= read -r -d '' src_file; do
-                local src_mtime=$(stat -f %m "$src_file" 2>/dev/null)
+                local src_mtime=$(file_mtime "$src_file")
                 if [ "$src_mtime" -gt "$newest_binary_mtime" ]; then
                     return 1
                 fi
@@ -121,7 +131,7 @@ binaries_are_fresh() {
         
         # Check Cargo.toml
         if [ -f "$crate_dir/Cargo.toml" ]; then
-            local toml_mtime=$(stat -f %m "$crate_dir/Cargo.toml" 2>/dev/null)
+            local toml_mtime=$(file_mtime "$crate_dir/Cargo.toml")
             if [ "$toml_mtime" -gt "$newest_binary_mtime" ]; then
                 return 1
             fi
@@ -130,13 +140,13 @@ binaries_are_fresh() {
     
     # Check root Cargo.toml and Cargo.lock
     if [ -f "$REPO_ROOT/Cargo.toml" ]; then
-        local root_toml_mtime=$(stat -f %m "$REPO_ROOT/Cargo.toml" 2>/dev/null)
+        local root_toml_mtime=$(file_mtime "$REPO_ROOT/Cargo.toml")
         if [ "$root_toml_mtime" -gt "$newest_binary_mtime" ]; then
             return 1
         fi
     fi
     if [ -f "$REPO_ROOT/Cargo.lock" ]; then
-        local lock_mtime=$(stat -f %m "$REPO_ROOT/Cargo.lock" 2>/dev/null)
+        local lock_mtime=$(file_mtime "$REPO_ROOT/Cargo.lock")
         if [ "$lock_mtime" -gt "$newest_binary_mtime" ]; then
             return 1
         fi

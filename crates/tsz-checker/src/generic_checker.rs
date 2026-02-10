@@ -317,13 +317,22 @@ impl<'a> CheckerState<'a> {
             // Try current arena first
             if let Some(node) = self.ctx.arena.get(decl_idx) {
                 if let Some(ta) = self.ctx.arena.get_type_alias(node) {
-                    return ta.type_parameters.is_some();
+                    if ta.type_parameters.is_some() {
+                        return true;
+                    }
+                    continue;
                 }
                 if let Some(iface) = self.ctx.arena.get_interface(node) {
-                    return iface.type_parameters.is_some();
+                    if iface.type_parameters.is_some() {
+                        return true;
+                    }
+                    continue;
                 }
                 if let Some(class) = self.ctx.arena.get_class(node) {
-                    return class.type_parameters.is_some();
+                    if class.type_parameters.is_some() {
+                        return true;
+                    }
+                    continue;
                 }
             }
 
@@ -331,13 +340,22 @@ impl<'a> CheckerState<'a> {
             if let Some(decl_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
                 if let Some(node) = decl_arena.get(decl_idx) {
                     if let Some(ta) = decl_arena.get_type_alias(node) {
-                        return ta.type_parameters.is_some();
+                        if ta.type_parameters.is_some() {
+                            return true;
+                        }
+                        continue;
                     }
                     if let Some(iface) = decl_arena.get_interface(node) {
-                        return iface.type_parameters.is_some();
+                        if iface.type_parameters.is_some() {
+                            return true;
+                        }
+                        continue;
                     }
                     if let Some(class) = decl_arena.get_class(node) {
-                        return class.type_parameters.is_some();
+                        if class.type_parameters.is_some() {
+                            return true;
+                        }
+                        continue;
                     }
                 }
             }
@@ -346,13 +364,22 @@ impl<'a> CheckerState<'a> {
             if let Some(decl_arena) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
                 if let Some(node) = decl_arena.get(decl_idx) {
                     if let Some(ta) = decl_arena.get_type_alias(node) {
-                        return ta.type_parameters.is_some();
+                        if ta.type_parameters.is_some() {
+                            return true;
+                        }
+                        continue;
                     }
                     if let Some(iface) = decl_arena.get_interface(node) {
-                        return iface.type_parameters.is_some();
+                        if iface.type_parameters.is_some() {
+                            return true;
+                        }
+                        continue;
                     }
                     if let Some(class) = decl_arena.get_class(node) {
-                        return class.type_parameters.is_some();
+                        if class.type_parameters.is_some() {
+                            return true;
+                        }
+                        continue;
                     }
                 }
             }
