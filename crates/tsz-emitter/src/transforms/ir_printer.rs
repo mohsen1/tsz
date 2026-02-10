@@ -363,10 +363,13 @@ impl<'a> IRPrinter<'a> {
                 self.emit_parameters(parameters);
                 self.write(") ");
                 let has_defaults = parameters.iter().any(|p| p.default_value.is_some());
-                // For anonymous functions with empty bodies, use inline format: { }
-                // Named functions (constructors) keep multi-line format
+                // For anonymous functions with empty bodies, use multi-line format
+                // to match TypeScript's output: {\n}
                 if !has_defaults && body.is_empty() && name.is_none() {
-                    self.write("{ }");
+                    self.write("{");
+                    self.write_line();
+                    self.write_indent();
+                    self.write("}");
                     return;
                 }
                 // Single-line function body: { return expr; }
@@ -1271,7 +1274,10 @@ impl<'a> IRPrinter<'a> {
 
     fn emit_block(&mut self, stmts: &[IRNode]) {
         if stmts.is_empty() {
-            self.write("{ }");
+            self.write("{");
+            self.write_line();
+            self.write_indent();
+            self.write("}");
             return;
         }
 
