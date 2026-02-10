@@ -1544,6 +1544,9 @@ impl<'a> AstToIr<'a> {
             k if k == syntax_kind_ext::CONTINUE_STATEMENT => self.convert_continue_statement(idx),
             k if k == syntax_kind_ext::LABELED_STATEMENT => self.convert_labeled_statement(idx),
             k if k == syntax_kind_ext::EMPTY_STATEMENT => IRNode::EmptyStatement,
+            k if k == syntax_kind_ext::DEBUGGER_STATEMENT => {
+                IRNode::ExpressionStatement(Box::new(IRNode::Identifier("debugger".to_string())))
+            }
             k if k == syntax_kind_ext::FOR_IN_STATEMENT
                 || k == syntax_kind_ext::FOR_OF_STATEMENT =>
             {
