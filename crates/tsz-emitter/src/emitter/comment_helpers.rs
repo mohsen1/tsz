@@ -314,6 +314,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if there are any comments within a source range.
+    #[allow(dead_code)]
     pub(super) fn has_comments_in_range(&self, start: u32, end: u32) -> bool {
         if self.ctx.options.remove_comments {
             return false;
@@ -331,6 +332,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit all comments within a source range, advancing comment_emit_idx.
+    #[allow(dead_code)]
     pub(super) fn emit_comments_in_range(&mut self, start: u32, end: u32) {
         if self.ctx.options.remove_comments {
             return;
