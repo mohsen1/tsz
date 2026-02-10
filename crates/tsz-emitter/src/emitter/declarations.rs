@@ -157,6 +157,14 @@ impl<'a> Printer<'a> {
             } else {
                 self.write(&output);
             }
+            // Skip comments within the class body range since the ES5 class emitter
+            // handles them separately. Without this, they'd appear at end of file.
+            let class_end = node.end;
+            while self.comment_emit_idx < self.all_comments.len()
+                && self.all_comments[self.comment_emit_idx].end <= class_end
+            {
+                self.comment_emit_idx += 1;
+            }
             return;
         }
 
@@ -523,6 +531,10 @@ impl<'a> Printer<'a> {
             }
             let output = es5_emitter.emit_namespace(idx);
             self.write(output.trim_end_matches('\n'));
+            // Skip comments within the namespace body range since the ES5 namespace emitter
+            // doesn't use the main comment system. Without this, comments would be dumped
+            // at end of file.
+            self.skip_comments_for_erased_node(node);
             return;
         }
 
