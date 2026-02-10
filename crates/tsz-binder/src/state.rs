@@ -1631,7 +1631,7 @@ impl BinderState {
         let mut file_exports = SymbolTable::new();
 
         // Iterate through file_locals to find modules and their exports
-        for (_name, &sym_id) in self.file_locals.iter() {
+        for (name, &sym_id) in self.file_locals.iter() {
             if let Some(symbol) = self.symbols.get(sym_id) {
                 // Check if this is a module/namespace symbol
                 if (symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
@@ -1645,6 +1645,13 @@ impl BinderState {
                             }
                         }
                     }
+                }
+
+                // Also collect symbols that are explicitly exported via `export { X }`
+                // or `export` modifier. These may not be module/namespace symbols but
+                // need to be in module_exports for cross-file import resolution.
+                if symbol.is_exported && !file_exports.has(name) {
+                    file_exports.set(name.clone(), sym_id);
                 }
             }
         }
