@@ -2113,9 +2113,14 @@ impl<'a> CheckerState<'a> {
                 break;
             }
             // If we reach a function-like boundary before the decl container,
-            // the usage is deferred and not a TDZ violation
+            // the usage is deferred and not a TDZ violation.
+            // Exception: IIFEs (immediately invoked function expressions) execute
+            // immediately, so they ARE TDZ violations.
             if node.is_function_like() {
-                return false;
+                if !self.is_immediately_invoked(current) {
+                    return false;
+                }
+                // IIFE - continue walking up, this function executes immediately
             }
             // Stop at source file
             if node.kind == syntax_kind_ext::SOURCE_FILE {
@@ -2132,6 +2137,39 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    /// Check if a function-like node is immediately invoked (IIFE pattern).
+    /// Detects patterns like `(() => expr)()` and `(function() {})()`.
+    fn is_immediately_invoked(&self, func_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Walk up through parenthesized expressions to find if the function
+        // is the callee of a call expression.
+        let mut current = func_idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                // Continue walking up through parens: ((fn))()
+                current = ext.parent;
+                continue;
+            }
+            if parent_node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                // Check that the function is the callee (expression), not an argument
+                if let Some(call_data) = self.ctx.arena.get_call_expr(parent_node) {
+                    return call_data.expression == current;
+                }
+            }
+            return false;
+        }
     }
 
     /// Find the enclosing function-like node or source file for a given node.
