@@ -14,6 +14,21 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::types::TypeParamInfo;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
+/// Result of tsc's `getSyntacticTruthySemantics` — purely syntactic truthiness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyntacticTruthiness {
+    AlwaysTruthy,
+    AlwaysFalsy,
+    Sometimes,
+}
+
+impl SyntacticTruthiness {
+    /// Combine two branches (e.g., both arms of a conditional expression).
+    fn combine(self, other: Self) -> Self {
+        if self == other { self } else { Self::Sometimes }
+    }
+}
+
 #[allow(dead_code)]
 impl<'a> CheckerState<'a> {
     // =========================================================================
@@ -1172,15 +1187,10 @@ impl<'a> CheckerState<'a> {
 
     /// TS2872: "This kind of expression is always truthy."
     ///
-    /// Emitted when the left operand of `||` or `??` is always truthy,
-    /// making the right operand unreachable (e.g., function expressions,
-    /// object literals, non-empty string literals).
-    pub(crate) fn check_always_truthy(&mut self, node_idx: NodeIndex, type_id: TypeId) {
-        use tsz_solver::judge::TruthinessKind;
-        let is_always_truthy = self.judge_classify_truthiness(type_id)
-            == TruthinessKind::AlwaysTruthy
-            || self.is_always_truthy_syntax(node_idx);
-        if is_always_truthy {
+    /// Emitted when a truthy-checked expression is syntactically always truthy.
+    /// Matches tsc's `getSyntacticTruthySemantics` — purely syntactic, never type-based.
+    pub(crate) fn check_always_truthy(&mut self, node_idx: NodeIndex, _type_id: TypeId) {
+        if self.get_syntactic_truthy_semantics(node_idx) == SyntacticTruthiness::AlwaysTruthy {
             use crate::types::diagnostics::diagnostic_codes;
             self.error_at_node(
                 node_idx,
@@ -1190,35 +1200,77 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a node is syntactically always truthy.
+    /// Matches tsc's `getSyntacticTruthySemantics`.
     ///
-    /// This handles cases where the type was widened (e.g., string literal `"str"` widened
-    /// to `string`) but the expression itself is always truthy based on its syntax.
-    /// Uses `literal_type_from_initializer` to get the un-widened literal type,
-    /// then checks its truthiness via the Judge.
-    ///
-    /// Note: Boolean literals (`true`/`false`) are excluded because TSC widens them to
-    /// `boolean` (which is "sometimes" truthy) and doesn't emit TS2872 for `true || x`.
-    fn is_always_truthy_syntax(&self, node_idx: NodeIndex) -> bool {
+    /// Returns whether an expression is syntactically always truthy, always falsy,
+    /// or sometimes either. This is a purely syntactic check — it examines node kinds
+    /// and literal values, never the resolved type.
+    fn get_syntactic_truthy_semantics(&self, node_idx: NodeIndex) -> SyntacticTruthiness {
         let Some(node) = self.ctx.arena.get(node_idx) else {
-            return false;
+            return SyntacticTruthiness::Sometimes;
         };
-        // Exclude boolean literals — TSC widens them to `boolean` for this check
-        if node.kind == SyntaxKind::TrueKeyword as u16
-            || node.kind == SyntaxKind::FalseKeyword as u16
-        {
-            return false;
+
+        // Skip parenthesized expressions (tsc's skipOuterExpressions)
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                return self.get_syntactic_truthy_semantics(paren.expression);
+            }
+            return SyntacticTruthiness::Sometimes;
         }
-        // Regex literals are always truthy (objects)
-        if node.kind == SyntaxKind::RegularExpressionLiteral as u16 {
-            return true;
+
+        match node.kind {
+            // Numeric literals: 0 and 1 are "sometimes" (allows while(0)/while(1)),
+            // all others are always truthy
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                if let Some(lit) = self.ctx.arena.get_literal(node) {
+                    if lit.text == "0" || lit.text == "1" {
+                        return SyntacticTruthiness::Sometimes;
+                    }
+                }
+                SyntacticTruthiness::AlwaysTruthy
+            }
+            // These expression kinds are always truthy (they produce objects/functions)
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == SyntaxKind::RegularExpressionLiteral as u16 =>
+            {
+                SyntacticTruthiness::AlwaysTruthy
+            }
+            // void and null are always falsy
+            k if k == syntax_kind_ext::VOID_EXPRESSION || k == SyntaxKind::NullKeyword as u16 => {
+                SyntacticTruthiness::AlwaysFalsy
+            }
+            // String/template literals: truthy if non-empty, falsy if empty
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                if let Some(lit) = self.ctx.arena.get_literal(node) {
+                    if lit.text.is_empty() {
+                        SyntacticTruthiness::AlwaysFalsy
+                    } else {
+                        SyntacticTruthiness::AlwaysTruthy
+                    }
+                } else {
+                    SyntacticTruthiness::Sometimes
+                }
+            }
+            // Conditional expressions: combine both branches
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+                    let when_true = self.get_syntactic_truthy_semantics(cond.when_true);
+                    let when_false = self.get_syntactic_truthy_semantics(cond.when_false);
+                    when_true.combine(when_false)
+                } else {
+                    SyntacticTruthiness::Sometimes
+                }
+            }
+            // Everything else (identifiers, call expressions, etc.) is "sometimes"
+            _ => SyntacticTruthiness::Sometimes,
         }
-        // For string/number literals, get the un-widened literal type and check truthiness
-        use tsz_solver::judge::TruthinessKind;
-        if let Some(literal_type) = self.literal_type_from_initializer(node_idx) {
-            return self.judge_classify_truthiness(literal_type) == TruthinessKind::AlwaysTruthy;
-        }
-        false
     }
 
     // =========================================================================
