@@ -245,8 +245,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.evaluate(cond.false_type);
             }
 
-            // Subtype check path
-            let result_branch = if checker.is_subtype_of(check_type, extends_type) {
+            // Subtype check path — use strict checking (no bivariant rest)
+            // to match tsc's `isTypeAssignableTo` which respects strictFunctionTypes.
+            let mut strict_checker =
+                SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            let result_branch = if strict_checker.is_subtype_of(check_type, extends_type) {
                 // T <: U -> true branch
                 cond.true_type
             } else {
