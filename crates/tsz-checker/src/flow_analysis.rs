@@ -2048,8 +2048,9 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// TS2449/TS2450: Check if a class or enum is used before its declaration
-    /// in immediately executing code (not inside a function/method body).
+    /// TS2448/TS2449/TS2450: Check if a block-scoped declaration (class, enum,
+    /// let/const) is used before its declaration in immediately executing code
+    /// (not inside a function/method body).
     pub(crate) fn is_class_or_enum_used_before_declaration(
         &self,
         sym_id: SymbolId,
@@ -2062,10 +2063,13 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Only applies to class and enum declarations (they have a TDZ like let/const)
-        let is_class_or_enum =
-            (symbol.flags & (symbol_flags::CLASS | symbol_flags::REGULAR_ENUM)) != 0;
-        if !is_class_or_enum {
+        // Applies to block-scoped declarations: class, enum, let/const
+        let is_block_scoped = (symbol.flags
+            & (symbol_flags::CLASS
+                | symbol_flags::REGULAR_ENUM
+                | symbol_flags::BLOCK_SCOPED_VARIABLE))
+            != 0;
+        if !is_block_scoped {
             return false;
         }
 
