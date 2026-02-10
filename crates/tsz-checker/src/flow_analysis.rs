@@ -2048,6 +2048,77 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// TS2449/TS2450: Check if a class or enum is used before its declaration
+    /// in immediately executing code (not inside a function/method body).
+    pub(crate) fn is_class_or_enum_used_before_declaration(
+        &self,
+        sym_id: SymbolId,
+        usage_idx: NodeIndex,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        // Only applies to class and enum declarations (they have a TDZ like let/const)
+        let is_class_or_enum =
+            (symbol.flags & (symbol_flags::CLASS | symbol_flags::REGULAR_ENUM)) != 0;
+        if !is_class_or_enum {
+            return false;
+        }
+
+        // Get the declaration position
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else if let Some(&first_decl) = symbol.declarations.first() {
+            first_decl
+        } else {
+            return false;
+        };
+
+        let Some(usage_node) = self.ctx.arena.get(usage_idx) else {
+            return false;
+        };
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        // Only flag if usage is before declaration in source order
+        if usage_node.pos >= decl_node.pos {
+            return false;
+        }
+
+        // Walk up the AST from usage: if we encounter a function-like boundary,
+        // the code is deferred and not a TDZ violation. TSC only flags class
+        // usage before declaration in immediately executing code.
+        let mut current = usage_idx;
+        while !current.is_none() {
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            // If we reach a function-like boundary, the usage is deferred
+            if node.is_function_like() {
+                return false;
+            }
+            // Stop at source file
+            if node.kind == syntax_kind_ext::SOURCE_FILE {
+                break;
+            }
+            // Walk to parent
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+
+        true
+    }
+
     // =========================================================================
     // Integration with Solver's Flow Analysis
     // =========================================================================

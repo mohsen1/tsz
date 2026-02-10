@@ -1672,6 +1672,11 @@ impl<'a> CheckerState<'a> {
 
                 // Try to resolve the heritage symbol
                 if let Some(heritage_sym) = self.resolve_heritage_symbol(expr_idx) {
+                    // TS2449/TS2450: Check if class/enum is used before its declaration
+                    if is_extends_clause && is_class_declaration {
+                        self.check_heritage_class_before_declaration(heritage_sym, expr_idx);
+                    }
+
                     // Symbol was resolved - check if it represents a constructor type for extends clauses
                     if is_extends_clause {
                         use tsz_binder::symbol_flags;
@@ -1979,6 +1984,66 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// TS2449/TS2450: Check if a class or enum referenced in a heritage clause
+    /// is used before its declaration in the source order.
+    fn check_heritage_class_before_declaration(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        usage_idx: NodeIndex,
+    ) {
+        use tsz_binder::symbol_flags;
+
+        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
+            return;
+        };
+
+        let is_class = symbol.flags & symbol_flags::CLASS != 0;
+        let is_enum = symbol.flags & symbol_flags::REGULAR_ENUM != 0;
+        if !is_class && !is_enum {
+            return;
+        }
+
+        // Get the declaration position
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else if let Some(&first_decl) = symbol.declarations.first() {
+            first_decl
+        } else {
+            return;
+        };
+
+        let Some(usage_node) = self.ctx.arena.get(usage_idx) else {
+            return;
+        };
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return;
+        };
+
+        // Only flag if usage is before declaration in source order
+        if usage_node.pos >= decl_node.pos {
+            return;
+        }
+
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        // Get the name from the usage site
+        let name = self.heritage_name_text(usage_idx).unwrap_or_default();
+
+        let (msg_template, code) = if is_class {
+            (
+                diagnostic_messages::CLASS_USED_BEFORE_ITS_DECLARATION,
+                diagnostic_codes::CLASS_USED_BEFORE_ITS_DECLARATION,
+            )
+        } else {
+            (
+                diagnostic_messages::ENUM_USED_BEFORE_ITS_DECLARATION,
+                diagnostic_codes::ENUM_USED_BEFORE_ITS_DECLARATION,
+            )
+        };
+        let message = format_message(msg_template, &[&name]);
+        self.error_at_node(usage_idx, &message, code);
     }
 
     /// Check a class declaration.
