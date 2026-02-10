@@ -933,6 +933,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Check if this is a known Node.js global → TS2580
+        if is_known_node_global(name) {
+            self.error_cannot_find_name_install_node_types(name, idx);
+            return;
+        }
+
+        // Check if this is a known test runner global → TS2582
+        if is_known_test_runner_global(name) {
+            self.error_cannot_find_name_install_test_types(name, idx);
+            return;
+        }
+
         // Try to find similar identifiers in scope for better error messages
         if let Some(suggestions) = self.find_similar_identifiers(name, idx)
             && !suggestions.is_empty()
@@ -1028,6 +1040,44 @@ impl<'a> CheckerState<'a> {
             );
             self.ctx.push_diagnostic(Diagnostic {
                 code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
+    /// Report TS2580: Cannot find name 'X' - suggest installing @types/node.
+    pub fn error_cannot_find_name_install_node_types(&mut self, name: &str, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let message = format_message(
+                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+                &[name],
+            );
+            self.ctx.push_diagnostic(Diagnostic {
+                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
+    /// Report TS2582: Cannot find name 'X' - suggest installing test runner types.
+    pub fn error_cannot_find_name_install_test_types(&mut self, name: &str, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let message = format_message(
+                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
+                &[name],
+            );
+            self.ctx.push_diagnostic(Diagnostic {
+                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),
@@ -2846,4 +2896,17 @@ pub fn is_known_dom_global(name: &str) -> bool {
         | "atob" | "btoa" => true,
         _ => false,
     }
+}
+
+/// Check if a name is a known Node.js global that requires @types/node (TS2580).
+pub fn is_known_node_global(name: &str) -> bool {
+    matches!(
+        name,
+        "require" | "exports" | "module" | "process" | "Buffer" | "__filename" | "__dirname"
+    )
+}
+
+/// Check if a name is a known test runner global that requires @types/jest or @types/mocha (TS2582).
+pub fn is_known_test_runner_global(name: &str) -> bool {
+    matches!(name, "describe" | "suite" | "it" | "test")
 }
