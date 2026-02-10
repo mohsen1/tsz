@@ -24,6 +24,7 @@ struct ClassMemberInfo {
     name_idx: NodeIndex,
     is_method: bool,
     is_static: bool,
+    is_accessor: bool,
 }
 
 // =============================================================================
@@ -61,6 +62,7 @@ impl<'a> CheckerState<'a> {
                     name_idx: prop.name,
                     is_method: false,
                     is_static,
+                    is_accessor: false,
                 })
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -87,6 +89,7 @@ impl<'a> CheckerState<'a> {
                     name_idx: method.name,
                     is_method: true,
                     is_static,
+                    is_accessor: false,
                 })
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
@@ -107,6 +110,7 @@ impl<'a> CheckerState<'a> {
                     name_idx: accessor.name,
                     is_method: false,
                     is_static,
+                    is_accessor: true,
                 })
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
@@ -135,6 +139,7 @@ impl<'a> CheckerState<'a> {
                     name_idx: accessor.name,
                     is_method: false,
                     is_static,
+                    is_accessor: true,
                 })
             }
             _ => None,
@@ -274,106 +279,131 @@ impl<'a> CheckerState<'a> {
             String::from("<anonymous>")
         };
 
+        // Track names that already had TS2610/TS2611 emitted (avoid duplicate for get+set pairs)
+        let mut accessor_mismatch_reported: rustc_hash::FxHashSet<String> =
+            rustc_hash::FxHashSet::default();
+
         // Check each member in the derived class
         for &member_idx in &class_data.members.nodes {
             let Some(info) = self.extract_class_member_info(member_idx, false) else {
                 continue;
             };
-            let (member_name, member_type, member_name_idx, is_method, is_static) = (
+            let (member_name, member_type, member_name_idx, is_method, is_static, is_accessor) = (
                 info.name,
                 info.type_id,
                 info.name_idx,
                 info.is_method,
                 info.is_static,
+                info.is_accessor,
             );
 
-            // Skip if type is ANY (no meaningful check)
-            if member_type == TypeId::ANY {
+            // Skip override checking for private identifiers (#foo)
+            // Private fields are scoped to the class that declares them and
+            // do NOT participate in the inheritance hierarchy
+            if member_name.starts_with('#') {
                 continue;
             }
 
-            // Look for a matching member in the base class (skip private members)
-            for &base_member_idx in &base_class.members.nodes {
-                let Some(base_info) = self.extract_class_member_info(base_member_idx, true) else {
-                    continue;
-                };
-                let (base_name, base_type, _base_is_method, base_is_static) = (
-                    base_info.name,
-                    base_info.type_id,
-                    base_info.is_method,
-                    base_info.is_static,
-                );
-
-                let base_type = instantiate_type(self.ctx.types, base_type, &substitution);
-
-                // Skip if base type is ANY
-                if base_type == TypeId::ANY {
-                    continue;
+            // Look for a matching member in the base class hierarchy (skip private members)
+            // First check direct members of the base class, then walk up the chain
+            let base_info = {
+                let mut found = None;
+                for &base_member_idx in &base_class.members.nodes {
+                    if let Some(info) = self.extract_class_member_info(base_member_idx, true) {
+                        if info.name == member_name && info.is_static == is_static {
+                            found = Some(info);
+                            break;
+                        }
+                    }
                 }
-
-                // Check if names match
-                if member_name != base_name {
-                    continue;
+                // If not found in direct base, walk up the ancestor chain
+                if found.is_none() {
+                    found = self.find_member_in_class_chain(base_idx, &member_name, is_static, 0);
                 }
+                found
+            };
 
-                // Skip override checking for private identifiers (#foo)
-                // Private fields are scoped to the class that declares them and
-                // do NOT participate in the inheritance hierarchy
-                if member_name.starts_with('#') {
-                    continue;
-                }
+            let Some(base_info) = base_info else {
+                continue;
+            };
 
-                // Static members can only override static members, instance only instance
-                if is_static != base_is_static {
-                    continue;
-                }
+            let base_type = instantiate_type(self.ctx.types, base_info.type_id, &substitution);
 
-                // Resolve TypeQuery types (typeof) before comparison
-                // If member_type is `typeof y` and base_type is `typeof x`,
-                // we need to compare the actual types of y and x
-                let resolved_member_type = self.resolve_type_query_type(member_type);
-                let resolved_base_type = self.resolve_type_query_type(base_type);
-
-                // Check type compatibility - derived type must be assignable to base type
-                // Use bivariant checking for methods (is_method = true), contravariant for properties
-                let is_compatible = if is_method {
-                    // Methods are bivariant in TypeScript for compatibility reasons
-                    self.is_assignable_to_bivariant(resolved_member_type, resolved_base_type)
-                } else {
-                    // Properties and accessors use standard (contravariant with strictFunctionTypes) checking
-                    self.is_assignable_to(resolved_member_type, resolved_base_type)
-                };
-
-                if !is_compatible {
-                    // Format type strings for error message
-                    let member_type_str = self.format_type(member_type);
-                    let base_type_str = self.format_type(base_type);
-
-                    // Report error 2416 on the member name
+            // TS2610/TS2611: Check accessor/property kind mismatch
+            // Only applies to non-method members. Fires regardless of types (even ANY).
+            if !is_method
+                && !base_info.is_method
+                && !accessor_mismatch_reported.contains(&member_name)
+            {
+                if !is_accessor && base_info.is_accessor {
+                    // TS2610: derived property overrides base accessor
+                    accessor_mismatch_reported.insert(member_name.clone());
                     self.error_at_node(
                         member_name_idx,
                         &format!(
-                            "Property '{}' in type '{}' is not assignable to the same property in base type '{}'.",
-                            member_name, derived_class_name, base_class_name
+                            "'{}' is defined as an accessor in class '{}', but is overridden here in '{}' as an instance property.",
+                            member_name, base_class_name, derived_class_name
+                        ),
+                        diagnostic_codes::IS_DEFINED_AS_AN_ACCESSOR_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_INSTANCE_PROP,
+                    );
+                    continue;
+                }
+                if is_accessor && !base_info.is_accessor {
+                    // TS2611: derived accessor overrides base property
+                    accessor_mismatch_reported.insert(member_name.clone());
+                    self.error_at_node(
+                        member_name_idx,
+                        &format!(
+                            "'{}' is defined as a property in class '{}', but is overridden here in '{}' as an accessor.",
+                            member_name, base_class_name, derived_class_name
+                        ),
+                        diagnostic_codes::IS_DEFINED_AS_A_PROPERTY_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_ACCESSOR,
+                    );
+                    continue;
+                }
+            }
+
+            // Skip type compatibility check if either type is ANY
+            if member_type == TypeId::ANY || base_type == TypeId::ANY {
+                continue;
+            }
+
+            // Resolve TypeQuery types (typeof) before comparison
+            let resolved_member_type = self.resolve_type_query_type(member_type);
+            let resolved_base_type = self.resolve_type_query_type(base_type);
+
+            // Check type compatibility - derived type must be assignable to base type
+            // Use bivariant checking for methods (is_method = true), contravariant for properties
+            let is_compatible = if is_method {
+                self.is_assignable_to_bivariant(resolved_member_type, resolved_base_type)
+            } else {
+                self.is_assignable_to(resolved_member_type, resolved_base_type)
+            };
+
+            if !is_compatible {
+                let member_type_str = self.format_type(member_type);
+                let base_type_str = self.format_type(base_type);
+
+                self.error_at_node(
+                    member_name_idx,
+                    &format!(
+                        "Property '{}' in type '{}' is not assignable to the same property in base type '{}'.",
+                        member_name, derived_class_name, base_class_name
+                    ),
+                    diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                );
+
+                if let Some((pos, end)) = self.get_node_span(member_name_idx) {
+                    self.error(
+                        pos,
+                        end - pos,
+                        format!(
+                            "Type '{}' is not assignable to type '{}'.",
+                            member_type_str, base_type_str
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
-
-                    // Add secondary error with type details
-                    if let Some((pos, end)) = self.get_node_span(member_name_idx) {
-                        self.error(
-                            pos,
-                            end - pos,
-                            format!(
-                                "Type '{}' is not assignable to type '{}'.",
-                                member_type_str, base_type_str
-                            ),
-                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
-                        );
-                    }
                 }
-
-                break; // Found matching base member, no need to continue
             }
         }
 
@@ -1004,6 +1034,68 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Find a member by name in a class, searching up the inheritance chain.
+    /// Returns the member info if found, or None. The `depth` parameter limits
+    /// chain traversal to prevent infinite loops.
+    fn find_member_in_class_chain(
+        &mut self,
+        class_idx: NodeIndex,
+        target_name: &str,
+        target_is_static: bool,
+        depth: usize,
+    ) -> Option<ClassMemberInfo> {
+        if depth > 10 {
+            return None; // Prevent infinite loops
+        }
+
+        let class_node = self.ctx.arena.get(class_idx)?;
+        let class_data = self.ctx.arena.get_class(class_node)?;
+
+        // Search direct members
+        for &member_idx in &class_data.members.nodes {
+            if let Some(info) = self.extract_class_member_info(member_idx, true) {
+                if info.name == target_name && info.is_static == target_is_static {
+                    return Some(info);
+                }
+            }
+        }
+
+        // Walk up to base class
+        let heritage_clauses = class_data.heritage_clauses.as_ref()?;
+        for &clause_idx in &heritage_clauses.nodes {
+            let clause_node = self.ctx.arena.get(clause_idx)?;
+            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            let type_idx = *heritage.types.nodes.first()?;
+            let type_node = self.ctx.arena.get(type_idx)?;
+            let expr_idx =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                    expr_type_args.expression
+                } else {
+                    type_idx
+                };
+            let expr_node = self.ctx.arena.get(expr_idx)?;
+            let ident = self.ctx.arena.get_identifier(expr_node)?;
+            let base_name = &ident.escaped_text;
+            let sym_id = self.ctx.binder.file_locals.get(base_name)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            let base_idx = if !symbol.value_declaration.is_none() {
+                symbol.value_declaration
+            } else {
+                *symbol.declarations.first()?
+            };
+            return self.find_member_in_class_chain(
+                base_idx,
+                target_name,
+                target_is_static,
+                depth + 1,
+            );
+        }
+        None
     }
 
     /// Count required (non-optional, non-rest, no-initializer) parameters in a
