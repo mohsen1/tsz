@@ -330,6 +330,11 @@ impl<'a> Printer<'a> {
                 }
             }
 
+            // Emit leading comments before this member
+            if let Some(member_node) = self.arena.get(member_idx) {
+                self.emit_comments_before_pos(member_node.pos);
+            }
+
             let before_len = self.writer.len();
             self.emit(member_idx);
             // Only add newline if something was actually emitted
