@@ -313,6 +313,7 @@ impl<'a> CheckerState<'a> {
             // If there's a type annotation, check that the element type is assignable to it
             if !var_decl.type_annotation.is_none() {
                 // TS2404: The left-hand side of a 'for...in' statement cannot use a type annotation
+                // TSC emits TS2404 and skips the assignability check for for-in loops.
                 if is_for_in {
                     use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
@@ -325,7 +326,9 @@ impl<'a> CheckerState<'a> {
                 let declared = self.get_type_from_type_node(var_decl.type_annotation);
 
                 // TS2322: Check that element type is assignable to declared type
-                if declared != TypeId::ANY
+                // Skip for for-in loops — TSC only emits TS2404 (no assignability check).
+                if !is_for_in
+                    && declared != TypeId::ANY
                     && !self.type_contains_error(declared)
                     && !self.is_assignable_to(element_type, declared)
                     && !self.should_skip_weak_union_error(element_type, declared, var_decl.name)

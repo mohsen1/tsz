@@ -228,13 +228,14 @@ impl<'a> CheckerState<'a> {
     /// For operators like -, *, /, %, **, -=, *=, /=, %=, **=,
     /// validates that operands are of type number, bigint, any, or enum.
     /// Emits appropriate errors when operands are invalid.
+    /// Returns true if any error was emitted.
     fn check_arithmetic_operands(
         &mut self,
         left_idx: NodeIndex,
         right_idx: NodeIndex,
         left_type: TypeId,
         right_type: TypeId,
-    ) {
+    ) -> bool {
         let left_is_valid = self.is_arithmetic_operand(left_type);
         let right_is_valid = self.is_arithmetic_operand(right_type);
 
@@ -265,6 +266,8 @@ impl<'a> CheckerState<'a> {
                 });
             }
         }
+
+        !left_is_valid || !right_is_valid
     }
 
     /// Emit TS2447 error for boolean bitwise operators (&, |, ^, &=, |=, ^=).
@@ -337,6 +340,10 @@ impl<'a> CheckerState<'a> {
 
         self.check_readonly_assignment(left_idx, expr_idx);
 
+        // Track whether an operator error was emitted so we can suppress cascading TS2322.
+        // TSC doesn't emit TS2322 when there's already an operator error (TS2447/TS2362/TS2363).
+        let mut emitted_operator_error = false;
+
         // Check arithmetic operands for compound arithmetic assignments
         // Emit TS2362/TS2363 for -=, *=, /=, %=, **=
         let is_arithmetic_compound = matches!(
@@ -350,7 +357,8 @@ impl<'a> CheckerState<'a> {
         if is_arithmetic_compound {
             // Don't emit arithmetic errors if either operand is ERROR - prevents cascading errors
             if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
-                self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+                emitted_operator_error =
+                    self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
             }
         }
 
@@ -379,11 +387,14 @@ impl<'a> CheckerState<'a> {
                     _ => ("^=", "!=="),
                 };
                 self.emit_boolean_operator_error(left_idx, op_str, suggestion);
+                emitted_operator_error = true;
             } else if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
-                self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+                emitted_operator_error =
+                    self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
             }
         } else if is_shift_compound && left_type != TypeId::ERROR && right_type != TypeId::ERROR {
-            self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+            emitted_operator_error =
+                self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
         }
 
         let result_type = self.compound_assignment_result_type(left_type, right_type, operator);
@@ -399,7 +410,7 @@ impl<'a> CheckerState<'a> {
             result_type
         };
 
-        if left_type != TypeId::ANY {
+        if left_type != TypeId::ANY && !emitted_operator_error {
             if let Some((source_level, target_level)) =
                 self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
             {
