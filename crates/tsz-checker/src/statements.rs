@@ -439,9 +439,11 @@ impl StatementChecker {
                                     );
                                 }
                                 // Check statements in the case
-                                for inner_stmt_idx in clause_stmts {
-                                    state.check_statement(inner_stmt_idx);
+                                for inner_stmt_idx in &clause_stmts {
+                                    state.check_statement(*inner_stmt_idx);
                                 }
+                                // Check for unreachable code in case clause
+                                state.check_unreachable_code_in_block(&clause_stmts);
                             }
                         }
 

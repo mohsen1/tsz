@@ -3273,7 +3273,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.printer.always_strict = val;
     }
     if let Some(val) = args.allow_unreachable_code {
-        options.checker.allow_unreachable_code = val;
+        options.checker.allow_unreachable_code = Some(val);
     }
     if args.sound {
         options.checker.sound_mode = true;

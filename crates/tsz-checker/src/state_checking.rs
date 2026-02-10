@@ -141,6 +141,9 @@ impl<'a> CheckerState<'a> {
             for &stmt_idx in &sf.statements.nodes {
                 self.check_statement(stmt_idx);
             }
+            // Check for unreachable code at the source file level (TS7027)
+            // Must run AFTER statement checking so types are resolved (avoids premature TS7006)
+            self.check_unreachable_code_in_block(&sf.statements.nodes);
             perf_log("check_statements", stmt_start);
 
             let post_start = Instant::now();

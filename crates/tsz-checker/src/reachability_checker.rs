@@ -43,8 +43,10 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_unreachable_code_in_block(&mut self, statements: &[NodeIndex]) {
         use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-        // TS7027 is suppressed when allowUnreachableCode is enabled
-        if self.ctx.compiler_options.allow_unreachable_code {
+        // TS7027 is only emitted as an error when allowUnreachableCode is explicitly false.
+        // When undefined (None), tsc emits it as a suggestion (not captured in conformance).
+        // When true (Some(true)), it's fully suppressed.
+        if self.ctx.compiler_options.allow_unreachable_code != Some(false) {
             return;
         }
 
@@ -55,12 +57,14 @@ impl<'a> CheckerState<'a> {
                 // - empty statements
                 // - function declarations (hoisted)
                 // - type/interface declarations (no runtime effect)
+                // - const enum declarations (no runtime effect when preserveConstEnums is off)
                 // - var declarations without initializers (hoisted, no runtime effect)
                 let should_skip = if let Some(node) = self.ctx.arena.get(stmt_idx) {
                     node.kind == syntax_kind_ext::EMPTY_STATEMENT
                         || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                         || node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                         || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                        || node.kind == syntax_kind_ext::MODULE_DECLARATION
                         || self.is_var_without_initializer(stmt_idx, node)
                 } else {
                     false
@@ -71,60 +75,11 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::UNREACHABLE_CODE_DETECTED,
                         diagnostic_codes::UNREACHABLE_CODE_DETECTED,
                     );
+                    // TypeScript only reports TS7027 for the first unreachable statement
+                    return;
                 }
-            } else {
-                let Some(node) = self.ctx.arena.get(stmt_idx) else {
-                    continue;
-                };
-                match node.kind {
-                    syntax_kind_ext::RETURN_STATEMENT | syntax_kind_ext::THROW_STATEMENT => {
-                        unreachable = true;
-                    }
-                    syntax_kind_ext::EXPRESSION_STATEMENT => {
-                        let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) else {
-                            continue;
-                        };
-                        let expr_type = self.get_type_of_node(expr_stmt.expression);
-                        if expr_type.is_never() {
-                            unreachable = true;
-                        }
-                    }
-                    syntax_kind_ext::VARIABLE_STATEMENT => {
-                        let Some(var_stmt) = self.ctx.arena.get_variable(node) else {
-                            continue;
-                        };
-                        for &decl_idx in &var_stmt.declarations.nodes {
-                            let Some(list_node) = self.ctx.arena.get(decl_idx) else {
-                                continue;
-                            };
-                            let Some(var_list) = self.ctx.arena.get_variable(list_node) else {
-                                continue;
-                            };
-                            for &list_decl_idx in &var_list.declarations.nodes {
-                                let Some(list_decl_node) = self.ctx.arena.get(list_decl_idx) else {
-                                    continue;
-                                };
-                                let Some(decl) =
-                                    self.ctx.arena.get_variable_declaration(list_decl_node)
-                                else {
-                                    continue;
-                                };
-                                if decl.initializer.is_none() {
-                                    continue;
-                                }
-                                let init_type = self.get_type_of_node(decl.initializer);
-                                if init_type.is_never() {
-                                    unreachable = true;
-                                    break;
-                                }
-                            }
-                            if unreachable {
-                                break;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+            } else if !self.statement_falls_through(stmt_idx) {
+                unreachable = true;
             }
         }
     }
@@ -178,9 +133,18 @@ impl<'a> CheckerState<'a> {
                         if decl.initializer.is_none() {
                             continue;
                         }
-                        let init_type = self.get_type_of_node(decl.initializer);
-                        if init_type.is_never() {
-                            return false;
+                        // Only treat call/new expressions as non-falling-through when
+                        // they return never. Type assertions like `null as never` still
+                        // complete normally at runtime.
+                        if let Some(init_node) = self.ctx.arena.get(decl.initializer) {
+                            if init_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                                || init_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                            {
+                                let init_type = self.get_type_of_node(decl.initializer);
+                                if init_type.is_never() {
+                                    return false;
+                                }
+                            }
                         }
                     }
                 }

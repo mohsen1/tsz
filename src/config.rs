@@ -630,7 +630,7 @@ pub fn resolve_compiler_options(
     }
 
     if let Some(allow_unreachable_code) = options.allow_unreachable_code {
-        resolved.checker.allow_unreachable_code = allow_unreachable_code;
+        resolved.checker.allow_unreachable_code = Some(allow_unreachable_code);
     }
 
     if let Some(ref custom_conditions) = options.custom_conditions {

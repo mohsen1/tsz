@@ -26881,12 +26881,14 @@ function test3(): string {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.allow_unreachable_code = Some(false);
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -26928,12 +26930,14 @@ function test2(): number {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.allow_unreachable_code = Some(false);
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -26977,12 +26981,14 @@ function test2(): void {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.allow_unreachable_code = Some(false);
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -29054,7 +29060,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             module: crate::common::ModuleKind::ESNext,
             es_module_interop: false,
             allow_synthetic_default_imports: false,
-            allow_unreachable_code: false,
+            allow_unreachable_code: None,
             sound_mode: false,
             experimental_decorators: false,
             no_unused_locals: false,
