@@ -28,14 +28,13 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_string_literal(&mut self, node: &Node) {
-        // Prefer raw source text to preserve line continuations and escape sequences
+        // Try to use raw source text to preserve line continuations etc.
         if let Some(raw) = self.get_raw_string_literal(node) {
             self.write(&raw);
             return;
         }
-
         if let Some(lit) = self.arena.get_literal(node) {
-            // Fallback: re-escape the parsed text
+            // Preserve original quote style from source text
             let quote = self.detect_original_quote(node).unwrap_or_else(|| {
                 if self.ctx.options.single_quote {
                     '\''
@@ -49,28 +48,25 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Extract the raw string literal from source text, preserving escape sequences.
+    /// Get the raw string literal from source text, preserving line continuations.
     fn get_raw_string_literal(&self, node: &Node) -> Option<String> {
         let text = self.source_text?;
         let bytes = text.as_bytes();
         let start = node.pos as usize;
         let end = std::cmp::min(node.end as usize, bytes.len());
-
-        // Find the opening quote (skip leading trivia)
-        let mut quote_start = start;
-        while quote_start < end {
-            match bytes[quote_start] {
+        // Skip leading trivia to find the quote
+        let mut i = start;
+        while i < end {
+            match bytes[i] {
                 b'\'' | b'"' => break,
-                b' ' | b'\t' | b'\r' | b'\n' => quote_start += 1,
-                _ => return None, // Not a simple string literal
+                b' ' | b'\t' | b'\r' | b'\n' => i += 1,
+                _ => return None,
             }
         }
-        if quote_start >= end {
+        if i >= end {
             return None;
         }
-
-        // Extract from opening quote to end of node (which includes closing quote)
-        Some(text[quote_start..end].to_string())
+        Some(text[i..end].to_string())
     }
 
     /// Detect the original quote character used in source text.

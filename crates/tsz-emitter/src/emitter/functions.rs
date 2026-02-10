@@ -35,9 +35,8 @@ impl<'a> Printer<'a> {
         }
 
         // Parameters (without types for JavaScript)
-        // TypeScript preserves parentheses from source for single simple parameters.
-        // If the source had `(x) => ...`, emit `(x) => ...`.
-        // If the source had `x => ...`, emit `x => ...`.
+        // TypeScript omits parentheses for single simple parameters: x => x
+        // But uses them for: (x, y) => x, () => x, ({x}) => x, ([x]) => x
         let needs_parens = self.arrow_function_needs_parens(node, &func.parameters.nodes);
 
         if needs_parens {
@@ -57,7 +56,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if arrow function parameters need parentheses.
-    /// TypeScript preserves parentheses from the original source.
+    /// TypeScript omits parentheses only for a single simple identifier parameter.
     fn arrow_function_needs_parens(&self, node: &Node, params: &[NodeIndex]) -> bool {
         // Need parens if not exactly one parameter
         if params.len() != 1 {
@@ -94,7 +93,6 @@ impl<'a> Printer<'a> {
             let start = node.pos as usize;
             let param_start = param_node.pos as usize;
             if param_start > start && param_start <= text.len() {
-                // Scan from node start to parameter start for '('
                 let slice = &text[start..param_start];
                 if slice.contains('(') {
                     return true;
@@ -102,7 +100,7 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Simple identifier parameter without source parens - no parens needed
+        // Simple identifier parameter - no parens needed
         false
     }
 
