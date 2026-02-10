@@ -1060,7 +1060,7 @@ impl<'a> ES5ClassTransformer<'a> {
                                 IRNode::id(&self.class_name),
                                 "prototype",
                             )),
-                            property_name: accessor_name.clone(),
+                            property_name: self.get_method_name_ir(accessor_data.name),
                             descriptor: IRPropertyDescriptor {
                                 get: get_fn.map(Box::new),
                                 set: set_fn.map(Box::new),
@@ -1303,7 +1303,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
                         body.push(IRNode::DefineProperty {
                             target: Box::new(IRNode::id(&self.class_name)),
-                            property_name: accessor_name.clone(),
+                            property_name: self.get_method_name_ir(accessor_data.name),
                             descriptor: IRPropertyDescriptor {
                                 get: get_fn.map(Box::new),
                                 set: set_fn.map(Box::new),
@@ -1369,6 +1369,18 @@ fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
     if node.kind == SyntaxKind::Identifier as u16 {
         arena.get_identifier(node).map(|id| id.escaped_text.clone())
+    } else if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+        // For computed property names like ["goodbye"], extract the string literal text
+        if let Some(computed) = arena.get_computed_property(node) {
+            if let Some(expr_node) = arena.get(computed.expression) {
+                if expr_node.kind == SyntaxKind::StringLiteral as u16 {
+                    return arena.get_literal(expr_node).map(|lit| lit.text.clone());
+                }
+            }
+        }
+        None
+    } else if node.kind == SyntaxKind::StringLiteral as u16 {
+        arena.get_literal(node).map(|lit| lit.text.clone())
     } else {
         None
     }
@@ -1532,6 +1544,9 @@ impl<'a> AstToIr<'a> {
             k if k == syntax_kind_ext::CONTINUE_STATEMENT => self.convert_continue_statement(idx),
             k if k == syntax_kind_ext::LABELED_STATEMENT => self.convert_labeled_statement(idx),
             k if k == syntax_kind_ext::EMPTY_STATEMENT => IRNode::EmptyStatement,
+            k if k == syntax_kind_ext::DEBUGGER_STATEMENT => {
+                IRNode::ExpressionStatement(Box::new(IRNode::Identifier("debugger".to_string())))
+            }
             k if k == syntax_kind_ext::FOR_IN_STATEMENT
                 || k == syntax_kind_ext::FOR_OF_STATEMENT =>
             {

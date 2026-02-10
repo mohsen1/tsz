@@ -35,6 +35,10 @@ impl<'a> Printer<'a> {
             if has_newline_before_right {
                 self.write(",");
                 self.write_line();
+                self.increase_indent();
+                self.emit(binary.right);
+                self.decrease_indent();
+                return;
             } else {
                 self.write(", ");
             }
@@ -306,13 +310,40 @@ impl<'a> Printer<'a> {
         }
 
         // Preserve multi-line formatting from source.
-        // Note: We use a direct newline check instead of is_single_line() because
-        // is_single_line uses brace-matching which fails for arrays containing objects.
+        // Check for newlines BETWEEN consecutive elements, not within the overall expression.
+        // This avoids treating `[, [\n...\n]]` as multi-line when only the nested array
+        // is multi-line, not the outer array's element separation.
         let is_multiline = array.elements.nodes.len() > 1
             && self.source_text.is_some_and(|text| {
-                let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-                let end = std::cmp::min(node.end as usize, text.len());
-                start < end && text[start..end].contains('\n')
+                // Check between consecutive elements for newlines
+                for i in 0..array.elements.nodes.len() - 1 {
+                    let curr = array.elements.nodes[i];
+                    let next = array.elements.nodes[i + 1];
+                    if let (Some(curr_node), Some(next_node)) =
+                        (self.arena.get(curr), self.arena.get(next))
+                    {
+                        let curr_end = std::cmp::min(curr_node.end as usize, text.len());
+                        let next_start = std::cmp::min(next_node.pos as usize, text.len());
+                        if curr_end <= next_start && text[curr_end..next_start].contains('\n') {
+                            return true;
+                        }
+                    }
+                }
+                // Also check between '[' and first element
+                if let Some(first_node) = array
+                    .elements
+                    .nodes
+                    .first()
+                    .and_then(|&n| self.arena.get(n))
+                {
+                    let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
+                    let first_pos = std::cmp::min(first_node.pos as usize, text.len());
+                    let start = std::cmp::min(bracket_pos, first_pos);
+                    if start < first_pos && text[start..first_pos].contains('\n') {
+                        return true;
+                    }
+                }
+                false
             });
 
         if !is_multiline {
