@@ -93,6 +93,47 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check if an `arguments` reference is directly inside an arrow function.
+    ///
+    /// Walks up the AST from the given node. If the first function-like node
+    /// encountered is an ArrowFunction, returns true. If it's a regular function
+    /// (FunctionDeclaration, FunctionExpression, Method, Constructor, Accessor),
+    /// returns false since those have their own `arguments` binding.
+    pub(crate) fn is_arguments_in_arrow_function(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::*;
+        let mut current = idx;
+        let mut iterations = 0;
+        while !current.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                match node.kind {
+                    k if k == ARROW_FUNCTION => return true,
+                    k if k == FUNCTION_DECLARATION
+                        || k == FUNCTION_EXPRESSION
+                        || k == METHOD_DECLARATION
+                        || k == CONSTRUCTOR
+                        || k == GET_ACCESSOR
+                        || k == SET_ACCESSOR =>
+                    {
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
     /// Check if `this` has a contextual owner (class or object literal).
     ///
     /// Walks up the AST to find the nearest non-arrow function. If that function is

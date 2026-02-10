@@ -1419,6 +1419,23 @@ impl<'a> CheckerState<'a> {
 
         let name = &ident.escaped_text;
 
+        // TS2496: 'arguments' cannot be referenced in an arrow function in ES5
+        if name == "arguments" {
+            use tsz_common::common::ScriptTarget;
+            let is_es5_or_lower = matches!(
+                self.ctx.compiler_options.target,
+                ScriptTarget::ES3 | ScriptTarget::ES5
+            );
+            if is_es5_or_lower && self.is_arguments_in_arrow_function(idx) {
+                use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ARROW_FUNCTION_IN_ES5_CONSIDER_U,
+                    diagnostic_codes::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ARROW_FUNCTION_IN_ES5_CONSIDER_U,
+                );
+            }
+        }
+
         // === CRITICAL FIX: Check type parameter scope FIRST ===
         // Type parameters in generic functions/classes/type aliases should be resolved
         // before checking any other scope. This is a common source of TS2304 false positives.
