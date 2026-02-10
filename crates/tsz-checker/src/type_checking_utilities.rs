@@ -1113,12 +1113,30 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::WHILE_STATEMENT
             | syntax_kind_ext::DO_STATEMENT
-            | syntax_kind_ext::FOR_STATEMENT
-            | syntax_kind_ext::FOR_IN_STATEMENT
-            | syntax_kind_ext::FOR_OF_STATEMENT => {
+            | syntax_kind_ext::FOR_STATEMENT => {
                 if let Some(loop_data) = self.ctx.arena.get_loop(node) {
                     self.collect_return_types_in_statement(
                         loop_data.statement,
+                        return_types,
+                        saw_empty,
+                        return_context,
+                    );
+                }
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(for_in_of) = self.ctx.arena.get_for_in_of(node) {
+                    self.collect_return_types_in_statement(
+                        for_in_of.statement,
+                        return_types,
+                        saw_empty,
+                        return_context,
+                    );
+                }
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
+                    self.collect_return_types_in_statement(
+                        labeled.statement,
                         return_types,
                         saw_empty,
                         return_context,
@@ -1254,11 +1272,21 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::WHILE_STATEMENT
             | syntax_kind_ext::DO_STATEMENT
-            | syntax_kind_ext::FOR_STATEMENT
-            | syntax_kind_ext::FOR_IN_STATEMENT
-            | syntax_kind_ext::FOR_OF_STATEMENT => {
+            | syntax_kind_ext::FOR_STATEMENT => {
                 if let Some(loop_data) = self.ctx.arena.get_loop(node) {
                     return self.statement_has_return_with_value(loop_data.statement);
+                }
+                false
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(for_in_of) = self.ctx.arena.get_for_in_of(node) {
+                    return self.statement_has_return_with_value(for_in_of.statement);
+                }
+                false
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
+                    return self.statement_has_return_with_value(labeled.statement);
                 }
                 false
             }
