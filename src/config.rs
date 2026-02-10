@@ -651,10 +651,20 @@ pub fn resolve_compiler_options(
         resolved.allow_synthetic_default_imports = allow_synthetic_default_imports;
         resolved.checker.allow_synthetic_default_imports = allow_synthetic_default_imports;
     } else if !resolved.allow_synthetic_default_imports {
-        // TypeScript defaults allowSyntheticDefaultImports to true unconditionally.
-        // Only skip if it was already set by esModuleInterop above.
-        resolved.allow_synthetic_default_imports = true;
-        resolved.checker.allow_synthetic_default_imports = true;
+        // TSC defaults allowSyntheticDefaultImports to true when:
+        // - esModuleInterop is true (already handled above)
+        // - module is "system"
+        // - moduleResolution is "bundler"
+        // Otherwise defaults to false.
+        let should_default_true = matches!(resolved.checker.module, ModuleKind::System)
+            || matches!(
+                resolved.module_resolution,
+                Some(ModuleResolutionKind::Bundler)
+            );
+        if should_default_true {
+            resolved.allow_synthetic_default_imports = true;
+            resolved.checker.allow_synthetic_default_imports = true;
+        }
     }
 
     if let Some(experimental_decorators) = options.experimental_decorators {
