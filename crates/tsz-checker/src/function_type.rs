@@ -120,6 +120,13 @@ impl<'a> CheckerState<'a> {
 
         let (type_params, type_param_updates) = self.push_type_parameters(type_parameters);
 
+        // Check for unused type parameters in function expressions and arrow functions (TS6133)
+        // Function declarations, methods, classes, interfaces, and type aliases are checked
+        // in the checking path (check_statement, check_method_declaration, etc.)
+        if !is_function_declaration && !is_method_or_constructor {
+            self.check_unused_type_params(type_parameters, idx);
+        }
+
         // Collect parameter info using solver's ParamInfo struct
         let mut params = Vec::new();
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
