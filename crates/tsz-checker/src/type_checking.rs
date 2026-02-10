@@ -730,10 +730,10 @@ impl<'a> CheckerState<'a> {
         // Traverse binding elements
         let pattern_kind = pattern_node.kind;
 
-        // TS2461: Check if array destructuring is applied to a non-array type
-        if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-            self.check_array_destructuring_target_type(pattern_idx, pattern_type);
-        }
+        // Note: Array destructuring iterability (TS2488) is checked by the caller
+        // (state_checking.rs) via check_destructuring_iterability before invoking
+        // check_binding_pattern, so we do NOT call check_array_destructuring_target_type
+        // here to avoid duplicate TS2488 errors.
 
         for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
             self.check_binding_element(element_idx, pattern_kind, i, pattern_type);

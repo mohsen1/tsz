@@ -30377,7 +30377,6 @@ for (const x of tuple) {
 
 /// Test that array destructuring with non-iterable number type emits TS2488
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_iterator_array_destructuring_number_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::state::CheckerState;
@@ -30476,7 +30475,6 @@ const [a, b] = arr;
 
 /// Test that array destructuring of a non-iterable number type emits TS2488
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_array_destructuring_number_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::state::CheckerState;
@@ -30524,7 +30522,6 @@ const [a, b] = num;  // TS2488: number is not iterable
 
 /// Test that array destructuring of a non-iterable boolean type emits TS2488
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_array_destructuring_boolean_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::state::CheckerState;
@@ -30572,7 +30569,6 @@ const [x] = flag;  // TS2488: boolean is not iterable
 
 /// Test that array destructuring of a non-iterable object type emits TS2488
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_array_destructuring_object_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::state::CheckerState;
