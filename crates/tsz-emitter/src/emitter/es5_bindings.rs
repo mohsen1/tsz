@@ -1736,6 +1736,36 @@ impl<'a> Printer<'a> {
                     {
                         if self.is_binding_pattern(decl.name) {
                             if let Some(pattern_node) = self.arena.get(decl.name) {
+                                // Object patterns: for single-property patterns, use element_expr
+                                // directly. For multi-property, create a temp.
+                                if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+                                    let (obj_count, obj_rest) =
+                                        self.count_effective_bindings(pattern_node);
+                                    if obj_count <= 1 && !obj_rest {
+                                        // Single property: var nameA = robots_1[_i].name
+                                        self.emit_es5_destructuring_pattern_direct(
+                                            pattern_node,
+                                            &element_expr,
+                                            &mut first,
+                                        );
+                                    } else {
+                                        // Multi property: var _p = robots_1[_o], nameA = _p.name, skillA = _p.skill
+                                        let temp_name = self.get_temp_var_name();
+                                        if !first {
+                                            self.write(", ");
+                                        }
+                                        first = false;
+                                        self.write(&temp_name);
+                                        self.write(" = ");
+                                        self.write(&element_expr);
+                                        self.emit_es5_destructuring_pattern(
+                                            pattern_node,
+                                            &temp_name,
+                                        );
+                                    }
+                                    continue;
+                                }
+
                                 let (effective_count, has_rest) =
                                     self.count_effective_bindings(pattern_node);
 
