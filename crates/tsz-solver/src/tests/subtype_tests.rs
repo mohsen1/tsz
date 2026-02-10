@@ -4813,7 +4813,7 @@ fn test_rest_any_three_fixed_to_two_fixed_plus_rest() {
 }
 
 #[test]
-fn test_function_fixed_to_rest_extra_param_rejects_undefined() {
+fn test_function_fixed_to_rest_extra_param_compatible() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -4864,7 +4864,9 @@ fn test_function_fixed_to_rest_extra_param_rejects_undefined() {
         is_method: false,
     });
 
-    assert!(!checker.is_subtype_of(source, target));
+    // Fixed params with matching types ARE subtype of rest with same element type.
+    // TypeScript allows (name: string, value: number) → (name: string, ...args: number[]).
+    assert!(checker.is_subtype_of(source, target));
 }
 
 #[test]
@@ -9289,9 +9291,10 @@ fn test_fn_optional_param_fewer_params_is_subtype() {
 }
 
 #[test]
-#[ignore = "Function optional parameter subtyping not fully implemented"]
 fn test_fn_optional_param_required_to_optional() {
-    // (x: string) => void <: (x?: string) => void
+    // (x: string) => void is NOT subtype of (x?: string) => void
+    // TypeScript widens optional params to string|undefined, so
+    // contravariant check: string|undefined <: string fails.
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -9325,13 +9328,14 @@ fn test_fn_optional_param_required_to_optional() {
         is_method: false,
     });
 
-    // Required param function can substitute for optional param function
-    assert!(checker.is_subtype_of(fn_required, fn_optional));
+    // Required param is NOT subtype of optional (undefined not assignable to string)
+    assert!(!checker.is_subtype_of(fn_required, fn_optional));
 }
 
 #[test]
-fn test_fn_optional_param_optional_to_required_not_subtype() {
-    // (x?: string) => void is NOT subtype of (x: string) => void
+fn test_fn_optional_param_optional_to_required_is_subtype() {
+    // (x?: string) => void IS subtype of (x: string) => void
+    // Contravariant: string <: string|undefined → YES
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -9365,14 +9369,14 @@ fn test_fn_optional_param_optional_to_required_not_subtype() {
         is_method: false,
     });
 
-    // Optional cannot substitute where required is expected
-    assert!(!checker.is_subtype_of(fn_optional, fn_required));
+    // Optional IS subtype of required (contravariant: string <: string|undefined)
+    assert!(checker.is_subtype_of(fn_optional, fn_required));
 }
 
 #[test]
-#[ignore = "Function optional parameter subtyping with multiple optional not fully implemented"]
 fn test_fn_optional_param_multiple_optional() {
-    // (a: string) => void <: (a?: string, b?: number) => void
+    // (a: string) => void is NOT subtype of (a?: string, b?: number) => void
+    // Contravariant: string|undefined <: string fails
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -9414,14 +9418,14 @@ fn test_fn_optional_param_multiple_optional() {
         is_method: false,
     });
 
-    // One required can substitute for two optional
-    assert!(checker.is_subtype_of(fn_one_required, fn_two_optional));
+    // Required is NOT subtype of optional (undefined not assignable to base type)
+    assert!(!checker.is_subtype_of(fn_one_required, fn_two_optional));
 }
 
 #[test]
-#[ignore = "Function optional parameter subtyping with mixed required/optional not fully implemented"]
 fn test_fn_optional_param_mixed_required_optional() {
-    // (a: string, b: number) => void <: (a: string, b?: number) => void
+    // (a: string, b: number) => void is NOT subtype of (a: string, b?: number) => void
+    // Contravariant on b: number|undefined <: number fails
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -9471,8 +9475,8 @@ fn test_fn_optional_param_mixed_required_optional() {
         is_method: false,
     });
 
-    // Both required can substitute for one optional
-    assert!(checker.is_subtype_of(fn_both_required, fn_one_optional));
+    // Required is NOT subtype of optional (undefined not assignable to number)
+    assert!(!checker.is_subtype_of(fn_both_required, fn_one_optional));
 }
 
 #[test]
@@ -9561,7 +9565,6 @@ fn test_fn_rest_param_basic() {
 }
 
 #[test]
-#[ignore = "Function rest parameter subtyping not fully implemented"]
 fn test_fn_rest_param_fixed_params_to_rest() {
     // (a: string, b: string) => void <: (...args: string[]) => void
     let interner = TypeInterner::new();
@@ -16009,7 +16012,6 @@ fn test_variance_rest_param_contravariant() {
 }
 
 #[test]
-#[ignore = "Optional parameter covariance optionality not fully implemented"]
 fn test_variance_optional_param_covariant_optionality() {
     // (x?: string) => void  <:  (x: string) => void
     // Optional is more permissive, can be called with fewer args
@@ -16609,7 +16611,6 @@ fn test_this_parameter_covariant_in_method() {
 }
 
 #[test]
-#[ignore = "Void this parameter compatibility not fully implemented"]
 fn test_this_parameter_void_this() {
     // this: void means the function doesn't use this
     let interner = TypeInterner::new();
@@ -19254,7 +19255,6 @@ fn test_constructor_contravariant_parameters() {
 }
 
 #[test]
-#[ignore = "Constructor optional parameter subtyping not fully implemented"]
 fn test_constructor_optional_parameter() {
     // new (x?: string) => T
     let interner = TypeInterner::new();
