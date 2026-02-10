@@ -194,7 +194,9 @@ impl<'a> CheckerState<'a> {
                     } else if !prop.initializer.is_none() {
                         self.get_type_of_node(prop.initializer)
                     } else {
-                        TypeId::UNKNOWN
+                        // Class properties without type annotation or initializer
+                        // get implicit 'any' type (TS7008 when noImplicitAny is on)
+                        TypeId::ANY
                     };
 
                     let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
