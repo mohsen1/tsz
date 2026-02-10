@@ -27357,11 +27357,10 @@ class DuplicateProperties {
 }
 
 #[test]
-#[ignore = "TODO: TS1117 duplicate object literal property detection not implemented"]
 fn test_duplicate_object_literal_properties() {
     use crate::parser::ParserState;
 
-    // Test duplicate properties in object literal
+    // Test duplicate properties in object literal (TS1117 only fires for ES5 target)
     let source = r#"
 const obj = {
     x: 1,
@@ -27382,12 +27381,14 @@ const obj = {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.target = tsz_common::common::ScriptTarget::ES5;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -27404,11 +27405,11 @@ const obj = {
 }
 
 #[test]
-#[ignore = "TODO: TS1117 duplicate object literal property detection not implemented"]
 fn test_duplicate_object_literal_mixed_properties() {
     use crate::parser::ParserState;
 
     // Test duplicate properties with different syntax (shorthand, method)
+    // TS1117 only fires for ES5 target
     let source = r#"
 const obj1 = {
     x: 1,
@@ -27438,12 +27439,14 @@ const obj2 = {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.target = tsz_common::common::ScriptTarget::ES5;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
