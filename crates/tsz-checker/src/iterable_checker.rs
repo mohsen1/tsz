@@ -39,7 +39,7 @@ impl<'a> CheckerState<'a> {
     /// - Has a [Symbol.iterator] method
     /// - A union where all members are iterable
     /// - An intersection where at least one member is iterable
-    pub fn is_iterable_type(&self, type_id: TypeId) -> bool {
+    pub fn is_iterable_type(&mut self, type_id: TypeId) -> bool {
         // Intrinsic types that are always iterable or not iterable
         if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
             return true; // Don't report errors on any/unknown/error
@@ -63,8 +63,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Internal helper that uses the solver's classification enum to determine iterability.
-    fn is_iterable_type_classified(&self, type_id: TypeId) -> bool {
-        match classify_full_iterable_type(self.ctx.types, type_id) {
+    fn is_iterable_type_classified(&mut self, type_id: TypeId) -> bool {
+        let kind = classify_full_iterable_type(self.ctx.types, type_id);
+        match kind {
             FullIterableTypeKind::Array(_) => true,
             FullIterableTypeKind::Tuple(_) => true,
             FullIterableTypeKind::StringLiteral(_) => true,
@@ -79,10 +80,12 @@ impl<'a> CheckerState<'a> {
                 // Check if object has a [Symbol.iterator] method or 'next' method
                 self.object_has_iterator_method(shape_id)
             }
-            FullIterableTypeKind::Application { base } => {
-                // Check if the base type is iterable
-                // This handles Set<T>, Map<K, V>, ReadonlyArray<T>, etc.
-                self.is_iterable_type(base)
+            FullIterableTypeKind::Application { .. } => {
+                // Application types (Set<T>, Map<K,V>, Iterable<T>, etc.) may have
+                // Lazy(DefId) bases that can't be resolved through the type classification.
+                // Use the full property access resolution which handles all the complex
+                // resolution paths including Application types with Lazy bases from lib files.
+                self.type_has_symbol_iterator_via_property_access(type_id)
             }
             FullIterableTypeKind::TypeParameter { constraint } => {
                 if let Some(c) = constraint {
@@ -100,9 +103,14 @@ impl<'a> CheckerState<'a> {
             // Index access, Conditional, Mapped - not directly iterable
             FullIterableTypeKind::ComplexType => false,
             // Functions, classes without Symbol.iterator are not iterable
-            FullIterableTypeKind::FunctionOrCallable => false,
-            // Unknown type - not iterable
-            FullIterableTypeKind::NotIterable => false,
+            FullIterableTypeKind::FunctionOrCallable => {
+                // Callable types can have properties (including [Symbol.iterator])
+                self.type_has_symbol_iterator_via_property_access(type_id)
+            }
+            // Lazy(DefId) from lib files - use property access to resolve
+            FullIterableTypeKind::NotIterable => {
+                self.type_has_symbol_iterator_via_property_access(type_id)
+            }
         }
     }
 
@@ -121,15 +129,24 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // TODO: Check call signatures for generators when CallableShape is implemented
-
         false
+    }
+
+    /// Check if a type has [Symbol.iterator] using the full property access resolution.
+    /// This handles Application types (Set<T>, Map<K,V>) with Lazy(DefId) bases from lib
+    /// files, Callable types with iterator properties, and other complex cases where simple
+    /// shape inspection fails but the full checker resolution machinery can find the property.
+    fn type_has_symbol_iterator_via_property_access(&mut self, type_id: TypeId) -> bool {
+        use tsz_solver::operations_property::PropertyAccessResult;
+        let result = self.resolve_property_access_with_env(type_id, "[Symbol.iterator]");
+        matches!(result, PropertyAccessResult::Success { .. })
     }
 
     /// Check if a type has a numeric index signature, making it "array-like".
     /// TypeScript allows array destructuring of array-like types without [Symbol.iterator]().
-    pub(crate) fn has_numeric_index_signature(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries::{FullIterableTypeKind, classify_full_iterable_type};
+    pub(crate) fn has_numeric_index_signature(&mut self, type_id: TypeId) -> bool {
+        // Resolve lazy types first
+        let type_id = self.resolve_lazy_type(type_id);
         match classify_full_iterable_type(self.ctx.types, type_id) {
             FullIterableTypeKind::Object(shape_id) => {
                 let shape = self.ctx.types.object_shape(shape_id);
@@ -145,17 +162,20 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type is async iterable (has Symbol.asyncIterator protocol).
-    pub fn is_async_iterable_type(&self, type_id: TypeId) -> bool {
+    pub fn is_async_iterable_type(&mut self, type_id: TypeId) -> bool {
         // Intrinsic types that are always iterable or not iterable
         if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
             return true; // Don't report errors on any/unknown/error
         }
 
+        // Resolve lazy types before checking
+        let type_id = self.resolve_lazy_type(type_id);
+
         self.is_async_iterable_type_classified(type_id)
     }
 
     /// Internal helper that uses the solver's classification enum to determine async iterability.
-    fn is_async_iterable_type_classified(&self, type_id: TypeId) -> bool {
+    fn is_async_iterable_type_classified(&mut self, type_id: TypeId) -> bool {
         match classify_async_iterable_type(self.ctx.types, type_id) {
             AsyncIterableTypeKind::Union(members) => {
                 members.iter().all(|&m| self.is_async_iterable_type(m))
@@ -175,7 +195,14 @@ impl<'a> CheckerState<'a> {
                 // Unwrap readonly wrapper and check inner type
                 self.is_async_iterable_type(inner)
             }
-            AsyncIterableTypeKind::NotAsyncIterable => false,
+            AsyncIterableTypeKind::NotAsyncIterable => {
+                // Use property access to check for [Symbol.asyncIterator] on types
+                // that couldn't be classified (e.g., Application types with Lazy bases).
+                use tsz_solver::operations_property::PropertyAccessResult;
+                let result =
+                    self.resolve_property_access_with_env(type_id, "[Symbol.asyncIterator]");
+                matches!(result, PropertyAccessResult::Success { .. })
+            }
         }
     }
 

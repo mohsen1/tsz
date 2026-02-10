@@ -910,7 +910,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type can be array-destructured.
     /// Returns true for arrays, tuples, strings, and types with [Symbol.iterator].
-    pub(crate) fn is_array_destructurable_type(&self, type_id: TypeId) -> bool {
+    pub(crate) fn is_array_destructurable_type(&mut self, type_id: TypeId) -> bool {
         use tsz_solver::type_queries;
 
         // Handle primitive types
