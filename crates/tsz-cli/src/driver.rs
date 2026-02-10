@@ -2085,6 +2085,42 @@ fn collect_diagnostics(
                             failure
                         };
 
+                        // Untyped JS module handling: When resolution fails but a JS
+                        // file exists for this specifier (without declaration files),
+                        // TypeScript treats it as an untyped module:
+                        // - With noImplicitAny: emit TS7016 ("Could not find a declaration file")
+                        // - Without noImplicitAny: silently treat as `any` (no error)
+                        if matches!(
+                            failure_to_use,
+                            tsz::module_resolver::ResolutionFailure::NotFound { .. }
+                                | tsz::module_resolver::ResolutionFailure::PackageJsonError { .. }
+                        ) {
+                            if let Some(js_path) = module_resolver.probe_js_file(
+                                specifier,
+                                file_path,
+                                span,
+                                *import_kind,
+                            ) {
+                                if options.checker.no_implicit_any {
+                                    resolved_module_errors.insert(
+                                        (file_idx, specifier.clone()),
+                                        tsz::checker::context::ResolutionError {
+                                            code: 7016,
+                                            message: format!(
+                                                "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
+                                                specifier, js_path.display()
+                                            ),
+                                        },
+                                    );
+                                }
+                                // Mark the module as "resolved" so the checker doesn't
+                                // independently emit TS2307. The module is treated as
+                                // untyped (type `any`) — no target file index needed.
+                                resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                                continue;
+                            }
+                        }
+
                         // Convert ResolutionFailure to Diagnostic to get the error code and message
                         let diagnostic = failure_to_use.to_diagnostic();
                         resolved_module_errors.insert(
@@ -2095,13 +2131,12 @@ fn collect_diagnostics(
                             },
                         );
 
-                        if let Some(resolved_path) = resolved_override {
+                        if resolved_override.is_some() {
+                            // Mark as resolved to suppress TS2307, but don't map
+                            // to a target file. For JsxNotEnabled, the resolved
+                            // file shouldn't have its exports validated (which
+                            // would cause spurious TS1192/TS2306 errors).
                             resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                            let canonical = canonicalize_or_owned(&resolved_path);
-                            if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                                resolved_module_paths
-                                    .insert((file_idx, specifier.clone()), target_idx);
-                            }
                         }
                     }
                 }
