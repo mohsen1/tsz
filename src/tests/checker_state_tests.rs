@@ -13174,7 +13174,6 @@ let useIt: T;
 }
 
 #[test]
-#[ignore]
 fn test_value_symbol_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13211,7 +13210,6 @@ let useIt: T;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_function_symbol_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13327,7 +13325,6 @@ let useIt: T;
 }
 
 #[test]
-#[ignore]
 fn test_namespace_value_member_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13366,7 +13363,6 @@ let useIt: T;
 }
 
 #[test]
-#[ignore]
 fn test_namespace_value_member_via_alias_used_as_type_error() {
     use crate::parser::ParserState;
 
