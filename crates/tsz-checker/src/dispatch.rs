@@ -53,15 +53,28 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Identifiers
             k if k == SyntaxKind::Identifier as u16 => self.checker.get_type_of_identifier(idx),
             k if k == SyntaxKind::ThisKeyword as u16 => {
-                // TS2331: 'this' cannot be referenced in a module or namespace body
-                if self.checker.is_this_in_namespace_body(idx) {
+                {
                     use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    self.checker.error_at_node(
-                        idx,
-                        diagnostic_messages::THIS_CANNOT_BE_REFERENCED_IN_A_MODULE_OR_NAMESPACE_BODY,
-                        diagnostic_codes::THIS_CANNOT_BE_REFERENCED_IN_A_MODULE_OR_NAMESPACE_BODY,
-                    );
-                    return TypeId::ANY;
+                    // TS2331: 'this' cannot be referenced in a module or namespace body
+                    if self.checker.is_this_in_namespace_body(idx) {
+                        self.checker.error_at_node(
+                            idx,
+                            diagnostic_messages::THIS_CANNOT_BE_REFERENCED_IN_A_MODULE_OR_NAMESPACE_BODY,
+                            diagnostic_codes::THIS_CANNOT_BE_REFERENCED_IN_A_MODULE_OR_NAMESPACE_BODY,
+                        );
+                        return TypeId::ANY;
+                    }
+                    // TS17009: 'super' must be called before accessing 'this'
+                    if self
+                        .checker
+                        .is_this_before_super_in_derived_constructor(idx)
+                    {
+                        self.checker.error_at_node(
+                            idx,
+                            diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_THIS_IN_THE_CONSTRUCTOR_OF_A_DERIVED_CLASS,
+                            diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_THIS_IN_THE_CONSTRUCTOR_OF_A_DERIVED_CLASS,
+                        );
+                    }
                 }
                 if let Some(this_type) = self.checker.current_this_type() {
                     this_type

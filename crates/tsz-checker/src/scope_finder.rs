@@ -17,6 +17,7 @@
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 // =============================================================================
 // Scope Finding Methods
@@ -212,6 +213,135 @@ impl<'a> CheckerState<'a> {
                 _ => continue,
             }
         }
+    }
+
+    // =========================================================================
+    // Super/This Ordering Detection
+    // =========================================================================
+
+    /// Check if a `this` expression is used before `super()` has been called
+    /// in a derived class constructor (TS17009).
+    ///
+    /// Detects two patterns:
+    /// 1. `super(this)` — `this` is an argument to the super() call itself
+    /// 2. `constructor(x = this.prop)` — `this` in a parameter default of
+    ///    a derived class constructor (evaluated before super() can run)
+    pub(crate) fn is_this_before_super_in_derived_constructor(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::*;
+        let mut current = idx;
+        let mut iterations = 0;
+
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            match node.kind {
+                // Pattern 1: this is inside super(...) call arguments
+                k if k == CALL_EXPRESSION => {
+                    if let Some(call_data) = self.ctx.arena.get_call_expr(node) {
+                        if let Some(callee) = self.ctx.arena.get(call_data.expression) {
+                            if callee.kind == SyntaxKind::SuperKeyword as u16 {
+                                // Verify we're in a derived class constructor
+                                return self.is_in_derived_class_constructor(current);
+                            }
+                        }
+                    }
+                }
+
+                // Pattern 2: this is in a constructor parameter default
+                k if k == PARAMETER => {
+                    // Check if this parameter belongs to a constructor
+                    if let Some(param_ext) = self.ctx.arena.get_extended(current) {
+                        let param_parent = param_ext.parent;
+                        if let Some(parent_node) = self.ctx.arena.get(param_parent) {
+                            if parent_node.kind == CONSTRUCTOR {
+                                return self.is_in_derived_class_constructor(param_parent);
+                            }
+                        }
+                    }
+                }
+
+                // Stop at any function boundary — this is scoped to the function
+                k if k == FUNCTION_DECLARATION
+                    || k == FUNCTION_EXPRESSION
+                    || k == ARROW_FUNCTION
+                    || k == METHOD_DECLARATION
+                    || k == GET_ACCESSOR
+                    || k == SET_ACCESSOR
+                    || k == CONSTRUCTOR =>
+                {
+                    return false;
+                }
+
+                _ => continue,
+            }
+        }
+    }
+
+    /// Check if a node is inside a constructor of a derived class.
+    fn is_in_derived_class_constructor(&self, from_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::*;
+        let mut current = from_idx;
+        let mut iterations = 0;
+
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            if node.kind == CONSTRUCTOR {
+                // Walk up to find the class
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    return false;
+                };
+                let class_idx = ext.parent;
+                return self.class_node_is_derived(class_idx);
+            }
+
+            // Stop at other function boundaries
+            if node.kind == FUNCTION_DECLARATION
+                || node.kind == FUNCTION_EXPRESSION
+                || node.kind == ARROW_FUNCTION
+                || node.kind == METHOD_DECLARATION
+            {
+                return false;
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+    }
+
+    /// Check if a class node (or its parent class) has an extends clause.
+    fn class_node_is_derived(&self, class_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        let Some(class_data) = self.ctx.arena.get_class(node) else {
+            return false;
+        };
+        self.class_has_base(class_data)
     }
 
     // =========================================================================
