@@ -103,70 +103,134 @@ impl<'a> CheckerState<'a> {
             None => return,
         };
 
-        let bindings_node = match self.ctx.arena.get(clause.named_bindings) {
-            Some(node) => node,
-            None => return,
+        let has_default_import = !clause.name.is_none();
+        let bindings_node = self.ctx.arena.get(clause.named_bindings);
+        let has_named_imports = bindings_node
+            .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::NAMED_IMPORTS);
+
+        // Nothing to check
+        if !has_default_import && !has_named_imports {
+            return;
+        }
+
+        // Resolve exports table (shared between default and named import checking)
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        let quoted = format!("\"{}\"", normalized);
+        let single_quoted = format!("'{}'", normalized);
+
+        let mut exports_table = if let Some(table) = self.ctx.binder.module_exports.get(module_name)
+        {
+            Some(table.clone())
+        } else if let Some(table) = self.ctx.binder.module_exports.get(normalized) {
+            Some(table.clone())
+        } else if let Some(table) = self.ctx.binder.module_exports.get(&quoted) {
+            Some(table.clone())
+        } else if let Some(table) = self.ctx.binder.module_exports.get(&single_quoted) {
+            Some(table.clone())
+        } else {
+            None
         };
 
-        if bindings_node.kind == tsz_parser::parser::syntax_kind_ext::NAMED_IMPORTS {
-            let named_imports = match self.ctx.arena.get_named_imports(bindings_node) {
-                Some(ni) => ni,
-                None => return,
-            };
-
-            let normalized = module_name.trim_matches('"').trim_matches('\'');
-            let quoted = format!("\"{}\"", normalized);
-            let single_quoted = format!("'{}'", normalized);
-
-            let mut exports_table =
-                if let Some(table) = self.ctx.binder.module_exports.get(module_name) {
-                    Some(table.clone())
-                } else if let Some(table) = self.ctx.binder.module_exports.get(normalized) {
-                    Some(table.clone())
-                } else if let Some(table) = self.ctx.binder.module_exports.get(&quoted) {
-                    Some(table.clone())
-                } else if let Some(table) = self.ctx.binder.module_exports.get(&single_quoted) {
-                    Some(table.clone())
-                } else {
-                    None
-                };
-
-            if exports_table.is_none()
-                && let Some(target_idx) = self.ctx.resolve_import_target(module_name)
-            {
+        if exports_table.is_none()
+            && let Some(target_idx) = self.ctx.resolve_import_target(module_name)
+        {
+            // Look up by file name in the TARGET file's binder, not the current one
+            if let Some(target_binder) = self.ctx.get_binder_for_file(target_idx) {
                 let arena = self.ctx.get_arena_for_file(target_idx as u32);
                 if let Some(source_file) = arena.source_files.first() {
-                    exports_table = self
-                        .ctx
-                        .binder
+                    exports_table = target_binder
                         .module_exports
                         .get(&source_file.file_name)
                         .cloned();
                 }
             }
+        }
 
-            if exports_table.is_none()
+        if exports_table.is_none()
+            && let Some(all_binders) = &self.ctx.all_binders
+        {
+            // Try looking up by module specifier in all binders
+            for binder in all_binders.iter() {
+                if let Some(table) = binder.module_exports.get(module_name) {
+                    exports_table = Some(table.clone());
+                    break;
+                }
+                if let Some(table) = binder.module_exports.get(normalized) {
+                    exports_table = Some(table.clone());
+                    break;
+                }
+                if let Some(table) = binder.module_exports.get(&quoted) {
+                    exports_table = Some(table.clone());
+                    break;
+                }
+                if let Some(table) = binder.module_exports.get(&single_quoted) {
+                    exports_table = Some(table.clone());
+                    break;
+                }
+            }
+        }
+
+        // Also try resolving by file name across all binders
+        if exports_table.is_none()
+            && let Some(target_idx) = self.ctx.resolve_import_target(module_name)
+        {
+            let arena = self.ctx.get_arena_for_file(target_idx as u32);
+            if let Some(source_file) = arena.source_files.first()
                 && let Some(all_binders) = &self.ctx.all_binders
             {
                 for binder in all_binders.iter() {
-                    if let Some(table) = binder.module_exports.get(module_name) {
-                        exports_table = Some(table.clone());
-                        break;
-                    }
-                    if let Some(table) = binder.module_exports.get(normalized) {
-                        exports_table = Some(table.clone());
-                        break;
-                    }
-                    if let Some(table) = binder.module_exports.get(&quoted) {
-                        exports_table = Some(table.clone());
-                        break;
-                    }
-                    if let Some(table) = binder.module_exports.get(&single_quoted) {
+                    if let Some(table) = binder.module_exports.get(&source_file.file_name) {
                         exports_table = Some(table.clone());
                         break;
                     }
                 }
             }
+        }
+
+        // Check default import: import X from "module"
+        // If the module has no "default" export and allowSyntheticDefaultImports is off,
+        // emit TS1192.
+        if has_default_import {
+            if let Some(ref table) = exports_table {
+                if !table.has("default") && !self.ctx.allow_synthetic_default_imports() {
+                    let message = format_message(
+                        diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT,
+                        &[module_name],
+                    );
+                    self.error_at_node(
+                        clause.name,
+                        &message,
+                        diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT,
+                    );
+                }
+            } else if self
+                .ctx
+                .resolved_modules
+                .as_ref()
+                .is_some_and(|resolved| resolved.contains(module_name))
+                && self.ctx.resolve_import_target(module_name).is_some()
+                && !self.ctx.allow_synthetic_default_imports()
+            {
+                // Module resolved but no exports table found - still emit TS1192
+                let message = format_message(
+                    diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT,
+                    &[module_name],
+                );
+                self.error_at_node(
+                    clause.name,
+                    &message,
+                    diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT,
+                );
+            }
+        }
+
+        // Check named imports: import { X, Y } from "module"
+        if has_named_imports {
+            let bindings_node = bindings_node.unwrap();
+            let named_imports = match self.ctx.arena.get_named_imports(bindings_node) {
+                Some(ni) => ni,
+                None => return,
+            };
 
             let Some(exports_table) = exports_table else {
                 if self
