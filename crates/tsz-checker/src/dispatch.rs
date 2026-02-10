@@ -214,6 +214,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // TS2588: Cannot assign to 'x' because it is a constant.
                     let is_const = self.checker.check_const_assignment(unary.operand);
 
+                    // TS2540: Cannot assign to readonly property (e.g., namespace const export)
+                    if !is_const {
+                        self.checker.check_readonly_assignment(unary.operand, idx);
+                    }
+
                     // Get operand type for validation
                     let operand_type = self.checker.get_type_of_node(unary.operand);
 
