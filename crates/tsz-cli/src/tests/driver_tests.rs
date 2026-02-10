@@ -3684,7 +3684,6 @@ export function isNonNull<T>(value: T | null | undefined): value is T {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn compile_generic_utility_library_multi_file() {
     // Test multi-file generic utility library with re-exports
     let temp = TempDir::new().expect("temp dir");
