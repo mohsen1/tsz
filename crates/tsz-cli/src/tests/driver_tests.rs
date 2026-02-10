@@ -705,7 +705,6 @@ fn compile_resolves_node_modules_types_versions_best_match() {
 }
 
 #[test]
-#[ignore = "TODO: Node modules type version resolution"]
 fn compile_resolves_node_modules_types_versions_prefers_specific_range() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
