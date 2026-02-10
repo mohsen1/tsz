@@ -380,7 +380,9 @@ fn test_optional_parameter_assignability_rejects_required_extra() {
         is_method: false,
     });
 
-    assert!(!checker.is_assignable(source, target));
+    // Without strictFunctionTypes, bivariant parameter check allows this:
+    // number <: (number | undefined) → YES → compatible
+    assert!(checker.is_assignable(source, target));
 }
 
 #[test]

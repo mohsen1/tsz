@@ -134,15 +134,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check if `this` parameters are compatible.
+    ///
+    /// TypeScript only checks `this` parameter compatibility when the target
+    /// declares an explicit `this` parameter. If the target has no `this` parameter,
+    /// any source `this` type is acceptable.
     pub(crate) fn are_this_parameters_compatible(
         &mut self,
         source_type: Option<TypeId>,
         target_type: Option<TypeId>,
     ) -> bool {
-        if source_type.is_none() && target_type.is_none() {
+        // If target has no explicit `this` parameter, always compatible.
+        // TypeScript only checks `this` when the target declares one.
+        if target_type.is_none() {
             return true;
         }
-        // Use Unknown instead of Any for stricter type checking
         let source_type = source_type.unwrap_or(TypeId::UNKNOWN);
         let target_type = target_type.unwrap_or(TypeId::UNKNOWN);
 
@@ -294,19 +299,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let rest_is_top = self.allow_bivariant_rest
             && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
 
+        // Count non-rest parameters (needed for arity check below)
+        let target_fixed_count = if target_has_rest {
+            target_params.len().saturating_sub(1)
+        } else {
+            target_params.len()
+        };
+        let source_fixed_count = if source_has_rest {
+            source.params.len().saturating_sub(1)
+        } else {
+            source.params.len()
+        };
+
+        // Check parameter arity: source's required params must not exceed
+        // the target's total non-rest params (including optional ones).
+        // When target has a rest parameter, skip the arity check entirely —
+        // the rest parameter can accept any number of arguments, and type
+        // compatibility of extra params is checked later against the rest element type.
         let source_required = self.required_param_count(&source.params);
-        let target_required = self.required_param_count(&target_params);
-        let extra_required_ok = target_has_rest
-            && source_required > target_required
-            && self.extra_required_accepts_undefined(
-                &source.params,
-                target_required,
-                source_required,
-            );
         if !self.allow_bivariant_param_count
-            && !rest_is_top
-            && source_required > target_required
-            && (!target_has_rest || !extra_required_ok)
+            && !target_has_rest
+            && source_required > target_fixed_count
         {
             return SubtypeResult::False;
         }
@@ -322,37 +335,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let param_check_result = (|| -> SubtypeResult {
-            // Count non-rest parameters
-            let target_fixed_count = if target_has_rest {
-                target_params.len().saturating_sub(1)
-            } else {
-                target_params.len()
-            };
-            let source_fixed_count = if source_has_rest {
-                source.params.len().saturating_sub(1)
-            } else {
-                source.params.len()
-            };
-
             // Compare fixed parameters
             let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
             for i in 0..fixed_compare_count {
                 let s_param = &source.params[i];
                 let t_param = &target_params[i];
 
-                // Check optional compatibility
-                if s_param.optional && !t_param.optional {
-                    if !self
-                        .check_subtype(TypeId::UNDEFINED, t_param.type_id)
-                        .is_true()
-                    {
-                        return SubtypeResult::False;
-                    }
-                }
+                // Optional parameters have effective type `T | undefined`.
+                // TypeScript widens optional params to include undefined for
+                // assignability checks.
+                let s_effective = if s_param.optional {
+                    self.interner.union2(s_param.type_id, TypeId::UNDEFINED)
+                } else {
+                    s_param.type_id
+                };
+                let t_effective = if t_param.optional {
+                    self.interner.union2(t_param.type_id, TypeId::UNDEFINED)
+                } else {
+                    t_param.type_id
+                };
 
                 // Check parameter compatibility
-                if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method)
-                {
+                if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method) {
                     // Trace: Parameter type mismatch
                     if let Some(tracer) = &mut self.tracer {
                         if !tracer.on_mismatch_dyn(
@@ -582,23 +586,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let rest_is_top = self.allow_bivariant_rest
             && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
 
-        let source_required = self.required_param_count(&source.params);
-        let target_required = self.required_param_count(&target.params);
-        let extra_required_ok = target_has_rest
-            && source_required > target_required
-            && self.extra_required_accepts_undefined(
-                &source.params,
-                target_required,
-                source_required,
-            );
-        if !self.allow_bivariant_param_count
-            && !rest_is_top
-            && source_required > target_required
-            && (!target_has_rest || !extra_required_ok)
-        {
-            return SubtypeResult::False;
-        }
-
         // Count non-rest parameters
         let target_fixed_count = if target_has_rest {
             target.params.len().saturating_sub(1)
@@ -610,6 +597,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             source.params.len()
         };
+
+        // Check parameter arity: source's required params must not exceed
+        // the target's total non-rest params (including optional ones).
+        // When target has a rest parameter, skip the arity check entirely —
+        // the rest parameter can accept any number of arguments, and type
+        // compatibility of extra params is checked later against the rest element type.
+        let source_required = self.required_param_count(&source.params);
+        if !self.allow_bivariant_param_count
+            && !target_has_rest
+            && source_required > target_fixed_count
+        {
+            return SubtypeResult::False;
+        }
 
         // Compare fixed parameters
         // Methods use bivariant parameter checking (Rule #2: Function Bivariance)
@@ -710,23 +710,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let rest_is_top = self.allow_bivariant_rest
             && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
 
-        let source_required = self.required_param_count(&source.params);
-        let target_required = self.required_param_count(&target.params);
-        let extra_required_ok = target_has_rest
-            && source_required > target_required
-            && self.extra_required_accepts_undefined(
-                &source.params,
-                target_required,
-                source_required,
-            );
-        if !self.allow_bivariant_param_count
-            && !rest_is_top
-            && source_required > target_required
-            && (!target_has_rest || !extra_required_ok)
-        {
-            return SubtypeResult::False;
-        }
-
         // Count non-rest parameters
         let target_fixed_count = if target_has_rest {
             target.params.len().saturating_sub(1)
@@ -738,6 +721,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             source.params.len()
         };
+
+        // Check parameter arity: source's required params must not exceed
+        // the target's total non-rest params (including optional ones).
+        // When target has a rest parameter, skip the arity check entirely —
+        // the rest parameter can accept any number of arguments, and type
+        // compatibility of extra params is checked later against the rest element type.
+        let source_required = self.required_param_count(&source.params);
+        if !self.allow_bivariant_param_count
+            && !target_has_rest
+            && source_required > target_fixed_count
+        {
+            return SubtypeResult::False;
+        }
 
         // Compare fixed parameters
         // Methods use bivariant parameter checking (Rule #2: Function Bivariance)
@@ -838,23 +834,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let rest_is_top = self.allow_bivariant_rest
             && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
 
-        let source_required = self.required_param_count(&source.params);
-        let target_required = self.required_param_count(&target.params);
-        let extra_required_ok = target_has_rest
-            && source_required > target_required
-            && self.extra_required_accepts_undefined(
-                &source.params,
-                target_required,
-                source_required,
-            );
-        if !self.allow_bivariant_param_count
-            && !rest_is_top
-            && source_required > target_required
-            && (!target_has_rest || !extra_required_ok)
-        {
-            return SubtypeResult::False;
-        }
-
         // Count non-rest parameters
         let target_fixed_count = if target_has_rest {
             target.params.len().saturating_sub(1)
@@ -866,6 +845,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             source.params.len()
         };
+
+        // Check parameter arity: source's required params must not exceed
+        // the target's total non-rest params (including optional ones).
+        // When target has a rest parameter, skip the arity check entirely —
+        // the rest parameter can accept any number of arguments, and type
+        // compatibility of extra params is checked later against the rest element type.
+        let source_required = self.required_param_count(&source.params);
+        if !self.allow_bivariant_param_count
+            && !target_has_rest
+            && source_required > target_fixed_count
+        {
+            return SubtypeResult::False;
+        }
 
         // Compare fixed parameters
         // Methods use bivariant parameter checking (Rule #2: Function Bivariance)
