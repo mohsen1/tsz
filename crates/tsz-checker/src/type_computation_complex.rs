@@ -1617,12 +1617,12 @@ impl<'a> CheckerState<'a> {
             // in value position. Falling back to interface type here causes
             // false TS2339/TS2351 on `Promise.resolve` / `new Promise(...)`.
             //
-            // BUG FIX: Skip this path for "Symbol" because the lib symbol merging has issues.
-            // SymbolId(2344) for "Symbol" has wrong value_decl, and get_type_of_symbol returns
-            // the interface type instead of SymbolConstructor. Just use the standard path.
+            // Merged interface+value symbols (e.g. Symbol interface + declare var Symbol: SymbolConstructor)
+            // must use the VALUE side in value position. The *Constructor lookup below
+            // handles finding the right type (SymbolConstructor, PromiseConstructor, etc.)
             let is_merged_interface_value =
                 has_type && has_value && (flags & tsz_binder::symbol_flags::INTERFACE) != 0;
-            if is_merged_interface_value && name != "Symbol" {
+            if is_merged_interface_value {
                 trace!(
                     name = name,
                     sym_id = ?sym_id,

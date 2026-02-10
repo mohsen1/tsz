@@ -402,11 +402,12 @@ class Bar {
 
 /// Issue: TS18016 checker validation - private identifier outside class
 ///
-/// Expected: TS18013 + TS18016 (both grammar and semantic errors)
-/// Status: FIXED (2026-02-09)
+/// For property access expressions (`obj.#bar`), TSC only emits TS18013 (semantic:
+/// can't access private member) — NOT TS18016 (grammar: private identifier outside class).
+/// TS18016 is only emitted for truly invalid syntax positions (object literals, etc.)
+/// because `obj.#bar` is valid syntax even outside a class body.
 ///
-/// Root cause: Checker didn't emit TS18016 for private identifiers outside class
-/// Fix: Added grammar check in get_type_of_private_property_access
+/// Status: FIXED (2026-02-10) - corrected to match TSC behavior
 #[test]
 fn test_ts18016_private_identifier_outside_class() {
     let diagnostics = compile_and_get_diagnostics(
@@ -416,7 +417,7 @@ class Foo {
 }
 
 let f: Foo;
-let x = f.#bar;  // Outside class - should error TS18013 + TS18016
+let x = f.#bar;  // Outside class - should error TS18013 only (not TS18016)
         "#,
     );
 
@@ -427,14 +428,15 @@ let x = f.#bar;  // Outside class - should error TS18013 + TS18016
         .cloned()
         .collect();
 
-    // Should emit TS18016 (grammar error - private identifier outside class)
+    // Should NOT emit TS18016 for property access — TSC doesn't emit it here.
+    // TS18016 is only for truly invalid positions (object literals, standalone expressions).
     assert!(
-        has_error(&relevant_diagnostics, 18016),
-        "Should emit TS18016 for private identifier outside class body.\nActual errors: {:#?}",
+        !has_error(&relevant_diagnostics, 18016),
+        "Should NOT emit TS18016 for property access outside class (TSC doesn't).\nActual errors: {:#?}",
         relevant_diagnostics
     );
 
-    // Should also emit TS18013 (semantic error - property not accessible)
+    // Should emit TS18013 (semantic error - property not accessible)
     assert!(
         has_error(&relevant_diagnostics, 18013),
         "Should emit TS18013 for private identifier access outside class.\nActual errors: {:#?}",
