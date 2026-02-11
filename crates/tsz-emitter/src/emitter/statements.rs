@@ -569,9 +569,12 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         for &stmt in &statements.nodes {
-            // Emit leading comments before this statement
+            // Emit leading comments before this statement.
+            // Use skip_trivia_forward to get the actual token start (past comments),
+            // so that emit_comments_before_pos can pick up comments in the leading trivia.
             if let Some(stmt_node) = self.arena.get(stmt) {
-                self.emit_comments_before_pos(stmt_node.pos);
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                self.emit_comments_before_pos(actual_start);
             }
             self.emit(stmt);
             self.write_line();
