@@ -360,7 +360,9 @@ impl<'a> Printer<'a> {
 
         if !is_multiline {
             self.write("[");
+            self.increase_indent();
             self.emit_comma_separated(&array.elements.nodes);
+            self.decrease_indent();
             self.write("]");
         } else {
             // Check if the first element is on a new line after '[' in the source.
