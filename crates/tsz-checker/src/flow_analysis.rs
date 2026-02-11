@@ -2153,6 +2153,15 @@ impl<'a> CheckerState<'a> {
                 }
                 // IIFE - continue walking up, this function executes immediately
             }
+            // Non-static class property initializers run during constructor execution,
+            // which is deferred — not a TDZ violation for class declarations.
+            if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                if let Some(prop) = self.ctx.arena.get_property_decl(node) {
+                    if !self.has_static_modifier(&prop.modifiers) {
+                        return false;
+                    }
+                }
+            }
             // Stop at source file
             if node.kind == syntax_kind_ext::SOURCE_FILE {
                 break;
