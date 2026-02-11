@@ -383,91 +383,6 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
-    // Variable Enclosure
-    // =========================================================================
-
-    /// Find the enclosing variable statement for a given node.
-    ///
-    /// Traverses up the AST to find a VARIABLE_STATEMENT.
-    ///
-    /// Returns Some(NodeIndex) if a variable statement is found, None otherwise.
-    #[allow(dead_code)]
-    pub(crate) fn find_enclosing_variable_statement(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        let mut iterations = 0;
-        while !current.is_none() {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return None;
-            }
-            if let Some(node) = self.ctx.arena.get(current)
-                && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-            {
-                return Some(current);
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
-        None
-    }
-
-    /// Find the enclosing variable declaration for a given node.
-    ///
-    /// Traverses up the AST to find a VARIABLE_DECLARATION.
-    ///
-    /// Returns Some(NodeIndex) if a variable declaration is found, None otherwise.
-    #[allow(dead_code)]
-    pub(crate) fn find_enclosing_variable_declaration(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return None;
-            }
-            let node = self.ctx.arena.get(current)?;
-            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                return Some(current);
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
-    }
-
-    // =========================================================================
-    // Source File Enclosure
-    // =========================================================================
-
-    /// Find the enclosing source file for a given node.
-    ///
-    /// Traverses up the AST to find the SOURCE_FILE node.
-    ///
-    /// Returns Some(NodeIndex) if a source file is found, None otherwise.
-    #[allow(dead_code)]
-    pub(crate) fn find_enclosing_source_file(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        while !current.is_none() {
-            if let Some(node) = self.ctx.arena.get(current)
-                && node.kind == syntax_kind_ext::SOURCE_FILE
-            {
-                return Some(current);
-            }
-            if let Some(ext) = self.ctx.arena.get_extended(current) {
-                current = ext.parent;
-            } else {
-                break;
-            }
-        }
-        None
-    }
-
-    // =========================================================================
     // Static Block Enclosure
     // =========================================================================
 
@@ -506,31 +421,6 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
         None
-    }
-
-    /// Find the class declaration containing a static block.
-    ///
-    /// Given a static block node, returns the parent CLASS_DECLARATION or CLASS_EXPRESSION.
-    ///
-    /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
-    #[allow(dead_code)]
-    pub(crate) fn find_class_for_static_block(
-        &self,
-        static_block_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let ext = self.ctx.arena.get_extended(static_block_idx)?;
-        let parent = ext.parent;
-        if parent.is_none() {
-            return None;
-        }
-        let parent_node = self.ctx.arena.get(parent)?;
-        if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-        {
-            Some(parent)
-        } else {
-            None
-        }
     }
 
     // =========================================================================

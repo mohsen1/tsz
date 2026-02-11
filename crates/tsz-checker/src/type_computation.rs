@@ -1883,7 +1883,12 @@ impl<'a> CheckerState<'a> {
                     let accessor_type = if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
                         self.get_type_of_function(elem_idx)
                     } else {
-                        // Setter: use the first parameter's type annotation
+                        // Setter: type-check the function body to track variable usage
+                        // (especially for noUnusedParameters/noUnusedLocals checking),
+                        // but use the parameter type annotation for the property type
+                        self.get_type_of_function(elem_idx);
+
+                        // Extract setter write type from first parameter
                         accessor
                             .parameters
                             .nodes

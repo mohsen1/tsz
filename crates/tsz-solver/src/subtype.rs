@@ -1564,13 +1564,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self
     }
 
-    /// Get the query database, if available.
-    #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn query_db(&self) -> Option<&'a dyn QueryDatabase> {
-        self.query_db
-    }
-
     /// Set whether strict null checks are enabled.
     /// When false, null and undefined are assignable to any type.
     pub fn with_strict_null_checks(mut self, strict_null_checks: bool) -> Self {
@@ -2087,30 +2080,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if two object types have overlapping properties.
     ///
     /// Returns false if any common property has non-overlapping types.
-    /// Returns true if all common properties have overlapping types.
-    ///
-    /// This is a simplified check - Phase 2 will use PropertyCollector
-    /// for full intersection-type-aware checking.
-    #[allow(dead_code)]
-    fn do_object_properties_overlap(&self, a_shape: ObjectShapeId, b_shape: ObjectShapeId) -> bool {
-        let a_props = self.interner.object_shape(a_shape);
-        let b_props = self.interner.object_shape(b_shape);
-
-        // Check each common property
-        for a_prop in &a_props.properties {
-            if let Some(b_prop) = b_props.properties.iter().find(|p| p.name == a_prop.name) {
-                // If the common property types don't overlap, the objects don't overlap
-                if !self.are_types_overlapping(a_prop.type_id, b_prop.type_id) {
-                    return false;
-                }
-            }
-        }
-
-        // All common properties have overlapping types
-        // (Note: this allows { a: string } & { b: number } to overlap, which is correct)
-        true
-    }
-
     /// Construct a `RelationCacheKey` for the current checker configuration.
     ///
     /// This packs the Lawyer-layer flags into a compact cache key to ensure that
