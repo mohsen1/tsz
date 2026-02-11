@@ -33,12 +33,11 @@ ${YELLOW}TSZ Conformance Test Runner${NC}
 Usage: ./scripts/conformance.sh [COMMAND] [OPTIONS]
 
 Commands:
-  download    Download TSC cache from GitHub artifacts (fastest)
-  generate    Generate TSC cache locally (required if download unavailable)
+  generate    Generate TSC cache locally (if not checked in)
   run         Run conformance tests against TSC cache
   analyze     Analyze failures: categorize, rank by impact, find easy wins
               Shows which error codes to implement for maximum conformance gain
-  all         Download/generate cache and run tests (default)
+  all         Generate cache (if needed) and run tests (default)
   clean       Remove cache file
 
 Options:
@@ -49,7 +48,6 @@ Options:
   --filter PAT      Filter test files by pattern
   --error-code N    Only show tests with this error code (e.g., 2304)
   --no-cache        Force cache regeneration even if cache exists
-  --no-download     Skip trying to download cache from GitHub
   --profile NAME    Use specific cargo profile (default: dist-fast, available: dist-fast, dist, release, dev)
 
 Analyze options:
@@ -73,8 +71,7 @@ Analysis output includes:
   - Impact estimation - how many tests each code affects
 
 Note: Binaries are automatically built if not found.
-      Cache is downloaded from GitHub artifacts when available (per TypeScript version).
-      Use 'generate' to create cache locally if download fails.
+      Cache (tsc-cache-full.json) is checked into the repo.
 
 Cache location: tsc-cache-full.json (in repo root)
 Test directory: TypeScript/tests/cases/conformance
@@ -182,28 +179,6 @@ ensure_binaries() {
     echo ""
 }
 
-download_cache() {
-    local force="${1:-false}"
-    
-    if [ "$force" != "true" ] && [ -f "$CACHE_FILE" ]; then
-        echo -e "${YELLOW}Cache already exists: $CACHE_FILE${NC}"
-        return 0
-    fi
-
-    echo -e "${GREEN}Attempting to download TSC cache from GitHub...${NC}"
-    
-    if [ -x "$REPO_ROOT/scripts/download-tsc-cache.sh" ]; then
-        if [ "$force" = "true" ]; then
-            "$REPO_ROOT/scripts/download-tsc-cache.sh" --force && return 0
-        else
-            "$REPO_ROOT/scripts/download-tsc-cache.sh" && return 0
-        fi
-    fi
-    
-    echo -e "${YELLOW}Download failed or unavailable${NC}"
-    return 1
-}
-
 generate_cache() {
     local force_regenerate="${1:-false}"
     
@@ -261,24 +236,13 @@ generate_cache() {
     echo -e "${GREEN}Cache generated: $CACHE_FILE${NC}"
 }
 
-# Ensure cache exists - try download first, then generate
+# Ensure cache exists - generate if not checked in
 ensure_cache() {
-    local no_download="${1:-false}"
-    
     if [ -f "$CACHE_FILE" ]; then
         return 0
     fi
-    
-    # Try downloading first (faster)
-    if [ "$no_download" != "true" ]; then
-        if download_cache; then
-            return 0
-        fi
-        echo ""
-    fi
-    
-    # Fall back to generation
-    echo -e "${YELLOW}Generating cache locally (this may take 10-15 minutes)...${NC}"
+
+    echo -e "${YELLOW}Cache not found, generating locally (this may take 10-15 minutes)...${NC}"
     ensure_binaries
     generate_cache
 }
@@ -538,7 +502,6 @@ fi
 
 # Check for flags
 NO_CACHE=false
-NO_DOWNLOAD=false
 REMAINING_ARGS=()
 i=0
 while [ $i -lt ${#@} ]; do
@@ -546,7 +509,8 @@ while [ $i -lt ${#@} ]; do
     if [ "$arg" = "--no-cache" ]; then
         NO_CACHE=true
     elif [ "$arg" = "--no-download" ]; then
-        NO_DOWNLOAD=true
+        # Kept for backward compatibility, now a no-op
+        true
     elif [ "$arg" = "--workers" ]; then
         i=$((i + 1))
         WORKERS="${@:$((i+1)):1}"
@@ -563,13 +527,6 @@ while [ $i -lt ${#@} ]; do
 done
 
 case "$COMMAND" in
-    download)
-        if [ "$NO_CACHE" = "true" ]; then
-            download_cache "true"
-        else
-            download_cache
-        fi
-        ;;
     generate)
         check_submodule_clean
         ensure_binaries
@@ -587,7 +544,7 @@ case "$COMMAND" in
             generate_cache "true"
             echo ""
         elif [ ! -f "$CACHE_FILE" ]; then
-            ensure_cache "$NO_DOWNLOAD"
+            ensure_cache
             echo ""
         fi
         run_tests "${REMAINING_ARGS[@]}"
@@ -596,7 +553,7 @@ case "$COMMAND" in
         check_submodule_clean
         ensure_binaries
         if [ ! -f "$CACHE_FILE" ]; then
-            ensure_cache "$NO_DOWNLOAD"
+            ensure_cache
             echo ""
         fi
         analyze_tests "${REMAINING_ARGS[@]}"
@@ -607,7 +564,7 @@ case "$COMMAND" in
         if [ "$NO_CACHE" = "true" ]; then
             generate_cache "true"
         else
-            ensure_cache "$NO_DOWNLOAD"
+            ensure_cache
         fi
         echo ""
         run_tests "${REMAINING_ARGS[@]}"
