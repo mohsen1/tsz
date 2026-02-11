@@ -30,13 +30,13 @@ impl<'a> Printer<'a> {
             self.write("async ");
         }
 
-        // TypeScript omits parentheses for single simple parameters
-        // A parameter is "simple" if it's:
-        // - A single identifier (not a destructuring pattern)
-        // - Has no type annotation
-        // - Has no initializer
-        // - Is not a rest parameter
-        let needs_parens = !self.is_simple_single_parameter(&func.parameters.nodes);
+        // TypeScript preserves parentheses from source:
+        // - If source had `(x) => x`, emit `(x) => x` even though x is simple
+        // - If source had `x => x`, emit `x => x`
+        // - If source had `(x: string) => x`, emit `(x) => x` (parens preserved)
+        let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
+        let is_simple = self.is_simple_single_parameter(&func.parameters.nodes);
+        let needs_parens = source_had_parens || !is_simple;
 
         if needs_parens {
             self.write("(");
@@ -52,6 +52,41 @@ impl<'a> Printer<'a> {
 
         // Body
         self.emit(func.body);
+    }
+
+    /// Check if the source had parentheses around the parameters
+    fn source_has_arrow_function_parens(&self, params: &[NodeIndex]) -> bool {
+        if params.is_empty() {
+            // Empty param list always has parens: () => x
+            return true;
+        }
+
+        let Some(source) = self.source_text else {
+            // No source text, default to adding parens for safety
+            return true;
+        };
+
+        // Check the character before the first parameter
+        if let Some(first_param) = params.first() {
+            if let Some(param_node) = self.arena.get(*first_param) {
+                let start_pos = param_node.pos as usize;
+
+                // Scan backwards from the parameter start to find a non-whitespace character
+                let mut pos = start_pos;
+                while pos > 0 {
+                    pos -= 1;
+                    let ch = &source[pos..pos + 1];
+                    if ch == " " || ch == "\t" || ch == "\n" || ch == "\r" {
+                        continue;
+                    }
+                    // Found a non-whitespace character
+                    return ch == "(";
+                }
+            }
+        }
+
+        // Default to parens if we couldn't determine
+        true
     }
 
     /// Check if parameters are a simple single parameter that doesn't need parens
