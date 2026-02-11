@@ -769,14 +769,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let Some(ref_node) = self.ctx.arena.get(import.module_specifier) else {
+        let module_specifier_idx = import.module_specifier;
+        let Some(ref_node) = self.ctx.arena.get(module_specifier_idx) else {
             return;
         };
+        let spec_start = ref_node.pos;
+        let spec_length = ref_node.end.saturating_sub(ref_node.pos);
 
         // Handle namespace imports: import x = Namespace or import x = Namespace.Member
         // These need to emit TS2503 ("Cannot find namespace") if not found
         if ref_node.kind != SyntaxKind::StringLiteral as u16 {
-            self.check_namespace_import(import.module_specifier);
+            self.check_namespace_import(module_specifier_idx);
             return;
         }
 
@@ -832,7 +835,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .modules_with_ts2307_emitted
                     .insert(module_key.clone());
-                self.error_at_node(import.module_specifier, &error_message, error_code);
+                self.error_at_position(spec_start, spec_length, &error_message, error_code);
             }
             return;
         }
@@ -850,7 +853,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .modules_with_ts2307_emitted
             .insert(module_key.clone());
-        self.error_at_node(import.module_specifier, &message, code);
+        self.error_at_position(spec_start, spec_length, &message, code);
     }
 
     // =========================================================================
@@ -991,8 +994,9 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
                 &[suggested],
             );
-            self.error_at_node(
-                import.module_specifier,
+            self.error_at_position(
+                spec_start,
+                spec_length,
                 &message,
                 diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
             );
@@ -1025,8 +1029,9 @@ impl<'a> CheckerState<'a> {
             let module_key = module_name.to_string();
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                 self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                self.error_at_node(
-                    import.module_specifier,
+                self.error_at_position(
+                    spec_start,
+                    spec_length,
                     &message,
                     diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
                 );
@@ -1058,7 +1063,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .modules_with_ts2307_emitted
                     .insert(module_key.clone());
-                self.error_at_node(import.module_specifier, &error_message, error_code);
+                self.error_at_position(spec_start, spec_length, &error_message, error_code);
             }
             if error_code
                 != crate::types::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
@@ -1100,8 +1105,9 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
                             &[suggested],
                         );
-                        self.error_at_node(
-                            import.module_specifier,
+                        self.error_at_position(
+                            spec_start,
+                            spec_length,
                             &message,
                             diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
                         );
@@ -1130,8 +1136,9 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_messages::FILE_IS_NOT_A_MODULE,
                                     &[&source_file.file_name],
                                 );
-                                self.error_at_node(
-                                    import.module_specifier,
+                                self.error_at_position(
+                                    spec_start,
+                                    spec_length,
                                     &message,
                                     diagnostic_codes::FILE_IS_NOT_A_MODULE,
                                 );
