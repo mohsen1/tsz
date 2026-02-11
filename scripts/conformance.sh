@@ -296,9 +296,19 @@ run_tests() {
     local has_error_code=false
     local has_max=false
     local prev_arg=""
+    local skip_next=false
     for arg in "$@"; do
-        if [[ "$arg" == --workers* ]]; then
-            # Skip --workers argument (we use our own)
+        if [ "$skip_next" = true ]; then
+            skip_next=false
+            continue
+        fi
+        if [ "$arg" = "--workers" ]; then
+            # Skip --workers and its value (we use our own)
+            skip_next=true
+            prev_arg=""
+            continue
+        fi
+        if [[ "$arg" == --workers=* ]]; then
             prev_arg=""
             continue
         fi
@@ -537,6 +547,9 @@ while [ $i -lt ${#@} ]; do
         NO_CACHE=true
     elif [ "$arg" = "--no-download" ]; then
         NO_DOWNLOAD=true
+    elif [ "$arg" = "--workers" ]; then
+        i=$((i + 1))
+        WORKERS="${@:$((i+1)):1}"
     elif [ "$arg" = "--profile" ]; then
         i=$((i + 1))
         BUILD_PROFILE="${@:$((i+1)):1}"
