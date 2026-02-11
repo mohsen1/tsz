@@ -2304,6 +2304,18 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(loc) = self.get_source_location(idx) {
+            // Deduplicate: get_type_from_type_node may re-resolve type references when
+            // type_parameter_scope changes, causing validate_type_reference_type_arguments
+            // to be called multiple times for the same node.
+            let key = (
+                loc.start,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+            );
+            if self.ctx.emitted_diagnostics.contains(&key) {
+                return;
+            }
+            self.ctx.emitted_diagnostics.insert(key);
+
             let type_str = self.format_type(type_arg);
             let constraint_str = self.format_type(constraint);
             let message = format_message(
