@@ -2025,10 +2025,18 @@ impl<'a> CheckerState<'a> {
                 else if let Some(param) = self.ctx.arena.get_parameter(node) {
                     // Get type from annotation
                     if !param.type_annotation.is_none() {
-                        return (
-                            self.get_type_from_type_node(param.type_annotation),
-                            Vec::new(),
-                        );
+                        let mut type_id = self.get_type_from_type_node(param.type_annotation);
+                        // Under strictNullChecks, optional parameters (?) include undefined
+                        // in their type. E.g., `n?: number` has type `number | undefined`.
+                        if param.question_token
+                            && self.ctx.strict_null_checks()
+                            && type_id != TypeId::ANY
+                            && type_id != TypeId::UNKNOWN
+                            && type_id != TypeId::ERROR
+                        {
+                            type_id = self.ctx.types.union2(type_id, TypeId::UNDEFINED);
+                        }
+                        return (type_id, Vec::new());
                     }
                     // Check for JSDoc type
                     if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(value_decl) {
