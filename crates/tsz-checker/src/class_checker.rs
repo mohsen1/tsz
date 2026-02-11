@@ -990,6 +990,14 @@ impl<'a> CheckerState<'a> {
                         let Some(member_name) = self.get_member_name(member_idx) else {
                             continue;
                         };
+
+                        // Skip optional interface members — they don't need to be present
+                        if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                            if sig.question_token {
+                                continue;
+                            }
+                        }
+
                         // Check if class has this member
                         if let Some(&class_member_idx) = class_members.get(&member_name) {
                             let class_member_type =
@@ -1005,8 +1013,11 @@ impl<'a> CheckerState<'a> {
                                 self.get_type_of_interface_member_simple(member_idx);
 
                             // Check type compatibility (class member type must be assignable to interface member type)
+                            // Skip if either type is any or error (unresolved types shouldn't cause false positives)
                             if interface_member_type != TypeId::ANY
                                 && class_member_type != TypeId::ANY
+                                && interface_member_type != TypeId::ERROR
+                                && class_member_type != TypeId::ERROR
                                 && !self.is_assignable_to(class_member_type, interface_member_type)
                             {
                                 let expected_str = self.format_type(interface_member_type);
