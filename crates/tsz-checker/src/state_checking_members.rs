@@ -3430,6 +3430,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let body_return_type = if is_generator && has_type_annotation {
                 self.get_generator_return_type_argument(return_type)
                     .unwrap_or(return_type)
+            } else if func.is_async && has_type_annotation {
+                // Unwrap Promise<T> to T for async function return type checking.
+                // The function body returns T, which gets auto-wrapped in a Promise.
+                self.unwrap_promise_type(return_type).unwrap_or(return_type)
             } else {
                 return_type
             };
