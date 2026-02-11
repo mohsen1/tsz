@@ -3022,8 +3022,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // Note: is_derived_property_redeclaration, find_containing_class are in type_checking.rs
-
     /// Check a break statement for validity.
     /// Check a with statement and emit TS2410.
     /// The 'with' statement is not supported in TypeScript.

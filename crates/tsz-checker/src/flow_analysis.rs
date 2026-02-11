@@ -34,7 +34,7 @@ use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{FlowTypeEvaluator, TypeId};
+use tsz_solver::TypeId;
 
 // =============================================================================
 // Property Key Types
@@ -2278,18 +2278,5 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
         current
-    }
-
-    // =========================================================================
-    // Integration with Solver's Flow Analysis
-    // =========================================================================
-
-    /// Create a flow type evaluator that uses the solver's type operations.
-    ///
-    /// This provides a bridge between the checker's flow analysis and the
-    /// solver's type narrowing capabilities.
-    #[allow(dead_code)]
-    pub(crate) fn create_flow_evaluator(&self) -> FlowTypeEvaluator<'_> {
-        FlowTypeEvaluator::new(self.ctx.types)
     }
 }
