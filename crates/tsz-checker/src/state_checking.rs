@@ -1752,14 +1752,17 @@ impl<'a> CheckerState<'a> {
 
                 // Try to resolve the heritage symbol
                 if let Some(heritage_sym) = self.resolve_heritage_symbol(expr_idx) {
-                    // TS2314: Check if generic type is used without required type arguments
+                    // TS2314: Check if generic type is used without required type arguments.
+                    // Skip for extends clauses — TypeScript allows omitting type arguments
+                    // in class extends, defaulting all missing type params to `any`.
+                    // E.g., `class C extends Array { }` is valid (Array<any>).
                     let has_type_args = self
                         .ctx
                         .arena
                         .get_expr_type_args(type_node)
                         .and_then(|e| e.type_arguments.as_ref())
                         .is_some_and(|args| !args.nodes.is_empty());
-                    if !has_type_args {
+                    if !has_type_args && !is_extends_clause {
                         let required_count = self.count_required_type_params(heritage_sym);
                         if required_count > 0 {
                             if let Some(name) = self.heritage_name_text(expr_idx) {
