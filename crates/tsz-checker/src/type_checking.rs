@@ -3192,6 +3192,12 @@ impl<'a> CheckerState<'a> {
                         if !(decl_has_body && other_has_body) {
                             continue;
                         }
+                        // Both have bodies -> duplicate function implementations
+                        // Force-add to conflicts since declarations_conflict returns false
+                        // for FUNCTION vs FUNCTION (they don't exclude each other).
+                        conflicts.insert(decl_idx);
+                        conflicts.insert(other_idx);
+                        continue;
                     }
 
                     // Check for method overloads - multiple method declarations are allowed
@@ -3337,6 +3343,36 @@ impl<'a> CheckerState<'a> {
 
             if conflicts.is_empty() {
                 continue;
+            }
+
+            // Handle TS2393: Duplicate function implementation.
+            // When 2+ function declarations with bodies share a name, emit TS2393 on each.
+            // This runs BEFORE TS2813/TS2814 handling since that removes function indices.
+            {
+                let duplicate_func_impls: Vec<NodeIndex> = declarations
+                    .iter()
+                    .filter(|(decl_idx, flags)| {
+                        conflicts.contains(decl_idx)
+                            && (flags & symbol_flags::FUNCTION) != 0
+                            && self.function_has_body(*decl_idx)
+                    })
+                    .map(|(idx, _)| *idx)
+                    .collect();
+
+                if duplicate_func_impls.len() > 1 {
+                    for &idx in &duplicate_func_impls {
+                        let error_node = self.get_declaration_name_node(idx).unwrap_or(idx);
+                        self.error_at_node(
+                            error_node,
+                            diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                            diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                        );
+                        conflicts.remove(&idx);
+                    }
+                    if conflicts.is_empty() {
+                        continue;
+                    }
+                }
             }
 
             // Check for class + function conflicts (TS2813 + TS2814)
