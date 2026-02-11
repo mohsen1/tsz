@@ -1102,12 +1102,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
         false
     }
 
-    /// Check if a property name is a private field (starts with #)
-    #[allow(dead_code)] // Infrastructure for private field checking
-    fn is_private_field(&self, prop_name: &str) -> bool {
-        prop_name.starts_with('#')
-    }
-
     fn resolve_property_access_inner(
         &self,
         obj_type: TypeId,
