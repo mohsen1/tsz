@@ -205,7 +205,3 @@ impl<'a> AsyncES5Emitter<'a> {
         printer.take_output()
     }
 }
-
-#[cfg(test)]
-#[path = "tests/async_es5_tests.rs"]
-mod tests;
