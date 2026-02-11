@@ -706,3 +706,95 @@ export const foo: typeof import("./module");
         parser.get_diagnostics()
     );
 }
+
+// =============================================================================
+// Tuple Type Tests
+// =============================================================================
+
+#[test]
+fn test_optional_tuple_element() {
+    // [T?] should parse correctly without TS1005/TS1110
+    let source = r#"
+interface Buzz { id: number; }
+type T = [Buzz?];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit TS1005 or TS1110 for optional tuple element
+    let ts1005_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1005)
+        .count();
+    let ts1110_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1110)
+        .count();
+
+    assert_eq!(
+        ts1005_count, 0,
+        "Expected no TS1005 errors for optional tuple element, got {}",
+        ts1005_count
+    );
+    assert_eq!(
+        ts1110_count, 0,
+        "Expected no TS1110 errors for optional tuple element, got {}",
+        ts1110_count
+    );
+}
+
+#[test]
+fn test_readonly_optional_tuple_element() {
+    // readonly [T?] should parse correctly
+    let source = r#"
+interface Buzz { id: number; }
+type T = readonly [Buzz?];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit any parser errors
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for readonly optional tuple, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_named_tuple_element_still_works() {
+    // name?: T should still parse as a named tuple element
+    let source = r#"
+type T = [name?: string];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit any parser errors
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for named optional tuple element, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_mixed_tuple_elements() {
+    // Mix of optional, named, and rest elements should work
+    let source = r#"
+interface A { a: number; }
+interface B { b: string; }
+type T = [A?, name: B, ...rest: string[]];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit any parser errors
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for mixed tuple elements, got {:?}",
+        parser.get_diagnostics()
+    );
+}

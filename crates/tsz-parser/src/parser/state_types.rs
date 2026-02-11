@@ -618,10 +618,13 @@ impl ParserState {
             self.next_token();
 
             // Check for optional marker and colon
-            let has_question = self.parse_optional(SyntaxKind::QuestionToken);
+            let _has_question = self.parse_optional(SyntaxKind::QuestionToken);
             let has_colon = self.is_token(SyntaxKind::ColonToken);
 
-            if has_colon || has_question {
+            // Only treat as named tuple member if there's a colon after the identifier
+            // (with or without the optional marker: name: T or name?: T)
+            // A standalone identifier with ? but no colon is just an optional type: T?
+            if has_colon {
                 // This is a named tuple element - parse it
                 self.scanner.restore_state(snapshot);
                 self.current_token = current;
