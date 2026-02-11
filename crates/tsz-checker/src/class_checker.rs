@@ -532,6 +532,135 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                // If the base is not an interface, check if it's a class with private/protected members (TS2430)
+                if base_iface_indices.is_empty() {
+                    // Check if the base is a class
+                    let mut base_class_idx = None;
+                    for &decl_idx in &base_symbol.declarations {
+                        if let Some(node) = self.ctx.arena.get(decl_idx)
+                            && node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        {
+                            base_class_idx = Some(decl_idx);
+                            break;
+                        }
+                    }
+
+                    if base_class_idx.is_none() && !base_symbol.value_declaration.is_none() {
+                        let decl_idx = base_symbol.value_declaration;
+                        if let Some(node) = self.ctx.arena.get(decl_idx)
+                            && node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        {
+                            base_class_idx = Some(decl_idx);
+                        }
+                    }
+
+                    if let Some(class_idx) = base_class_idx {
+                        if let Some(class_node) = self.ctx.arena.get(class_idx)
+                            && let Some(class_data) = self.ctx.arena.get_class(class_node)
+                        {
+                            // Check if any interface member redeclares a private/protected class member
+                            for (member_name, _, derived_member_idx, _) in &derived_members {
+                                for &class_member_idx in &class_data.members.nodes {
+                                    let Some(class_member_node) =
+                                        self.ctx.arena.get(class_member_idx)
+                                    else {
+                                        continue;
+                                    };
+
+                                    let (class_member_name, is_private_or_protected) =
+                                        match class_member_node.kind {
+                                            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                                                if let Some(prop) = self
+                                                    .ctx
+                                                    .arena
+                                                    .get_property_decl(class_member_node)
+                                                {
+                                                    let name = self.get_property_name(prop.name);
+                                                    let is_priv_prot = self
+                                                        .has_private_modifier(&prop.modifiers)
+                                                        || self.has_protected_modifier(
+                                                            &prop.modifiers,
+                                                        );
+                                                    (name, is_priv_prot)
+                                                } else {
+                                                    continue;
+                                                }
+                                            }
+                                            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                                                if let Some(method) = self
+                                                    .ctx
+                                                    .arena
+                                                    .get_method_decl(class_member_node)
+                                                {
+                                                    let name = self.get_property_name(method.name);
+                                                    let is_priv_prot = self
+                                                        .has_private_modifier(&method.modifiers)
+                                                        || self.has_protected_modifier(
+                                                            &method.modifiers,
+                                                        );
+                                                    (name, is_priv_prot)
+                                                } else {
+                                                    continue;
+                                                }
+                                            }
+                                            k if k == syntax_kind_ext::GET_ACCESSOR
+                                                || k == syntax_kind_ext::SET_ACCESSOR =>
+                                            {
+                                                if let Some(accessor) =
+                                                    self.ctx.arena.get_accessor(class_member_node)
+                                                {
+                                                    let name =
+                                                        self.get_property_name(accessor.name);
+                                                    let is_priv_prot = self
+                                                        .has_private_modifier(&accessor.modifiers)
+                                                        || self.has_protected_modifier(
+                                                            &accessor.modifiers,
+                                                        );
+                                                    (name, is_priv_prot)
+                                                } else {
+                                                    continue;
+                                                }
+                                            }
+                                            _ => continue,
+                                        };
+
+                                    if let Some(class_member_name) = class_member_name {
+                                        if &class_member_name == member_name
+                                            && is_private_or_protected
+                                        {
+                                            // Interface redeclares a private/protected member as public - TS2430
+                                            self.error_at_node(
+                                                *derived_member_idx,
+                                                &format!(
+                                                    "Interface '{}' incorrectly extends interface '{}'.",
+                                                    derived_name, base_name
+                                                ),
+                                                diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                                            );
+
+                                            if let Some((pos, end)) =
+                                                self.get_node_span(*derived_member_idx)
+                                            {
+                                                self.error(
+                                                    pos,
+                                                    end - pos,
+                                                    format!(
+                                                        "Property '{}' is private in type '{}' but not in type '{}'.",
+                                                        member_name, base_name, derived_name
+                                                    ),
+                                                    diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    continue;
+                }
+
                 let Some(&base_root_idx) = base_iface_indices.first() else {
                     continue;
                 };
