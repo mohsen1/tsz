@@ -75,6 +75,7 @@ yarn.lock
 !/CLAUDE.md
 !/yek.yaml
 
+
 # Random AI coding artifacts sometimes generated in sessions
 /tmp
 /scripts/*.py
@@ -82,7 +83,7 @@ yarn.lock
 # Claude Code - ignore everything in .claude except local settings and skills
 .claude/*
 !.claude/settings.json
-!.claude/settings.local.json
+.claude/settings.local.json
 !.claude/skills/
 # Runaway process daemon files
 .runaway-daemon.pid
