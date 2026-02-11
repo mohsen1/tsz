@@ -30,10 +30,21 @@ impl<'a> Printer<'a> {
             self.write("async ");
         }
 
-        // Parameters (without types for JavaScript)
-        self.write("(");
+        // TypeScript omits parentheses for single simple parameters
+        // A parameter is "simple" if it's:
+        // - A single identifier (not a destructuring pattern)
+        // - Has no type annotation
+        // - Has no initializer
+        // - Is not a rest parameter
+        let needs_parens = !self.is_simple_single_parameter(&func.parameters.nodes);
+
+        if needs_parens {
+            self.write("(");
+        }
         self.emit_function_parameters_js(&func.parameters.nodes);
-        self.write(")");
+        if needs_parens {
+            self.write(")");
+        }
 
         // Skip return type for JavaScript
 
@@ -41,6 +52,47 @@ impl<'a> Printer<'a> {
 
         // Body
         self.emit(func.body);
+    }
+
+    /// Check if parameters are a simple single parameter that doesn't need parens
+    /// For JS emit, type annotations don't matter since they're always stripped.
+    fn is_simple_single_parameter(&self, params: &[NodeIndex]) -> bool {
+        // Must have exactly one parameter
+        if params.len() != 1 {
+            return false;
+        }
+
+        let param_idx = params[0];
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+
+        // Must not be a rest parameter
+        if param.dot_dot_dot_token {
+            return false;
+        }
+
+        // Type annotations are irrelevant for JS emit - they're always stripped
+
+        // Must have no initializer
+        if !param.initializer.is_none() {
+            return false;
+        }
+
+        // The name must be a simple identifier (not a destructuring pattern)
+        if param.name.is_none() {
+            return false;
+        }
+
+        let Some(name_node) = self.arena.get(param.name) else {
+            return false;
+        };
+
+        // Check if it's an identifier (not ArrayBindingPattern or ObjectBindingPattern)
+        name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
     }
 
     pub(super) fn emit_function_expression(&mut self, node: &Node, _idx: NodeIndex) {
