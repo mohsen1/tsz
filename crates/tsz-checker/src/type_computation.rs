@@ -903,6 +903,44 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             }
+            // TS2367: Check for comparisons with no overlap
+            let is_equality_op = matches!(
+                op_kind,
+                k if k == SyntaxKind::EqualsEqualsToken as u16
+                    || k == SyntaxKind::ExclamationEqualsToken as u16
+                    || k == SyntaxKind::EqualsEqualsEqualsToken as u16
+                    || k == SyntaxKind::ExclamationEqualsEqualsToken as u16
+            );
+
+            // For TS2367, get the narrow types (literals) not the widened types
+            let left_narrow = self
+                .literal_type_from_initializer(left_idx)
+                .unwrap_or(left_type);
+            let right_narrow = self
+                .literal_type_from_initializer(right_idx)
+                .unwrap_or(right_type);
+
+            if is_equality_op
+                && left_narrow != TypeId::ERROR
+                && right_narrow != TypeId::ERROR
+                && self.types_have_no_overlap(left_narrow, right_narrow)
+            {
+                use crate::types::diagnostics::{
+                    diagnostic_codes, diagnostic_messages, format_message,
+                };
+                let left_str = self.format_type(left_narrow);
+                let right_str = self.format_type(right_narrow);
+                let message = format_message(
+                    diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
+                    &[&left_str, &right_str],
+                );
+                self.error_at_node(
+                    node_idx,
+                    &message,
+                    diagnostic_codes::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
+                );
+            }
+
             let op_str = match op_kind {
                 k if k == SyntaxKind::PlusToken as u16 => "+",
                 k if k == SyntaxKind::MinusToken as u16 => "-",

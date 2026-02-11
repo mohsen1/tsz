@@ -2184,6 +2184,126 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if two types have no overlap (for TS2367 validation).
+    /// Returns true if the types can never be equal in a comparison.
+    pub(crate) fn types_have_no_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
+        use tsz_solver::TypeKey;
+
+        tracing::trace!(left = ?left, right = ?right, "types_have_no_overlap called");
+
+        // any, unknown, error types can overlap with anything
+        if left == TypeId::ANY || right == TypeId::ANY {
+            tracing::trace!("has ANY");
+            return false;
+        }
+        if left == TypeId::UNKNOWN || right == TypeId::UNKNOWN {
+            tracing::trace!("has UNKNOWN");
+            return false;
+        }
+        if left == TypeId::ERROR || right == TypeId::ERROR {
+            tracing::trace!("has ERROR");
+            return false;
+        }
+
+        // Same type always overlaps
+        if left == right {
+            tracing::trace!("same type");
+            return false;
+        }
+
+        // For type parameters, check the constraint instead of the parameter itself
+        let effective_left = match self.ctx.types.lookup(left) {
+            Some(TypeKey::TypeParameter(info)) if info.constraint.is_some() => {
+                let constraint = info.constraint.unwrap();
+                tracing::trace!(?constraint, "left is type param with constraint");
+                constraint
+            }
+            _ => left,
+        };
+
+        let effective_right = match self.ctx.types.lookup(right) {
+            Some(TypeKey::TypeParameter(info)) if info.constraint.is_some() => {
+                let constraint = info.constraint.unwrap();
+                tracing::trace!(?constraint, "right is type param with constraint");
+                constraint
+            }
+            _ => right,
+        };
+
+        tracing::trace!(
+            ?effective_left,
+            ?effective_right,
+            "effective types for overlap check"
+        );
+
+        // Check union types: if any member of one union overlaps with the other, they overlap
+        if let Some(TypeKey::Union(left_list)) = self.ctx.types.lookup(effective_left) {
+            tracing::trace!("effective_left is union");
+            for &left_member in self.ctx.types.type_list(left_list).iter() {
+                tracing::trace!(?left_member, ?effective_right, "checking union member");
+                if !self.types_have_no_overlap(left_member, effective_right) {
+                    tracing::trace!("union member overlaps - union overlaps");
+                    return false;
+                }
+            }
+            tracing::trace!("no union members overlap - returning true");
+            return true;
+        }
+
+        if let Some(TypeKey::Union(right_list)) = self.ctx.types.lookup(effective_right) {
+            tracing::trace!("effective_right is union");
+            for &right_member in self.ctx.types.type_list(right_list).iter() {
+                if !self.types_have_no_overlap(effective_left, right_member) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // If either is assignable to the other, they overlap
+        let left_type_str = self.format_type(effective_left);
+        let right_type_str = self.format_type(effective_right);
+        let left_to_right = self.is_assignable_to(effective_left, effective_right);
+        let right_to_left = self.is_assignable_to(effective_right, effective_left);
+        tracing::trace!(
+            ?effective_left,
+            ?effective_right,
+            %left_type_str,
+            %right_type_str,
+            left_to_right,
+            right_to_left,
+            "assignability check"
+        );
+        if left_to_right || right_to_left {
+            return false;
+        }
+
+        // Check union types: if any member of one union overlaps with the other, they overlap
+        if let Some(TypeKey::Union(left_list)) = self.ctx.types.lookup(effective_left) {
+            tracing::trace!("left is union");
+            for &left_member in self.ctx.types.type_list(left_list).iter() {
+                if !self.types_have_no_overlap(left_member, effective_right) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if let Some(TypeKey::Union(right_list)) = self.ctx.types.lookup(effective_right) {
+            tracing::trace!("right is union");
+            for &right_member in self.ctx.types.type_list(right_list).iter() {
+                if !self.types_have_no_overlap(effective_left, right_member) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        tracing::trace!("no overlap detected");
+        // No other overlap detected
+        true
+    }
+
     /// Get display string for implicit any return type.
     ///
     /// Returns "any" for null/undefined only types, otherwise formats the type.
