@@ -31,7 +31,6 @@ pub use crate::binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
 use crate::diagnostics::PendingDiagnostic;
 use crate::infer::InferenceContext;
 use crate::instantiate::{TypeSubstitution, instantiate_type};
-use crate::type_operations_helper;
 use crate::types::*;
 use crate::utils;
 use crate::visitor::TypeVisitor;
@@ -1361,8 +1360,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn rest_element_type(&self, type_id: TypeId) -> TypeId {
-        // Phase 3: Refactored to use visitor pattern via type_operations_helper
-        type_operations_helper::extract_array_element(self.interner, type_id)
+        match self.interner.lookup(type_id) {
+            Some(TypeKey::Array(elem)) => elem,
+            _ => type_id,
+        }
     }
 
     /// Maximum iterations for type unwrapping loops to prevent infinite loops.
