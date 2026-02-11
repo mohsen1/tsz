@@ -11,9 +11,6 @@
 //! This module extends CheckerState with scope-finding methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
-// TODO: Remove this once the methods are used by the checker
-#![allow(dead_code)]
-
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -386,88 +383,6 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
-    // Variable Enclosure
-    // =========================================================================
-
-    /// Find the enclosing variable statement for a given node.
-    ///
-    /// Traverses up the AST to find a VARIABLE_STATEMENT.
-    ///
-    /// Returns Some(NodeIndex) if a variable statement is found, None otherwise.
-    pub(crate) fn find_enclosing_variable_statement(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        let mut iterations = 0;
-        while !current.is_none() {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return None;
-            }
-            if let Some(node) = self.ctx.arena.get(current)
-                && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-            {
-                return Some(current);
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
-        None
-    }
-
-    /// Find the enclosing variable declaration for a given node.
-    ///
-    /// Traverses up the AST to find a VARIABLE_DECLARATION.
-    ///
-    /// Returns Some(NodeIndex) if a variable declaration is found, None otherwise.
-    pub(crate) fn find_enclosing_variable_declaration(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return None;
-            }
-            let node = self.ctx.arena.get(current)?;
-            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                return Some(current);
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
-    }
-
-    // =========================================================================
-    // Source File Enclosure
-    // =========================================================================
-
-    /// Find the enclosing source file for a given node.
-    ///
-    /// Traverses up the AST to find the SOURCE_FILE node.
-    ///
-    /// Returns Some(NodeIndex) if a source file is found, None otherwise.
-    pub(crate) fn find_enclosing_source_file(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        while !current.is_none() {
-            if let Some(node) = self.ctx.arena.get(current)
-                && node.kind == syntax_kind_ext::SOURCE_FILE
-            {
-                return Some(current);
-            }
-            if let Some(ext) = self.ctx.arena.get_extended(current) {
-                current = ext.parent;
-            } else {
-                break;
-            }
-        }
-        None
-    }
-
-    // =========================================================================
     // Static Block Enclosure
     // =========================================================================
 
@@ -506,30 +421,6 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
         None
-    }
-
-    /// Find the class declaration containing a static block.
-    ///
-    /// Given a static block node, returns the parent CLASS_DECLARATION or CLASS_EXPRESSION.
-    ///
-    /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
-    pub(crate) fn find_class_for_static_block(
-        &self,
-        static_block_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let ext = self.ctx.arena.get_extended(static_block_idx)?;
-        let parent = ext.parent;
-        if parent.is_none() {
-            return None;
-        }
-        let parent_node = self.ctx.arena.get(parent)?;
-        if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-        {
-            Some(parent)
-        } else {
-            None
-        }
     }
 
     // =========================================================================
@@ -574,6 +465,7 @@ impl<'a> CheckerState<'a> {
     /// then finds the class declaration.
     ///
     /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
+    #[allow(dead_code)]
     pub(crate) fn find_class_for_computed_property(
         &self,
         computed_idx: NodeIndex,
@@ -637,12 +529,66 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check if an identifier is the direct expression of an ExpressionWithTypeArguments
+    /// in a heritage clause (e.g., `extends A` or `implements B`), as opposed to
+    /// being nested deeper (e.g., as a function argument in `extends factory(A)`).
+    ///
+    /// Returns true ONLY when the identifier is the direct type reference.
+    pub(crate) fn is_direct_heritage_type_reference(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::HERITAGE_CLAUSE;
+
+        // Walk up from the identifier to the heritage clause.
+        // If we encounter a CALL_EXPRESSION on the way, the identifier is
+        // nested inside a call (e.g., `factory(A)`) — NOT a direct reference.
+        let mut current = idx;
+        for _ in 0..20 {
+            let ext = match self.ctx.arena.get_extended(current) {
+                Some(ext) if !ext.parent.is_none() => ext,
+                _ => return false,
+            };
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.kind == HERITAGE_CLAUSE {
+                // Reached heritage clause without encountering a call expression.
+                // This identifier IS the direct type reference.
+                return true;
+            }
+
+            // If we pass through a call expression, the identifier is nested
+            // (e.g., an argument to `factory(A)`).
+            if parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::NEW_EXPRESSION
+            {
+                return false;
+            }
+
+            // Stop at function/class/interface boundaries
+            if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                || parent_node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                return false;
+            }
+
+            current = parent_idx;
+        }
+        false
+    }
+
     /// Find the class or interface declaration containing a heritage clause.
     ///
     /// Given a heritage clause node, returns the parent CLASS_DECLARATION,
     /// CLASS_EXPRESSION, or INTERFACE_DECLARATION.
     ///
     /// Returns Some(NodeIndex) if the parent is a class/interface, None otherwise.
+    #[allow(dead_code)]
     pub(crate) fn find_class_for_heritage_clause(
         &self,
         heritage_idx: NodeIndex,

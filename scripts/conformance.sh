@@ -33,11 +33,11 @@ ${YELLOW}TSZ Conformance Test Runner${NC}
 Usage: ./scripts/conformance.sh [COMMAND] [OPTIONS]
 
 Commands:
-  download    Download TSC cache from GitHub artifacts (fastest)
-  generate    Generate TSC cache locally (required if download unavailable)
+  generate    Generate TSC cache locally (if not checked in)
   run         Run conformance tests against TSC cache
   analyze     Analyze failures: categorize, rank by impact, find easy wins
-  all         Download/generate cache and run tests (default)
+              Shows which error codes to implement for maximum conformance gain
+  all         Generate cache (if needed) and run tests (default)
   clean       Remove cache file
 
 Options:
@@ -48,7 +48,6 @@ Options:
   --filter PAT      Filter test files by pattern
   --error-code N    Only show tests with this error code (e.g., 2304)
   --no-cache        Force cache regeneration even if cache exists
-  --no-download     Skip trying to download cache from GitHub
   --profile NAME    Use specific cargo profile (default: dist-fast, available: dist-fast, dist, release, dev)
 
 Analyze options:
@@ -59,17 +58,34 @@ Examples:
   ./scripts/conformance.sh run --max 100              # Test first 100 files
   ./scripts/conformance.sh run --filter "strict"      # Run tests matching "strict"
   ./scripts/conformance.sh run --error-code 2304      # Only show tests with TS2304
+  ./scripts/conformance.sh analyze                    # Full analysis with impact report
   ./scripts/conformance.sh analyze --offset 0 --max 3101  # Analyze slice failures
   ./scripts/conformance.sh analyze --category false-positive  # Show only false positives
   ./scripts/conformance.sh analyze --category close    # Tests closest to passing
+  ./scripts/conformance.sh analyze --top 30            # Show top 30 items per section
+
+Analysis output includes:
+  - Error codes NOT IMPLEMENTED (never emitted by tsz) - highest priority!
+  - Error codes that appear TOGETHER in tests - implement groups for more impact
+  - QUICK WINS - tests missing just one error code
+  - Impact estimation - how many tests each code affects
 
 Note: Binaries are automatically built if not found.
-      Cache is downloaded from GitHub artifacts when available (per TypeScript version).
-      Use 'generate' to create cache locally if download fails.
+      Cache (tsc-cache-full.json) is checked into the repo.
 
 Cache location: tsc-cache-full.json (in repo root)
 Test directory: TypeScript/tests/cases/conformance
 EOF
+}
+
+# Cross-platform file modification time (seconds since epoch)
+# Linux: stat -c %Y, macOS: stat -f %m
+file_mtime() {
+    if stat -c %Y /dev/null >/dev/null 2>&1; then
+        stat -c %Y "$1" 2>/dev/null
+    else
+        stat -f %m "$1" 2>/dev/null
+    fi
 }
 
 # Check if binaries are up-to-date with source code
@@ -86,7 +102,7 @@ binaries_are_fresh() {
     fi
     
     # Find the newest binary modification time
-    local newest_binary_mtime=$(stat -f %m "$tsz_bin" "$conformance_bin" "$cache_gen_bin" 2>/dev/null | sort -n | tail -1)
+    local newest_binary_mtime=$(for f in "$tsz_bin" "$conformance_bin" "$cache_gen_bin"; do file_mtime "$f"; done | sort -n | tail -1)
     
     # Check if any Rust source file in the relevant crates is newer than the binaries
     # These are all the workspace crates that tsz-cli and tsz-conformance depend on
@@ -112,7 +128,7 @@ binaries_are_fresh() {
         # Check source files
         if [ -d "$crate_dir/src" ]; then
             while IFS= read -r -d '' src_file; do
-                local src_mtime=$(stat -f %m "$src_file" 2>/dev/null)
+                local src_mtime=$(file_mtime "$src_file")
                 if [ "$src_mtime" -gt "$newest_binary_mtime" ]; then
                     return 1
                 fi
@@ -121,7 +137,7 @@ binaries_are_fresh() {
         
         # Check Cargo.toml
         if [ -f "$crate_dir/Cargo.toml" ]; then
-            local toml_mtime=$(stat -f %m "$crate_dir/Cargo.toml" 2>/dev/null)
+            local toml_mtime=$(file_mtime "$crate_dir/Cargo.toml")
             if [ "$toml_mtime" -gt "$newest_binary_mtime" ]; then
                 return 1
             fi
@@ -130,13 +146,13 @@ binaries_are_fresh() {
     
     # Check root Cargo.toml and Cargo.lock
     if [ -f "$REPO_ROOT/Cargo.toml" ]; then
-        local root_toml_mtime=$(stat -f %m "$REPO_ROOT/Cargo.toml" 2>/dev/null)
+        local root_toml_mtime=$(file_mtime "$REPO_ROOT/Cargo.toml")
         if [ "$root_toml_mtime" -gt "$newest_binary_mtime" ]; then
             return 1
         fi
     fi
     if [ -f "$REPO_ROOT/Cargo.lock" ]; then
-        local lock_mtime=$(stat -f %m "$REPO_ROOT/Cargo.lock" 2>/dev/null)
+        local lock_mtime=$(file_mtime "$REPO_ROOT/Cargo.lock")
         if [ "$lock_mtime" -gt "$newest_binary_mtime" ]; then
             return 1
         fi
@@ -161,28 +177,6 @@ ensure_binaries() {
     cargo build --profile "$BUILD_PROFILE" -p tsz-cli -p tsz-conformance
     
     echo ""
-}
-
-download_cache() {
-    local force="${1:-false}"
-    
-    if [ "$force" != "true" ] && [ -f "$CACHE_FILE" ]; then
-        echo -e "${YELLOW}Cache already exists: $CACHE_FILE${NC}"
-        return 0
-    fi
-
-    echo -e "${GREEN}Attempting to download TSC cache from GitHub...${NC}"
-    
-    if [ -x "$REPO_ROOT/scripts/download-tsc-cache.sh" ]; then
-        if [ "$force" = "true" ]; then
-            "$REPO_ROOT/scripts/download-tsc-cache.sh" --force && return 0
-        else
-            "$REPO_ROOT/scripts/download-tsc-cache.sh" && return 0
-        fi
-    fi
-    
-    echo -e "${YELLOW}Download failed or unavailable${NC}"
-    return 1
 }
 
 generate_cache() {
@@ -242,24 +236,13 @@ generate_cache() {
     echo -e "${GREEN}Cache generated: $CACHE_FILE${NC}"
 }
 
-# Ensure cache exists - try download first, then generate
+# Ensure cache exists - generate if not checked in
 ensure_cache() {
-    local no_download="${1:-false}"
-    
     if [ -f "$CACHE_FILE" ]; then
         return 0
     fi
-    
-    # Try downloading first (faster)
-    if [ "$no_download" != "true" ]; then
-        if download_cache; then
-            return 0
-        fi
-        echo ""
-    fi
-    
-    # Fall back to generation
-    echo -e "${YELLOW}Generating cache locally (this may take 10-15 minutes)...${NC}"
+
+    echo -e "${YELLOW}Cache not found, generating locally (this may take 10-15 minutes)...${NC}"
     ensure_binaries
     generate_cache
 }
@@ -277,9 +260,19 @@ run_tests() {
     local has_error_code=false
     local has_max=false
     local prev_arg=""
+    local skip_next=false
     for arg in "$@"; do
-        if [[ "$arg" == --workers* ]]; then
-            # Skip --workers argument (we use our own)
+        if [ "$skip_next" = true ]; then
+            skip_next=false
+            continue
+        fi
+        if [ "$arg" = "--workers" ]; then
+            # Skip --workers and its value (we use our own)
+            skip_next=true
+            prev_arg=""
+            continue
+        fi
+        if [[ "$arg" == --workers=* ]]; then
             prev_arg=""
             continue
         fi
@@ -509,7 +502,6 @@ fi
 
 # Check for flags
 NO_CACHE=false
-NO_DOWNLOAD=false
 REMAINING_ARGS=()
 i=0
 while [ $i -lt ${#@} ]; do
@@ -517,7 +509,11 @@ while [ $i -lt ${#@} ]; do
     if [ "$arg" = "--no-cache" ]; then
         NO_CACHE=true
     elif [ "$arg" = "--no-download" ]; then
-        NO_DOWNLOAD=true
+        # Kept for backward compatibility, now a no-op
+        true
+    elif [ "$arg" = "--workers" ]; then
+        i=$((i + 1))
+        WORKERS="${@:$((i+1)):1}"
     elif [ "$arg" = "--profile" ]; then
         i=$((i + 1))
         BUILD_PROFILE="${@:$((i+1)):1}"
@@ -531,13 +527,6 @@ while [ $i -lt ${#@} ]; do
 done
 
 case "$COMMAND" in
-    download)
-        if [ "$NO_CACHE" = "true" ]; then
-            download_cache "true"
-        else
-            download_cache
-        fi
-        ;;
     generate)
         check_submodule_clean
         ensure_binaries
@@ -555,7 +544,7 @@ case "$COMMAND" in
             generate_cache "true"
             echo ""
         elif [ ! -f "$CACHE_FILE" ]; then
-            ensure_cache "$NO_DOWNLOAD"
+            ensure_cache
             echo ""
         fi
         run_tests "${REMAINING_ARGS[@]}"
@@ -564,7 +553,7 @@ case "$COMMAND" in
         check_submodule_clean
         ensure_binaries
         if [ ! -f "$CACHE_FILE" ]; then
-            ensure_cache "$NO_DOWNLOAD"
+            ensure_cache
             echo ""
         fi
         analyze_tests "${REMAINING_ARGS[@]}"
@@ -575,7 +564,7 @@ case "$COMMAND" in
         if [ "$NO_CACHE" = "true" ]; then
             generate_cache "true"
         else
-            ensure_cache "$NO_DOWNLOAD"
+            ensure_cache
         fi
         echo ""
         run_tests "${REMAINING_ARGS[@]}"

@@ -39,7 +39,7 @@ impl<'a> Printer<'a> {
             // Emit the comment text using safe slicing
             let comment_text = safe_slice::slice(text, comment.pos as usize, comment.end as usize);
             if !comment_text.is_empty() {
-                self.write(comment_text);
+                self.write_comment(comment_text);
             }
             // Advance the global comment index past this comment so it
             // won't be emitted again by the end-of-file comment sweep.
@@ -165,7 +165,7 @@ impl<'a> Printer<'a> {
             // Use safe slicing to avoid panics
             let comment_text = safe_slice::slice(text, comment.pos as usize, comment.end as usize);
             if !comment_text.is_empty() {
-                self.write(comment_text);
+                self.write_comment(comment_text);
             }
             if comment.has_trailing_newline {
                 self.write_line();
@@ -194,7 +194,7 @@ impl<'a> Printer<'a> {
             // Use safe slicing to avoid panics
             let comment_text = safe_slice::slice(text, comment.pos as usize, comment.end as usize);
             if !comment_text.is_empty() {
-                self.write(comment_text);
+                self.write_comment(comment_text);
             }
             if comment.has_trailing_newline {
                 self.write_line();
@@ -268,7 +268,7 @@ impl<'a> Printer<'a> {
                     }
                     let comment_text = safe_slice::slice(text, comment_start, start + comment_end);
                     if !comment_text.is_empty() {
-                        self.write(comment_text);
+                        self.write_comment(comment_text);
                     }
                     self.write_line();
 
@@ -299,7 +299,7 @@ impl<'a> Printer<'a> {
                     }
                     let comment_text = safe_slice::slice(text, comment_start, start + comment_end);
                     if !comment_text.is_empty() {
-                        self.write(comment_text);
+                        self.write_comment(comment_text);
                     }
                     self.write_line();
 
@@ -314,6 +314,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if there are any comments within a source range.
+    #[allow(dead_code)]
     pub(super) fn has_comments_in_range(&self, start: u32, end: u32) -> bool {
         if self.ctx.options.remove_comments {
             return false;
@@ -331,6 +332,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit all comments within a source range, advancing comment_emit_idx.
+    #[allow(dead_code)]
     pub(super) fn emit_comments_in_range(&mut self, start: u32, end: u32) {
         if self.ctx.options.remove_comments {
             return;
@@ -350,7 +352,7 @@ impl<'a> Printer<'a> {
                 if let Some(text) = self.source_text {
                     let comment_text = safe_slice::slice(text, c_pos as usize, c_end as usize);
                     if !comment_text.is_empty() {
-                        self.write(comment_text);
+                        self.write_comment(comment_text);
                     }
                 }
                 if c_trailing {
@@ -359,6 +361,34 @@ impl<'a> Printer<'a> {
                 self.comment_emit_idx += 1;
             } else {
                 self.comment_emit_idx += 1;
+            }
+        }
+    }
+
+    /// Emit all pending comments from `all_comments` whose end position is before `pos`.
+    /// Uses the `comment_emit_idx` cursor to advance through comments.
+    /// Similar to the top-level statement comment emission logic.
+    pub(super) fn emit_comments_before_pos(&mut self, pos: u32) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+        let actual_start = self.skip_whitespace_forward(pos, pos + 1024);
+        if let Some(text) = self.source_text {
+            while self.comment_emit_idx < self.all_comments.len() {
+                let c_end = self.all_comments[self.comment_emit_idx].end;
+                if c_end <= actual_start {
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                    let comment_text =
+                        crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                    self.write_comment(comment_text);
+                    if c_trailing {
+                        self.write_line();
+                    }
+                    self.comment_emit_idx += 1;
+                } else {
+                    break;
+                }
             }
         }
     }
@@ -419,7 +449,7 @@ impl<'a> Printer<'a> {
                     // Use safe slicing for comment text
                     let comment_text = safe_slice::slice(text, comment_start, start + comment_end);
                     if !comment_text.is_empty() {
-                        self.write(comment_text);
+                        self.write_comment(comment_text);
                     }
                     self.write_line();
 
@@ -446,7 +476,7 @@ impl<'a> Printer<'a> {
                     // Use safe slicing for comment text
                     let comment_text = safe_slice::slice(text, comment_start, start + comment_end);
                     if !comment_text.is_empty() {
-                        self.write(comment_text);
+                        self.write_comment(comment_text);
                     }
                     self.write_line();
 
@@ -457,6 +487,37 @@ impl<'a> Printer<'a> {
 
             // Hit non-whitespace, non-comment content - stop scanning
             break;
+        }
+    }
+
+    /// Write comment text, trimming trailing whitespace from each line of multi-line comments.
+    /// TypeScript strips trailing whitespace from multi-line comment lines in its emitter.
+    pub(super) fn write_comment(&mut self, text: &str) {
+        if text.contains('\n') {
+            // Multi-line comment: trim trailing whitespace from each line
+            let mut first = true;
+            for line in text.split('\n') {
+                if !first {
+                    self.write("\n");
+                }
+                self.write(line.trim_end());
+                first = false;
+            }
+        } else {
+            self.write(text);
+        }
+    }
+
+    /// Skip (suppress) all comments that belong to an erased declaration (interface, type alias).
+    /// Advances comment_emit_idx past any comments whose end position falls within the node's range.
+    pub(super) fn skip_comments_for_erased_node(&mut self, node: &Node) {
+        while self.comment_emit_idx < self.all_comments.len() {
+            let c = &self.all_comments[self.comment_emit_idx];
+            if c.end <= node.end {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
         }
     }
 }

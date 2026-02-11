@@ -214,6 +214,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // TS2588: Cannot assign to 'x' because it is a constant.
                     let is_const = self.checker.check_const_assignment(unary.operand);
 
+                    // TS2540: Cannot assign to readonly property (e.g., namespace const export)
+                    if !is_const {
+                        self.checker.check_readonly_assignment(unary.operand, idx);
+                    }
+
                     // Get operand type for validation
                     let operand_type = self.checker.get_type_of_node(unary.operand);
 
@@ -336,6 +341,54 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             expr_type
                         } else {
                             // `expr as T` / `<T>expr` yields `T`.
+                            // TS2352: Check if conversion may be a mistake (types don't sufficiently overlap)
+                            self.checker.ensure_application_symbols_resolved(expr_type);
+                            self.checker
+                                .ensure_application_symbols_resolved(asserted_type);
+
+                            // Don't check if either type is error, any, unknown, or never
+                            let should_check = !self.checker.type_contains_error(expr_type)
+                                && !self.checker.type_contains_error(asserted_type)
+                                && expr_type != TypeId::ANY
+                                && asserted_type != TypeId::ANY
+                                && expr_type != TypeId::UNKNOWN
+                                && asserted_type != TypeId::UNKNOWN
+                                && expr_type != TypeId::NEVER
+                                && asserted_type != TypeId::NEVER;
+
+                            if should_check {
+                                // TS2352 is emitted if neither type is assignable to the other
+                                // (i.e., the types don't "sufficiently overlap").
+                                // TSC uses isTypeComparableTo which is more relaxed than assignability:
+                                // types are comparable if they share at least one common property.
+                                let source_to_target =
+                                    self.checker.is_assignable_to(expr_type, asserted_type);
+                                let target_to_source =
+                                    self.checker.is_assignable_to(asserted_type, expr_type);
+
+                                if !source_to_target && !target_to_source {
+                                    // Before emitting TS2352, check if types share common properties.
+                                    // This approximates TSC's isTypeComparableTo check.
+                                    let evaluated_expr =
+                                        self.checker.evaluate_type_for_assignability(expr_type);
+                                    let evaluated_asserted =
+                                        self.checker.evaluate_type_for_assignability(asserted_type);
+                                    let have_overlap =
+                                        tsz_solver::type_queries::types_are_comparable(
+                                            self.checker.ctx.types,
+                                            evaluated_expr,
+                                            evaluated_asserted,
+                                        );
+                                    if !have_overlap {
+                                        self.checker.error_type_assertion_no_overlap(
+                                            expr_type,
+                                            asserted_type,
+                                            idx,
+                                        );
+                                    }
+                                }
+                            }
+
                             asserted_type
                         }
                     }

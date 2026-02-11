@@ -79,6 +79,7 @@ pub mod state_type_resolution;
 pub mod statements;
 pub mod super_checker;
 pub mod symbol_resolver;
+pub mod triple_slash_validator;
 pub mod tuple_type;
 pub mod type_api;
 pub mod type_checking;
@@ -86,8 +87,6 @@ mod type_checking_queries;
 mod type_checking_utilities;
 pub mod type_computation;
 mod type_computation_complex;
-// pub mod type_computing_visitor; // TODO: module not found
-pub mod triple_slash_validator;
 pub mod type_literal_checker;
 pub mod type_node;
 pub mod type_parameter;
@@ -124,12 +123,18 @@ mod symbol_resolver_stability_tests;
 #[path = "tests/ts2322_tests.rs"]
 mod ts2322_tests;
 #[cfg(test)]
+#[path = "tests/ts2540_readonly_tests.rs"]
+mod ts2540_readonly_tests;
+#[cfg(test)]
 #[path = "tests/ts6133_unused_type_params_tests.rs"]
 mod ts6133_unused_type_params_tests;
 #[cfg(test)]
 #[path = "tests/value_usage_tests.rs"]
 mod value_usage_tests;
 // Tests that don't depend on test_fixtures, moved from root crate:
+#[cfg(test)]
+#[path = "tests/conditional_keyof_test.rs"]
+mod conditional_keyof_test;
 #[cfg(test)]
 #[path = "tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;

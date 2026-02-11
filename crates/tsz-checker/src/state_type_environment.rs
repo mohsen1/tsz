@@ -611,11 +611,31 @@ impl<'a> CheckerState<'a> {
                     self.resolve_type_for_property_access_inner(resolved, visited)
                 }
             }
-            PropertyAccessResolutionKind::Application(_) => {
-                // Don't expand Application types for property access resolution
-                // This preserves nominal identity (e.g., D<string>) in error messages
-                // The property access resolver will handle it correctly
-                type_id
+            PropertyAccessResolutionKind::Application(app_id) => {
+                // For property access, we need to resolve type arguments to their constraints
+                // Example: Readonly<P> where P extends Props should resolve to Readonly<Props>
+                let app = self.ctx.types.type_application(app_id);
+                let base = app.base;
+                let args = &app.args;
+
+                // Recursively resolve each type argument
+                let mut resolved_args = Vec::with_capacity(args.len());
+                let mut any_changed = false;
+                for &arg in args {
+                    let resolved_arg = self.resolve_type_for_property_access_inner(arg, visited);
+                    if resolved_arg != arg {
+                        any_changed = true;
+                    }
+                    resolved_args.push(resolved_arg);
+                }
+
+                if any_changed {
+                    // Create new Application with resolved args
+                    self.ctx.types.application(base, resolved_args)
+                } else {
+                    // No changes, return original
+                    type_id
+                }
             }
             PropertyAccessResolutionKind::TypeParameter { constraint } => {
                 if let Some(constraint) = constraint {
@@ -1261,6 +1281,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.leave_recursion();
                 return Vec::new();
             }
+
             let mut checker = Box::new(CheckerState::with_parent_cache(
                 symbol_arena.as_ref(),
                 self.ctx.binder,
@@ -1271,27 +1292,22 @@ impl<'a> CheckerState<'a> {
             ));
             let result = checker.get_type_params_for_symbol(sym_id);
 
-            // Propagate delegated symbol caches back to the parent context.
-            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_types {
-                self.ctx.symbol_types.entry(cached_sym).or_insert(cached_ty);
-            }
-            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_instance_types {
-                self.ctx
-                    .symbol_instance_types
-                    .entry(cached_sym)
-                    .or_insert(cached_ty);
-            }
+            // DO NOT merge child's symbol_types back. See delegate_cross_arena_symbol_resolution
+            // for the full explanation: node_symbols collisions across arenas cause cache poisoning.
+
+            Self::leave_cross_arena_delegation();
 
             if !result.is_empty() {
                 self.ctx.insert_def_type_params(def_id, result.clone());
                 self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
-            } else {
-                self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+                self.ctx.leave_recursion();
+                return result;
             }
-
-            self.ctx.leave_recursion();
-            Self::leave_cross_arena_delegation();
-            return result;
+            // Cross-arena delegation returned no type params. This can happen when
+            // a user-defined generic type (e.g., `interface Tag<T>`) is merged with
+            // a non-generic lib symbol of the same name. The lib arena doesn't have
+            // the user's declaration, so it finds no type params. Fall through to
+            // check the current arena's declarations below.
         }
 
         // Type alias - get type parameters from declaration

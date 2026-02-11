@@ -488,7 +488,6 @@ fn test_instantiate_conditional() {
 }
 
 #[test]
-#[ignore = "TODO: Mapped type instantiation with shadowed type parameter"]
 fn test_instantiate_mapped_type_shadowed_param() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
@@ -857,7 +856,6 @@ fn test_instantiate_template_literal_in_object() {
 }
 
 #[test]
-#[ignore = "TODO: Template literal in mapped type instantiation"]
 fn test_instantiate_template_literal_in_mapped_type_template() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
@@ -907,22 +905,41 @@ fn test_instantiate_template_literal_in_mapped_type_template() {
     subst.insert(t_name, prefix_lit);
     let result = instantiate_type(&interner, mapped, &subst);
 
-    // The result should be a mapped type with T substituted
-    // K should NOT be substituted since it's shadowed
-    if let Some(TypeKey::Mapped(mapped_id)) = interner.lookup(result) {
-        let mapped = interner.mapped_type(mapped_id);
-        // Check that K is still the type param in the template
-        if let Some(TypeKey::TemplateLiteral(spans_id)) = interner.lookup(mapped.template) {
-            let spans = interner.template_list(spans_id);
-            // The template should have T substituted with "prefix", but K preserved
-            // So we expect: Text("prefix"), Text("_"), Type(K)
-            // Note: evaluation might merge text spans
-            assert!(!spans.is_empty());
-        } else {
-            panic!("Expected template literal in mapped type");
-        }
+    // After substitution, T is replaced with "prefix" and K is shadowed.
+    // Since the constraint is concrete ("a" | "b"), the mapped type is eagerly
+    // evaluated to an object: { a: "prefix_a", b: "prefix_b" }
+    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+        let shape = interner.object_shape(shape_id);
+        let props = &shape.properties;
+        assert_eq!(props.len(), 2, "Expected 2 properties, got {}", props.len());
+
+        let a_name = interner.intern_string("a");
+        let b_name = interner.intern_string("b");
+
+        let a_prop = props.iter().find(|p| p.name == a_name);
+        let b_prop = props.iter().find(|p| p.name == b_name);
+
+        assert!(a_prop.is_some(), "Expected property 'a'");
+        assert!(b_prop.is_some(), "Expected property 'b'");
+
+        // Check that template literal evaluation produced the correct string literals
+        let prefix_a = interner.literal_string("prefix_a");
+        let prefix_b = interner.literal_string("prefix_b");
+        assert_eq!(
+            a_prop.unwrap().type_id,
+            prefix_a,
+            "Property 'a' should be 'prefix_a'"
+        );
+        assert_eq!(
+            b_prop.unwrap().type_id,
+            prefix_b,
+            "Property 'b' should be 'prefix_b'"
+        );
     } else {
-        panic!("Expected mapped type, got {:?}", interner.lookup(result));
+        panic!(
+            "Expected object type from evaluated mapped type, got {:?}",
+            interner.lookup(result)
+        );
     }
 }
 

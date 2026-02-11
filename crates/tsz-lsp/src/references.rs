@@ -924,8 +924,10 @@ impl<'a> FindReferences<'a> {
         let node = self.arena.get(node_idx)?;
         let kind = node.kind;
 
-        // Only apply to keyword nodes (not identifiers)
-        if kind == SyntaxKind::Identifier as u16 || kind == SyntaxKind::PrivateIdentifier as u16 {
+        // Only apply to keyword nodes, not identifiers, literals, or other tokens
+        let is_keyword =
+            kind >= SyntaxKind::BreakKeyword as u16 && kind <= SyntaxKind::DeferKeyword as u16;
+        if !is_keyword {
             return None;
         }
 

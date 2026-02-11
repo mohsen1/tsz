@@ -158,12 +158,15 @@ fn main() -> Result<()> {
     let verbose = args.verbose;
     let timeout = args.timeout;
     let tsc_path_ref = &tsc_path;
+    let test_dir_path = Path::new(&args.test_dir)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(&args.test_dir));
 
     // Process tests in parallel
     test_files.par_iter().for_each(|path| {
-        match process_test_file(path, timeout, tsc_path_ref) {
-            Ok(Some((hash, entry))) => {
-                cache.lock().unwrap().insert(hash, entry);
+        match process_test_file(path, &test_dir_path, timeout, tsc_path_ref) {
+            Ok(Some((key, entry))) => {
+                cache.lock().unwrap().insert(key, entry);
             }
             Ok(None) => {
                 skipped.fetch_add(1, Ordering::SeqCst);
@@ -256,6 +259,7 @@ fn discover_tests(test_dir: &str, max: usize, filter: Option<&str>) -> Result<Ve
 
 fn process_test_file(
     path: &Path,
+    test_dir: &Path,
     _timeout_secs: u64,
     tsc_path: &str,
 ) -> Result<Option<(String, TscCacheEntry)>> {
@@ -280,12 +284,18 @@ fn process_test_file(
         .as_millis() as u64;
     let size = metadata.len();
 
-    // Calculate hash
-    let hash = tsz_conformance::cache::calculate_test_hash(&content, &parsed.directives.options);
+    // Cache key is relative file path from test directory
+    let key = tsz_conformance::cache::cache_key(path, test_dir).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Path {} is not under test dir {}",
+            path.display(),
+            test_dir.display()
+        )
+    })?;
 
     // Create temporary directory for this test
     let temp_dir = tempfile::TempDir::new()?;
-    let test_dir = temp_dir.path();
+    let work_dir = temp_dir.path();
 
     // Create tsconfig.json with parsed @-directives unless test provides its own.
     let has_tsconfig_file = parsed
@@ -294,7 +304,7 @@ fn process_test_file(
         .iter()
         .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
     if !has_tsconfig_file {
-        let tsconfig_path = test_dir.join("tsconfig.json");
+        let tsconfig_path = work_dir.join("tsconfig.json");
         let tsconfig_content = serde_json::json!({
             "compilerOptions": convert_options_to_tsconfig(&parsed.directives.options),
             "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
@@ -310,7 +320,7 @@ fn process_test_file(
     if parsed.directives.filenames.is_empty() {
         // Single-file test
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("ts");
-        let main_file = test_dir.join(format!("test.{}", ext));
+        let main_file = work_dir.join(format!("test.{}", ext));
         fs::write(&main_file, strip_directive_comments(&content))?;
     } else {
         // Multi-file test: write files from @filename directives
@@ -319,9 +329,9 @@ fn process_test_file(
                 .replace("..", "_")
                 .trim_start_matches('/')
                 .to_string();
-            let file_path = test_dir.join(&sanitized);
+            let file_path = work_dir.join(&sanitized);
 
-            if !file_path.starts_with(test_dir) {
+            if !file_path.starts_with(work_dir) {
                 continue;
             }
 
@@ -338,32 +348,32 @@ fn process_test_file(
         Command::new("npx")
             .arg("tsc")
             .arg("--project")
-            .arg(test_dir)
+            .arg(work_dir)
             .arg("--noEmit")
             .arg("--pretty")
             .arg("false")
-            .current_dir(test_dir)
+            .current_dir(work_dir)
             .output()
     } else if tsc_path.ends_with(".js") {
         // Direct node invocation of tsc.js
         Command::new("node")
             .arg(tsc_path)
             .arg("--project")
-            .arg(test_dir)
+            .arg(work_dir)
             .arg("--noEmit")
             .arg("--pretty")
             .arg("false")
-            .current_dir(test_dir)
+            .current_dir(work_dir)
             .output()
     } else {
         // Direct tsc binary
         Command::new(tsc_path)
             .arg("--project")
-            .arg(test_dir)
+            .arg(work_dir)
             .arg("--noEmit")
             .arg("--pretty")
             .arg("false")
-            .current_dir(test_dir)
+            .current_dir(work_dir)
             .output()
     };
 
@@ -384,7 +394,7 @@ fn process_test_file(
     error_codes.dedup();
 
     Ok(Some((
-        hash,
+        key,
         TscCacheEntry {
             metadata: FileMetadata { mtime_ms, size },
             error_codes,

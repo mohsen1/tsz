@@ -1,5 +1,4 @@
 use super::{Printer, get_operator_text};
-use tracing::trace;
 use tsz_parser::parser::{node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -13,13 +12,58 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // ES5: lower assignment destructuring patterns
+        if self.ctx.target_es5 && binary.operator_token == SyntaxKind::EqualsToken as u16 {
+            if let Some(left_node) = self.arena.get(binary.left) {
+                if left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    || left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                {
+                    self.emit_assignment_destructuring_es5(left_node, binary.right);
+                    return;
+                }
+            }
+        }
+
         self.emit(binary.left);
+
+        // Check if there's a line break between the operator and the right operand
+        // in the source. TypeScript preserves these line breaks.
+        let has_newline_before_right = self.source_text.is_some_and(|text| {
+            if let (Some(left_node), Some(right_node)) =
+                (self.arena.get(binary.left), self.arena.get(binary.right))
+            {
+                let left_end = left_node.end as usize;
+                let right_start = right_node.pos as usize;
+                let end = std::cmp::min(right_start, text.len());
+                let start = std::cmp::min(left_end, end);
+                text[start..end].contains('\n')
+            } else {
+                false
+            }
+        });
+
         // Comma operator: no space before, space after (e.g., `(1, 2, 3)`)
         if binary.operator_token == SyntaxKind::CommaToken as u16 {
-            self.write(", ");
+            if has_newline_before_right {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.emit(binary.right);
+                self.decrease_indent();
+                return;
+            } else {
+                self.write(", ");
+            }
         } else {
             self.write_space();
             self.write(get_operator_text(binary.operator_token));
+            if has_newline_before_right {
+                self.write_line();
+                self.increase_indent();
+                self.emit(binary.right);
+                self.decrease_indent();
+                return;
+            }
             self.write_space();
         }
         self.emit(binary.right);
@@ -277,24 +321,97 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Preserve multi-line formatting from source
-        if self.is_single_line(node) || array.elements.nodes.len() == 1 {
-            self.write("[");
-            self.emit_comma_separated(&array.elements.nodes);
-            self.write("]");
-        } else {
-            self.write("[");
-            self.write_line();
-            self.increase_indent();
-            for (i, &elem) in array.elements.nodes.iter().enumerate() {
-                self.emit(elem);
-                if i < array.elements.nodes.len() - 1 {
-                    self.write(",");
+        // Preserve multi-line formatting from source.
+        // Check for newlines BETWEEN consecutive elements, not within the overall expression.
+        // This avoids treating `[, [\n...\n]]` as multi-line when only the nested array
+        // is multi-line, not the outer array's element separation.
+        let is_multiline = array.elements.nodes.len() > 1
+            && self.source_text.is_some_and(|text| {
+                // Check between consecutive elements for newlines
+                for i in 0..array.elements.nodes.len() - 1 {
+                    let curr = array.elements.nodes[i];
+                    let next = array.elements.nodes[i + 1];
+                    if let (Some(curr_node), Some(next_node)) =
+                        (self.arena.get(curr), self.arena.get(next))
+                    {
+                        let curr_end = std::cmp::min(curr_node.end as usize, text.len());
+                        let next_start = std::cmp::min(next_node.pos as usize, text.len());
+                        if curr_end <= next_start && text[curr_end..next_start].contains('\n') {
+                            return true;
+                        }
+                    }
                 }
-                self.write_line();
-            }
+                // Also check between '[' and first element
+                if let Some(first_node) = array
+                    .elements
+                    .nodes
+                    .first()
+                    .and_then(|&n| self.arena.get(n))
+                {
+                    let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
+                    let first_pos = std::cmp::min(first_node.pos as usize, text.len());
+                    let start = std::cmp::min(bracket_pos, first_pos);
+                    if start < first_pos && text[start..first_pos].contains('\n') {
+                        return true;
+                    }
+                }
+                false
+            });
+
+        if !is_multiline {
+            self.write("[");
+            self.increase_indent();
+            self.emit_comma_separated(&array.elements.nodes);
             self.decrease_indent();
             self.write("]");
+        } else {
+            // Check if the first element is on a new line after '[' in the source.
+            // TypeScript preserves the source formatting:
+            // - `[elem1,\n  elem2]` -> first element on same line
+            // - `[\n  elem1,\n  elem2\n]` -> first element on new line
+            let first_elem_on_new_line = self.source_text.is_some_and(|text| {
+                if let Some(first_elem) = array.elements.nodes.first() {
+                    if let Some(first_node) = self.arena.get(*first_elem) {
+                        let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
+                        let first_pos = first_node.pos as usize;
+                        let end = std::cmp::min(first_pos, text.len());
+                        let start = std::cmp::min(bracket_pos, end);
+                        text[start..end].contains('\n')
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            });
+
+            if first_elem_on_new_line {
+                // Format: [\n  elem1,\n  elem2\n]
+                self.write("[");
+                self.increase_indent();
+                for (i, &elem) in array.elements.nodes.iter().enumerate() {
+                    if i > 0 {
+                        self.write(",");
+                    }
+                    self.write_line();
+                    self.emit(elem);
+                }
+                self.write_line();
+                self.decrease_indent();
+                self.write("]");
+            } else {
+                // Format: [elem1,\n  elem2,\n  elem3]
+                self.write("[");
+                self.emit(array.elements.nodes[0]);
+                self.increase_indent();
+                for &elem in &array.elements.nodes[1..] {
+                    self.write(",");
+                    self.write_line();
+                    self.emit(elem);
+                }
+                self.decrease_indent();
+                self.write("]");
+            }
         }
     }
 
@@ -341,20 +458,13 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_property_assignment(&mut self, node: &Node) {
-        trace!("emit_property_assignment called");
         let Some(prop) = self.arena.get_property_assignment(node) else {
             return;
         };
 
-        trace!(
-            "Emitting property assignment: name={:?}, initializer={:?}",
-            prop.name, prop.initializer
-        );
-
-        // Detect shorthand properties: parser creates PROPERTY_ASSIGNMENT with
-        // name == initializer (same NodeIndex) for shorthand `{ name }` syntax.
+        // Shorthand property: parser creates PROPERTY_ASSIGNMENT with name == initializer
+        // (same NodeIndex) for { name } instead of SHORTHAND_PROPERTY_ASSIGNMENT
         if prop.name == prop.initializer {
-            // Shorthand: just emit the name
             self.emit(prop.name);
             return;
         }
@@ -365,9 +475,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_shorthand_property(&mut self, node: &Node) {
-        trace!("emit_shorthand_property called");
         let Some(shorthand) = self.arena.get_shorthand_property(node) else {
-            trace!("Failed to get shorthand property data");
             // Fallback: try to get identifier data directly
             if let Some(ident) = self.arena.get_identifier(node) {
                 self.write(&ident.escaped_text);
@@ -375,7 +483,6 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        trace!("Emitting shorthand property: {:?}", shorthand.name);
         self.emit(shorthand.name);
         if shorthand.equals_token {
             self.write(" = ");

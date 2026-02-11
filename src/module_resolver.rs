@@ -678,14 +678,7 @@ impl ModuleResolver {
         let containing_file_str = containing_file.display().to_string();
 
         if let Some(extension) = explicit_ts_extension(specifier) {
-            // allowImportingTsExtensions is only valid with moduleResolution: bundler
-            // (or nodenext in TS 5.4+). For other modes, always emit TS5097.
-            let ts_extensions_allowed = self.allow_importing_ts_extensions
-                && matches!(
-                    self.resolution_kind,
-                    ModuleResolutionKind::Bundler | ModuleResolutionKind::NodeNext
-                );
-            if !ts_extensions_allowed {
+            if !self.allow_importing_ts_extensions {
                 return Err(ResolutionFailure::ImportingTsExtensionNotAllowed {
                     extension,
                     containing_file: containing_file_str.clone(),
@@ -718,6 +711,7 @@ impl ModuleResolver {
             importing_module_kind,
             import_kind,
         );
+
         if let Ok(resolved) = &result {
             if matches!(
                 resolved.extension,
@@ -1217,6 +1211,16 @@ impl ModuleResolver {
                 package_name: None,
                 original_specifier: specifier.to_string(),
                 extension: ModuleExtension::from_path(&resolved),
+            });
+        }
+
+        // Classic resolution emits TS2792 ("Did you mean to set moduleResolution
+        // to 'nodenext'?") instead of TS2307 when resolution fails.
+        if matches!(self.resolution_kind, ModuleResolutionKind::Classic) {
+            return Err(ResolutionFailure::ModuleResolutionModeMismatch {
+                specifier: specifier.to_string(),
+                containing_file: containing_file.to_string(),
+                span: specifier_span,
             });
         }
 
@@ -2028,9 +2032,11 @@ impl ModuleResolver {
                 }
             }
             ModuleResolutionKind::Classic => {
-                // Classic resolution only looks for TypeScript extensions,
-                // never .js/.jsx even with allowJs
-                &CLASSIC_EXTENSION_CANDIDATES
+                if self.allow_js {
+                    &TS_JS_EXTENSION_CANDIDATES
+                } else {
+                    &CLASSIC_EXTENSION_CANDIDATES
+                }
             }
             _ => {
                 if self.allow_js {
@@ -2127,6 +2133,55 @@ impl ModuleResolver {
 
         serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+    }
+
+    /// Probe for a JS file that would resolve for this specifier.
+    ///
+    /// Used for TS7016: when normal resolution fails but a JS file exists,
+    /// we can report "Could not find declaration file" instead of "Cannot find module".
+    /// Returns the resolved JS file path if found.
+    pub fn probe_js_file(
+        &mut self,
+        specifier: &str,
+        containing_file: &Path,
+        specifier_span: Span,
+        import_kind: ImportKind,
+    ) -> Option<PathBuf> {
+        if self.allow_js {
+            return None; // Already tried JS in normal resolution
+        }
+        let containing_dir = containing_file
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        let containing_file_str = containing_file.display().to_string();
+        let importing_module_kind = self.get_importing_module_kind(containing_file);
+
+        self.allow_js = true;
+        let result = self.resolve_uncached(
+            specifier,
+            &containing_dir,
+            &containing_file_str,
+            specifier_span,
+            importing_module_kind,
+            import_kind,
+        );
+        self.allow_js = false;
+
+        match result {
+            Ok(resolved)
+                if matches!(
+                    resolved.extension,
+                    ModuleExtension::Js
+                        | ModuleExtension::Jsx
+                        | ModuleExtension::Mjs
+                        | ModuleExtension::Cjs
+                ) =>
+            {
+                Some(resolved.resolved_path)
+            }
+            _ => None,
+        }
     }
 
     /// Clear the resolution cache

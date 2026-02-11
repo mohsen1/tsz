@@ -954,27 +954,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Get the rightmost identifier text for an entity name.
-    ///
-    /// This is used to disambiguate symbol IDs that may collide across binders
-    /// by matching the actual identifier text referenced in source.
-    #[allow(dead_code)]
-    pub(crate) fn entity_name_symbol_text(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
-        }
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let qn = self.ctx.arena.get_qualified_name(node)?;
-            return self.entity_name_symbol_text(qn.right);
-        }
-        None
-    }
-
     // =========================================================================
     // Symbol Resolution for Lowering
     // =========================================================================
@@ -1575,38 +1554,6 @@ impl<'a> CheckerState<'a> {
         // Module resolution for require() is handled in compute_type_of_symbol
         // by creating an object type from module_exports.
         None
-    }
-
-    /// Check if a node is a `require()` call expression.
-    ///
-    /// This is used to detect import equals declarations like `import x = require('./module')`
-    /// where we want to return ANY type instead of the literal string type.
-    #[allow(dead_code)] // Infrastructure for module resolution
-    pub(crate) fn is_require_call(&self, idx: NodeIndex) -> bool {
-        let node = match self.ctx.arena.get(idx) {
-            Some(n) => n,
-            None => return false,
-        };
-        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return false;
-        }
-
-        let call = match self.ctx.arena.get_call_expr(node) {
-            Some(c) => c,
-            None => return false,
-        };
-
-        let callee_node = match self.ctx.arena.get(call.expression) {
-            Some(n) => n,
-            None => return false,
-        };
-
-        let callee_ident = match self.ctx.arena.get_identifier(callee_node) {
-            Some(ident) => ident,
-            None => return false,
-        };
-
-        callee_ident.escaped_text == "require"
     }
 
     // =========================================================================

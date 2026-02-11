@@ -8,7 +8,6 @@ use crate::state::CheckerState;
 use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::types::Visibility;
 use tsz_solver::{ContextualTypeContext, TypeId};
 
 /// Check if an AST node is contextually sensitive (requires contextual typing).
@@ -723,77 +722,6 @@ impl<'a> CheckerState<'a> {
                 .collect(),
             StringLiteralKeyKind::NotStringLiteral => Vec::new(),
         }
-    }
-
-    /// Get the Symbol constructor type.
-    ///
-    /// Creates the type for the global `Symbol` constructor, including:
-    /// - Call signature: `Symbol(description?: string | number): symbol`
-    /// - Well-known symbol properties (iterator, asyncIterator, etc.)
-    #[allow(dead_code)]
-    pub(crate) fn get_symbol_constructor_type(&self) -> TypeId {
-        use tsz_solver::{CallSignature, CallableShape, ParamInfo, PropertyInfo};
-
-        // Parameter: description?: string | number
-        let description_param_type = self.ctx.types.union(vec![TypeId::STRING, TypeId::NUMBER]);
-        let description_param = ParamInfo {
-            name: Some(self.ctx.types.intern_string("description")),
-            type_id: description_param_type,
-            optional: true,
-            rest: false,
-        };
-
-        let call_signature = CallSignature {
-            type_params: vec![],
-            params: vec![description_param],
-            this_type: None,
-            return_type: TypeId::SYMBOL,
-            type_predicate: None,
-            is_method: false,
-        };
-
-        let well_known = [
-            "iterator",
-            "asyncIterator",
-            "hasInstance",
-            "isConcatSpreadable",
-            "match",
-            "matchAll",
-            "replace",
-            "search",
-            "split",
-            "species",
-            "toPrimitive",
-            "toStringTag",
-            "unscopables",
-            "dispose",
-            "asyncDispose",
-            "metadata",
-        ];
-
-        let mut properties = Vec::new();
-        for name in well_known {
-            let name_atom = self.ctx.types.intern_string(name);
-            properties.push(PropertyInfo {
-                name: name_atom,
-                type_id: TypeId::SYMBOL,
-                write_type: TypeId::SYMBOL,
-                optional: false,
-                readonly: true,
-                is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-            });
-        }
-
-        self.ctx.types.callable(CallableShape {
-            call_signatures: vec![call_signature],
-            construct_signatures: Vec::new(),
-            properties,
-            string_index: None,
-            number_index: None,
-            symbol: None,
-        })
     }
 
     /// Get the class declaration node from a TypeId.
@@ -1554,10 +1482,12 @@ impl<'a> CheckerState<'a> {
                     return self.check_flow_usage(idx, value_type, sym_id);
                 }
 
-                // Don't emit TS2693 in heritage clause context — the heritage
-                // checker will emit the appropriate error (e.g., TS2689 for
-                // class extends interface).
-                if self.find_enclosing_heritage_clause(idx).is_some() {
+                // Don't emit TS2693 in heritage clause context — but ONLY when the
+                // identifier is the direct expression of an ExpressionWithTypeArguments
+                // (e.g., `extends A`). If the identifier is nested deeper, such as
+                // a function argument within the heritage expression (e.g.,
+                // `extends factory(A)`), TS2693 should still fire.
+                if self.is_direct_heritage_type_reference(idx) {
                     return TypeId::ERROR;
                 }
 
@@ -2145,6 +2075,7 @@ impl<'a> CheckerState<'a> {
         if !Self::enter_cross_arena_delegation() {
             return TypeId::UNKNOWN;
         }
+
         let mut checker = Box::new(CheckerState::with_parent_cache(
             decl_arena.as_ref(),
             self.ctx.binder,
@@ -2162,16 +2093,8 @@ impl<'a> CheckerState<'a> {
             .set(self.ctx.symbol_resolution_depth.get());
         let result = checker.type_of_value_declaration(decl_idx);
 
-        // Propagate delegated symbol caches back to the parent context.
-        for (&cached_sym, &cached_ty) in &checker.ctx.symbol_types {
-            self.ctx.symbol_types.entry(cached_sym).or_insert(cached_ty);
-        }
-        for (&cached_sym, &cached_ty) in &checker.ctx.symbol_instance_types {
-            self.ctx
-                .symbol_instance_types
-                .entry(cached_sym)
-                .or_insert(cached_ty);
-        }
+        // DO NOT merge child's symbol_types back. See delegate_cross_arena_symbol_resolution
+        // for the full explanation: node_symbols collisions across arenas cause cache poisoning.
 
         Self::leave_cross_arena_delegation();
         result

@@ -966,6 +966,12 @@ impl<'a> FlowAnalyzer<'a> {
         if node.kind == SyntaxKind::UndefinedKeyword as u16 {
             return Some(TypeId::UNDEFINED);
         }
+        // In value position, `undefined` is an Identifier, not UndefinedKeyword
+        if let Some(ident) = self.arena.get_identifier(node) {
+            if ident.escaped_text == "undefined" {
+                return Some(TypeId::UNDEFINED);
+            }
+        }
 
         None
     }

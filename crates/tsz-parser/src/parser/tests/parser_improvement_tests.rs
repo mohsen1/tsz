@@ -35,7 +35,6 @@ interface I {
 }
 
 #[test]
-#[ignore = "Parser hangs on malformed arrow function with line break - needs investigation"]
 fn test_arrow_function_with_line_break_no_false_positive() {
     // Arrow function where => is missing but there's a line break
     // Should be more permissive to avoid false positives
@@ -637,5 +636,248 @@ function validFunction() {
         error_count <= 2,
         "Expected limited errors with recovery, got {}",
         error_count
+    );
+}
+
+// =============================================================================
+// Import Type Tests
+// =============================================================================
+
+#[test]
+fn test_typeof_import_with_member_access() {
+    // typeof import("...").A.foo should parse without TS1005
+    // This is a valid TypeScript syntax for accessing static members
+    let source = r#"
+export const foo: typeof import("./a").A.foo;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit TS1005 for member access after import()
+    let ts1005_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1005)
+        .count();
+    assert_eq!(
+        ts1005_count, 0,
+        "Expected no TS1005 errors for typeof import with member access, got {}",
+        ts1005_count
+    );
+
+    // Should have no errors at all
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for typeof import with member access, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_typeof_import_with_nested_member_access() {
+    // typeof import("...").A.B.C should parse correctly
+    let source = r#"
+export const foo: typeof import("./module").A.B.C;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit any errors for nested member access after import()
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for typeof import with nested member access, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_typeof_import_without_member_access() {
+    // typeof import("...") without member access should still work
+    let source = r#"
+export const foo: typeof import("./module");
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit any errors
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for typeof import without member access, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_import_type_without_typeof() {
+    // import("...").Type should parse without typeof
+    let source = r#"
+export const a: import("./test1").T = null as any;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit parse errors
+    let ts1005_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1005)
+        .count();
+    let ts1109_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1109)
+        .count();
+    let ts1359_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1359)
+        .count();
+
+    assert_eq!(
+        ts1005_count, 0,
+        "Expected no TS1005 errors for import type, got {}",
+        ts1005_count
+    );
+    assert_eq!(
+        ts1109_count, 0,
+        "Expected no TS1109 errors for import type, got {}",
+        ts1109_count
+    );
+    assert_eq!(
+        ts1359_count, 0,
+        "Expected no TS1359 errors for import type, got {}",
+        ts1359_count
+    );
+}
+
+#[test]
+fn test_import_type_with_member_access() {
+    // import("...").Type.SubType should parse correctly
+    let source = r#"
+export const a: import("./test1").T.U = null as any;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit parse errors
+    assert!(
+        parser.get_diagnostics().iter().all(|d| d.code >= 2000),
+        "Expected no parser errors (1xxx) for import type with member access, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_import_type_with_generic_arguments() {
+    // import("...").Type<T> should parse correctly
+    let source = r#"
+export const a: import("./test1").T<typeof import("./test2").theme> = null as any;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit parse errors
+    let parse_errors = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .count();
+    assert_eq!(
+        parse_errors,
+        0,
+        "Expected no parser errors for import type with generics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+// =============================================================================
+// Tuple Type Tests
+// =============================================================================
+
+#[test]
+fn test_optional_tuple_element() {
+    // [T?] should parse correctly without TS1005/TS1110
+    let source = r#"
+interface Buzz { id: number; }
+type T = [Buzz?];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit TS1005 or TS1110 for optional tuple element
+    let ts1005_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1005)
+        .count();
+    let ts1110_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1110)
+        .count();
+
+    assert_eq!(
+        ts1005_count, 0,
+        "Expected no TS1005 errors for optional tuple element, got {}",
+        ts1005_count
+    );
+    assert_eq!(
+        ts1110_count, 0,
+        "Expected no TS1110 errors for optional tuple element, got {}",
+        ts1110_count
+    );
+}
+
+#[test]
+fn test_readonly_optional_tuple_element() {
+    // readonly [T?] should parse correctly
+    let source = r#"
+interface Buzz { id: number; }
+type T = readonly [Buzz?];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit any parser errors
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for readonly optional tuple, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_named_tuple_element_still_works() {
+    // name?: T should still parse as a named tuple element
+    let source = r#"
+type T = [name?: string];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit any parser errors
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for named optional tuple element, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_mixed_tuple_elements() {
+    // Mix of optional, named, and rest elements should work
+    let source = r#"
+interface A { a: number; }
+interface B { b: string; }
+type T = [A?, name: B, ...rest: string[]];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit any parser errors
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for mixed tuple elements, got {:?}",
+        parser.get_diagnostics()
     );
 }

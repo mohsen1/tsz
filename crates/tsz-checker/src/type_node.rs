@@ -940,9 +940,22 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let optional = param_data.question_token || !param_data.initializer.is_none();
                 let rest = param_data.dot_dot_dot_token;
 
+                // Under strictNullChecks, optional parameters (with `?`) get
+                // `undefined` added to their type.
+                let effective_type = if param_data.question_token
+                    && self.ctx.strict_null_checks()
+                    && type_id != TypeId::ANY
+                    && type_id != TypeId::ERROR
+                    && type_id != TypeId::UNDEFINED
+                {
+                    self.ctx.types.union2(type_id, TypeId::UNDEFINED)
+                } else {
+                    type_id
+                };
+
                 params.push(ParamInfo {
                     name: Some(self.ctx.types.intern_string(&name)),
-                    type_id,
+                    type_id: effective_type,
                     optional,
                     rest,
                 });

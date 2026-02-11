@@ -663,3 +663,108 @@ var f = function(x) { };
         relevant
     );
 }
+
+/// Issue: Contextual typing for mapped type generic parameters
+///
+/// When a generic function has a mapped type parameter like `{ [K in keyof P]: P[K] }`,
+/// and P has a constraint (e.g. `P extends Props`), the lambda parameters inside the
+/// object literal argument should be contextually typed from the constraint.
+///
+/// For example:
+/// ```typescript
+/// interface Props { when: (value: string) => boolean; }
+/// function good2<P extends Props>(attrs: { [K in keyof P]: P[K] }) { }
+/// good2({ when: value => false }); // `value` should be typed as `string`
+/// ```
+///
+/// Root cause was two-fold:
+/// 1. During two-pass generic inference, when all args are context-sensitive,
+///    type parameters had no candidates. Fixed by using upper bounds (constraints)
+///    in `get_current_substitution` instead of UNKNOWN.
+/// 2. The instantiated mapped type contained Lazy references that the solver's
+///    NoopResolver couldn't resolve. Fixed by evaluating the contextual type
+///    with the checker's Judge (which has the full TypeEnvironment resolver)
+///    before extracting property types.
+#[test]
+fn test_contextual_typing_mapped_type_generic_param() {
+    let source = r#"
+// @noImplicitAny: true
+interface Props {
+    when: (value: string) => boolean;
+}
+function good2<P extends Props>(attrs: { [K in keyof P]: P[K] }) { }
+good2({ when: value => false });
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut options = CheckerOptions::default();
+    options.no_implicit_any = true;
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 7006),
+        "Should NOT emit TS7006 - parameter 'value' should be contextually typed as string \
+         from the mapped type constraint Props.\nActual errors: {:#?}",
+        relevant
+    );
+}
+
+/// Issue: TS2344 reported twice for the same type argument
+///
+/// When `get_type_from_type_node` re-resolves a type reference (e.g., because
+/// `type_parameter_scope` changes between type environment building and statement
+/// checking), `validate_type_reference_type_arguments` was called twice for the
+/// same node, producing duplicate TS2344 errors.
+///
+/// Fix: Use `emitted_diagnostics` deduplication in `error_type_constraint_not_satisfied`
+/// to prevent emitting the same TS2344 at the same source position twice.
+#[test]
+fn test_ts2344_no_duplicate_errors() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Box<T extends string> {
+    value: T;
+}
+type BadBox = Box<number>;
+type IsString<T extends string> = T extends string ? true : false;
+type Test2 = IsString<number>;
+type Keys<T extends object> = keyof T;
+type Test4 = Keys<string>;
+        "#,
+    );
+
+    // Count TS2344 errors - each should appear exactly once
+    let ts2344_count = diagnostics.iter().filter(|(code, _)| *code == 2344).count();
+    assert_eq!(
+        ts2344_count, 3,
+        "Should emit exactly 3 TS2344 errors (one per bad type arg), not duplicates.\nActual errors: {:#?}",
+        diagnostics
+    );
+}

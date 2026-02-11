@@ -139,7 +139,6 @@ const c4 = new Container<number>({}); // TS2322: {} doesn't extend number
 }
 
 #[test]
-#[ignore = "TODO: Generic constraint checking not yet implemented"]
 fn test_generic_contravariance() {
     let source = r#"
 interface Producer<T> {

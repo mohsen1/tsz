@@ -2,7 +2,7 @@
 //!
 //! Orchestrates parallel test execution using tokio and compares results.
 
-use crate::cache::{calculate_test_hash, check_cache_metadata, load_cache};
+use crate::cache::{self, load_cache};
 use crate::cli::Args;
 use crate::test_parser::{
     expand_option_variants, filter_incompatible_module_resolution_variants, parse_test_file,
@@ -94,6 +94,7 @@ impl Runner {
 
         let error_code_filter = self.args.error_code;
         let timeout_secs = self.args.timeout;
+        let test_dir: PathBuf = PathBuf::from(&self.args.test_dir);
 
         stream::iter(test_files)
             .for_each_concurrent(Some(concurrency_limit), |path| {
@@ -107,6 +108,7 @@ impl Runner {
                 let print_test = self.args.print_test;
                 let print_test_files = self.args.print_test_files;
                 let base = base_path.clone();
+                let test_dir = test_dir.clone();
 
                 async move {
                     let _permit = permit.acquire().await.unwrap();
@@ -114,6 +116,7 @@ impl Runner {
 
                     match Self::run_test(
                         &path,
+                        &test_dir,
                         cache,
                         tsz_binary,
                         verbose,
@@ -359,22 +362,14 @@ impl Runner {
     /// Run a single test
     async fn run_test(
         path: &Path,
+        test_dir: &Path,
         cache: Arc<crate::cache::TscCache>,
         tsz_binary: String,
         _verbose: bool,
         print_test_files: bool,
         timeout_secs: u64,
     ) -> anyhow::Result<TestResult> {
-        // CRITICAL PERFORMANCE OPTIMIZATION:
-        // Get metadata FIRST (fast syscall) before reading file content
-        let metadata = tokio::fs::metadata(path).await?;
-        let mtime_ms = metadata
-            .modified()?
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_millis() as u64;
-        let size = metadata.len() as u64;
-
-        // Read file content (only if we need it)
+        // Read file content
         // Skip files with invalid UTF-8 (BOM tests, Unicode encoding tests, etc.)
         let bytes = tokio::fs::read(path).await?;
         let content = match String::from_utf8(bytes) {
@@ -403,11 +398,11 @@ impl Runner {
             return Ok(TestResult::Skipped(reason));
         }
 
-        // Calculate hash
-        let hash = calculate_test_hash(&content, &parsed.directives.options);
+        // Look up cache by relative file path
+        let key =
+            cache::cache_key(path, test_dir).unwrap_or_else(|| path.to_string_lossy().to_string());
 
-        // Check cache (using hash as key, metadata for validation)
-        if let Some(tsc_result) = check_cache_metadata(&cache, &hash, mtime_ms, size) {
+        if let Some(tsc_result) = cache::lookup(&cache, &key) {
             debug!("Cache hit for {}", path.display());
 
             // Cache hit - prepare test directory (fast sync I/O)

@@ -5522,7 +5522,6 @@ fn test_infer_generic_constraint_violation() {
 }
 
 #[test]
-#[ignore = "Generic constraint depending on prior parameter not fully implemented"]
 fn test_infer_generic_constraint_depends_on_prior_param() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);

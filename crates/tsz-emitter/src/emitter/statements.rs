@@ -15,16 +15,21 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Empty blocks: preserve original format (single-line vs multi-line)
+        // Empty blocks: check for comments inside, then preserve original format
         if block.statements.nodes.is_empty() {
-            // Check for comments inside the empty block
-            let has_inner_comments = self.has_comments_in_range(node.pos, node.end);
+            // Find the actual closing `}` position (not node.end which includes trailing trivia)
+            let closing_brace_pos = self.find_token_end_before_trivia(node.pos, node.end);
+            // Check if there are comments inside the block (between { and })
+            let has_inner_comments = !self.ctx.options.remove_comments
+                && self
+                    .all_comments
+                    .get(self.comment_emit_idx)
+                    .is_some_and(|c| c.end <= closing_brace_pos);
             if has_inner_comments {
-                // Emit block with comments inside
                 self.write("{");
                 self.write_line();
                 self.increase_indent();
-                self.emit_comments_in_range(node.pos, node.end);
+                self.emit_comments_before_pos(closing_brace_pos);
                 self.decrease_indent();
                 self.write("}");
             } else if self.is_single_line(node) {
@@ -197,7 +202,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Collect variable names from a declaration list for CommonJS export
-    fn collect_variable_names(&self, declarations: &NodeList) -> Vec<String> {
+    pub(super) fn collect_variable_names(&self, declarations: &NodeList) -> Vec<String> {
         let mut names = Vec::new();
         for &decl_list_idx in &declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
@@ -524,12 +529,12 @@ impl<'a> Printer<'a> {
         self.emit(clause.expression);
         self.write(":");
 
-        // Use the expression node's end position as reference for same-line detection
+        // Use expression end position for same-line detection
         let label_end = self
             .arena
             .get(clause.expression)
             .map(|n| n.end)
-            .unwrap_or(node.pos);
+            .unwrap_or(0);
         self.emit_case_clause_body(&clause.statements, label_end);
     }
 
@@ -540,9 +545,8 @@ impl<'a> Printer<'a> {
 
         self.write("default:");
 
-        // "default" is 7 chars + ":" is 1, so label ends around node.pos + 8
-        let label_end = node.pos + 8;
-        self.emit_case_clause_body(&clause.statements, label_end);
+        // Use node pos + "default" length for same-line detection
+        self.emit_case_clause_body(&clause.statements, node.pos + 8);
     }
 
     fn emit_case_clause_body(&mut self, statements: &NodeList, label_end: u32) {
@@ -565,33 +569,13 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         for &stmt in &statements.nodes {
-            // Emit leading comments before this statement (same as emit_block)
+            // Emit leading comments before this statement.
+            // Use skip_trivia_forward to get the actual token start (past comments),
+            // so that emit_comments_before_pos can pick up comments in the leading trivia.
             if let Some(stmt_node) = self.arena.get(stmt) {
-                let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
-                if let Some(text) = self.source_text {
-                    while self.comment_emit_idx < self.all_comments.len() {
-                        let c_end = self.all_comments[self.comment_emit_idx].end;
-                        if c_end <= actual_start {
-                            let c_pos = self.all_comments[self.comment_emit_idx].pos;
-                            let c_trailing =
-                                self.all_comments[self.comment_emit_idx].has_trailing_new_line;
-                            let comment_text = crate::printer::safe_slice::slice(
-                                text,
-                                c_pos as usize,
-                                c_end as usize,
-                            );
-                            self.write(comment_text);
-                            if c_trailing {
-                                self.write_line();
-                            }
-                            self.comment_emit_idx += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                self.emit_comments_before_pos(actual_start);
             }
-
             self.emit(stmt);
             self.write_line();
         }
@@ -599,16 +583,11 @@ impl<'a> Printer<'a> {
         self.decrease_indent();
     }
 
-    /// Check if two source positions are on the same line in the original source
+    /// Check if two source positions are on the same line
     fn is_on_same_source_line(&self, pos1: u32, pos2: u32) -> bool {
         if let Some(text) = self.source_text {
             let start = std::cmp::min(pos1 as usize, text.len());
             let end = std::cmp::min(pos2 as usize, text.len());
-            let (start, end) = if start <= end {
-                (start, end)
-            } else {
-                (end, start)
-            };
             !text[start..end].contains('\n')
         } else {
             false

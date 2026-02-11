@@ -46,18 +46,19 @@ impl<'a> Printer<'a> {
             self.write("...");
         }
 
-        // propertyName: name  or just name (shorthand)
-        // For shorthand bindings like `{ name }`, property_name and name are both set
-        // to the same identifier. We only emit `propertyName: name` when they differ.
+        // propertyName: name  or just name
         if !elem.property_name.is_none() {
-            let is_shorthand = self.is_shorthand_binding(&elem.property_name, &elem.name);
-            if !is_shorthand {
+            // Check for shorthand: { name } where property_name text == name text
+            if self.is_shorthand_binding(elem.property_name, elem.name) {
+                self.emit(elem.name);
+            } else {
                 self.emit(elem.property_name);
                 self.write(": ");
+                self.emit(elem.name);
             }
+        } else {
+            self.emit(elem.name);
         }
-
-        self.emit(elem.name);
 
         // Default value: = expr
         if !elem.initializer.is_none() {
@@ -77,34 +78,22 @@ impl<'a> Printer<'a> {
         self.make_unique_name()
     }
 
-    /// Check if a binding element is a shorthand (property_name and name are the same identifier)
-    fn is_shorthand_binding(&self, property_name: &NodeIndex, name: &NodeIndex) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        let Some(prop_node) = self.arena.get(*property_name) else {
-            return false;
-        };
-        let Some(name_node) = self.arena.get(*name) else {
-            return false;
-        };
-
-        // Both must be identifiers
-        if prop_node.kind != SyntaxKind::Identifier as u16
-            || name_node.kind != SyntaxKind::Identifier as u16
-        {
-            return false;
-        }
-
-        // Compare identifier text
+    /// Check if a binding element is a shorthand (property_name text == name text)
+    fn is_shorthand_binding(&self, property_name: NodeIndex, name: NodeIndex) -> bool {
         let prop_text = self
             .arena
-            .get_identifier(prop_node)
-            .map(|i| &i.escaped_text);
+            .get(property_name)
+            .and_then(|n| self.arena.get_identifier(n))
+            .map(|id| id.escaped_text.as_str());
         let name_text = self
             .arena
-            .get_identifier(name_node)
-            .map(|i| &i.escaped_text);
-        prop_text == name_text && prop_text.is_some()
+            .get(name)
+            .and_then(|n| self.arena.get_identifier(n))
+            .map(|id| id.escaped_text.as_str());
+        match (prop_text, name_text) {
+            (Some(p), Some(n)) => p == n,
+            _ => false,
+        }
     }
 
     /// Check if a node is a binding pattern

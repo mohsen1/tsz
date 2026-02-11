@@ -1230,10 +1230,31 @@ impl<'a> CheckerState<'a> {
         decl_node: NodeIndex,
     ) {
         use crate::types::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext;
 
         // Only emit if report_unresolved_imports is enabled
         // (CLI driver handles module resolution in multi-file mode)
         if !self.ctx.report_unresolved_imports {
+            return;
+        }
+
+        // For import declarations, defer to check_import_declaration / check_import_equals_declaration
+        // which have accurate module specifier positions and handle special cases (e.g., TS1147 for
+        // imports in namespaces). This function may be called during type resolution with incorrect
+        // position information (or no node at all).
+        if let Some(node) = self.ctx.arena.get(decl_node) {
+            match node.kind {
+                syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::IMPORT_SPECIFIER
+                | syntax_kind_ext::NAMESPACE_IMPORT
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                    return;
+                }
+                _ => {}
+            }
+        } else if self.ctx.report_unresolved_imports {
+            // No declaration node available — check_import_declaration will handle this
+            // with correct module specifier positions from the import statement
             return;
         }
 

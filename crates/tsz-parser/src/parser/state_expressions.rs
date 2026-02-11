@@ -1647,14 +1647,23 @@ impl ParserState {
             }
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
-                break;
+                if self.is_token(SyntaxKind::CloseBraceToken)
+                    || self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    break;
+                }
+                // Missing comma - emit error and continue parsing for recovery
+                self.parse_expected(SyntaxKind::CommaToken);
             }
         }
 
-        let end_pos = if self.parse_expected(SyntaxKind::CloseBraceToken) {
-            self.token_end()
+        let end_pos = if self.is_token(SyntaxKind::CloseBraceToken) {
+            let end = self.token_end();
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+            end
         } else {
             // Recover by advancing until we see a closing brace or EOF to avoid infinite loops.
+            self.parse_expected(SyntaxKind::CloseBraceToken);
             while !self.is_token(SyntaxKind::CloseBraceToken)
                 && !self.is_token(SyntaxKind::EndOfFileToken)
             {

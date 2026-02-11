@@ -148,57 +148,6 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
-    // Property Accessibility
-    // =========================================================================
-
-    /// Verify that a property access is valid given the current class context.
-    ///
-    /// Returns true if the access is allowed, false if it should be an error.
-    /// This does NOT emit errors - use `check_property_accessible` for error emission.
-    ///
-    /// This is a simplified pre-check. For full accessibility checking with error emission,
-    /// use the existing `check_property_accessibility` method.
-    pub fn verify_property_accessible(&self, _object_type: TypeId, _property_name: &str) -> bool {
-        // If we're not in a class context, we can only access public members
-        let _current_class = self.ctx.enclosing_class.as_ref();
-
-        // For now, we always return true and let the full check handle it
-        // This method is meant for quick pre-checks where we don't need errors
-        true
-    }
-
-    // =========================================================================
-    // Private Brand Checking
-    // =========================================================================
-
-    /// Check if two types share the same private brand.
-    ///
-    /// This is used for nominal typing with private members.
-    /// Returns true if both types have the same private brand or neither has a private brand.
-    ///
-    /// Note: This is a simplified implementation. The full version would check
-    /// the private brand properties directly in the type system.
-    pub fn verify_same_private_brand(&self, _type1: TypeId, _type2: TypeId) -> bool {
-        // Simplified: always return true for now
-        // The full implementation requires access to private type internals
-        true
-    }
-
-    /// Get a description of why private brands don't match, if any.
-    ///
-    /// Returns None if brands match or if there are no private brands.
-    /// Returns Some(message) describing the mismatch otherwise.
-    pub fn describe_private_brand_mismatch(
-        &self,
-        _source: TypeId,
-        _target: TypeId,
-    ) -> Option<String> {
-        // Simplified implementation - return None (no mismatch)
-        // The full implementation would compare private brand properties
-        None
-    }
-
-    // =========================================================================
     // Error Reporting for Accessibility
     // =========================================================================
 

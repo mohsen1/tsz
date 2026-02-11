@@ -125,7 +125,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-build
-          path: target/release/
+          path: .target/release/
           retention-days: 1
 
   # ─── Test: Foundation crates (common, scanner, parser) ─────────────────────
@@ -431,86 +431,76 @@ jobs:
   conformance:
     name: Conformance Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [changes, build]
+    timeout-minutes: 30
+    needs: [changes]
     if: >-
       needs.changes.outputs.solver == 'true' ||
       needs.changes.outputs.checker == 'true' ||
       needs.changes.outputs.binder == 'true' ||
       needs.changes.outputs.common == 'true' ||
-      needs.changes.outputs.root == 'true'
+      needs.changes.outputs.root == 'true' ||
+      needs.changes.outputs.emitter == 'true'
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: release-build
-          path: .target/release/
-
-      - name: Make binaries executable
-        run: chmod +x .target/release/tsz .target/release/tsz-conformance .target/release/generate-tsc-cache || true
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - name: Fetch TypeScript conformance tests
-        run: git submodule update --init --depth 1 -- TypeScript || echo "No TypeScript submodule"
-
-      - name: Get TypeScript version
-        id: ts-version
         run: |
-          TS_SHA=$(git rev-parse HEAD:TypeScript 2>/dev/null || echo "unknown")
-          echo "sha=$TS_SHA" >> $GITHUB_OUTPUT
-          echo "TypeScript SHA: $TS_SHA"
+          git submodule update --init --depth 1 -- TypeScript
+          test -d TypeScript/tests/cases/conformance || { echo "ERROR: TypeScript test files missing"; exit 1; }
 
-      - name: Try to restore TSC cache
-        id: tsc-cache
-        uses: actions/cache@v4
-        with:
-          path: tsc-cache-full.json
-          key: tsc-cache-${{ steps.ts-version.outputs.sha }}
-
-      - name: Install Rust (for crates/conformance build if needed)
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache crates/conformance build
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            .target
             crates/conformance/target
-          key: ${{ runner.os }}-conformance-${{ hashFiles('crates/conformance/Cargo.lock') }}
+          key: ${{ runner.os }}-conformance-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-conformance-
 
-      - name: Build conformance runner
+      - name: Run conformance tests
         run: |
-          cd crates/conformance
-          cargo build --release
-          mkdir -p ../.target/release
-          cp target/release/tsz-conformance ../.target/release/ || true
-          cp target/release/generate-tsc-cache ../.target/release/ || true
+          # Extract baseline percentage from README
+          BASELINE=$(sed -n '/CONFORMANCE_START/,/CONFORMANCE_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | head -1 | tr -d '%')
+          echo "README baseline: ${BASELINE}%"
 
-      - name: Run conformance tests (quick)
-        run: |
-          timeout 600 ./scripts/conformance.sh run --no-download --max 500 --workers 4 || {
-            EXIT_CODE=$?
-            if [ $EXIT_CODE -eq 124 ]; then
-              echo "::warning::Conformance tests timed out"
+          # Build and run conformance (cache is checked into the repo)
+          TMPOUT=$(mktemp)
+          ./scripts/conformance.sh run 2>&1 | tee "$TMPOUT" || true
+
+          # Extract actual percentage from output (matches "N.N%" pattern)
+          ACTUAL=$(grep -oE '[0-9]+\.[0-9]+%' "$TMPOUT" | tail -1 | tr -d '%')
+          rm -f "$TMPOUT"
+
+          if [ -z "$ACTUAL" ] || [ "$ACTUAL" = "0.0" ]; then
+            echo "::error::Conformance runner produced no results (0.0% or no output)"
+            exit 1
+          fi
+
+          if [ -n "$BASELINE" ]; then
+            echo "Actual: ${ACTUAL}% | Baseline: ${BASELINE}%"
+            if echo "$ACTUAL $BASELINE" | awk '{exit !($1 < $2)}'; then
+              echo "::error::Conformance regression: ${ACTUAL}% < ${BASELINE}% (README baseline)"
               exit 1
+            else
+              echo "::notice::Conformance OK: ${ACTUAL}% >= ${BASELINE}% baseline"
             fi
-            echo "::notice::Conformance tests completed with exit code $EXIT_CODE (not failing CI)"
-            exit 0
-          }
+          else
+            echo "::warning::Could not extract baseline from README, skipping regression check"
+          fi
 
   # ─── Summary ───────────────────────────────────────────────────────────────
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [lint, build, test-foundation, test-binder, test-solver, test-checker, test-leaf, test-root, wasm-build]
+    needs: [lint, build, test-foundation, test-binder, test-solver, test-checker, test-leaf, test-root, wasm-build, conformance]
     if: always()
     steps:
       - name: Check results
@@ -534,5 +524,6 @@ jobs:
           check_job "Leaf Tests" "${{ needs.test-leaf.result }}"
           check_job "Root Tests" "${{ needs.test-root.result }}"
           check_job "WASM Build" "${{ needs.wasm-build.result }}"
+          check_job "Conformance" "${{ needs.conformance.result }}"
 
           echo "All critical jobs passed (or were skipped because no relevant changes)!"
