@@ -9829,14 +9829,11 @@ const value = map[1];
 
 /// Test TS7053: Element access requires index signature
 ///
-/// NOTE: Currently ignored - index signature requirement detection is not fully
-/// implemented. The checker should emit TS7053 when accessing object properties
-/// with a string index when no index signature is defined.
+/// When noImplicitAny is enabled, accessing an object with a string index
+/// that has no index signature should emit TS7053.
 #[test]
-#[ignore = "Index signature requirement detection not fully implemented"]
 fn test_checker_element_access_requires_index_signature() {
     use crate::parser::ParserState;
-    use crate::test_fixtures::load_lib_files_for_test;
 
     let source = r#"
 interface Foo { x: number; }
@@ -9848,40 +9845,21 @@ const value = obj[key];
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    // Load lib files for global types
-    let lib_files = load_lib_files_for_test();
     let mut binder = BinderState::new();
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::binder::state::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&lib_contexts);
-    }
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.no_implicit_any = true;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
-    // Set lib contexts for global type resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -9894,11 +9872,9 @@ const value = obj[key];
 
 /// Test TS7053: Element access with union string index requires index signature
 ///
-/// NOTE: Currently ignored - index signature requirement for union string indices
-/// is not being detected correctly. The checker should emit TS7053 when accessing
-/// objects with union string indices that include non-literal types.
+/// When noImplicitAny is enabled, accessing an object with a union string index
+/// that includes non-literal types should emit TS7053.
 #[test]
-#[ignore = "Index signature requirement for union string indices not detected correctly"]
 fn test_checker_element_access_union_string_index_requires_signature() {
     use crate::parser::ParserState;
 
@@ -9917,12 +9893,14 @@ const value = obj[key];
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.no_implicit_any = true;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -9937,10 +9915,9 @@ const value = obj[key];
 
 /// Test TS7053: Element access with union string/number index requires index signature
 ///
-/// NOTE: Currently ignored - index signature requirement for union string/number indices
-/// is not being detected correctly. Related to `test_checker_element_access_union_string_index_requires_signature`.
+/// When noImplicitAny is enabled, accessing an object with a union string/number index
+/// should emit TS7053. Related to `test_checker_element_access_union_string_index_requires_signature`.
 #[test]
-#[ignore = "Index signature requirement for union string/number indices not detected correctly"]
 fn test_checker_element_access_union_string_number_index_requires_signature() {
     use crate::parser::ParserState;
 
@@ -9959,12 +9936,14 @@ const value = obj[key];
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.no_implicit_any = true;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
