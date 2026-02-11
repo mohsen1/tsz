@@ -645,11 +645,13 @@ impl<'a> CheckerState<'a> {
             // cached during compute_final_type. This prevents "Zombie Freshness" where
             // get_type_of_symbol returns the stale fresh type instead of the widened type.
             //
-            // EXCEPT: For merged interface+variable symbols (e.g., `interface Ctor { new(): T }` +
-            // `declare var Ctor: Ctor`), the final_type from get_type_from_type_node is a Lazy
-            // wrapper, while get_type_of_symbol already cached the structural Callable type with
-            // construct signatures. Overwriting with Lazy causes false TS2351 ("not constructable")
-            // because the Lazy type can't be resolved back to the Callable by the solver.
+            // EXCEPT: For merged interface+variable symbols (e.g., `interface Error` +
+            // `declare var Error: ErrorConstructor`), get_type_of_symbol already cached
+            // the INTERFACE type (which is the correct type for type-position usage like
+            // `var e: Error`). The variable declaration's type annotation resolves to
+            // the constructor/value type, so overwriting would corrupt the cached interface
+            // type. Value-position resolution (`new Error()`) is handled separately by
+            // `get_type_of_identifier` which has its own merged-symbol path.
             {
                 let is_merged_interface = self.ctx.binder.get_symbol(sym_id).is_some_and(|s| {
                     s.flags & tsz_binder::symbol_flags::INTERFACE != 0
@@ -658,9 +660,7 @@ impl<'a> CheckerState<'a> {
                                 | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
                             != 0
                 });
-                let is_lazy =
-                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, final_type).is_some();
-                if !(is_merged_interface && is_lazy) {
+                if !is_merged_interface {
                     self.cache_symbol_type(sym_id, final_type);
                 }
             }
