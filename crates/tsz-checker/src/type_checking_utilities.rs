@@ -63,9 +63,22 @@ impl<'a> CheckerState<'a> {
             };
             self.push_symbol_dependency(sym_id, true);
             let type_id = if let Some(types) = param_types {
+                // param_types already have optional undefined applied
                 types.get(i).and_then(|t| *t)
             } else if !param.type_annotation.is_none() {
-                Some(self.get_type_from_type_node(param.type_annotation))
+                let mut t = self.get_type_from_type_node(param.type_annotation);
+                // Under strictNullChecks, optional parameters (with `?`) include
+                // `undefined` in their type.  Parameters with only a default value
+                // (no `?`) do NOT — the default guarantees a value at runtime.
+                if param.question_token
+                    && self.ctx.strict_null_checks()
+                    && t != TypeId::ANY
+                    && t != TypeId::UNKNOWN
+                    && t != TypeId::ERROR
+                {
+                    t = self.ctx.types.union2(t, TypeId::UNDEFINED);
+                }
+                Some(t)
             } else {
                 // Parameters without type annotations get implicit 'any' type.
                 // TypeScript uses 'any' (with TS7006 when noImplicitAny is enabled).

@@ -249,13 +249,27 @@ impl<'a> CheckerState<'a> {
                 let optional = param.question_token || !param.initializer.is_none();
                 let rest = param.dot_dot_dot_token;
 
+                // Under strictNullChecks, optional parameters (with `?`) get
+                // `undefined` added to their type.  Parameters with a default
+                // value but no `?` do NOT — the default guarantees a value.
+                let effective_type = if param.question_token
+                    && self.ctx.strict_null_checks()
+                    && type_id != TypeId::ANY
+                    && type_id != TypeId::ERROR
+                    && type_id != TypeId::UNDEFINED
+                {
+                    self.ctx.types.union2(type_id, TypeId::UNDEFINED)
+                } else {
+                    type_id
+                };
+
                 params.push(ParamInfo {
                     name,
-                    type_id,
+                    type_id: effective_type,
                     optional,
                     rest,
                 });
-                param_types.push(Some(type_id));
+                param_types.push(Some(effective_type));
                 contextual_index += 1;
             }
         }
