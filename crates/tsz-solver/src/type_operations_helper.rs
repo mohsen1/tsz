@@ -255,6 +255,154 @@ pub fn extract_object_shape(
     result
 }
 
+// ============================================================================
+// Advanced Visitor-Based Helpers (Phase 4 Expansion)
+// ============================================================================
+
+/// Result type for composite member iteration
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Either<L, R> {
+    /// Left variant (e.g., array element)
+    Left(L),
+    /// Right variant (e.g., tuple elements)
+    Right(R),
+}
+
+impl<L, R> Either<L, R> {
+    /// Extract left value if present
+    pub fn left(self) -> Option<L> {
+        match self {
+            Either::Left(l) => Some(l),
+            Either::Right(_) => None,
+        }
+    }
+
+    /// Extract right value if present
+    pub fn right(self) -> Option<R> {
+        match self {
+            Either::Left(_) => None,
+            Either::Right(r) => Some(r),
+        }
+    }
+}
+
+/// Extract array element OR tuple elements (but not both).
+///
+/// Useful when a type can be either a single-element container (array)
+/// or a multi-element container (tuple).
+///
+/// # Returns
+///
+/// - `Some(Either::Left(elem))` if type is array
+/// - `Some(Either::Right(elements))` if type is tuple
+/// - `None` if type is neither
+pub fn extract_array_or_tuple(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Either<TypeId, crate::types::TupleListId>> {
+    let mut visitor = TypeClassificationVisitor::new(db, type_id);
+
+    // Try array first
+    let mut result = None;
+    if visitor.visit_array(|elem| {
+        result = Some(Either::Left(elem));
+    }) {
+        return result;
+    }
+
+    // Try tuple next
+    if visitor.visit_tuple(|elements| {
+        result = Some(Either::Right(elements));
+    }) {
+        return result;
+    }
+
+    None
+}
+
+/// Extract union members OR intersection members (composite types).
+///
+/// Returns the member list if type is union or intersection, None otherwise.
+/// Use when you need to handle both union and intersection uniformly.
+///
+/// # Example
+///
+/// ```ignore
+/// // Type is string | number or string & number
+/// let members = extract_composite_members(db, composite_type);
+/// // members == Some(TypeListId)
+/// ```
+pub fn extract_composite_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::types::TypeListId> {
+    let mut visitor = TypeClassificationVisitor::new(db, type_id);
+
+    let mut result = None;
+    if visitor.visit_union(|members| {
+        result = Some(members);
+    }) {
+        return result;
+    }
+
+    if visitor.visit_intersection(|members| {
+        result = Some(members);
+    }) {
+        return result;
+    }
+
+    None
+}
+
+/// Extract object shape if type is object (including object with index).
+///
+/// Returns shape for both regular objects and objects with index signatures.
+/// Simpler than checking both ObjectShapeId variants separately.
+pub fn extract_any_object_shape(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::types::ObjectShapeId> {
+    // Current implementation is same as extract_object_shape
+    // because TypeClassificationVisitor::visit_object handles both variants
+    extract_object_shape(db, type_id)
+}
+
+/// Check if a type is a container type (array, tuple, union, intersection, object).
+///
+/// Container types hold other types. Useful for recursive type operations.
+pub fn is_container_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let mut visitor = TypeClassificationVisitor::new(db, type_id);
+
+    visitor.is_array()
+        || visitor.is_tuple()
+        || visitor.is_union()
+        || visitor.is_intersection()
+        || visitor.is_object()
+}
+
+/// Check if a type is a collection (array or tuple).
+///
+/// Collections are ordered containers with positional elements.
+pub fn is_collection_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let mut visitor = TypeClassificationVisitor::new(db, type_id);
+    visitor.is_array() || visitor.is_tuple()
+}
+
+/// Check if a type is a composite (union or intersection).
+///
+/// Composite types combine multiple types with set operations.
+pub fn is_composite_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let mut visitor = TypeClassificationVisitor::new(db, type_id);
+    visitor.is_union() || visitor.is_intersection()
+}
+
+/// Check if a type is a simple type (not a container).
+///
+/// Simple types are primitives, literals, and intrinsic types.
+pub fn is_simple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    !is_container_type(db, type_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
