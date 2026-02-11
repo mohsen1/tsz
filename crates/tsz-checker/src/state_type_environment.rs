@@ -1261,6 +1261,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.leave_recursion();
                 return Vec::new();
             }
+
             let mut checker = Box::new(CheckerState::with_parent_cache(
                 symbol_arena.as_ref(),
                 self.ctx.binder,
@@ -1271,16 +1272,8 @@ impl<'a> CheckerState<'a> {
             ));
             let result = checker.get_type_params_for_symbol(sym_id);
 
-            // Propagate delegated symbol caches back to the parent context.
-            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_types {
-                self.ctx.symbol_types.entry(cached_sym).or_insert(cached_ty);
-            }
-            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_instance_types {
-                self.ctx
-                    .symbol_instance_types
-                    .entry(cached_sym)
-                    .or_insert(cached_ty);
-            }
+            // DO NOT merge child's symbol_types back. See delegate_cross_arena_symbol_resolution
+            // for the full explanation: node_symbols collisions across arenas cause cache poisoning.
 
             Self::leave_cross_arena_delegation();
 

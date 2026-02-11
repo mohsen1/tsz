@@ -2273,7 +2273,6 @@ fn invalidate_paths_with_dependents_symbols_handles_star_reexports() {
 }
 
 #[test]
-#[ignore = "TODO: Multi-file project compilation with imports"]
 fn compile_multi_file_project_with_imports() {
     // End-to-end test for a multi-file project.
     // Note: Uses namespace imports to avoid known named import type resolution issues.

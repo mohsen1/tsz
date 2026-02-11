@@ -1201,7 +1201,16 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // User symbol - use remapped ID
                 remapped_file_locals.set(name.clone(), new_sym_id);
                 // Also add to globals (all top-level declarations visible globally)
-                globals.set(name.clone(), new_sym_id);
+                // EXCEPT ALIAS symbols (import declarations) which are file-local by design.
+                // Leaking import aliases to globals causes cross-file contamination where
+                // other files try to resolve the import and get incorrect types.
+                let is_alias = global_symbols
+                    .get(new_sym_id)
+                    .map(|s| s.flags & crate::binder::symbol_flags::ALIAS != 0)
+                    .unwrap_or(false);
+                if !is_alias {
+                    globals.set(name.clone(), new_sym_id);
+                }
             } else if let Some(&global_id) = lib_name_to_global.get(name) {
                 // Lib symbol - use the pre-remapped global ID
                 // Only add to file_locals, NOT to globals (lib symbols are accessed

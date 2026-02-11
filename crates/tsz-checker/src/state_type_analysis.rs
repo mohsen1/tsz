@@ -1011,6 +1011,7 @@ impl<'a> CheckerState<'a> {
             trace!(
                 sym_id = sym_id.0,
                 type_id = cached.0,
+                file = self.ctx.file_name.as_str(),
                 "(cached) get_type_of_symbol"
             );
             return cached;
@@ -1102,6 +1103,7 @@ impl<'a> CheckerState<'a> {
             placeholder = placeholder.0,
             is_lazy =
                 tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, placeholder).is_some(),
+            file = self.ctx.file_name.as_str(),
             "get_type_of_symbol: inserted placeholder"
         );
         self.ctx.symbol_types.insert(sym_id, placeholder);
@@ -1121,7 +1123,12 @@ impl<'a> CheckerState<'a> {
 
         // Cache result
         self.ctx.symbol_types.insert(sym_id, result);
-        trace!(sym_id = sym_id.0, type_id = result.0, "get_type_of_symbol");
+        trace!(
+            sym_id = sym_id.0,
+            type_id = result.0,
+            file = self.ctx.file_name.as_str(),
+            "get_type_of_symbol"
+        );
 
         // Also populate the type environment for Application expansion
         // IMPORTANT: We use the type_params returned by compute_type_of_symbol
@@ -1375,18 +1382,15 @@ impl<'a> CheckerState<'a> {
             // Use get_type_of_symbol to ensure proper cycle detection.
             let result = checker.get_type_of_symbol(sym_id);
 
-            // `with_parent_cache` currently clones map-backed caches, so child updates
-            // do not automatically propagate. Merge symbol caches back to the parent
-            // to avoid repeated lib symbol recomputation across delegated resolutions.
-            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_types {
-                self.ctx.symbol_types.entry(cached_sym).or_insert(cached_ty);
-            }
-            for (&cached_sym, &cached_ty) in &checker.ctx.symbol_instance_types {
-                self.ctx
-                    .symbol_instance_types
-                    .entry(cached_sym)
-                    .or_insert(cached_ty);
-            }
+            // DO NOT merge child's symbol_types back to the parent.
+            // Cross-arena child checkers share the parent's binder (including node_symbols
+            // which maps the parent file's node indices to symbol IDs) but operate on a
+            // different arena. This causes node index collisions: a lib node at index N
+            // can be confused with the parent file's node at index N, contaminating the
+            // symbol cache (e.g., setting an ALIAS import symbol to STRING because the
+            // same node index maps to a StringKeyword in the lib arena).
+            // The delegated symbol's result is returned directly and cached by the caller
+            // in get_type_of_symbol, so no merge-back is needed for correctness.
 
             self.ctx.leave_recursion();
             Self::leave_cross_arena_delegation();
@@ -1593,6 +1597,12 @@ impl<'a> CheckerState<'a> {
 
         // Handle cross-file symbol resolution via delegation
         if let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id) {
+            tracing::trace!(
+                sym_id = sym_id.0,
+                result_type = result.0.0,
+                file = self.ctx.file_name.as_str(),
+                "compute_type_of_symbol: delegated to cross-arena"
+            );
             return result;
         }
 
@@ -1610,6 +1620,17 @@ impl<'a> CheckerState<'a> {
                 ),
                 None => return (TypeId::UNKNOWN, Vec::new()),
             };
+
+        tracing::trace!(
+            sym_id = sym_id.0,
+            flags = format!("{:#x}", flags).as_str(),
+            name = escaped_name.as_str(),
+            import_module = ?import_module,
+            import_name = ?import_name,
+            value_decl = value_decl.0,
+            file = self.ctx.file_name.as_str(),
+            "compute_type_of_symbol: resolved symbol"
+        );
 
         // Class - return class constructor type (merging namespace exports when present)
         // Also compute and cache instance type for TYPE position resolution
