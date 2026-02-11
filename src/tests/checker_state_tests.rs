@@ -6587,7 +6587,6 @@ fn test_symbol_property_not_found() {
 // ============== Property access from index signature tests (error 4111) ==============
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_property_access_from_index_signature_4111() {
     use crate::parser::ParserState;
 
@@ -6607,12 +6606,14 @@ const val = obj.someProperty;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.no_property_access_from_index_signature = true;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -6646,12 +6647,14 @@ const val = obj.explicitProp;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.no_property_access_from_index_signature = true;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -6664,10 +6667,11 @@ const val = obj.explicitProp;
 }
 
 #[test]
-#[ignore]
 fn test_union_with_index_signature_4111() {
     use crate::parser::ParserState;
 
+    // When a union has one member with an explicit property and another with an index
+    // signature, tsc does NOT emit TS4111 for the explicit property.
     let source = r#"
 type Mixed = { x: number } | { [key: string]: number };
 const obj: Mixed = {} as any;
@@ -6682,20 +6686,23 @@ const val = obj.x;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    let mut opts = crate::checker::context::CheckerOptions::default();
+    opts.no_property_access_from_index_signature = true;
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        opts,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&4111),
-        "Expected error 4111 for union with index signature member"
+        !codes.contains(&4111),
+        "Should NOT emit 4111 when union member has explicit property 'x', got: {:?}",
+        codes
     );
 }
 

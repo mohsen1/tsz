@@ -988,7 +988,7 @@ impl<'a> CheckerState<'a> {
                                 "Property '{}' comes from an index signature, so it must be accessed with ['{}'].",
                                 property_name, property_name
                             ),
-                            diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+                            diagnostic_codes::PROPERTY_COMES_FROM_AN_INDEX_SIGNATURE_SO_IT_MUST_BE_ACCESSED_WITH,
                         );
                     }
                     self.apply_flow_narrowing(idx, prop_type)
