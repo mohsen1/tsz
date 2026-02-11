@@ -676,9 +676,10 @@ impl<'a> CheckerState<'a> {
                 self.check_type_for_parameter_properties(func_type.type_annotation);
             }
         }
-        // Check type literals (object types) for call/construct signatures
+        // Check type literals (object types) for call/construct signatures and duplicate properties
         else if node.kind == syntax_kind_ext::TYPE_LITERAL {
             if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
+                self.check_type_literal_duplicate_properties(&type_lit.members.nodes);
                 for &member_idx in &type_lit.members.nodes {
                     self.check_type_member_for_parameter_properties(member_idx);
                 }
@@ -701,6 +702,64 @@ impl<'a> CheckerState<'a> {
             && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
         {
             self.check_type_for_parameter_properties(paren.type_node);
+        } else if node.kind == syntax_kind_ext::TYPE_PREDICATE
+            && let Some(pred) = self.ctx.arena.get_type_predicate(node)
+        {
+            if !pred.type_node.is_none() {
+                self.check_type_for_parameter_properties(pred.type_node);
+            }
+        }
+    }
+
+    /// Check for duplicate property names in type literals (TS2300).
+    /// e.g. `{ a: string; a: number; }` has duplicate property `a`.
+    pub(crate) fn check_type_literal_duplicate_properties(&mut self, members: &[NodeIndex]) {
+        use crate::types::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
+
+        let mut seen: rustc_hash::FxHashMap<String, NodeIndex> = rustc_hash::FxHashMap::default();
+
+        for &member_idx in members {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            if member_node.kind != PROPERTY_SIGNATURE && member_node.kind != METHOD_SIGNATURE {
+                continue;
+            }
+
+            let Some(name) = self.get_member_name(member_idx) else {
+                continue;
+            };
+
+            if let Some(&prev_idx) = seen.get(&name) {
+                // Report duplicate on the second occurrence
+                let name_idx = if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                    sig.name
+                } else {
+                    member_idx
+                };
+                self.error_at_node(
+                    name_idx,
+                    &format!("Duplicate identifier '{}'.", name),
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                );
+                // Also mark the first occurrence
+                if let Some(prev_node) = self.ctx.arena.get(prev_idx) {
+                    let prev_name_idx = if let Some(sig) = self.ctx.arena.get_signature(prev_node) {
+                        sig.name
+                    } else {
+                        prev_idx
+                    };
+                    self.error_at_node(
+                        prev_name_idx,
+                        &format!("Duplicate identifier '{}'.", name),
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
+                }
+            } else {
+                seen.insert(name, member_idx);
+            }
         }
     }
 
