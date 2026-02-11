@@ -61,26 +61,51 @@ impl<'a> Printer<'a> {
             return true;
         }
 
-        let Some(source) = self.source_text else {
-            // No source text, default to adding parens for safety
-            return true;
-        };
+        // FIRST: Check source text if available (most reliable)
+        // Scan forward from the last parameter to find ')' before '=>'
+        if let Some(source) = self.source_text {
+            if let Some(last_param) = params.last() {
+                if let Some(param_node) = self.arena.get(*last_param) {
+                    let end_pos = param_node.end as usize;
 
-        // Check the character before the first parameter
+                    // Ensure we don't go out of bounds
+                    if end_pos < source.len() {
+                        // Scan forward from the end of the last parameter
+                        // Look for ')' (had parens) or '=' from '=>' (no parens)
+                        let suffix = &source[end_pos..];
+                        for ch in suffix.chars() {
+                            match ch {
+                                // Whitespace - skip
+                                ' ' | '\t' | '\n' | '\r' => continue,
+                                // Found closing paren - had parens
+                                ')' => return true,
+                                // Found '=' from '=>' - no parens
+                                '=' => return false,
+                                // Any other character (colon for type, etc.) - keep scanning
+                                _ => continue,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // FALLBACK: If source text check failed or no source available,
+        // check if parameter has modifiers or type annotations.
+        // Parameters with these MUST have had parens in valid TS.
         if let Some(first_param) = params.first() {
             if let Some(param_node) = self.arena.get(*first_param) {
-                let start_pos = param_node.pos as usize;
-
-                // Scan backwards from the parameter start to find a non-whitespace character
-                let mut pos = start_pos;
-                while pos > 0 {
-                    pos -= 1;
-                    let ch = &source[pos..pos + 1];
-                    if ch == " " || ch == "\t" || ch == "\n" || ch == "\r" {
-                        continue;
+                if let Some(param) = self.arena.get_parameter(param_node) {
+                    // Check for modifiers (public, private, protected, readonly, etc.)
+                    if let Some(mods) = &param.modifiers {
+                        if !mods.nodes.is_empty() {
+                            return true;
+                        }
                     }
-                    // Found a non-whitespace character
-                    return ch == "(";
+                    // Check for type annotation
+                    if !param.type_annotation.is_none() {
+                        return true;
+                    }
                 }
             }
         }
