@@ -3,7 +3,8 @@
 ## Baseline
 - **Slice 2 Range**: Tests 3146-6292 (offset=3146, max=3146)
 - **Initial Pass Rate**: 1813/3132 passed (57.9%)
-- **Current Pass Rate**: 1812/3130 passed (57.9%) [after TS2708 + TS1147 fixes]
+- **Current Pass Rate**: 1813/3129 passed (57.9%) [after all Session 1 fixes]
+- **Net Change**: +0 tests (maintained stability while improving error quality)
 - **Test Date**: 2026-02-11
 
 ## Fixes Implemented
@@ -21,6 +22,12 @@
    - Defer IMPORT_EQUALS_DECLARATION in emit_module_not_found_error
    - Impact: 1 test (importDeclarationInModuleDeclaration1.ts)
    - **Note**: May need revision - some tests expect both TS1147 and TS2307
+
+3. **TS2708 for Namespace Member Access** (`aa2fa3f95`)
+   - Emit TS2708 + TS2693 for namespace.TypeMember access (e.g., `ns.Interface()`)
+   - Modified get_type_of_element_access and get_type_of_property_access_by_name
+   - Dual emission: TS2708 for namespace misuse, TS2693 for type-only member
+   - Impact: 1 test (interfaceNameAsIdentifier.ts)
 
 ## Top Error Mismatches
 
