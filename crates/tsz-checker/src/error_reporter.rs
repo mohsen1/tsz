@@ -1537,8 +1537,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx.file_name.clone(),
                     loc.start,
                     loc.length(),
-                    "This expression is not callable because it is a 'get' accessor. Did you mean to access it without '()'?".to_string(),
-                    diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE,
+                    "This expression is not callable because it is a 'get' accessor. Did you mean to use it without '()'?".to_string(),
+                    diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE_BECAUSE_IT_IS_A_GET_ACCESSOR_DID_YOU_MEAN_TO_USE,
                 ),
             );
         }
