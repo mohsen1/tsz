@@ -965,6 +965,26 @@ impl<'a> CheckerState<'a> {
                     let Some(interface_decl) = self.ctx.arena.get_interface(interface_node) else {
                         continue;
                     };
+
+                    // Check if interface extends a class with private/protected members (TS2420)
+                    // Only error if the implementing class doesn't extend the same base class
+                    if self.interface_extends_class_with_inaccessible_members(
+                        interface_idx,
+                        interface_decl,
+                        _class_idx,
+                        class_data,
+                    ) {
+                        self.error_at_node(
+                            type_idx,
+                            &format!(
+                                "Class '{}' incorrectly implements interface '{}'.",
+                                class_name, interface_name
+                            ),
+                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                        );
+                        continue;
+                    }
+
                     // Check that all interface members are implemented with compatible types
                     let mut missing_members: Vec<String> = Vec::new();
                     let mut incompatible_members: Vec<(String, String, String)> = Vec::new(); // (name, expected_type, actual_type)
@@ -1088,6 +1108,252 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Check if an interface extends a class with private/protected members that are
+    /// inaccessible to the implementing class.
+    ///
+    /// When an interface extends a class with private/protected members, those members
+    /// become part of the interface's contract. A class implementing such an interface
+    /// can only satisfy this contract if it extends the same base class (giving it
+    /// access to those private members). Otherwise, TS2420 should be emitted.
+    ///
+    /// # Arguments
+    /// * `interface_idx` - The NodeIndex of the interface declaration
+    /// * `interface_decl` - The interface data
+    /// * `class_idx` - The NodeIndex of the implementing class
+    /// * `class_data` - The class data
+    ///
+    /// # Returns
+    /// true if the interface extends a class with private/protected members that the
+    /// implementing class cannot access
+    fn interface_extends_class_with_inaccessible_members(
+        &mut self,
+        _interface_idx: NodeIndex,
+        interface_decl: &tsz_parser::parser::node::InterfaceData,
+        _class_idx: NodeIndex,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        // First, collect the base classes that the implementing class extends
+        let mut class_extends_symbols = std::collections::HashSet::new();
+        if let Some(ref class_heritage) = class_data.heritage_clauses {
+            for &clause_idx in &class_heritage.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+
+                // Only look at extends clauses
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                for &type_idx in &heritage.types.nodes {
+                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                        continue;
+                    };
+
+                    let expr_idx = if let Some(expr_type_args) =
+                        self.ctx.arena.get_expr_type_args(type_node)
+                    {
+                        expr_type_args.expression
+                    } else {
+                        type_idx
+                    };
+
+                    if let Some(base_name) = self.heritage_name_text(expr_idx)
+                        && let Some(sym_id) = self.ctx.binder.file_locals.get(&base_name)
+                    {
+                        class_extends_symbols.insert(sym_id);
+                    }
+                }
+            }
+        }
+
+        let Some(ref heritage_clauses) = interface_decl.heritage_clauses else {
+            return false;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+
+            // Only check extends clauses (not implements)
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            for &type_idx in &heritage.types.nodes {
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    continue;
+                };
+
+                // Get the expression from ExpressionWithTypeArguments or TypeReference
+                let expr_idx =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                        expr_type_args.expression
+                    } else {
+                        type_idx
+                    };
+
+                // Resolve the symbol being extended
+                if let Some(base_name) = self.heritage_name_text(expr_idx)
+                    && let Some(sym_id) = self.ctx.binder.file_locals.get(&base_name)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                {
+                    // If the implementing class extends this same base class, then it has
+                    // access to the private members - no error needed
+                    if class_extends_symbols.contains(&sym_id) {
+                        continue;
+                    }
+
+                    // Check if any declaration is a class with private/protected members
+                    for &decl_idx in &symbol.declarations {
+                        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                            continue;
+                        };
+
+                        // Check if it's a class declaration
+                        if decl_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                            continue;
+                        }
+
+                        let Some(class_data) = self.ctx.arena.get_class(decl_node) else {
+                            continue;
+                        };
+
+                        // Check if class has any private or protected members
+                        for &member_idx in &class_data.members.nodes {
+                            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                                continue;
+                            };
+
+                            match member_node.kind {
+                                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                                    if let Some(prop) =
+                                        self.ctx.arena.get_property_decl(member_node)
+                                    {
+                                        if self.has_private_modifier(&prop.modifiers)
+                                            || self.has_protected_modifier(&prop.modifiers)
+                                        {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                                    if let Some(method) =
+                                        self.ctx.arena.get_method_decl(member_node)
+                                    {
+                                        if self.has_private_modifier(&method.modifiers)
+                                            || self.has_protected_modifier(&method.modifiers)
+                                        {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                k if k == syntax_kind_ext::GET_ACCESSOR => {
+                                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
+                                    {
+                                        if self.has_private_modifier(&accessor.modifiers)
+                                            || self.has_protected_modifier(&accessor.modifiers)
+                                        {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                k if k == syntax_kind_ext::SET_ACCESSOR => {
+                                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
+                                    {
+                                        if self.has_private_modifier(&accessor.modifiers)
+                                            || self.has_protected_modifier(&accessor.modifiers)
+                                        {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    // Also check value_declaration
+                    if !symbol.value_declaration.is_none() {
+                        let decl_idx = symbol.value_declaration;
+                        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                            continue;
+                        };
+
+                        if decl_node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                            let Some(class_data) = self.ctx.arena.get_class(decl_node) else {
+                                continue;
+                            };
+
+                            for &member_idx in &class_data.members.nodes {
+                                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                                    continue;
+                                };
+
+                                match member_node.kind {
+                                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                                        if let Some(prop) =
+                                            self.ctx.arena.get_property_decl(member_node)
+                                        {
+                                            if self.has_private_modifier(&prop.modifiers)
+                                                || self.has_protected_modifier(&prop.modifiers)
+                                            {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                                        if let Some(method) =
+                                            self.ctx.arena.get_method_decl(member_node)
+                                        {
+                                            if self.has_private_modifier(&method.modifiers)
+                                                || self.has_protected_modifier(&method.modifiers)
+                                            {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                    k if k == syntax_kind_ext::GET_ACCESSOR => {
+                                        if let Some(accessor) =
+                                            self.ctx.arena.get_accessor(member_node)
+                                        {
+                                            if self.has_private_modifier(&accessor.modifiers)
+                                                || self.has_protected_modifier(&accessor.modifiers)
+                                            {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                    k if k == syntax_kind_ext::SET_ACCESSOR => {
+                                        if let Some(accessor) =
+                                            self.ctx.arena.get_accessor(member_node)
+                                        {
+                                            if self.has_private_modifier(&accessor.modifiers)
+                                                || self.has_protected_modifier(&accessor.modifiers)
+                                            {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Find a member by name in a class, searching up the inheritance chain.
