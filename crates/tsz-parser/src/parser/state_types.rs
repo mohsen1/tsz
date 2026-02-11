@@ -788,17 +788,40 @@ impl ParserState {
         )
     }
 
-    /// Parse typeof type: typeof x, typeof x.y
+    /// Parse typeof type: typeof x, typeof x.y, typeof import("...").A.B
     pub(crate) fn parse_typeof_type(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::TypeOfKeyword);
 
         // Parse the expression name (can be qualified: x.y.z or typeof import("..."))
-        let expr_name = if self.is_token(SyntaxKind::ImportKeyword) {
+        let mut expr_name = if self.is_token(SyntaxKind::ImportKeyword) {
             self.parse_import_expression()
         } else {
             self.parse_entity_name()
         };
+
+        // Parse member access after import(): typeof import("./a").A.foo
+        // This handles cases like: typeof import("module").Class.staticMember
+        while self.is_token(SyntaxKind::DotToken) {
+            self.next_token();
+            let right = self.parse_identifier_name(); // Use identifier_name to allow keywords as property names
+            let node_start_pos = if let Some(node) = self.arena.get(expr_name) {
+                node.pos
+            } else {
+                start_pos
+            };
+            let end_pos = self.token_end();
+
+            expr_name = self.arena.add_qualified_name(
+                syntax_kind_ext::QUALIFIED_NAME,
+                node_start_pos,
+                end_pos,
+                crate::parser::node::QualifiedNameData {
+                    left: expr_name,
+                    right,
+                },
+            );
+        }
 
         // Parse optional type arguments for instantiation expressions: typeof Err<U>
         let type_arguments = if self.is_token(SyntaxKind::LessThanToken) {

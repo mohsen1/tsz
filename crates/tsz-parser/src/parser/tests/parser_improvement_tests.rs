@@ -638,3 +638,71 @@ function validFunction() {
         error_count
     );
 }
+
+// =============================================================================
+// Import Type Tests
+// =============================================================================
+
+#[test]
+fn test_typeof_import_with_member_access() {
+    // typeof import("...").A.foo should parse without TS1005
+    // This is a valid TypeScript syntax for accessing static members
+    let source = r#"
+export const foo: typeof import("./a").A.foo;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit TS1005 for member access after import()
+    let ts1005_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1005)
+        .count();
+    assert_eq!(
+        ts1005_count, 0,
+        "Expected no TS1005 errors for typeof import with member access, got {}",
+        ts1005_count
+    );
+
+    // Should have no errors at all
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for typeof import with member access, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_typeof_import_with_nested_member_access() {
+    // typeof import("...").A.B.C should parse correctly
+    let source = r#"
+export const foo: typeof import("./module").A.B.C;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit any errors for nested member access after import()
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for typeof import with nested member access, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_typeof_import_without_member_access() {
+    // typeof import("...") without member access should still work
+    let source = r#"
+export const foo: typeof import("./module");
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit any errors
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no parser errors for typeof import without member access, got {:?}",
+        parser.get_diagnostics()
+    );
+}
