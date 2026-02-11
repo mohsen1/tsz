@@ -260,7 +260,7 @@ pub fn extract_object_shape(
 // ============================================================================
 
 /// Result type for composite member iteration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Either<L, R> {
     /// Left variant (e.g., array element)
     Left(L),
@@ -269,20 +269,14 @@ pub enum Either<L, R> {
 }
 
 impl<L, R> Either<L, R> {
-    /// Extract left value if present
-    pub fn left(self) -> Option<L> {
-        match self {
-            Either::Left(l) => Some(l),
-            Either::Right(_) => None,
-        }
+    /// Check if this is the left variant
+    pub fn is_left(&self) -> bool {
+        matches!(self, Either::Left(_))
     }
 
-    /// Extract right value if present
-    pub fn right(self) -> Option<R> {
-        match self {
-            Either::Left(_) => None,
-            Either::Right(r) => Some(r),
-        }
+    /// Check if this is the right variant
+    pub fn is_right(&self) -> bool {
+        matches!(self, Either::Right(_))
     }
 }
 
@@ -434,5 +428,17 @@ mod tests {
             TypePattern::Reference,
             TypePattern::Unknown,
         ];
+    }
+
+    #[test]
+    fn test_either_enum() {
+        // Test Either<L, R> enum for union-like returns
+        let left: Either<i32, String> = Either::Left(42);
+        assert!(left.is_left());
+        assert!(!left.is_right());
+
+        let right: Either<i32, String> = Either::Right("hello".to_string());
+        assert!(!right.is_left());
+        assert!(right.is_right());
     }
 }
