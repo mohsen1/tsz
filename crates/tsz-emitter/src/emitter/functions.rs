@@ -25,6 +25,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit native ES6+ arrow function syntax
+    #[tracing::instrument(level = "trace", skip(self, func), fields(param_count = func.parameters.nodes.len()))]
     fn emit_arrow_function_native(&mut self, func: &tsz_parser::parser::node::FunctionData) {
         if func.is_async {
             self.write("async ");
@@ -37,6 +38,13 @@ impl<'a> Printer<'a> {
         let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
         let is_simple = self.is_simple_single_parameter(&func.parameters.nodes);
         let needs_parens = source_had_parens || !is_simple;
+
+        tracing::trace!(
+            source_had_parens,
+            is_simple,
+            needs_parens,
+            "Arrow function parenthesis decision"
+        );
 
         if needs_parens {
             self.write("(");
@@ -55,34 +63,63 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if the source had parentheses around the parameters
+    #[tracing::instrument(level = "trace", skip(self, params), fields(param_count = params.len()))]
     fn source_has_arrow_function_parens(&self, params: &[NodeIndex]) -> bool {
         if params.is_empty() {
             // Empty param list always has parens: () => x
+            tracing::trace!("Empty param list, returning true");
             return true;
         }
 
         // FIRST: Check source text if available (most reliable)
-        // Scan forward from the last parameter to find ')' before '=>'
+        // Scan forward from the last parameter NAME to find ')' before '=>'
+        // Important: Use the parameter NAME's end, not the whole parameter's end
+        // (which includes type annotations that we want to detect)
         if let Some(source) = self.source_text {
             if let Some(last_param) = params.last() {
                 if let Some(param_node) = self.arena.get(*last_param) {
-                    let end_pos = param_node.end as usize;
+                    if let Some(param_data) = self.arena.get_parameter(param_node) {
+                        // Get the parameter NAME's end position, not the whole parameter
+                        if let Some(name_node) = self.arena.get(param_data.name) {
+                            let end_pos = name_node.end as usize;
+                            tracing::trace!(
+                                end_pos,
+                                source_len = source.len(),
+                                "Scanning source from param NAME end"
+                            );
 
-                    // Ensure we don't go out of bounds
-                    if end_pos < source.len() {
-                        // Scan forward from the end of the last parameter
-                        // Look for ')' (had parens) or '=' from '=>' (no parens)
-                        let suffix = &source[end_pos..];
-                        for ch in suffix.chars() {
-                            match ch {
-                                // Whitespace - skip
-                                ' ' | '\t' | '\n' | '\r' => continue,
-                                // Found closing paren - had parens
-                                ')' => return true,
-                                // Found '=' from '=>' - no parens
-                                '=' => return false,
-                                // Any other character (colon for type, etc.) - keep scanning
-                                _ => continue,
+                            // Ensure we don't go out of bounds
+                            if end_pos < source.len() {
+                                // Scan forward from the end of the parameter NAME
+                                // Look for ')' (had parens) or '=' from '=>' (no parens)
+                                let suffix = &source[end_pos..];
+                                let preview = &suffix[..std::cmp::min(30, suffix.len())];
+                                tracing::trace!(preview, "Source suffix preview");
+                                for ch in suffix.chars() {
+                                    match ch {
+                                        // Whitespace - skip
+                                        ' ' | '\t' | '\n' | '\r' => continue,
+                                        // Found closing paren - had parens
+                                        ')' => {
+                                            tracing::trace!("Found ')' in source, returning true");
+                                            return true;
+                                        }
+                                        // Found '=' from '=>' - no parens (simple param without parens)
+                                        '=' => {
+                                            tracing::trace!("Found '=' in source, returning false");
+                                            return false;
+                                        }
+                                        // Colon indicates type annotation, keep scanning
+                                        ':' => {
+                                            tracing::trace!(
+                                                "Found ':' (type annotation), continuing scan"
+                                            );
+                                            continue;
+                                        }
+                                        // Any other character - keep scanning
+                                        _ => continue,
+                                    }
+                                }
                             }
                         }
                     }
@@ -93,17 +130,24 @@ impl<'a> Printer<'a> {
         // FALLBACK: If source text check failed or no source available,
         // check if parameter has modifiers or type annotations.
         // Parameters with these MUST have had parens in valid TS.
+        tracing::trace!("Entering fallback check for modifiers/type annotations");
         if let Some(first_param) = params.first() {
             if let Some(param_node) = self.arena.get(*first_param) {
                 if let Some(param) = self.arena.get_parameter(param_node) {
                     // Check for modifiers (public, private, protected, readonly, etc.)
                     if let Some(mods) = &param.modifiers {
+                        let mod_count = mods.nodes.len();
+                        tracing::trace!(mod_count, "Found modifiers");
                         if !mods.nodes.is_empty() {
+                            tracing::trace!("Has modifiers, returning true");
                             return true;
                         }
                     }
                     // Check for type annotation
-                    if !param.type_annotation.is_none() {
+                    let has_type = !param.type_annotation.is_none();
+                    tracing::trace!(has_type, "Type annotation check");
+                    if has_type {
+                        tracing::trace!("Has type annotation, returning true");
                         return true;
                     }
                 }
@@ -111,6 +155,7 @@ impl<'a> Printer<'a> {
         }
 
         // Default to parens if we couldn't determine
+        tracing::trace!("Fallback: returning true (conservative default)");
         true
     }
 
