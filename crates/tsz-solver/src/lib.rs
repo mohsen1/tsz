@@ -46,10 +46,19 @@ pub mod sound;
 mod subtype;
 mod subtype_rules;
 pub mod tracer;
+pub mod type_classification_visitor;
+pub mod type_classifier;
+pub mod type_dispatcher;
+pub mod type_operations_helper;
+pub mod type_operations_matcher;
 pub mod type_predicates;
 pub mod type_queries;
 pub mod type_queries_extended;
+pub mod type_query_builder;
 pub mod types;
+
+// Documentation and examples
+mod examples_usage;
 pub mod unsoundness_audit;
 mod utils;
 pub mod variance;
@@ -86,6 +95,8 @@ pub use objects::*;
 pub use operations::*;
 pub use sound::*;
 pub use subtype::*;
+pub use type_classification_visitor::*;
+pub use type_classifier::*;
 pub use type_predicates::*;
 pub use types::Visibility;
 pub use types::*;
