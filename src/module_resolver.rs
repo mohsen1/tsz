@@ -1214,6 +1214,16 @@ impl ModuleResolver {
             });
         }
 
+        // Classic resolution emits TS2792 ("Did you mean to set moduleResolution
+        // to 'nodenext'?") instead of TS2307 when resolution fails.
+        if matches!(self.resolution_kind, ModuleResolutionKind::Classic) {
+            return Err(ResolutionFailure::ModuleResolutionModeMismatch {
+                specifier: specifier.to_string(),
+                containing_file: containing_file.to_string(),
+                span: specifier_span,
+            });
+        }
+
         Err(ResolutionFailure::NotFound {
             specifier: specifier.to_string(),
             containing_file: containing_file.to_string(),
