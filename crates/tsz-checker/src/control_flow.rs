@@ -1324,6 +1324,46 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
+    /// Check if an assignment flow node is a variable declaration with a type annotation.
+    ///
+    /// When a variable has an explicit type annotation, the flow analysis should
+    /// use the declared type (not the initializer's structural type) for non-literal
+    /// assignments. This prevents the initializer's type from overriding the declared
+    /// type in the flow graph.
+    fn is_var_decl_with_type_annotation(&self, node: NodeIndex) -> bool {
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+
+        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            if let Some(decl) = self.arena.get_variable_declaration(node_data) {
+                return !decl.type_annotation.is_none();
+            }
+        }
+
+        // Handle VARIABLE_DECLARATION_LIST or VARIABLE_STATEMENT
+        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            || node_data.kind == syntax_kind_ext::VARIABLE_STATEMENT
+        {
+            if let Some(list) = self.arena.get_variable(node_data) {
+                for &decl_idx in &list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                        if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
+                            if !decl.type_annotation.is_none() {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     /// Check if an assignment node represents a destructuring assignment.
     /// Destructuring assignments widen literals to primitives, unlike direct assignments.
     fn is_destructuring_assignment(&self, node: NodeIndex) -> bool {
@@ -1508,6 +1548,30 @@ impl<'a> FlowAnalyzer<'a> {
                 return Some(nullish_type);
             }
             // Fall back to type checker's result for non-literal expressions
+            //
+            // FIX: For variable declarations with type annotations where the RHS is a
+            // structural literal (object/array), the declared type should be preserved —
+            // don't let the initializer's structural type override the annotated type.
+            // Literal and nullish initializers (handled above) still narrow correctly,
+            // but object/array literals produce structural types that lose optional
+            // properties and interface identity.
+            //
+            // Example: `var obj4: I<number,string> = { one: 1 };`
+            //   - Declared type: I<number, string> (includes two?: string)
+            //   - Initializer type: { one: number } (missing the optional property)
+            //   - Without this fix, flow uses { one: number } instead of I<number, string>
+            //
+            // We only apply this for object/array literals. Type assertions like
+            // `{} as any` and other expressions should still use the node_types result.
+            if self.is_var_decl_with_type_annotation(assignment_node) {
+                if let Some(rhs_node) = self.arena.get(rhs) {
+                    if rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    {
+                        return None;
+                    }
+                }
+            }
             if let Some(node_types) = self.node_types
                 && let Some(&rhs_type) = node_types.get(&rhs.0)
             {
