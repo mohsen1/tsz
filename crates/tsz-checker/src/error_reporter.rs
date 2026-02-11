@@ -2303,6 +2303,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Also suppress when either side CONTAINS error types (e.g., { new(): error }).
+        // This happens when a forward-referenced class hasn't been fully resolved yet.
+        if tsz_solver::type_queries::contains_error_type_db(self.ctx.types, type_arg)
+            || tsz_solver::type_queries::contains_error_type_db(self.ctx.types, constraint)
+        {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             // Deduplicate: get_type_from_type_node may re-resolve type references when
             // type_parameter_scope changes, causing validate_type_reference_type_arguments
