@@ -58,10 +58,22 @@ yarn.lock
 /*.sh
 /*.mjs
 /*.js
+/*.ts
 /*.py
 /*.rs
 /*.md
 /*.gz
+/*.json
+/*.txt
+
+# Whitelist known root files
+!Cargo.lock
+!/Cargo.toml
+!/LICENSE.txt
+!/README.md
+!/AGENTS.md
+!/CLAUDE.md
+!/yek.yaml
 
 # Random AI coding artifacts sometimes generated in sessions
 /tmp
