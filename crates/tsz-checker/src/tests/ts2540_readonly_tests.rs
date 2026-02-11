@@ -1,6 +1,6 @@
 //! Tests for TS2540 readonly property assignment errors
 //!
-//! Verifies that assigning to readonly class properties emits TS2540.
+//! Verifies that assigning to readonly properties emits TS2540.
 
 use crate::CheckerState;
 use tsz_binder::BinderState;
@@ -27,6 +27,37 @@ fn has_error_with_code(source: &str, code: u32) -> bool {
 
     checker.ctx.diagnostics.iter().any(|d| d.code == code)
 }
+
+fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318) // Filter global type errors
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+// =========================================================================
+// Class readonly property tests
+// =========================================================================
 
 #[test]
 fn test_readonly_class_property_assignment() {
@@ -55,5 +86,95 @@ c.y = 20;
     assert!(
         !has_error_with_code(source, 2540),
         "Should NOT emit TS2540 for non-readonly property"
+    );
+}
+
+#[test]
+fn test_readonly_class_mixed_properties() {
+    // Class with both readonly and mutable properties
+    let source = r#"
+class C {
+    readonly ro: string = "hello";
+    mut_prop: string = "world";
+}
+const c = new C();
+c.ro = "new";
+c.mut_prop = "ok";
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|(code, _)| *code == 2540).count();
+    assert_eq!(
+        ts2540_count, 1,
+        "Should emit exactly 1 TS2540 (for ro), got: {:?}",
+        diags
+    );
+}
+
+// =========================================================================
+// Interface readonly property tests
+// =========================================================================
+
+#[test]
+fn test_readonly_interface_property() {
+    let source = r#"
+interface I {
+    readonly x: number;
+}
+declare const obj: I;
+obj.x = 10;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assigning to readonly interface property"
+    );
+}
+
+#[test]
+fn test_non_readonly_interface_property_ok() {
+    let source = r#"
+interface I {
+    x: number;
+}
+declare const obj: I;
+obj.x = 10;
+"#;
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for mutable interface property"
+    );
+}
+
+// =========================================================================
+// Const variable tests
+// =========================================================================
+
+#[test]
+fn test_const_variable_assignment() {
+    // TS2588: Cannot assign to 'x' because it is a constant
+    let source = r#"
+const x = 10;
+x = 20;
+"#;
+    assert!(
+        has_error_with_code(source, 2588),
+        "Should emit TS2588 for assigning to const variable"
+    );
+}
+
+// =========================================================================
+// Namespace const export tests
+// =========================================================================
+
+#[test]
+fn test_namespace_const_export_readonly() {
+    let source = r#"
+namespace M {
+    export const x = 0;
+}
+M.x = 1;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assigning to namespace const export"
     );
 }

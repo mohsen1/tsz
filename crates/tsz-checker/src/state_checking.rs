@@ -1428,6 +1428,15 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Check AST-level readonly on interface properties
+        // For `obj.x = 10` where `obj: I` and `interface I { readonly x: number }`
+        if let Some(type_name) = self.get_declared_type_name_from_expression(access.expression)
+            && self.is_interface_property_readonly(&type_name, &prop_name)
+        {
+            self.error_readonly_property_at(&prop_name, target_idx);
+            return true;
+        }
+
         // Check if the property is a const export from a namespace/module (TS2540).
         // For `M.x = 1` where `export const x = 0` in namespace M.
         if self.is_namespace_const_property(access.expression, &prop_name) {
