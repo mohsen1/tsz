@@ -1,9 +1,26 @@
 # Conformance Slice 2 - Investigation Notes
 
 ## Baseline
-- **Slice 2 Range**: Tests 3146-6292 (offset=3146, max=3146)  
-- **Current Pass Rate**: 1813/3132 passed (57.9%)
+- **Slice 2 Range**: Tests 3146-6292 (offset=3146, max=3146)
+- **Initial Pass Rate**: 1813/3132 passed (57.9%)
+- **Current Pass Rate**: 1812/3130 passed (57.9%) [after TS2708 + TS1147 fixes]
 - **Test Date**: 2026-02-11
+
+## Fixes Implemented
+
+### Session 1 (2026-02-11)
+1. **TS2708 Implementation** (`04f13d9a2`)
+   - Emit "Cannot use namespace as a value" for `export import a = NS.Interface`
+   - Check if namespace contains only type symbols (interfaces/type aliases)
+   - Handle parent EXPORT_DECLARATION wrapper detection
+   - Impact: ~2-3 tests
+
+2. **TS1147 + TS2307 Coordination** (`b7db89c47`)
+   - Suppress TS2307 for import = require() inside namespaces
+   - Return early after TS1147 to avoid duplicate module-not-found errors
+   - Defer IMPORT_EQUALS_DECLARATION in emit_module_not_found_error
+   - Impact: 1 test (importDeclarationInModuleDeclaration1.ts)
+   - **Note**: May need revision - some tests expect both TS1147 and TS2307
 
 ## Top Error Mismatches
 
@@ -58,10 +75,40 @@ import a = x.c;  // TS2694: Namespace 'x' has no exported member 'c'
   3. Add direct scope lookup in `report_type_query_missing_member`
 
 ### 3. Over-Strict Type Checking
-**Problem**: 112+ extra TS2322 errors, 134+ extra TS2339 errors  
-**Root Cause**: Unknown - needs investigation of specific test cases  
-**Complexity**: High - core type system issues  
+**Problem**: 112+ extra TS2322 errors, 134+ extra TS2339 errors
+**Root Cause**: Unknown - needs investigation of specific test cases
+**Complexity**: High - core type system issues
 **Impact**: 388 total false positive tests
+
+### 4. TS2708 for Namespace Member Call
+**Problem**: `m2.C()` where `C` is an interface should emit TS2708
+**Example**:
+```typescript
+namespace m2 {
+    export interface C { (): void; }
+}
+m2.C();  // Should emit TS2708: Cannot use namespace as a value
+```
+**Current**: We emit TS2693 (type used as value) for the direct call
+**Missing**: TS2708 for the namespace member access
+**Complexity**: Medium - need to detect namespace.member calls where member is type-only
+**Impact**: 1 test (interfaceNameAsIdentifier.ts)
+
+### 5. Ambient Module Namespace Exports
+**Problem**: In `declare module "m"`, interfaces in nested namespaces not accessible
+**Example**:
+```typescript
+declare module "m" {
+    namespace x {
+        interface c {}  // No export keyword but should be accessible
+    }
+    export import a = x.c;  // TS2694 but shouldn't error
+}
+```
+**Root Cause**: Ambient context rules - all type declarations implicitly accessible
+**Complexity**: Medium-High - needs ambient context tracking
+**Impact**: 1-2 tests
+**Status**: Partially investigated, needs ambient context flag in binder
 
 ## Recommendations
 
