@@ -1323,8 +1323,16 @@ impl<'a> CheckerState<'a> {
                         self.error_readonly_property_at(&name, target_idx);
                         return true;
                     }
-                    // Also check namespace const exports via element access (M["x"])
+                    // Check AST-level interface readonly for element access (obj["x"])
                     if let Some(name) = self.get_literal_string_from_node(access.name_or_argument) {
+                        if let Some(type_name) =
+                            self.get_declared_type_name_from_expression(access.expression)
+                            && self.is_interface_property_readonly(&type_name, &name)
+                        {
+                            self.error_readonly_property_at(&name, target_idx);
+                            return true;
+                        }
+                        // Also check namespace const exports via element access (M["x"])
                         if self.is_namespace_const_property(access.expression, &name) {
                             self.error_readonly_property_at(&name, target_idx);
                             return true;
