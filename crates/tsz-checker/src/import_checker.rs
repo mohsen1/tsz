@@ -779,7 +779,7 @@ impl<'a> CheckerState<'a> {
         // Handle namespace imports: import x = Namespace or import x = Namespace.Member
         // These need to emit TS2503 ("Cannot find namespace") if not found
         if ref_node.kind != SyntaxKind::StringLiteral as u16 {
-            self.check_namespace_import(module_specifier_idx);
+            self.check_namespace_import(stmt_idx, module_specifier_idx);
             return;
         }
 
@@ -862,8 +862,10 @@ impl<'a> CheckerState<'a> {
 
     /// Check a namespace import (import x = Namespace or import x = Namespace.Member).
     /// Emits TS2503 "Cannot find namespace" if the namespace cannot be resolved.
-    fn check_namespace_import(&mut self, module_ref: NodeIndex) {
+    /// Emits TS2708 "Cannot use namespace as a value" if exporting a type-only member.
+    fn check_namespace_import(&mut self, stmt_idx: NodeIndex, module_ref: NodeIndex) {
         use crate::types::diagnostics::diagnostic_codes;
+        use tsz_binder::symbol_flags;
 
         let Some(ref_node) = self.ctx.arena.get(module_ref) else {
             return;
@@ -910,6 +912,74 @@ impl<'a> CheckerState<'a> {
                     // If left is resolved, check if right member exists (TS2694)
                     // Use the existing report_type_query_missing_member which handles this correctly
                     self.report_type_query_missing_member(module_ref);
+
+                    // TS2708: Check if export import is used with a namespace member
+                    // When you have `export import a = NS.Member`, if NS contains only types,
+                    // you cannot export it as a value.
+                    // Check if the parent node is an EXPORT_DECLARATION (for `export import`)
+                    let mut is_exported = self.has_export_modifier(stmt_idx);
+                    if !is_exported {
+                        if let Some(ext) = self.ctx.arena.get_extended(stmt_idx) {
+                            if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                                if parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                                    is_exported = true;
+                                }
+                            }
+                        }
+                    }
+                    if is_exported {
+                        // Check if the left (namespace) is type-only by checking if it has
+                        // any value members. For now, emit TS2708 if we're exporting an import
+                        // from a namespace that contains a type member.
+                        // Try to resolve the qualified name to check if it's type-only
+                        if let Some(resolved_sym) = self.resolve_qualified_symbol(module_ref) {
+                            let lib_binders = self.get_lib_binders();
+                            if let Some(symbol) = self
+                                .ctx
+                                .binder
+                                .get_symbol_with_libs(resolved_sym, &lib_binders)
+                            {
+                                // Check if this is a type-only symbol (interface or type alias)
+                                let is_type_only = (symbol.flags
+                                    & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS))
+                                    != 0;
+                                if is_type_only {
+                                    // Emit TS2708: Cannot use namespace as a value
+                                    // The error message mentions the namespace, not the member
+                                    self.error_namespace_used_as_value_at(&name, qn.left);
+                                }
+                            }
+                        } else {
+                            // Even if we can't resolve the full qualified name (TS2694 case),
+                            // check if the namespace contains only types
+                            if let Some(left_sym) = self.resolve_qualified_symbol(qn.left) {
+                                let lib_binders = self.get_lib_binders();
+                                if let Some(ns_symbol) =
+                                    self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders)
+                                {
+                                    // Check if namespace exports table contains any value symbols
+                                    let has_value_exports = if let Some(exports) =
+                                        &ns_symbol.exports
+                                    {
+                                        exports.as_ref().iter().any(|(_, &sym_id)| {
+                                            if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
+                                                (sym.flags & symbol_flags::VALUE) != 0
+                                            } else {
+                                                false
+                                            }
+                                        })
+                                    } else {
+                                        false
+                                    };
+
+                                    // If namespace has no value exports, emit TS2708
+                                    if !has_value_exports {
+                                        self.error_namespace_used_as_value_at(&name, qn.left);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

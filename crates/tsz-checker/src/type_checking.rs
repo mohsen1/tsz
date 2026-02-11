@@ -81,6 +81,11 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_module(node)
                 .and_then(|m| m.modifiers.as_ref()),
+            syntax_kind_ext::IMPORT_EQUALS_DECLARATION => self
+                .ctx
+                .arena
+                .get_import_decl(node)
+                .and_then(|i| i.modifiers.as_ref()),
             _ => None,
         }
     }
