@@ -19347,18 +19347,15 @@ const config: Config = { ...base };
 /// even in method parameters where it should be Contravariant.
 /// This allows derived classes to be assigned to base class types.
 ///
-/// EXPECTED FAILURE: Class extends and `this` type handling not fully implemented.
-/// Once class inheritance works, change to expect 0 errors.
+/// tsc allows this unsound pattern — covariant `this` types let derived
+/// classes with tighter `compare` methods be assigned to base class types.
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_covariant_this_basic_subtyping() {
     use crate::parser::ParserState;
 
     let source = r#"
 class Animal {
     name: string = "";
-
-    // Method with `this` type parameter
     compare(other: this): boolean {
         return this.name === other.name;
     }
@@ -19366,14 +19363,11 @@ class Animal {
 
 class Dog extends Animal {
     breed: string = "";
-
-    // Overriding with tighter `this` type
     compare(other: this): boolean {
         return super.compare(other) && this.breed === other.breed;
     }
 }
 
-// This is unsound: Dog has tighter `compare` but is assignable to Animal
 const animal: Animal = new Dog();
 "#;
 
@@ -19400,19 +19394,10 @@ const animal: Animal = new Dog();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    let error_count = checker.ctx.diagnostics.len();
-
-    // Currently fails because class extends not implemented
-    // Once class inheritance works, change to expect 0 errors
-    if error_count == 0 {
-        eprintln!("=== Covariant This Basic Diagnostics ===");
-        eprintln!("Expected errors (class extends not implemented), got 0");
-    }
-
-    // Expect some errors until class extends is implemented
     assert!(
-        error_count > 0,
-        "Expected errors for class extends (not yet implemented)"
+        checker.ctx.diagnostics.is_empty(),
+        "Expected 0 errors (tsc allows this), got: {:?}",
+        checker.ctx.diagnostics
     );
 }
 
@@ -19567,20 +19552,15 @@ const p2 = p1.clone();
     );
 }
 
-/// TS Unsoundness #19: Covariant `this` Types - The unsound case
-///
-/// This demonstrates the actual unsoundness: calling a method on
-/// a base class reference with an incompatible derived class.
+/// tsc allows covariant `this` types — derived-to-base assignment compiles
+/// even though it's unsound at runtime.
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_covariant_this_unsound_call() {
     use crate::parser::ParserState;
 
     let source = r#"
 class Box {
     content: string = "";
-
-    // `this` in parameter position - should be contravariant but isn't
     merge(other: this): void {
         this.content += other.content;
     }
@@ -19588,19 +19568,12 @@ class Box {
 
 class NumberBox extends Box {
     value: number = 0;
-
     merge(other: this): void {
         super.merge(other);
         this.value += other.value;
     }
 }
 
-// This compiles but is unsound at runtime:
-const box: Box = new NumberBox();
-const plainBox = new Box();
-// box.merge(plainBox);  // Would crash: plainBox has no `value` property
-
-// Just assigning derived to base is allowed (the unsoundness)
 const b: Box = new NumberBox();
 "#;
 
@@ -19627,19 +19600,10 @@ const b: Box = new NumberBox();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    let error_count = checker.ctx.diagnostics.len();
-
-    // Currently fails because class extends not implemented
-    // Once class inheritance works, change to expect 0 errors
-    if error_count == 0 {
-        eprintln!("=== Covariant This Unsound Call Diagnostics ===");
-        eprintln!("Expected errors (class extends not implemented), got 0");
-    }
-
-    // Expect some errors until class extends is implemented
     assert!(
-        error_count > 0,
-        "Expected errors for class extends (not yet implemented)"
+        checker.ctx.diagnostics.is_empty(),
+        "Expected 0 errors (tsc allows this), got: {:?}",
+        checker.ctx.diagnostics
     );
 }
 
