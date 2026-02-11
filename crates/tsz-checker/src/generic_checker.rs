@@ -203,6 +203,17 @@ impl<'a> CheckerState<'a> {
                 self.ensure_refs_resolved(type_arg);
                 self.ensure_refs_resolved(instantiated_constraint);
 
+                // Also skip if the instantiated constraint contains type parameters.
+                // This can happen when the constraint references other type params
+                // that weren't fully substituted (e.g., `K extends keyof T` where T
+                // is itself a type parameter from a different context).
+                if tsz_solver::type_queries::contains_type_parameters_db(
+                    self.ctx.types,
+                    instantiated_constraint,
+                ) {
+                    continue;
+                }
+
                 let is_satisfied = {
                     let env = self.ctx.type_env.borrow();
                     let mut checker =
