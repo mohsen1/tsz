@@ -879,6 +879,12 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Abstract classes don't need to implement interface members —
+        // their abstract members satisfy the interface contract.
+        if self.has_abstract_modifier(&class_data.modifiers) {
+            return;
+        }
+
         // Collect implemented members from the class (name -> node_idx).
         // Member types are computed lazily only when needed for an interface match.
         let mut class_members: rustc_hash::FxHashMap<String, NodeIndex> =
