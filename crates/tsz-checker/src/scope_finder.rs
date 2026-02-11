@@ -11,9 +11,6 @@
 //! This module extends CheckerState with scope-finding methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
-// TODO: Remove this once the methods are used by the checker
-#![allow(dead_code)]
-
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -394,6 +391,7 @@ impl<'a> CheckerState<'a> {
     /// Traverses up the AST to find a VARIABLE_STATEMENT.
     ///
     /// Returns Some(NodeIndex) if a variable statement is found, None otherwise.
+    #[allow(dead_code)]
     pub(crate) fn find_enclosing_variable_statement(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
         let mut iterations = 0;
@@ -421,6 +419,7 @@ impl<'a> CheckerState<'a> {
     /// Traverses up the AST to find a VARIABLE_DECLARATION.
     ///
     /// Returns Some(NodeIndex) if a variable declaration is found, None otherwise.
+    #[allow(dead_code)]
     pub(crate) fn find_enclosing_variable_declaration(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
         let mut iterations = 0;
@@ -450,6 +449,7 @@ impl<'a> CheckerState<'a> {
     /// Traverses up the AST to find the SOURCE_FILE node.
     ///
     /// Returns Some(NodeIndex) if a source file is found, None otherwise.
+    #[allow(dead_code)]
     pub(crate) fn find_enclosing_source_file(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
         while !current.is_none() {
@@ -513,6 +513,7 @@ impl<'a> CheckerState<'a> {
     /// Given a static block node, returns the parent CLASS_DECLARATION or CLASS_EXPRESSION.
     ///
     /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
+    #[allow(dead_code)]
     pub(crate) fn find_class_for_static_block(
         &self,
         static_block_idx: NodeIndex,
@@ -574,6 +575,7 @@ impl<'a> CheckerState<'a> {
     /// then finds the class declaration.
     ///
     /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
+    #[allow(dead_code)]
     pub(crate) fn find_class_for_computed_property(
         &self,
         computed_idx: NodeIndex,
@@ -696,6 +698,7 @@ impl<'a> CheckerState<'a> {
     /// CLASS_EXPRESSION, or INTERFACE_DECLARATION.
     ///
     /// Returns Some(NodeIndex) if the parent is a class/interface, None otherwise.
+    #[allow(dead_code)]
     pub(crate) fn find_class_for_heritage_clause(
         &self,
         heritage_idx: NodeIndex,
