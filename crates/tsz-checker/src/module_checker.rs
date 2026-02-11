@@ -75,8 +75,6 @@ impl<'a> CheckerState<'a> {
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
-            // Additional validation: check for ESM/CommonJS compatibility
-            // If this is an ESM file, importing from a CommonJS module might need special handling
             return; // Module exists
         }
 
