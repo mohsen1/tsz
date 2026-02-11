@@ -615,6 +615,10 @@ run_utility_types_benchmarks() {
     ensure_utility_types_fixture
     echo -e "${GREEN}✓${NC} utility-types pinned at $(git -C "$UTILITY_TYPES_DIR" rev-parse --short HEAD)"
 
+    # Use project's tsconfig lib settings (dom, es2017) for fair comparison
+    # Without this, tsz loads all default libs which is slower and doesn't match tsgo's behavior
+    local lib_args="--lib dom,es2017"
+
     local files
     if [ "$QUICK_MODE" = true ]; then
         files=("src/index.ts")
@@ -631,7 +635,7 @@ run_utility_types_benchmarks() {
     for rel in "${files[@]}"; do
         local full_path="$UTILITY_TYPES_DIR/$rel"
         if [ -f "$full_path" ]; then
-            run_benchmark "utility-types/${rel#src/}" "$full_path"
+            run_benchmark "utility-types/${rel#src/}" "$full_path" "$lib_args"
             echo
         fi
     done
