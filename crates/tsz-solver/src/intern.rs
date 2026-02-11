@@ -1989,27 +1989,6 @@ impl TypeInterner {
         false
     }
 
-    /// Check if two property types are disjoint (Rule #21: Intersection Reduction).
-    /// Returns true if the intersection of these types would be never.
-    #[allow(dead_code)]
-    fn property_types_disjoint(&self, left: TypeId, right: TypeId) -> bool {
-        // Same type is not disjoint
-        if left == right {
-            return false;
-        }
-
-        // Check for disjoint primitives: string & number, boolean & string, etc.
-        let left_class = self.primitive_class_for(left);
-        let right_class = self.primitive_class_for(right);
-
-        if let (Some(lc), Some(rc)) = (left_class, right_class) {
-            // Different primitive classes are disjoint
-            return lc != rc;
-        }
-
-        false
-    }
-
     fn literal_sets_disjoint(&self, left: &LiteralSet, right: &LiteralSet) -> bool {
         if left.domain != right.domain {
             return true;
