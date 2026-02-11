@@ -2048,9 +2048,8 @@ id(123);
 ///
 /// NOTE: Currently ignored - overload resolution for array methods is not fully
 /// implemented. The checker doesn't correctly match array method overloads for
-/// generic callback functions.
+/// generic callback functions (map and filter work, reduce has overload issues).
 #[test]
-#[ignore = "Overload resolution for array methods not fully implemented"]
 fn test_overload_call_array_methods() {
     use crate::parser::ParserState;
 
@@ -2058,6 +2057,40 @@ fn test_overload_call_array_methods() {
 const arr = [1, 2, 3];
 arr.map(x => x * 2);
 arr.filter(x => x > 1);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    assert!(
+        checker.ctx.diagnostics.is_empty(),
+        "Unexpected diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+#[ignore = "Array.reduce overload resolution picks wrong overload for callback type inference"]
+fn test_overload_call_array_reduce() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+const arr = [1, 2, 3];
 arr.reduce((a, b) => a + b, 0);
 "#;
 
