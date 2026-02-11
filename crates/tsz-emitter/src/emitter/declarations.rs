@@ -955,6 +955,12 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Skip declaration-only constructors (no body).
+        // These are overload signatures or ambient declarations, not emitted in JS.
+        if ctor.body.is_none() {
+            return;
+        }
+
         // Collect parameter property names (public/private/protected/readonly params)
         let param_props = self.collect_parameter_properties(&ctor.parameters.nodes);
         let field_inits = std::mem::take(&mut self.pending_class_field_inits);
@@ -962,14 +968,12 @@ impl<'a> Printer<'a> {
         self.write("constructor(");
         self.emit_function_parameters_js(&ctor.parameters.nodes);
         self.write(")");
+        self.write(" ");
 
-        if !ctor.body.is_none() {
-            self.write(" ");
-            if param_props.is_empty() && field_inits.is_empty() {
-                self.emit(ctor.body);
-            } else {
-                self.emit_constructor_body_with_prologue(ctor.body, &param_props, &field_inits);
-            }
+        if param_props.is_empty() && field_inits.is_empty() {
+            self.emit(ctor.body);
+        } else {
+            self.emit_constructor_body_with_prologue(ctor.body, &param_props, &field_inits);
         }
     }
 
