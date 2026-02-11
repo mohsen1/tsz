@@ -82,7 +82,19 @@ fn run_tsz(cwd: &Path, args: &[&str]) -> Option<String> {
 fn find_tsz_binary() -> Option<PathBuf> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    // Try common build output locations
+    // Try workspace root (two directories up from crates/tsz-cli)
+    if let Some(workspace_root) = manifest_dir.parent().and_then(|p| p.parent()) {
+        for profile in &["debug", "release", "dist-fast"] {
+            for target_dir in &[".target", "target"] {
+                let path = workspace_root.join(target_dir).join(profile).join("tsz");
+                if path.exists() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    // Try crate-local build output locations (fallback)
     for profile in &["debug", "release"] {
         for target_dir in &[".target", "target"] {
             let path = manifest_dir.join(target_dir).join(profile).join("tsz");
