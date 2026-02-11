@@ -8,6 +8,19 @@ Important documents:
 
 ---
 
+## CRITICAL: No Files in Root Directory
+
+**NEVER create files in the project root.** This includes:
+- Test `.ts` files — use `tmp/` or the appropriate `crates/*/tests/` directory
+- Scratch/debug scripts — use `tmp/`
+- Session notes, bug reports, analysis docs — use `docs/` subdirectories
+- Any `.md`, `.ts`, `.js`, `.json`, `.sh`, `.py` files
+
+The `.gitignore` blocks all new files in root. Only these root files are allowed:
+`Cargo.toml`, `Cargo.lock`, `LICENSE.txt`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `yek.yaml`
+
+---
+
 ## Project Status
 
 - This is an unreleased work in progress
