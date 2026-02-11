@@ -27,6 +27,27 @@ impl<'a> CheckerState<'a> {
     // Core Type Computation
     // =========================================================================
 
+    /// Evaluate a contextual type that may contain unevaluated mapped/conditional types.
+    ///
+    /// When a generic function's parameter type is instantiated (e.g., `{ [K in keyof P]: P[K] }`
+    /// with P=Props), the result may be a mapped type with `Lazy` references that need a
+    /// full resolver to evaluate. The solver's default `contextual_property_type` uses
+    /// `NoopResolver` and can't resolve these. This method uses the Judge (which has access
+    /// to the TypeEnvironment resolver) to evaluate such types into concrete object types.
+    fn evaluate_contextual_type(&self, type_id: TypeId) -> TypeId {
+        use tsz_solver::TypeKey;
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Mapped(_) | TypeKey::Conditional(_) | TypeKey::Application(_)) => {
+                let evaluated = self.judge_evaluate(type_id);
+                if evaluated != type_id {
+                    return evaluated;
+                }
+                type_id
+            }
+            _ => type_id,
+        }
+    }
+
     /// Get the type of a conditional expression (ternary operator).
     ///
     /// Computes the type of `condition ? whenTrue : whenFalse`.
@@ -1589,8 +1610,13 @@ impl<'a> CheckerState<'a> {
             // Property assignment: { x: value }
             if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
                 if let Some(name) = self.get_property_name(prop.name) {
-                    // Get contextual type for this property
+                    // Get contextual type for this property.
+                    // For mapped/conditional/application types that contain Lazy references
+                    // (e.g. { [K in keyof Props]: Props[K] } after generic inference),
+                    // evaluate them with the full resolver first so the solver can
+                    // extract property types from the resulting concrete object type.
                     let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
+                        let ctx_type = self.evaluate_contextual_type(ctx_type);
                         self.ctx.types.contextual_property_type(ctx_type, &name)
                     } else {
                         None

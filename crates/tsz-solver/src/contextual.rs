@@ -779,6 +779,18 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_parameter_type(index);
         }
 
+        // Handle Mapped and Conditional types by evaluating them first
+        match self.interner.lookup(expected) {
+            Some(TypeKey::Mapped(_) | TypeKey::Conditional(_)) => {
+                let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+                if evaluated != expected {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                    return ctx.get_parameter_type(index);
+                }
+            }
+            _ => {}
+        }
+
         // Use visitor for Function/Callable types
         let mut extractor = ParameterExtractor::new(self.interner, index);
         extractor.extract(expected)
@@ -960,6 +972,50 @@ impl<'a> ContextualTypeContext<'a> {
             } else {
                 Some(self.interner.union(prop_types))
             };
+        }
+
+        // Handle Mapped, Conditional, and Application types.
+        // These complex types need to be resolved to concrete object types before
+        // property extraction can work.
+        match self.interner.lookup(expected) {
+            Some(TypeKey::Mapped(mapped_id)) => {
+                // First try evaluating the mapped type directly
+                let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+                if evaluated != expected {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                    return ctx.get_property_type(name);
+                }
+                // If evaluation deferred (e.g. { [K in keyof P]: P[K] } where P is a type
+                // parameter), fall back to the constraint of the mapped type's source.
+                // For `keyof P` where `P extends Props`, use `Props` as the contextual type.
+                let mapped = self.interner.mapped_type(mapped_id);
+                if let Some(TypeKey::KeyOf(operand)) = self.interner.lookup(mapped.constraint) {
+                    // The operand may be a Lazy type wrapping a type parameter — resolve it
+                    let resolved_operand = crate::evaluate::evaluate_type(self.interner, operand);
+                    if let Some(constraint) = crate::type_queries::get_type_parameter_constraint(
+                        self.interner,
+                        resolved_operand,
+                    ) {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+                        return ctx.get_property_type(name);
+                    }
+                    // Also try the original operand (may already be a TypeParameter)
+                    if let Some(constraint) =
+                        crate::type_queries::get_type_parameter_constraint(self.interner, operand)
+                    {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+                        return ctx.get_property_type(name);
+                    }
+                }
+            }
+            Some(TypeKey::Conditional(_) | TypeKey::Application(_)) => {
+                let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+                if evaluated != expected {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                    return ctx.get_property_type(name);
+                }
+            }
+            _ => {}
         }
 
         // Use visitor for Object types
