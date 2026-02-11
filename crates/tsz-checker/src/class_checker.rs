@@ -1119,6 +1119,11 @@ impl<'a> CheckerState<'a> {
                     let mut incompatible_members: Vec<(String, String, String)> = Vec::new(); // (name, expected_type, actual_type)
                     let mut interface_has_index_signature = false;
 
+                    // Push interface type parameters into scope so they're available when
+                    // checking member types (fixes TS2304 false positive for interface type params)
+                    let (_interface_type_params, interface_type_param_updates) =
+                        self.push_type_parameters(&interface_decl.type_parameters);
+
                     for &member_idx in &interface_decl.members.nodes {
                         let Some(member_node) = self.ctx.arena.get(member_idx) else {
                             continue;
@@ -1234,6 +1239,9 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                         );
                     }
+
+                    // Pop interface type parameters from scope
+                    self.pop_type_parameters(interface_type_param_updates);
                 }
             }
         }
