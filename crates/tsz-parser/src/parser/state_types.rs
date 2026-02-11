@@ -509,6 +509,16 @@ impl ParserState {
             return lit;
         }
 
+        // Handle import types: import("./module") or import("./module").Type
+        if self.is_token(SyntaxKind::ImportKeyword) {
+            let import_type = self.parse_import_type();
+            // Handle array type on import: import("./a")[]
+            if self.is_token(SyntaxKind::OpenBracketToken) {
+                return self.parse_array_type(start_pos, import_type);
+            }
+            return import_type;
+        }
+
         // Check for type keywords (string, number, boolean, etc.)
         // Also handle contextual keywords (await, yield) which are valid as type names
         let first_name = match self.token() {
@@ -841,6 +851,57 @@ impl ParserState {
             end_pos,
             crate::parser::node::TypeQueryData {
                 expr_name,
+                type_arguments,
+            },
+        )
+    }
+
+    /// Parse import type: import("./module") or import("./module").Type
+    pub(crate) fn parse_import_type(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+
+        // Parse the import call: import("./module")
+        let argument = self.parse_import_expression();
+
+        // Parse member access after import: import("./a").Type.SubType
+        let mut qualifier = argument;
+        while self.is_token(SyntaxKind::DotToken) {
+            self.next_token();
+            let right = self.parse_identifier_name();
+            let node_start_pos = if let Some(node) = self.arena.get(qualifier) {
+                node.pos
+            } else {
+                start_pos
+            };
+            let end_pos = self.token_end();
+
+            qualifier = self.arena.add_qualified_name(
+                syntax_kind_ext::QUALIFIED_NAME,
+                node_start_pos,
+                end_pos,
+                crate::parser::node::QualifiedNameData {
+                    left: qualifier,
+                    right,
+                },
+            );
+        }
+
+        // Parse optional type arguments: import("./a").Type<T>
+        let type_arguments = if self.is_token(SyntaxKind::LessThanToken) {
+            Some(self.parse_type_arguments())
+        } else {
+            None
+        };
+
+        let end_pos = self.token_end();
+
+        // Return as a type reference with the import expression as the type name
+        self.arena.add_type_ref(
+            syntax_kind_ext::TYPE_REFERENCE,
+            start_pos,
+            end_pos,
+            crate::parser::node::TypeRefData {
+                type_name: qualifier,
                 type_arguments,
             },
         )

@@ -707,6 +707,89 @@ export const foo: typeof import("./module");
     );
 }
 
+#[test]
+fn test_import_type_without_typeof() {
+    // import("...").Type should parse without typeof
+    let source = r#"
+export const a: import("./test1").T = null as any;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit parse errors
+    let ts1005_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1005)
+        .count();
+    let ts1109_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1109)
+        .count();
+    let ts1359_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1359)
+        .count();
+
+    assert_eq!(
+        ts1005_count, 0,
+        "Expected no TS1005 errors for import type, got {}",
+        ts1005_count
+    );
+    assert_eq!(
+        ts1109_count, 0,
+        "Expected no TS1109 errors for import type, got {}",
+        ts1109_count
+    );
+    assert_eq!(
+        ts1359_count, 0,
+        "Expected no TS1359 errors for import type, got {}",
+        ts1359_count
+    );
+}
+
+#[test]
+fn test_import_type_with_member_access() {
+    // import("...").Type.SubType should parse correctly
+    let source = r#"
+export const a: import("./test1").T.U = null as any;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit parse errors
+    assert!(
+        parser.get_diagnostics().iter().all(|d| d.code >= 2000),
+        "Expected no parser errors (1xxx) for import type with member access, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_import_type_with_generic_arguments() {
+    // import("...").Type<T> should parse correctly
+    let source = r#"
+export const a: import("./test1").T<typeof import("./test2").theme> = null as any;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should not emit parse errors
+    let parse_errors = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .count();
+    assert_eq!(
+        parse_errors,
+        0,
+        "Expected no parser errors for import type with generics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
 // =============================================================================
 // Tuple Type Tests
 // =============================================================================
