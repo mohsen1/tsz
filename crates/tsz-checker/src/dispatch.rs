@@ -358,18 +358,31 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
                             if should_check {
                                 // TS2352 is emitted if neither type is assignable to the other
-                                // (i.e., the types don't "sufficiently overlap")
+                                // (i.e., the types don't "sufficiently overlap").
+                                // TSC uses isTypeComparableTo which is more relaxed than assignability:
+                                // types are comparable if they share at least one common property.
                                 let source_to_target =
                                     self.checker.is_assignable_to(expr_type, asserted_type);
                                 let target_to_source =
                                     self.checker.is_assignable_to(asserted_type, expr_type);
 
                                 if !source_to_target && !target_to_source {
-                                    self.checker.error_type_assertion_no_overlap(
-                                        expr_type,
-                                        asserted_type,
-                                        idx,
+                                    // Before emitting TS2352, check if types share common properties.
+                                    // This approximates TSC's isTypeComparableTo check.
+                                    let evaluated_expr = self.checker.evaluate_type_for_assignability(expr_type);
+                                    let evaluated_asserted = self.checker.evaluate_type_for_assignability(asserted_type);
+                                    let have_overlap = tsz_solver::type_queries::types_are_comparable(
+                                        self.checker.ctx.types,
+                                        evaluated_expr,
+                                        evaluated_asserted,
                                     );
+                                    if !have_overlap {
+                                        self.checker.error_type_assertion_no_overlap(
+                                            expr_type,
+                                            asserted_type,
+                                            idx,
+                                        );
+                                    }
                                 }
                             }
 
