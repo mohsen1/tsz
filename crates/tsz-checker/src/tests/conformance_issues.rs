@@ -735,3 +735,36 @@ good2({ when: value => false });
         relevant
     );
 }
+
+/// Issue: TS2344 reported twice for the same type argument
+///
+/// When `get_type_from_type_node` re-resolves a type reference (e.g., because
+/// `type_parameter_scope` changes between type environment building and statement
+/// checking), `validate_type_reference_type_arguments` was called twice for the
+/// same node, producing duplicate TS2344 errors.
+///
+/// Fix: Use `emitted_diagnostics` deduplication in `error_type_constraint_not_satisfied`
+/// to prevent emitting the same TS2344 at the same source position twice.
+#[test]
+fn test_ts2344_no_duplicate_errors() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Box<T extends string> {
+    value: T;
+}
+type BadBox = Box<number>;
+type IsString<T extends string> = T extends string ? true : false;
+type Test2 = IsString<number>;
+type Keys<T extends object> = keyof T;
+type Test4 = Keys<string>;
+        "#,
+    );
+
+    // Count TS2344 errors - each should appear exactly once
+    let ts2344_count = diagnostics.iter().filter(|(code, _)| *code == 2344).count();
+    assert_eq!(
+        ts2344_count, 3,
+        "Should emit exactly 3 TS2344 errors (one per bad type arg), not duplicates.\nActual errors: {:#?}",
+        diagnostics
+    );
+}
