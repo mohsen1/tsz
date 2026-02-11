@@ -133,6 +133,9 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 self.ctx.arena.get_accessor(node).map(|a| a.name)
             }
+            syntax_kind_ext::PROPERTY_SIGNATURE | syntax_kind_ext::METHOD_SIGNATURE => {
+                self.ctx.arena.get_signature(node).map(|s| s.name)
+            }
             _ => None,
         }
     }

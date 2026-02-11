@@ -959,7 +959,6 @@ impl<'a> CheckerState<'a> {
                     let Some(interface_decl) = self.ctx.arena.get_interface(interface_node) else {
                         continue;
                     };
-
                     // Check that all interface members are implemented with compatible types
                     let mut missing_members: Vec<String> = Vec::new();
                     let mut incompatible_members: Vec<(String, String, String)> = Vec::new(); // (name, expected_type, actual_type)
@@ -985,7 +984,6 @@ impl<'a> CheckerState<'a> {
                         let Some(member_name) = self.get_member_name(member_idx) else {
                             continue;
                         };
-
                         // Check if class has this member
                         if let Some(&class_member_idx) = class_members.get(&member_name) {
                             let class_member_type =
