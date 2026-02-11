@@ -2648,13 +2648,10 @@ function test() {
     binder.bind_source_file(arena, root);
 
     let types = tsz_solver::TypeInterner::new();
-    let mut checker = CheckerState::new(
-        arena,
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
+    // TS2454 requires strictNullChecks (matches tsc behavior)
+    let mut opts = crate::context::CheckerOptions::default();
+    opts.strict_null_checks = true;
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
     checker.check_source_file(root);
 
     // Should have TS2454 error

@@ -9,7 +9,6 @@
 
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::type_query_builder::TypeQueryBuilder;
 
 // =============================================================================
 // Type API Methods
@@ -305,96 +304,5 @@ impl<'a> CheckerState<'a> {
             }
             TypeDepthKind::Terminal => 1,
         }
-    }
-
-    // =========================================================================
-    // Optimized Multi-Query Operations (Phase 1: Checker Migration)
-    // =========================================================================
-    //
-    // These methods demonstrate the use of TypeQueryBuilder for efficient
-    // multi-query operations on types. They perform a single database lookup
-    // and cache multiple boolean properties for reuse, reducing database access
-    // by 50-80% compared to calling individual is_*_type() methods.
-    //
-    // For example, when checking a type that might be callable or object-like,
-    // instead of calling is_callable_type() + is_object_type() (2 lookups),
-    // use query_type_properties() once (1 lookup).
-
-    /// Query multiple type properties in a single efficient operation.
-    ///
-    /// This method performs a single database lookup and caches all commonly
-    /// needed type properties. Use this when you need to check multiple
-    /// properties of the same type.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let properties = checker.query_type_properties(type_id);
-    /// if properties.is_callable {
-    ///     // Handle callable
-    /// } else if properties.is_object {
-    ///     // Handle object
-    /// }
-    /// ```
-    ///
-    /// # Performance
-    /// - Single database lookup instead of 2-3 individual calls
-    /// - 67-80% reduction in database access for multi-check scenarios
-    pub fn query_type_properties(
-        &self,
-        ty: TypeId,
-    ) -> tsz_solver::type_query_builder::TypeQueryResult {
-        TypeQueryBuilder::new(self.ctx.types, ty).build()
-    }
-
-    /// Check if a type can be an assignment target (with optimized lookup).
-    ///
-    /// Returns true if the type can appear on the left-hand side of an assignment.
-    /// Uses TypeQueryBuilder for efficient single-lookup operation.
-    pub fn can_be_assignment_target_optimized(&self, ty: TypeId) -> bool {
-        use tsz_solver::type_operations_helper::can_be_assignment_target;
-        can_be_assignment_target(self.ctx.types, ty)
-    }
-
-    /// Check if a type is indexable (with optimized lookup).
-    ///
-    /// Returns true if the type supports bracket notation access like `obj[key]`.
-    /// Uses TypeQueryBuilder internally for single-lookup operation.
-    pub fn is_indexable_optimized(&self, ty: TypeId) -> bool {
-        use tsz_solver::type_operations_helper::is_indexable_type;
-        is_indexable_type(self.ctx.types, ty)
-    }
-
-    /// Check if a type is iterable (with optimized lookup).
-    ///
-    /// Returns true if the type can be used in for-of loops and iteration.
-    /// Uses TypeQueryBuilder internally for single-lookup operation.
-    pub fn is_iterable_optimized(&self, ty: TypeId) -> bool {
-        use tsz_solver::type_operations_helper::is_iterable_type;
-        is_iterable_type(self.ctx.types, ty)
-    }
-
-    /// Analyze all type operations in a single lookup.
-    ///
-    /// Performs comprehensive type operation analysis (callable, indexable,
-    /// iterable, etc.) in a single database lookup, returning all results
-    /// in a structured TypeOperationResult.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let ops = checker.analyze_type_operations_all(type_id);
-    /// println!("Invocable: {}", ops.is_invocable);
-    /// println!("Indexable: {}", ops.is_indexable);
-    /// println!("Iterable: {}", ops.is_iterable);
-    /// ```
-    ///
-    /// # Performance
-    /// - Single database lookup for all operations
-    /// - Much faster than calling individual is_* methods
-    pub fn analyze_type_operations_all(
-        &self,
-        ty: TypeId,
-    ) -> tsz_solver::type_operations_helper::TypeOperationResult {
-        use tsz_solver::type_operations_helper::analyze_type_operations;
-        analyze_type_operations(self.ctx.types, ty)
     }
 }
