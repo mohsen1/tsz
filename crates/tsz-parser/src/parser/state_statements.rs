@@ -2781,6 +2781,21 @@ impl ParserState {
                         break;
                     }
 
+                    // If followed by semicolon, comma, equals, or closing brace, it's a property name (valid)
+                    // Examples: var; | var, | var = | var }
+                    if matches!(
+                        self.current_token,
+                        SyntaxKind::SemicolonToken
+                            | SyntaxKind::CommaToken
+                            | SyntaxKind::EqualsToken
+                            | SyntaxKind::CloseBraceToken
+                    ) {
+                        // Restore and break - var/let is a property name
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                        break;
+                    }
+
                     // Otherwise it's being used as a modifier (invalid)
                     // Restore state to emit error at var/let position, then consume it
                     self.scanner.restore_state(snapshot);
