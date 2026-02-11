@@ -178,3 +178,69 @@ M.x = 1;
         "Should emit TS2540 for assigning to namespace const export"
     );
 }
+
+// =========================================================================
+// Interface mixed readonly tests
+// =========================================================================
+
+#[test]
+fn test_readonly_interface_mixed_properties() {
+    // Interface with both readonly and mutable properties
+    let source = r#"
+interface I {
+    readonly ro: string;
+    mut_prop: string;
+}
+declare const obj: I;
+obj.ro = "new";
+obj.mut_prop = "ok";
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|(code, _)| *code == 2540).count();
+    assert_eq!(
+        ts2540_count, 1,
+        "Should emit exactly 1 TS2540 (for ro), got: {:?}",
+        diags
+    );
+}
+
+#[test]
+fn test_readonly_interface_multiple_readonly_props() {
+    // Interface with multiple readonly properties
+    let source = r#"
+interface I {
+    readonly a: number;
+    readonly b: string;
+    c: boolean;
+}
+declare const obj: I;
+obj.a = 1;
+obj.b = "x";
+obj.c = true;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|(code, _)| *code == 2540).count();
+    assert_eq!(
+        ts2540_count, 2,
+        "Should emit 2 TS2540 errors (for a and b), got: {:?}",
+        diags
+    );
+}
+
+// =========================================================================
+// Namespace let export should be mutable
+// =========================================================================
+
+#[test]
+fn test_namespace_let_export_mutable() {
+    let source = r#"
+namespace M {
+    export let x = 0;
+}
+M.x = 1;
+"#;
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for namespace let export"
+    );
+}
