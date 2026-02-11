@@ -1900,6 +1900,16 @@ impl<'a> CheckerState<'a> {
             );
             return TypeId::ERROR;
         }
+        // TS2523: 'yield' in default parameter
+        if name == "yield" && self.is_in_default_parameter(idx) {
+            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                idx,
+                diagnostic_messages::YIELD_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
+                diagnostic_codes::YIELD_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
+            );
+            return TypeId::ERROR;
+        }
         // Suppress TS2304 for unresolved imports (TS2307 was already emitted)
         if self.is_unresolved_import_symbol(idx) {
             return TypeId::ANY;
