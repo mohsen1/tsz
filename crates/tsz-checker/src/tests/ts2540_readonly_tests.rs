@@ -264,3 +264,35 @@ obj["x"] = 10;
         "Should emit TS2540 for element access to readonly interface property"
     );
 }
+
+#[test]
+fn test_readonly_class_compound_assignment() {
+    // Compound assignments (+=, -=, etc.) should also be caught
+    let source = r#"
+class C {
+    readonly x: number = 1;
+}
+const c = new C();
+c.x += 10;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for compound assignment to readonly class property"
+    );
+}
+
+#[test]
+fn test_readonly_class_increment() {
+    // Increment/decrement should also be caught
+    let source = r#"
+class C {
+    readonly x: number = 1;
+}
+const c = new C();
+c.x++;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for increment on readonly class property"
+    );
+}
