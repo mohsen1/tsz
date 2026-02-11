@@ -2867,6 +2867,52 @@ impl<'a> CheckerState<'a> {
         // signatures has the same TypeId as the T registered in TypeEnvironment.
         let (array_type, array_type_params) = self.resolve_lib_type_with_params("Array");
 
+        // Pre-compute type parameters for commonly-used generic lib types.
+        // This populates the def_type_params cache so that:
+        // 1. validate_type_reference_type_arguments can check constraints (TS2344)
+        // 2. Application(Lazy(DefId), Args) expansion works in the solver
+        // Without this, cross-arena delegation in get_type_params_for_symbol fails
+        // for lib symbols due to depth guards, causing constraint checks to be skipped.
+        for type_name in &[
+            "ReadonlyArray",
+            "Promise",
+            "PromiseLike",
+            "Awaited",
+            "Map",
+            "Set",
+            "WeakMap",
+            "WeakSet",
+            "WeakRef",
+            "ReadonlyMap",
+            "ReadonlySet",
+            "Iterator",
+            "IterableIterator",
+            "AsyncIterator",
+            "AsyncIterable",
+            "AsyncIterableIterator",
+            "Generator",
+            "AsyncGenerator",
+            "Partial",
+            "Required",
+            "Readonly",
+            "Record",
+            "Pick",
+            "Omit",
+            "Exclude",
+            "Extract",
+            "NonNullable",
+            "ReturnType",
+            "Parameters",
+            "ConstructorParameters",
+            "InstanceType",
+            "ThisParameterType",
+            "OmitThisParameter",
+        ] {
+            // resolve_lib_type_with_params internally caches type params via
+            // insert_def_type_params, making them available for constraint checking
+            let _ = self.resolve_lib_type_with_params(type_name);
+        }
+
         // The Array type from lib.d.ts is a Callable with instance methods as properties
         // We register this type directly so that resolve_array_property can use it
         // No need to extract instance type from construct signatures - the methods
