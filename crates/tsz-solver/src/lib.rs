@@ -50,6 +50,7 @@ pub mod type_classifier;
 pub mod type_predicates;
 pub mod type_queries;
 pub mod type_queries_extended;
+pub mod type_query_builder;
 pub mod types;
 pub mod unsoundness_audit;
 mod utils;
