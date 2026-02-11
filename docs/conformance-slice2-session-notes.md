@@ -38,11 +38,24 @@ namespace x {
 }
 import a = x.c;  // TS2694: Namespace 'x' has no exported member 'c'
 ```
-**Root Cause**: In TS, type-only declarations in namespaces are implicitly accessible via qualified names  
-**Current Behavior**: We only add to exports table if explicit `export` keyword  
-**Complexity**: Medium - requires tracking ambient context or modifying import resolution  
-**Impact**: 46 false positive TS2694 errors  
-**Files**: `crates/tsz-binder/src/state_binding.rs:populate_module_exports`
+**Root Cause**: In TS, type-only declarations in namespaces are implicitly accessible via qualified names
+**Current Behavior**: We only add to exports table if explicit `export` keyword
+**Complexity**: Medium-High - requires modifying resolution logic
+**Impact**: 46 false positive TS2694 errors
+**Files**:
+- `crates/tsz-checker/src/symbol_resolver.rs:report_type_query_missing_member`
+- `crates/tsz-binder/src/state_binding.rs:populate_module_exports`
+
+**Investigation Details**:
+- Error emitted from `report_type_query_missing_member` at line 1593
+- Called from `state_type_analysis.rs:check_import_alias` line 2120
+- Attempted fix: Check if member resolves via `resolve_qualified_symbol`
+- **Blocker**: `resolve_qualified_symbol` itself checks exports, so fails for unexported interfaces
+- **Root Issue**: Interface symbols in namespaces aren't added to exports table
+- **Solution Options**:
+  1. Add interfaces to namespace exports (may break value/type separation)
+  2. Modify `resolve_qualified_symbol` to check scope for type-only symbols
+  3. Add direct scope lookup in `report_type_query_missing_member`
 
 ### 3. Over-Strict Type Checking
 **Problem**: 112+ extra TS2322 errors, 134+ extra TS2339 errors  
