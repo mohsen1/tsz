@@ -55,8 +55,6 @@ fn test_emit_reexport_property_alias() {
 #[test]
 fn test_collect_export_names_with_parsed_ast() {
     use tsz_parser::parser::ParserState;
-    use tsz_parser::parser::syntax_kind_ext;
-    use tsz_scanner::SyntaxKind;
 
     let source = "export class C {}";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
