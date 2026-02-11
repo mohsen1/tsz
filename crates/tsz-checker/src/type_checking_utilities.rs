@@ -2343,42 +2343,6 @@ impl<'a> CheckerState<'a> {
         return_type == TypeId::ANY || self.is_null_or_undefined_only(return_type)
     }
 
-    /// Check if a property in a derived class is redeclaring a base class property.
-    #[allow(dead_code)] // Infrastructure for class inheritance checking
-    pub(crate) fn is_derived_property_redeclaration(
-        &self,
-        member_idx: NodeIndex,
-        _property_name: &str,
-    ) -> bool {
-        // Find the containing class for this member
-        if let Some(class_idx) = self.find_containing_class(member_idx)
-            && let Some(class_node) = self.ctx.arena.get(class_idx)
-            && let Some(class_data) = self.ctx.arena.get_class(class_node)
-        {
-            // Check if this class has a base class (extends clause)
-            if self.class_has_base(class_data) {
-                // In derived classes, properties need definite assignment
-                // unless they have explicit initializers or definite assignment assertion
-                // This catches cases like: class B extends A { property: any; }
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Find the containing class for a member node by walking up the parent chain.
-    #[allow(dead_code)] // Infrastructure for class member resolution
-    pub(crate) fn find_containing_class(&self, _member_idx: NodeIndex) -> Option<NodeIndex> {
-        // Check if this member is directly in a class
-        // Since we don't have parent pointers, we need to search through classes
-        // This is a simplified approach - in a full implementation we'd maintain parent links
-
-        // For now, assume the member is in a class context if we're checking properties
-        // The actual class detection would require traversing the full AST
-        // This is sufficient for the TS2524 definite assignment checking we need
-        None // Simplified implementation - could be enhanced with full parent tracking
-    }
-
     // =========================================================================
     // Type Refinement Helper Functions
     // =========================================================================
