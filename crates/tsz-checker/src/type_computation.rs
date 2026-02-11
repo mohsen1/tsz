@@ -150,7 +150,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get types of all elements, applying contextual typing when available.
+        // Track (type, node_index) pairs for excess property checking on array elements.
         let mut element_types = Vec::new();
+        let mut element_nodes = Vec::new();
         let mut tuple_elements = Vec::new();
         for (index, &elem_idx) in array.elements.nodes.iter().enumerate() {
             if elem_idx.is_none() {
@@ -265,6 +267,7 @@ impl<'a> CheckerState<'a> {
                 });
             } else {
                 element_types.push(elem_type);
+                element_nodes.push(elem_idx);
             }
         }
 
@@ -292,12 +295,25 @@ impl<'a> CheckerState<'a> {
         if let Some(ref helper) = ctx_helper
             && let Some(context_element_type) = helper.get_array_element_type()
         {
-            // Check if all elements are assignable to the contextual type
-            // If so, use the contextual type for the array
+            // Check if all elements are structurally compatible with the contextual type.
+            // IMPORTANT: Use is_subtype_of (structural check) instead of is_assignable_to
+            // because is_assignable_to includes excess property checking which would
+            // reject fresh object literals like `{a: 1, b: 2}` against `Foo {a: number}`.
+            // Excess properties should be checked separately, not block contextual typing.
             if element_types
                 .iter()
-                .all(|&elem_type| self.is_assignable_to(elem_type, context_element_type))
+                .all(|&elem_type| self.is_subtype_of(elem_type, context_element_type))
             {
+                // Check excess properties on each element before collapsing to contextual type.
+                // Fresh object literal types would be lost after returning Array<ContextualType>,
+                // so we must check excess properties here while the fresh types are still available.
+                for (elem_type, elem_node) in element_types.iter().zip(element_nodes.iter()) {
+                    self.check_object_literal_excess_properties(
+                        *elem_type,
+                        context_element_type,
+                        *elem_node,
+                    );
+                }
                 return self.ctx.types.array(context_element_type);
             }
         }
