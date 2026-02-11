@@ -58,13 +58,6 @@ impl<'a> FlowGraph<'a> {
         self.arena.get(id)
     }
 
-    /// Get a mutable reference to a flow node by ID.
-    pub fn get_mut(&mut self, _id: FlowNodeId) -> Option<&mut FlowNode> {
-        // Note: This would require interior mutability or a different API design
-        // For now, we'll return None as FlowGraph is meant for querying, not modifying
-        None
-    }
-
     /// Get the number of flow nodes in the graph.
     pub fn len(&self) -> usize {
         self.arena.len()
@@ -3155,24 +3148,6 @@ impl<'a> FlowAnalyzer<'a> {
                 || k == SyntaxKind::CaretEqualsToken as u16
         )
     }
-}
-
-/// Check whether a function body can fall through to the end.
-/// Returns true if execution can reach the end of the function body without
-/// encountering a return/throw statement.
-pub fn function_body_falls_through(_arena: &NodeArena, _body_idx: NodeIndex) -> bool {
-    // Simplified stub: assume function bodies can fall through
-    // A full implementation would analyze control flow to detect
-    // if all paths have return/throw statements
-    true
-}
-
-/// Check whether a statement can fall through to the next statement.
-/// Returns true if execution can continue past this statement.
-pub fn statement_falls_through(_arena: &NodeArena, _stmt_idx: NodeIndex) -> bool {
-    // Simplified stub: assume statements can fall through
-    // A full implementation would analyze control flow
-    true
 }
 
 #[cfg(test)]

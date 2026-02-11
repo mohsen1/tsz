@@ -2440,10 +2440,35 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a class property is readonly.
     ///
-    /// Returns true if the property has a readonly modifier.
-    /// Note: This is a stub - full implementation requires symbol lookup by name.
-    pub(crate) fn is_class_property_readonly(&self, _class_name: &str, _prop_name: &str) -> bool {
-        // TODO: Implement when get_symbol_by_name is available
+    /// Looks up the class by name, finds the property member declaration,
+    /// and checks if it has a readonly modifier.
+    pub(crate) fn is_class_property_readonly(&self, class_name: &str, prop_name: &str) -> bool {
+        let Some(class_sym_id) = self.get_symbol_by_name(class_name) else {
+            return false;
+        };
+        let Some(class_sym) = self.ctx.binder.get_symbol(class_sym_id) else {
+            return false;
+        };
+        if class_sym.value_declaration.is_none() {
+            return false;
+        }
+        let Some(class_node) = self.ctx.arena.get(class_sym.value_declaration) else {
+            return false;
+        };
+        let Some(class_data) = self.ctx.arena.get_class(class_node) else {
+            return false;
+        };
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if let Some(prop_decl) = self.ctx.arena.get_property_decl(member_node) {
+                let member_name = self.get_identifier_text_from_idx(prop_decl.name);
+                if member_name.as_deref() == Some(prop_name) {
+                    return self.has_readonly_modifier(&prop_decl.modifiers);
+                }
+            }
+        }
         false
     }
 
