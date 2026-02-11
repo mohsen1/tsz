@@ -1061,12 +1061,15 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                // Get the expression (identifier or property access) from ExpressionWithTypeArguments
-                let expr_idx =
+                // Get the expression and type arguments from ExpressionWithTypeArguments
+                let (expr_idx, type_arguments) =
                     if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
-                        expr_type_args.expression
+                        (
+                            expr_type_args.expression,
+                            expr_type_args.type_arguments.as_ref(),
+                        )
                     } else {
-                        type_idx
+                        (type_idx, None)
                     };
 
                 // Get the interface symbol
@@ -1119,10 +1122,39 @@ impl<'a> CheckerState<'a> {
                     let mut incompatible_members: Vec<(String, String, String)> = Vec::new(); // (name, expected_type, actual_type)
                     let mut interface_has_index_signature = false;
 
+                    // Build type arguments vector from implements clause (e.g., A<boolean> -> [boolean])
+                    let mut type_args = Vec::new();
+                    if let Some(args) = type_arguments {
+                        for &arg_idx in &args.nodes {
+                            type_args.push(self.get_type_from_type_node(arg_idx));
+                        }
+                    }
+
                     // Push interface type parameters into scope so they're available when
                     // checking member types (fixes TS2304 false positive for interface type params)
-                    let (_interface_type_params, interface_type_param_updates) =
+                    let (interface_type_params, interface_type_param_updates) =
                         self.push_type_parameters(&interface_decl.type_parameters);
+
+                    // Fill in missing type arguments with defaults/constraints/unknown
+                    if type_args.len() < interface_type_params.len() {
+                        for param in interface_type_params.iter().skip(type_args.len()) {
+                            let fallback = param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN);
+                            type_args.push(fallback);
+                        }
+                    }
+                    if type_args.len() > interface_type_params.len() {
+                        type_args.truncate(interface_type_params.len());
+                    }
+
+                    // Create substitution to instantiate interface type parameters with actual type arguments
+                    let substitution = tsz_solver::TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &interface_type_params,
+                        &type_args,
+                    );
 
                     for &member_idx in &interface_decl.members.nodes {
                         let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -1162,9 +1194,14 @@ impl<'a> CheckerState<'a> {
                                     class_member_types.insert(class_member_idx, computed);
                                     computed
                                 };
-                            // Get the expected type from the interface
+                            // Get the expected type from the interface and instantiate with type arguments
                             let interface_member_type =
                                 self.get_type_of_interface_member_simple(member_idx);
+                            let interface_member_type = tsz_solver::instantiate_type(
+                                self.ctx.types,
+                                interface_member_type,
+                                &substitution,
+                            );
 
                             // Check type compatibility (class member type must be assignable to interface member type)
                             // Skip if either type is any or error (unresolved types shouldn't cause false positives)
