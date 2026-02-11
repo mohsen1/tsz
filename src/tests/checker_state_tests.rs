@@ -16794,13 +16794,6 @@ box.value = 42; // OK: setter accepts number
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Split Accessors Basic Diagnostics ===");
-        for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
-        }
-    }
-
     assert!(
         checker.ctx.diagnostics.is_empty(),
         "Split accessor basic usage should work: {:?}",
@@ -25149,16 +25142,6 @@ type t1 = DeepMap<tpl, number>;
     // This should NOT crash even with recursive types
     checker.check_source_file(root);
 
-    eprintln!(
-        "[RECURSIVE_MAPPED_TEST] All diagnostics: {:?}",
-        checker
-            .ctx
-            .diagnostics
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
-    );
-
     // Verify TS2456 is emitted for direct circular type alias
     let ts2456_count = checker
         .ctx
@@ -25182,12 +25165,6 @@ type t1 = DeepMap<tpl, number>;
             .iter()
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
-    );
-
-    // The test reaching here means we didn't crash on recursive mapped types
-    eprintln!(
-        "[RECURSIVE_MAPPED_TEST] Test completed without crash - {} TS2456 errors found",
-        ts2456_count
     );
 }
 
