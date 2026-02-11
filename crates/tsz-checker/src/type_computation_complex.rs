@@ -1554,10 +1554,12 @@ impl<'a> CheckerState<'a> {
                     return self.check_flow_usage(idx, value_type, sym_id);
                 }
 
-                // Don't emit TS2693 in heritage clause context — the heritage
-                // checker will emit the appropriate error (e.g., TS2689 for
-                // class extends interface).
-                if self.find_enclosing_heritage_clause(idx).is_some() {
+                // Don't emit TS2693 in heritage clause context — but ONLY when the
+                // identifier is the direct expression of an ExpressionWithTypeArguments
+                // (e.g., `extends A`). If the identifier is nested deeper, such as
+                // a function argument within the heritage expression (e.g.,
+                // `extends factory(A)`), TS2693 should still fire.
+                if self.is_direct_heritage_type_reference(idx) {
                     return TypeId::ERROR;
                 }
 

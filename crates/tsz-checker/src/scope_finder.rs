@@ -637,6 +637,59 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check if an identifier is the direct expression of an ExpressionWithTypeArguments
+    /// in a heritage clause (e.g., `extends A` or `implements B`), as opposed to
+    /// being nested deeper (e.g., as a function argument in `extends factory(A)`).
+    ///
+    /// Returns true ONLY when the identifier is the direct type reference.
+    pub(crate) fn is_direct_heritage_type_reference(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::HERITAGE_CLAUSE;
+
+        // Walk up from the identifier to the heritage clause.
+        // If we encounter a CALL_EXPRESSION on the way, the identifier is
+        // nested inside a call (e.g., `factory(A)`) — NOT a direct reference.
+        let mut current = idx;
+        for _ in 0..20 {
+            let ext = match self.ctx.arena.get_extended(current) {
+                Some(ext) if !ext.parent.is_none() => ext,
+                _ => return false,
+            };
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.kind == HERITAGE_CLAUSE {
+                // Reached heritage clause without encountering a call expression.
+                // This identifier IS the direct type reference.
+                return true;
+            }
+
+            // If we pass through a call expression, the identifier is nested
+            // (e.g., an argument to `factory(A)`).
+            if parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::NEW_EXPRESSION
+            {
+                return false;
+            }
+
+            // Stop at function/class/interface boundaries
+            if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                || parent_node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                return false;
+            }
+
+            current = parent_idx;
+        }
+        false
+    }
+
     /// Find the class or interface declaration containing a heritage clause.
     ///
     /// Given a heritage clause node, returns the parent CLASS_DECLARATION,
