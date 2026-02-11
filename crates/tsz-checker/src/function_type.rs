@@ -90,8 +90,18 @@ impl<'a> CheckerState<'a> {
                     Some(method.name),
                     self.property_name_for_error(method.name),
                 )
+            } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                // Support GET_ACCESSOR and SET_ACCESSOR nodes (object literal and class accessors)
+                (
+                    &accessor.type_parameters,
+                    &accessor.parameters,
+                    accessor.type_annotation,
+                    accessor.body,
+                    Some(accessor.name),
+                    self.property_name_for_error(accessor.name),
+                )
             } else {
-                return return_with_cleanup!(TypeId::ERROR); // Missing function/method data - propagate error
+                return return_with_cleanup!(TypeId::ERROR); // Missing function/method/accessor data - propagate error
             };
 
         // Function declarations don't report implicit any for parameters (handled by check_statement)
