@@ -244,3 +244,23 @@ M.x = 1;
         "Should NOT emit TS2540 for namespace let export"
     );
 }
+
+// =========================================================================
+// Element access readonly tests
+// =========================================================================
+
+#[test]
+fn test_readonly_interface_element_access() {
+    // obj["x"] should also be caught as readonly
+    let source = r#"
+interface I {
+    readonly x: number;
+}
+declare const obj: I;
+obj["x"] = 10;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for element access to readonly interface property"
+    );
+}
