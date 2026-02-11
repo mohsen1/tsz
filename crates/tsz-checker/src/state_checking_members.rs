@@ -2143,7 +2143,9 @@ impl<'a> CheckerState<'a> {
                         "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
                         diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                     );
-                } else {
+                } else if self.ctx.strict_null_checks() {
+                    // TS2366: Only emit when strictNullChecks is enabled, because
+                    // without it, undefined is implicitly assignable to any type.
                     use crate::types::diagnostics::diagnostic_messages;
                     self.error_at_node(
                         method.type_annotation,
@@ -2428,9 +2430,12 @@ impl<'a> CheckerState<'a> {
                         "A 'get' accessor must return a value.",
                         diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
                     );
-                } else if has_type_annotation && requires_return && falls_through {
-                    // TS2355: For getters with type annotation that requires return, but have
-                    // some return statements but also fall through
+                } else if has_type_annotation
+                    && requires_return
+                    && falls_through
+                    && self.ctx.strict_null_checks()
+                {
+                    // TS2366: Only emit with strictNullChecks
                     use crate::types::diagnostics::diagnostic_messages;
                     self.error_at_node(
                         accessor.type_annotation,
@@ -3474,7 +3479,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
                         diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                     );
-                } else {
+                } else if self.ctx.strict_null_checks() {
+                    // TS2366: Only emit with strictNullChecks
                     use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         func.type_annotation,

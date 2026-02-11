@@ -478,7 +478,8 @@ impl<'a> CheckerState<'a> {
                             "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
                             diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                         );
-                    } else {
+                    } else if self.ctx.strict_null_checks() {
+                        // TS2366: Only emit with strictNullChecks
                         self.error_at_node(
                             type_annotation,
                             diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
