@@ -2158,6 +2158,32 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if a type is or contains bigint (for TS2538 validation).
+    pub(crate) fn type_contains_bigint(&self, type_id: TypeId) -> bool {
+        use tsz_solver::{LiteralValue, TypeKey};
+
+        if type_id == TypeId::BIGINT {
+            return true;
+        }
+
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Literal(LiteralValue::BigInt(_))) => true,
+            Some(TypeKey::Union(list_id)) => self
+                .ctx
+                .types
+                .type_list(list_id)
+                .iter()
+                .any(|&member| self.type_contains_bigint(member)),
+            Some(TypeKey::Intersection(list_id)) => self
+                .ctx
+                .types
+                .type_list(list_id)
+                .iter()
+                .any(|&member| self.type_contains_bigint(member)),
+            _ => false,
+        }
+    }
+
     /// Get display string for implicit any return type.
     ///
     /// Returns "any" for null/undefined only types, otherwise formats the type.
