@@ -15,7 +15,6 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 use tsz_solver::type_queries::{LiteralTypeKind, classify_literal_type};
-use tsz_solver::type_query_builder::TypeQueryBuilder;
 
 // =============================================================================
 // Type Query Utilities
@@ -68,16 +67,10 @@ impl<'a> CheckerState<'a> {
             LiteralTypeKind::Boolean(_) => "boolean".to_string(),
             LiteralTypeKind::BigInt(_) => "bigint".to_string(),
             LiteralTypeKind::NotLiteral => {
-                // Use TypeQueryBuilder for efficient multi-query operation
-                // Single database lookup handles both callable and object checks
-                let query = TypeQueryBuilder::new(self.ctx.types, type_id).build();
-
-                if query.is_callable {
+                if tsz_solver::type_queries::is_callable_type(self.ctx.types, type_id)
+                    || tsz_solver::type_queries::is_function_type(self.ctx.types, type_id)
+                {
                     "function".to_string()
-                } else if query.is_object {
-                    "object".to_string()
-                } else if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
-                    "object".to_string() // Conservative fallback
                 } else {
                     "object".to_string()
                 }
