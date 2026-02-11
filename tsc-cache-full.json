@@ -34369,7 +34369,6 @@
       "size": 364
     },
     "error_codes": [
-      2306,
       6142
     ]
   },
@@ -34379,7 +34378,6 @@
       "size": 280
     },
     "error_codes": [
-      2306,
       6142
     ]
   },
@@ -34416,9 +34414,7 @@
       "mtime_ms": 1770711484579,
       "size": 862
     },
-    "error_codes": [
-      2792
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithModule.ts": {
     "metadata": {
@@ -34460,9 +34456,7 @@
       "mtime_ms": 1770711484579,
       "size": 417
     },
-    "error_codes": [
-      2305
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithSuffixes_oneBlank.ts": {
     "metadata": {
@@ -34476,9 +34470,7 @@
       "mtime_ms": 1770711484580,
       "size": 539
     },
-    "error_codes": [
-      2305
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithSuffixes_one_jsModule.ts": {
     "metadata": {
@@ -34492,27 +34484,21 @@
       "mtime_ms": 1770711484580,
       "size": 608
     },
-    "error_codes": [
-      2732
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithSuffixes_threeLastIsBlank1.ts": {
     "metadata": {
       "mtime_ms": 1770711484580,
       "size": 548
     },
-    "error_codes": [
-      2305
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithSuffixes_threeLastIsBlank2.ts": {
     "metadata": {
       "mtime_ms": 1770711484580,
       "size": 499
     },
-    "error_codes": [
-      2305
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithSuffixes_oneNotFound.ts": {
     "metadata": {
@@ -34520,7 +34506,7 @@
       "size": 399
     },
     "error_codes": [
-      2305
+      2307
     ]
   },
   "compiler/moduleResolutionWithSuffixes_one_dirModuleWithIndex.ts": {
@@ -34528,36 +34514,28 @@
       "mtime_ms": 1770711484579,
       "size": 445
     },
-    "error_codes": [
-      2305
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithSuffixes_one_externalModule.ts": {
     "metadata": {
       "mtime_ms": 1770711484580,
       "size": 870
     },
-    "error_codes": [
-      2305
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithSuffixes_one_externalModulePath.ts": {
     "metadata": {
       "mtime_ms": 1770711484580,
       "size": 914
     },
-    "error_codes": [
-      2305
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithSuffixes_one_externalModule_withPaths.ts": {
     "metadata": {
       "mtime_ms": 1770711484580,
       "size": 1185
     },
-    "error_codes": [
-      2307
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithSuffixes_threeLastIsBlank3.ts": {
     "metadata": {
@@ -34580,18 +34558,14 @@
       "mtime_ms": 1770711484581,
       "size": 1398
     },
-    "error_codes": [
-      2307
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithSymlinks_notInNodeModules.ts": {
     "metadata": {
       "mtime_ms": 1770711484581,
       "size": 1180
     },
-    "error_codes": [
-      2307
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolutionWithSymlinks_preserveSymlinks.ts": {
     "metadata": {
@@ -34599,8 +34573,7 @@
       "size": 673
     },
     "error_codes": [
-      2307,
-      2688
+      2322
     ]
   },
   "compiler/moduleResolutionWithSymlinks_referenceTypes.ts": {
@@ -34615,18 +34588,14 @@
       "mtime_ms": 1770711484581,
       "size": 627
     },
-    "error_codes": [
-      2307
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolution_automaticTypeDirectiveNames.ts": {
     "metadata": {
       "mtime_ms": 1770711484582,
       "size": 236
     },
-    "error_codes": [
-      2451
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolution_classicPrefersTs.ts": {
     "metadata": {
@@ -34684,9 +34653,7 @@
       "mtime_ms": 1770711484582,
       "size": 262
     },
-    "error_codes": [
-      2305
-    ]
+    "error_codes": []
   },
   "compiler/moduleResolution_noLeadingDot.ts": {
     "metadata": {
@@ -82726,6 +82693,7 @@
       "size": 682
     },
     "error_codes": [
+      2307,
       2792
     ]
   },
@@ -83074,7 +83042,9 @@
       "mtime_ms": 1770711485350,
       "size": 1030
     },
-    "error_codes": []
+    "error_codes": [
+      2792
+    ]
   },
   "conformance/moduleResolution/resolutionModeTripleSlash1.ts": {
     "metadata": {
@@ -83082,7 +83052,7 @@
       "size": 697
     },
     "error_codes": [
-      2688
+      2552
     ]
   },
   "conformance/moduleResolution/resolutionModeTripleSlash2.ts": {
@@ -83090,14 +83060,18 @@
       "mtime_ms": 1770711485350,
       "size": 798
     },
-    "error_codes": []
+    "error_codes": [
+      2304
+    ]
   },
   "conformance/moduleResolution/resolutionModeTripleSlash3.ts": {
     "metadata": {
       "mtime_ms": 1770711485350,
       "size": 722
     },
-    "error_codes": []
+    "error_codes": [
+      2552
+    ]
   },
   "conformance/moduleResolution/resolutionModeTripleSlash4.ts": {
     "metadata": {
@@ -83105,6 +83079,8 @@
       "size": 699
     },
     "error_codes": [
+      2304,
+      2552,
       2688
     ]
   },
@@ -83113,14 +83089,18 @@
       "mtime_ms": 1770711485351,
       "size": 721
     },
-    "error_codes": []
+    "error_codes": [
+      2552
+    ]
   },
   "conformance/moduleResolution/resolutionModeTypeOnlyImport1.ts": {
     "metadata": {
       "mtime_ms": 1770711485351,
       "size": 1317
     },
-    "error_codes": []
+    "error_codes": [
+      2792
+    ]
   },
   "conformance/moduleResolution/resolvesWithoutExportsDiagnostic1.ts": {
     "metadata": {
@@ -83157,10 +83137,7 @@
       "mtime_ms": 1768743784683,
       "size": 817
     },
-    "error_codes": [
-      2322,
-      2451
-    ]
+    "error_codes": []
   },
   "conformance/moduleResolution/typesVersions.emptyTypes.ts": {
     "metadata": {
