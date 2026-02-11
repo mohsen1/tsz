@@ -2109,6 +2109,20 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Skip check for cross-file symbols (imported from another file).
+        // Position comparison only makes sense within the same file.
+        if symbol.decl_file_idx != u32::MAX || symbol.import_module.is_some() {
+            return false;
+        }
+
+        // In multi-file mode, symbol declarations may reference nodes in another
+        // file's arena.  `self.ctx.arena` only contains the *current* file, so
+        // looking up the declaration index would yield an unrelated node whose
+        // position comparison is meaningless.  Detect this by verifying that the
+        // node found at the declaration index really IS a class / enum / variable
+        // declaration — if it isn't, the index came from a different arena.
+        let is_multi_file = self.ctx.all_arenas.is_some();
+
         // Get the declaration position
         let decl_idx = if !symbol.value_declaration.is_none() {
             symbol.value_declaration
@@ -2124,6 +2138,25 @@ impl<'a> CheckerState<'a> {
         let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
             return false;
         };
+
+        // In multi-file mode, validate the declaration node kind matches the
+        // symbol.  A mismatch means the node index is from a different file's
+        // arena and should not be compared.
+        if is_multi_file {
+            let is_class = symbol.flags & symbol_flags::CLASS != 0;
+            let is_enum = symbol.flags & symbol_flags::REGULAR_ENUM != 0;
+            let is_var = symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0;
+            let kind_ok = (is_class
+                && (decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION))
+                || (is_enum && decl_node.kind == syntax_kind_ext::ENUM_DECLARATION)
+                || (is_var
+                    && (decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                        || decl_node.kind == syntax_kind_ext::PARAMETER));
+            if !kind_ok {
+                return false;
+            }
+        }
 
         // Only flag if usage is before declaration in source order
         if usage_node.pos >= decl_node.pos {
@@ -2166,6 +2199,13 @@ impl<'a> CheckerState<'a> {
                         return false;
                     }
                 }
+            }
+            // Export assignments (`export = X` / `export default X`) are not TDZ
+            // violations: the compiler reorders them after all declarations, so
+            // the referenced class/variable is initialized by the time the export
+            // binding is created.
+            if node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                return false;
             }
             // Stop at source file
             if node.kind == syntax_kind_ext::SOURCE_FILE {
