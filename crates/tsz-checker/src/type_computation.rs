@@ -1177,9 +1177,11 @@ impl<'a> CheckerState<'a> {
         let index_type = self.get_type_of_node(access.name_or_argument);
 
         // TS2538: Type cannot be used as an index type
-        // Check if index_type contains an array type
+        // Check if index_type contains an array type or bigint
         let contains_array_type = self.type_contains_array_type(index_type);
-        if contains_array_type {
+        let contains_bigint = self.type_contains_bigint(index_type);
+
+        if contains_array_type || contains_bigint {
             use crate::types::diagnostics::{
                 diagnostic_codes, diagnostic_messages, format_message,
             };
