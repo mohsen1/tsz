@@ -4431,7 +4431,6 @@ fn test_resolve_bounds_function_this_parameter_mismatch() {
 /// optional targets is not fully implemented. The solver panics with a BoundsViolation
 /// error when trying to resolve this case.
 #[test]
-#[ignore = "Function `this` parameter optional target bounds resolution not fully implemented"]
 fn test_resolve_bounds_function_this_parameter_optional_target() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);

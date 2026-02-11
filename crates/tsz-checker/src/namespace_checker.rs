@@ -15,6 +15,7 @@ use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
+use tsz_parser::NodeIndex;
 use tsz_solver::TypeId;
 use tsz_solver::types::Visibility;
 
@@ -85,16 +86,39 @@ impl<'a> CheckerState<'a> {
 
             let type_id = self.get_type_of_symbol(*member_id);
             let name_atom = self.ctx.types.intern_string(name);
-            props.entry(name_atom).or_insert(PropertyInfo {
-                name: name_atom,
-                type_id,
-                write_type: type_id,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-            });
+
+            // Check for duplicate identifiers (TS2300)
+            // When a class static member and namespace export share the same name
+            if props.contains_key(&name_atom) {
+                // Get the namespace export symbol to report error at its location
+                if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
+                    let error_node = export_symbol.value_declaration;
+                    if error_node != NodeIndex::NONE {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            error_node,
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            &[name],
+                        );
+                    }
+                }
+                // Skip adding this duplicate property
+                continue;
+            }
+
+            props.insert(
+                name_atom,
+                PropertyInfo {
+                    name: name_atom,
+                    type_id,
+                    write_type: type_id,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                },
+            );
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();
@@ -157,16 +181,39 @@ impl<'a> CheckerState<'a> {
 
             let type_id = self.get_type_of_symbol(*member_id);
             let name_atom = self.ctx.types.intern_string(name);
-            props.entry(name_atom).or_insert(PropertyInfo {
-                name: name_atom,
-                type_id,
-                write_type: type_id,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-            });
+
+            // Check for duplicate identifiers (TS2300)
+            // When a function property and namespace export share the same name
+            if props.contains_key(&name_atom) {
+                // Get the namespace export symbol to report error at its location
+                if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
+                    let error_node = export_symbol.value_declaration;
+                    if error_node != NodeIndex::NONE {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            error_node,
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            &[name],
+                        );
+                    }
+                }
+                // Skip adding this duplicate property
+                continue;
+            }
+
+            props.insert(
+                name_atom,
+                PropertyInfo {
+                    name: name_atom,
+                    type_id,
+                    write_type: type_id,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                },
+            );
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();

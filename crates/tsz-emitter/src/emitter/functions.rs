@@ -30,12 +30,21 @@ impl<'a> Printer<'a> {
             self.write("async ");
         }
 
-        // Parameters (without types for JavaScript)
-        // TypeScript always emits parentheses in output, even for single simple parameters
-        // Source: `x => x` is emitted as `(x) => x`
-        self.write("(");
+        // TypeScript preserves parentheses from source:
+        // - If source had `(x) => x`, emit `(x) => x` even though x is simple
+        // - If source had `x => x`, emit `x => x`
+        // - If source had `(x: string) => x`, emit `(x) => x` (parens preserved)
+        let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
+        let is_simple = self.is_simple_single_parameter(&func.parameters.nodes);
+        let needs_parens = source_had_parens || !is_simple;
+
+        if needs_parens {
+            self.write("(");
+        }
         self.emit_function_parameters_js(&func.parameters.nodes);
-        self.write(")");
+        if needs_parens {
+            self.write(")");
+        }
 
         // Skip return type for JavaScript
 
@@ -43,6 +52,107 @@ impl<'a> Printer<'a> {
 
         // Body
         self.emit(func.body);
+    }
+
+    /// Check if the source had parentheses around the parameters
+    fn source_has_arrow_function_parens(&self, params: &[NodeIndex]) -> bool {
+        if params.is_empty() {
+            // Empty param list always has parens: () => x
+            return true;
+        }
+
+        // FIRST: Check source text if available (most reliable)
+        // Scan forward from the last parameter to find ')' before '=>'
+        if let Some(source) = self.source_text {
+            if let Some(last_param) = params.last() {
+                if let Some(param_node) = self.arena.get(*last_param) {
+                    let end_pos = param_node.end as usize;
+
+                    // Ensure we don't go out of bounds
+                    if end_pos < source.len() {
+                        // Scan forward from the end of the last parameter
+                        // Look for ')' (had parens) or '=' from '=>' (no parens)
+                        let suffix = &source[end_pos..];
+                        for ch in suffix.chars() {
+                            match ch {
+                                // Whitespace - skip
+                                ' ' | '\t' | '\n' | '\r' => continue,
+                                // Found closing paren - had parens
+                                ')' => return true,
+                                // Found '=' from '=>' - no parens
+                                '=' => return false,
+                                // Any other character (colon for type, etc.) - keep scanning
+                                _ => continue,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // FALLBACK: If source text check failed or no source available,
+        // check if parameter has modifiers or type annotations.
+        // Parameters with these MUST have had parens in valid TS.
+        if let Some(first_param) = params.first() {
+            if let Some(param_node) = self.arena.get(*first_param) {
+                if let Some(param) = self.arena.get_parameter(param_node) {
+                    // Check for modifiers (public, private, protected, readonly, etc.)
+                    if let Some(mods) = &param.modifiers {
+                        if !mods.nodes.is_empty() {
+                            return true;
+                        }
+                    }
+                    // Check for type annotation
+                    if !param.type_annotation.is_none() {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Default to parens if we couldn't determine
+        true
+    }
+
+    /// Check if parameters are a simple single parameter that doesn't need parens
+    /// For JS emit, type annotations don't matter since they're always stripped.
+    fn is_simple_single_parameter(&self, params: &[NodeIndex]) -> bool {
+        // Must have exactly one parameter
+        if params.len() != 1 {
+            return false;
+        }
+
+        let param_idx = params[0];
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+
+        // Must not be a rest parameter
+        if param.dot_dot_dot_token {
+            return false;
+        }
+
+        // Type annotations are irrelevant for JS emit - they're always stripped
+
+        // Must have no initializer
+        if !param.initializer.is_none() {
+            return false;
+        }
+
+        // The name must be a simple identifier (not a destructuring pattern)
+        if param.name.is_none() {
+            return false;
+        }
+
+        let Some(name_node) = self.arena.get(param.name) else {
+            return false;
+        };
+
+        // Check if it's an identifier (not ArrayBindingPattern or ObjectBindingPattern)
+        name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
     }
 
     pub(super) fn emit_function_expression(&mut self, node: &Node, _idx: NodeIndex) {
@@ -220,6 +330,29 @@ impl<'a> Printer<'a> {
                     self.write(" = ");
                     self.emit(param.initializer);
                 }
+            }
+        }
+
+        // Emit trailing comments after the last parameter (e.g., `...rest /* comment */`).
+        // We use the name node's end position, not the parameter node's end, because
+        // the parameter node's end may extend past the comment (including trivia).
+        if let Some(&last_param) = params.last() {
+            if let Some(last_node) = self.arena.get(last_param)
+                && let Some(last_param) = self.arena.get_parameter(last_node)
+            {
+                // Use the end of the last thing we emitted (initializer or name)
+                let scan_pos = if !last_param.initializer.is_none() {
+                    if let Some(init_node) = self.arena.get(last_param.initializer) {
+                        init_node.end
+                    } else {
+                        last_node.end
+                    }
+                } else if let Some(name_node) = self.arena.get(last_param.name) {
+                    name_node.end
+                } else {
+                    last_node.end
+                };
+                self.emit_trailing_comments(scan_pos);
             }
         }
     }

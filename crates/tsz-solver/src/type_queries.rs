@@ -28,6 +28,7 @@
 //! ```
 
 use crate::{TypeDatabase, TypeId, TypeKey};
+use tsz_common::Atom;
 
 // Re-export extended type queries so callers can use `type_queries::*`
 pub use crate::type_queries_extended::*;
@@ -2684,4 +2685,129 @@ pub fn is_valid_for_in_target(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         // Everything else is not valid for for...in
         _ => false,
     }
+}
+
+/// Check if two types are "comparable" for TS2352 type assertion overlap check.
+///
+/// TSC uses `isTypeComparableTo` which is more relaxed than assignability.
+/// Types are comparable if:
+/// 1. They share at least one common object property name
+/// 2. One is a base primitive type and the other is a literal/union of that primitive
+/// 3. For union types, any member is comparable to the other type
+///
+/// This prevents false TS2352 errors on valid type assertions.
+pub fn types_are_comparable(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
+    types_are_comparable_inner(db, source, target, 0)
+}
+
+fn types_are_comparable_inner(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+    depth: u32,
+) -> bool {
+    // Prevent infinite recursion
+    if depth > 5 {
+        return false;
+    }
+
+    // Same type is always comparable
+    if source == target {
+        return true;
+    }
+
+    // Check union types: a union is comparable if ANY member is comparable
+    if let Some(TypeKey::Union(list_id)) = db.lookup(source) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .any(|&m| types_are_comparable_inner(db, m, target, depth + 1));
+    }
+    if let Some(TypeKey::Union(list_id)) = db.lookup(target) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .any(|&m| types_are_comparable_inner(db, source, m, depth + 1));
+    }
+
+    // Check primitive ↔ literal comparability
+    // string is comparable to any string literal
+    // number is comparable to any numeric literal
+    // etc.
+    if is_primitive_comparable(db, source, target) || is_primitive_comparable(db, target, source) {
+        return true;
+    }
+
+    // Check object property overlap
+    types_have_common_properties(db, source, target)
+}
+
+/// Check if a base primitive type is comparable to a literal or other form of that primitive.
+fn is_primitive_comparable(db: &dyn TypeDatabase, base: TypeId, other: TypeId) -> bool {
+    // string is comparable to string literals
+    if base == TypeId::STRING {
+        if let Some(TypeKey::Literal(lit)) = db.lookup(other) {
+            return matches!(lit, crate::types::LiteralValue::String(_));
+        }
+        return other == TypeId::STRING;
+    }
+    // number is comparable to numeric literals
+    if base == TypeId::NUMBER {
+        if let Some(TypeKey::Literal(lit)) = db.lookup(other) {
+            return matches!(lit, crate::types::LiteralValue::Number(_));
+        }
+        return other == TypeId::NUMBER;
+    }
+    // boolean is comparable to true/false
+    if base == TypeId::BOOLEAN {
+        return other == TypeId::BOOLEAN_TRUE
+            || other == TypeId::BOOLEAN_FALSE
+            || other == TypeId::BOOLEAN;
+    }
+    // bigint is comparable to bigint literals
+    if base == TypeId::BIGINT {
+        if let Some(TypeKey::Literal(lit)) = db.lookup(other) {
+            return matches!(lit, crate::types::LiteralValue::BigInt(_));
+        }
+        return other == TypeId::BIGINT;
+    }
+    false
+}
+
+/// Check if two types share at least one common property name.
+fn types_have_common_properties(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
+    // Helper to get property names from an object/callable type
+    fn get_property_names(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<Atom> {
+        match db.lookup(type_id) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = db.object_shape(shape_id);
+                shape.properties.iter().map(|p| p.name).collect()
+            }
+            Some(TypeKey::Callable(callable_id)) => {
+                let shape = db.callable_shape(callable_id);
+                shape.properties.iter().map(|p| p.name).collect()
+            }
+            Some(TypeKey::Intersection(list_id)) => {
+                let members = db.type_list(list_id);
+                let mut names = Vec::new();
+                for &member in members.iter() {
+                    names.extend(get_property_names(db, member));
+                }
+                names
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    let source_names = get_property_names(db, source);
+    let target_names = get_property_names(db, target);
+
+    if source_names.is_empty() || target_names.is_empty() {
+        return false;
+    }
+
+    // Check if any source property exists in target
+    use rustc_hash::FxHashSet;
+    let target_set: FxHashSet<Atom> = target_names.into_iter().collect();
+    source_names.iter().any(|name| target_set.contains(name))
 }

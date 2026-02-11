@@ -67,13 +67,10 @@ impl<'a> CheckerState<'a> {
             LiteralTypeKind::Boolean(_) => "boolean".to_string(),
             LiteralTypeKind::BigInt(_) => "bigint".to_string(),
             LiteralTypeKind::NotLiteral => {
-                // Check for function types
-                if self.is_callable_type(type_id) {
+                if tsz_solver::type_queries::is_callable_type(self.ctx.types, type_id)
+                    || tsz_solver::type_queries::is_function_type(self.ctx.types, type_id)
+                {
                     "function".to_string()
-                } else if self.is_object_type(type_id) {
-                    "object".to_string()
-                } else if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
-                    "object".to_string() // Conservative fallback
                 } else {
                     "object".to_string()
                 }

@@ -758,38 +758,21 @@ impl<'a> Completions<'a> {
             .unwrap_or(0);
         let last_word = &trimmed[last_word_start..];
 
-        // Keywords that always return true per TypeScript's implementation
+        // Keywords after which we are creating a new identifier (name declaration position).
+        // TypeScript's isNewIdentifierLocation only returns true for specific declaration
+        // contexts where the user is expected to type a new name.
+        // Keywords like `const`, `let`, `var`, `return`, `as` return false because
+        // they expect existing identifiers or type names.
         if matches!(
             last_word,
             "module"
                 | "namespace"
                 | "import"
                 | "function"
-                | "yield"
                 | "class"
                 | "interface"
                 | "enum"
                 | "type"
-                | "async"
-                | "return"
-                | "case"
-                | "throw"
-                | "new"
-                | "extends"
-                | "implements"
-                | "const"
-                | "let"
-                | "var"
-                | "export"
-                | "default"
-                | "typeof"
-                | "void"
-                | "delete"
-                | "in"
-                | "of"
-                | "instanceof"
-                | "as"
-                | "await"
         ) {
             return true;
         }
@@ -832,10 +815,6 @@ impl<'a> Completions<'a> {
             Some(b'&') => return true,
             // After `!` in logical not
             Some(b'!') => return true,
-            // After `;` in statement position
-            Some(b';') => return true,
-            // After `>` in closing type argument or JSX
-            Some(b'>') => return true,
             _ => {}
         }
 
@@ -3140,20 +3119,21 @@ mod completions_tests {
     }
 
     #[test]
-    #[ignore = "TODO: Completions default sort text for functions"]
     fn test_completions_default_sort_text_function() {
         // default_sort_text should return correct categories for each kind.
+        // Variables, functions, and parameters use LOCATION_PRIORITY ("11")
+        // matching tsc's LocationPriority for most items in scope.
         assert_eq!(
             default_sort_text(CompletionItemKind::Variable),
-            sort_priority::LOCAL_DECLARATION
+            sort_priority::LOCATION_PRIORITY
         );
         assert_eq!(
             default_sort_text(CompletionItemKind::Function),
-            sort_priority::LOCAL_DECLARATION
+            sort_priority::LOCATION_PRIORITY
         );
         assert_eq!(
             default_sort_text(CompletionItemKind::Parameter),
-            sort_priority::LOCAL_DECLARATION
+            sort_priority::LOCATION_PRIORITY
         );
         assert_eq!(
             default_sort_text(CompletionItemKind::Property),
@@ -3375,7 +3355,6 @@ mod completions_tests {
     }
 
     #[test]
-    #[ignore = "TODO: New identifier location detection after 'const'"]
     fn test_is_new_identifier_location_after_const() {
         // TypeScript returns false for `const |` - it's a declaration keyword but
         // the default in TS is false unless specific AST conditions are met
@@ -3426,7 +3405,6 @@ mod completions_tests {
     }
 
     #[test]
-    #[ignore = "TODO: New identifier location detection after 'as'"]
     fn test_is_new_identifier_location_after_as() {
         // `x as <type>` is a type assertion - selecting existing type, not new identifier
         let source = "var y = x as ";
@@ -3440,7 +3418,6 @@ mod completions_tests {
     }
 
     #[test]
-    #[ignore = "TODO: New identifier location detection after 'return'"]
     fn test_is_new_identifier_location_not_after_return() {
         // TypeScript returns false for `return |` - it falls through to the default
         let source = "function f() { return ";
@@ -3454,7 +3431,6 @@ mod completions_tests {
     }
 
     #[test]
-    #[ignore = "TODO: New identifier location detection in expressions"]
     fn test_is_new_identifier_location_not_in_normal_expression() {
         let source = "const x = 1;\n";
         let (root, arena, binder, line_map, src) = make_completions_provider(source);

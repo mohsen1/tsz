@@ -2588,10 +2588,13 @@ impl<'a> InferenceContext<'a> {
         if source.is_none() && target.is_none() {
             return true;
         }
-        // Use Unknown instead of Any for stricter type checking
-        // When this parameter type is not specified, we should not allow any value
+        // If target has no explicit `this` parameter, always compatible.
+        // TypeScript only checks `this` when the target declares one.
+        if target.is_none() {
+            return true;
+        }
         let source = source.unwrap_or(TypeId::UNKNOWN);
-        let target = target.unwrap_or(TypeId::UNKNOWN);
+        let target = target.unwrap();
         self.are_parameters_compatible(source, target, bivariant)
     }
 
@@ -3841,15 +3844,41 @@ impl<'a> InferenceContext<'a> {
 
         for (name, var, _) in type_params.iter() {
             let ty = match self.probe(*var) {
-                Some(resolved) => resolved,
+                Some(resolved) => {
+                    tracing::trace!(
+                        ?name,
+                        ?var,
+                        ?resolved,
+                        "get_current_substitution: already resolved"
+                    );
+                    resolved
+                }
                 None => {
                     // Not resolved yet, try to get best candidate
                     let root = self.table.find(*var);
                     let info = self.table.probe_value(root);
+                    tracing::trace!(
+                        ?name, ?var,
+                        candidates_count = info.candidates.len(),
+                        upper_bounds_count = info.upper_bounds.len(),
+                        upper_bounds = ?info.upper_bounds,
+                        "get_current_substitution: not resolved"
+                    );
 
                     if !info.candidates.is_empty() {
                         let is_const = self.is_var_const(root);
                         self.resolve_from_candidates(&info.candidates, is_const)
+                    } else if !info.upper_bounds.is_empty() {
+                        // No candidates yet, but we have a constraint (upper bound).
+                        // Use the constraint as contextual fallback so that mapped types
+                        // like `{ [K in keyof P]: P[K] }` resolve using the constraint
+                        // type. This matches tsc's behavior for contextual typing of
+                        // generic call arguments when all arguments are context-sensitive.
+                        if info.upper_bounds.len() == 1 {
+                            info.upper_bounds[0]
+                        } else {
+                            self.interner.intersection(info.upper_bounds.to_vec())
+                        }
                     } else {
                         // No info yet, use unknown as placeholder
                         TypeId::UNKNOWN
@@ -3866,10 +3895,6 @@ impl<'a> InferenceContext<'a> {
 
 // DISABLED: Tests use deprecated add_candidate / resolve_with_constraints API
 // The inference system has been refactored to use unification-based inference.
-// These tests need to be rewritten to test the new system.
-// #[cfg(test)]
-// #[path = "tests/inference_candidates_tests.rs"]
-// mod inference_candidates_tests;
 #[cfg(test)]
 #[path = "tests/infer_tests.rs"]
 mod tests;

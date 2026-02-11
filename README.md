@@ -20,9 +20,10 @@ Currently targeting `TypeScript`@`6.0.0-dev.20260116`
 To ensure tsz is a drop-in replacement for `tsc`, we run the official TypeScript conformance
 test suite against it.
 
+
 <!-- CONFORMANCE_START -->
 ```
-Progress: [██████████░░░░░░░░░░] 51.7% (6210/12005 tests)
+Progress: [████████████░░░░░░░░] 58.5% (7,336/12,546 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -34,8 +35,8 @@ to ensure correct code generation.
 <!-- EMIT_START -->
 
 ``` 
-JavaScript:  [█████████░░░░░░░░░░░] 39.5% (4155/10509 tests)
-Declaration: [██████░░░░░░░░░░░░░░] 16.4% (146/888 tests)
+JavaScript:  [█████████░░░░░░░░░░░] 41.3% (4,914/11,886 tests)
+Declaration: [██████░░░░░░░░░░░░░░] 15.8% (170/1,077) tests)
 ```
 
 ### Language Service

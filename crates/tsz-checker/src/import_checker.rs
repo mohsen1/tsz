@@ -661,6 +661,8 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                         diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                     );
+                    // Return early - don't check for module resolution when import is invalid
+                    return;
                 }
             }
         }
@@ -769,14 +771,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let Some(ref_node) = self.ctx.arena.get(import.module_specifier) else {
+        let module_specifier_idx = import.module_specifier;
+        let Some(ref_node) = self.ctx.arena.get(module_specifier_idx) else {
             return;
         };
+        let spec_start = ref_node.pos;
+        let spec_length = ref_node.end.saturating_sub(ref_node.pos);
 
         // Handle namespace imports: import x = Namespace or import x = Namespace.Member
         // These need to emit TS2503 ("Cannot find namespace") if not found
         if ref_node.kind != SyntaxKind::StringLiteral as u16 {
-            self.check_namespace_import(import.module_specifier);
+            self.check_namespace_import(stmt_idx, module_specifier_idx);
             return;
         }
 
@@ -832,7 +837,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .modules_with_ts2307_emitted
                     .insert(module_key.clone());
-                self.error_at_node(import.module_specifier, &error_message, error_code);
+                self.error_at_position(spec_start, spec_length, &error_message, error_code);
             }
             return;
         }
@@ -850,7 +855,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .modules_with_ts2307_emitted
             .insert(module_key.clone());
-        self.error_at_node(import.module_specifier, &message, code);
+        self.error_at_position(spec_start, spec_length, &message, code);
     }
 
     // =========================================================================
@@ -859,8 +864,10 @@ impl<'a> CheckerState<'a> {
 
     /// Check a namespace import (import x = Namespace or import x = Namespace.Member).
     /// Emits TS2503 "Cannot find namespace" if the namespace cannot be resolved.
-    fn check_namespace_import(&mut self, module_ref: NodeIndex) {
+    /// Emits TS2708 "Cannot use namespace as a value" if exporting a type-only member.
+    fn check_namespace_import(&mut self, stmt_idx: NodeIndex, module_ref: NodeIndex) {
         use crate::types::diagnostics::diagnostic_codes;
+        use tsz_binder::symbol_flags;
 
         let Some(ref_node) = self.ctx.arena.get(module_ref) else {
             return;
@@ -907,6 +914,74 @@ impl<'a> CheckerState<'a> {
                     // If left is resolved, check if right member exists (TS2694)
                     // Use the existing report_type_query_missing_member which handles this correctly
                     self.report_type_query_missing_member(module_ref);
+
+                    // TS2708: Check if export import is used with a namespace member
+                    // When you have `export import a = NS.Member`, if NS contains only types,
+                    // you cannot export it as a value.
+                    // Check if the parent node is an EXPORT_DECLARATION (for `export import`)
+                    let mut is_exported = self.has_export_modifier(stmt_idx);
+                    if !is_exported {
+                        if let Some(ext) = self.ctx.arena.get_extended(stmt_idx) {
+                            if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                                if parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                                    is_exported = true;
+                                }
+                            }
+                        }
+                    }
+                    if is_exported {
+                        // Check if the left (namespace) is type-only by checking if it has
+                        // any value members. For now, emit TS2708 if we're exporting an import
+                        // from a namespace that contains a type member.
+                        // Try to resolve the qualified name to check if it's type-only
+                        if let Some(resolved_sym) = self.resolve_qualified_symbol(module_ref) {
+                            let lib_binders = self.get_lib_binders();
+                            if let Some(symbol) = self
+                                .ctx
+                                .binder
+                                .get_symbol_with_libs(resolved_sym, &lib_binders)
+                            {
+                                // Check if this is a type-only symbol (interface or type alias)
+                                let is_type_only = (symbol.flags
+                                    & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS))
+                                    != 0;
+                                if is_type_only {
+                                    // Emit TS2708: Cannot use namespace as a value
+                                    // The error message mentions the namespace, not the member
+                                    self.error_namespace_used_as_value_at(&name, qn.left);
+                                }
+                            }
+                        } else {
+                            // Even if we can't resolve the full qualified name (TS2694 case),
+                            // check if the namespace contains only types
+                            if let Some(left_sym) = self.resolve_qualified_symbol(qn.left) {
+                                let lib_binders = self.get_lib_binders();
+                                if let Some(ns_symbol) =
+                                    self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders)
+                                {
+                                    // Check if namespace exports table contains any value symbols
+                                    let has_value_exports = if let Some(exports) =
+                                        &ns_symbol.exports
+                                    {
+                                        exports.as_ref().iter().any(|(_, &sym_id)| {
+                                            if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
+                                                (sym.flags & symbol_flags::VALUE) != 0
+                                            } else {
+                                                false
+                                            }
+                                        })
+                                    } else {
+                                        false
+                                    };
+
+                                    // If namespace has no value exports, emit TS2708
+                                    if !has_value_exports {
+                                        self.error_namespace_used_as_value_at(&name, qn.left);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -959,9 +1034,15 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let Some(spec_node) = self.ctx.arena.get(import.module_specifier) else {
+        // Extract module specifier data eagerly to avoid borrow issues later
+        let module_specifier_idx = import.module_specifier;
+        let import_clause_idx = import.import_clause;
+
+        let Some(spec_node) = self.ctx.arena.get(module_specifier_idx) else {
             return;
         };
+        let spec_start = spec_node.pos;
+        let spec_length = spec_node.end.saturating_sub(spec_node.pos);
 
         let Some(literal) = self.ctx.arena.get_literal(spec_node) else {
             return;
@@ -971,7 +1052,7 @@ impl<'a> CheckerState<'a> {
         let is_type_only_import = self
             .ctx
             .arena
-            .get(import.import_clause)
+            .get(import_clause_idx)
             .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
             .map(|clause| clause.is_type_only)
             .unwrap_or(false);
@@ -985,8 +1066,9 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
                 &[suggested],
             );
-            self.error_at_node(
-                import.module_specifier,
+            self.error_at_position(
+                spec_start,
+                spec_length,
                 &message,
                 diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
             );
@@ -998,11 +1080,13 @@ impl<'a> CheckerState<'a> {
                 binder.declared_modules.contains(module_name)
                     || binder.shorthand_ambient_modules.contains(module_name)
             }) {
+                tracing::trace!(%module_name, "check_import_declaration: found in declared/shorthand modules, returning");
                 return;
             }
         }
 
         if self.would_create_cycle(module_name) {
+            tracing::trace!(%module_name, "check_import_declaration: cycle detected");
             let cycle_path: Vec<&str> = self
                 .ctx
                 .import_resolution_stack
@@ -1017,8 +1101,9 @@ impl<'a> CheckerState<'a> {
             let module_key = module_name.to_string();
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                 self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                self.error_at_node(
-                    import.module_specifier,
+                self.error_at_position(
+                    spec_start,
+                    spec_length,
                     &message,
                     diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
                 );
@@ -1032,6 +1117,7 @@ impl<'a> CheckerState<'a> {
         // `declare module "x"` in .d.ts files should suppress TS2307 even when
         // file-based resolution fails (matching check_import_equals_declaration).
         if self.is_ambient_module_match(module_name) {
+            tracing::trace!(%module_name, "check_import_declaration: ambient module match, returning");
             self.ctx.import_resolution_stack.pop();
             return;
         }
@@ -1043,12 +1129,13 @@ impl<'a> CheckerState<'a> {
             // Extract error values before mutable borrow
             let error_code = error.code;
             let error_message = error.message.clone();
+            tracing::trace!(%module_name, error_code, "check_import_declaration: resolution error found");
             // Check if we've already emitted an error for this module (prevents duplicate emissions)
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                 self.ctx
                     .modules_with_ts2307_emitted
                     .insert(module_key.clone());
-                self.error_at_node(import.module_specifier, &error_message, error_code);
+                self.error_at_position(spec_start, spec_length, &error_message, error_code);
             }
             if error_code
                 != crate::types::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
@@ -1090,8 +1177,9 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
                             &[suggested],
                         );
-                        self.error_at_node(
-                            import.module_specifier,
+                        self.error_at_position(
+                            spec_start,
+                            spec_length,
                             &message,
                             diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
                         );
@@ -1120,8 +1208,9 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_messages::FILE_IS_NOT_A_MODULE,
                                     &[&source_file.file_name],
                                 );
-                                self.error_at_node(
-                                    import.module_specifier,
+                                self.error_at_position(
+                                    spec_start,
+                                    spec_length,
                                     &message,
                                     diagnostic_codes::FILE_IS_NOT_A_MODULE,
                                 );
@@ -1150,6 +1239,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.ctx.binder.module_exports.contains_key(module_name) {
+            tracing::trace!(%module_name, "check_import_declaration: found in module_exports, checking members");
             self.check_imported_members(import, module_name);
 
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
@@ -1163,6 +1253,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        tracing::trace!(%module_name, "check_import_declaration: fallback - emitting module-not-found error");
         // Fallback: Emit module-not-found error if no specific error was found
         // Check if we've already emitted for this module (prevents duplicate emissions)
         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
@@ -1170,7 +1261,9 @@ impl<'a> CheckerState<'a> {
                 .modules_with_ts2307_emitted
                 .insert(module_key.clone());
             let (message, code) = self.module_not_found_diagnostic(module_name);
-            self.error_at_node(import.module_specifier, &message, code);
+            // Use pre-extracted position instead of error_at_node to avoid
+            // silent failures when get_node_span returns None
+            self.error_at_position(spec_start, spec_length, &message, code);
         }
 
         self.ctx.import_resolution_stack.pop();

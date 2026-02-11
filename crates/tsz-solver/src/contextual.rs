@@ -779,6 +779,18 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_parameter_type(index);
         }
 
+        // Handle Mapped and Conditional types by evaluating them first
+        match self.interner.lookup(expected) {
+            Some(TypeKey::Mapped(_) | TypeKey::Conditional(_)) => {
+                let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+                if evaluated != expected {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                    return ctx.get_parameter_type(index);
+                }
+            }
+            _ => {}
+        }
+
         // Use visitor for Function/Callable types
         let mut extractor = ParameterExtractor::new(self.interner, index);
         extractor.extract(expected)
@@ -962,6 +974,50 @@ impl<'a> ContextualTypeContext<'a> {
             };
         }
 
+        // Handle Mapped, Conditional, and Application types.
+        // These complex types need to be resolved to concrete object types before
+        // property extraction can work.
+        match self.interner.lookup(expected) {
+            Some(TypeKey::Mapped(mapped_id)) => {
+                // First try evaluating the mapped type directly
+                let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+                if evaluated != expected {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                    return ctx.get_property_type(name);
+                }
+                // If evaluation deferred (e.g. { [K in keyof P]: P[K] } where P is a type
+                // parameter), fall back to the constraint of the mapped type's source.
+                // For `keyof P` where `P extends Props`, use `Props` as the contextual type.
+                let mapped = self.interner.mapped_type(mapped_id);
+                if let Some(TypeKey::KeyOf(operand)) = self.interner.lookup(mapped.constraint) {
+                    // The operand may be a Lazy type wrapping a type parameter — resolve it
+                    let resolved_operand = crate::evaluate::evaluate_type(self.interner, operand);
+                    if let Some(constraint) = crate::type_queries::get_type_parameter_constraint(
+                        self.interner,
+                        resolved_operand,
+                    ) {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+                        return ctx.get_property_type(name);
+                    }
+                    // Also try the original operand (may already be a TypeParameter)
+                    if let Some(constraint) =
+                        crate::type_queries::get_type_parameter_constraint(self.interner, operand)
+                    {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+                        return ctx.get_property_type(name);
+                    }
+                }
+            }
+            Some(TypeKey::Conditional(_) | TypeKey::Application(_)) => {
+                let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+                if evaluated != expected {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                    return ctx.get_property_type(name);
+                }
+            }
+            _ => {}
+        }
+
         // Use visitor for Object types
         let mut extractor = PropertyExtractor::new(self.interner, name.to_string());
         extractor.extract(expected)
@@ -1083,114 +1139,6 @@ impl<'a> ContextualTypeContext<'a> {
             None
         } else {
             None
-        }
-    }
-
-    #[allow(dead_code)]
-    fn get_parameter_type_from_signatures(
-        &self,
-        signatures: &[CallSignature],
-        index: usize,
-    ) -> Option<TypeId> {
-        let param_types: Vec<TypeId> = signatures
-            .iter()
-            .filter_map(|sig| self.get_parameter_type_from_params(&sig.params, index))
-            .collect();
-
-        if param_types.is_empty() {
-            None
-        } else if param_types.len() == 1 {
-            Some(param_types[0])
-        } else {
-            Some(self.interner.union(param_types))
-        }
-    }
-
-    #[allow(dead_code)]
-    fn get_parameter_type_from_signatures_for_call(
-        &self,
-        signatures: &[CallSignature],
-        index: usize,
-        arg_count: usize,
-    ) -> Option<TypeId> {
-        let mut matched = false;
-        let mut param_types: Vec<TypeId> = Vec::new();
-
-        for sig in signatures {
-            if self.signature_accepts_arg_count(&sig.params, arg_count) {
-                matched = true;
-                if let Some(param_type) = self.get_parameter_type_from_params(&sig.params, index) {
-                    param_types.push(param_type);
-                }
-            }
-        }
-
-        if param_types.is_empty() && !matched {
-            param_types = signatures
-                .iter()
-                .filter_map(|sig| self.get_parameter_type_from_params(&sig.params, index))
-                .collect();
-        }
-
-        if param_types.is_empty() {
-            None
-        } else if param_types.len() == 1 {
-            Some(param_types[0])
-        } else {
-            Some(self.interner.union(param_types))
-        }
-    }
-
-    #[allow(dead_code)]
-    fn signature_accepts_arg_count(&self, params: &[ParamInfo], arg_count: usize) -> bool {
-        let mut min = 0usize;
-        let mut max = 0usize;
-        let mut has_rest = false;
-
-        for param in params {
-            if param.rest {
-                has_rest = true;
-                break;
-            }
-            max += 1;
-            if !param.optional {
-                min += 1;
-            }
-        }
-
-        if arg_count < min {
-            return false;
-        }
-        if has_rest {
-            return true;
-        }
-        arg_count <= max
-    }
-
-    #[allow(dead_code)]
-    fn get_this_type_from_signatures(&self, signatures: &[CallSignature]) -> Option<TypeId> {
-        let this_types: Vec<TypeId> = signatures.iter().filter_map(|sig| sig.this_type).collect();
-
-        if this_types.is_empty() {
-            None
-        } else if this_types.len() == 1 {
-            Some(this_types[0])
-        } else {
-            Some(self.interner.union(this_types))
-        }
-    }
-
-    #[allow(dead_code)]
-    fn get_return_type_from_signatures(&self, signatures: &[CallSignature]) -> Option<TypeId> {
-        if signatures.is_empty() {
-            return None;
-        }
-
-        let return_types: Vec<TypeId> = signatures.iter().map(|sig| sig.return_type).collect();
-        if return_types.len() == 1 {
-            Some(return_types[0])
-        } else {
-            Some(self.interner.union(return_types))
         }
     }
 

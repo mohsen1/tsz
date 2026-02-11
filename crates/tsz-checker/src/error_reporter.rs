@@ -848,7 +848,7 @@ impl<'a> CheckerState<'a> {
             index_str, object_str
         );
 
-        self.error_at_node(idx, &message, diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE);
+        self.error_at_node(idx, &message, diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN);
     }
 
     // =========================================================================
@@ -1229,10 +1229,13 @@ impl<'a> CheckerState<'a> {
     ) -> Option<Vec<String>> {
         let mut suggestions = Vec::new();
 
-        let visible_names = self
-            .ctx
-            .binder
-            .collect_visible_symbol_names(self.ctx.arena, idx);
+        // Only suggest value-scope symbols (not type-only like interfaces/type aliases)
+        // to match tsc behavior: "Cannot find name 'X'. Did you mean 'Y'?" only suggests values
+        let visible_names = self.ctx.binder.collect_visible_symbol_names_filtered(
+            self.ctx.arena,
+            idx,
+            tsz_binder::symbol_flags::VALUE,
+        );
         for symbol_name in visible_names {
             if symbol_name != name {
                 let similarity = self.calculate_string_similarity(name, &symbol_name);
@@ -1534,8 +1537,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx.file_name.clone(),
                     loc.start,
                     loc.length(),
-                    "This expression is not callable because it is a 'get' accessor. Did you mean to access it without '()'?".to_string(),
-                    diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE,
+                    "This expression is not callable because it is a 'get' accessor. Did you mean to use it without '()'?".to_string(),
+                    diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE_BECAUSE_IT_IS_A_GET_ACCESSOR_DID_YOU_MEAN_TO_USE,
                 ),
             );
         }
@@ -2182,19 +2185,13 @@ impl<'a> CheckerState<'a> {
 
     /// Report TS2749: Symbol refers to a value, but is used as a type.
     pub fn error_value_only_type_at(&mut self, name: &str, idx: NodeIndex) {
-        // In single-file mode, type/value classification can be incomplete
-        // (e.g., class from another file resolves as value-only).
-        // Suppress to prevent false positives.
-        if !self.ctx.report_unresolved_imports {
-            return;
-        }
         if let Some(loc) = self.get_source_location(idx) {
             let message = format_message(
-                diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                diagnostic_messages::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF,
                 &[name],
             );
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                code: diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,
@@ -2306,7 +2303,27 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Also suppress when either side CONTAINS error types (e.g., { new(): error }).
+        // This happens when a forward-referenced class hasn't been fully resolved yet.
+        if tsz_solver::type_queries::contains_error_type_db(self.ctx.types, type_arg)
+            || tsz_solver::type_queries::contains_error_type_db(self.ctx.types, constraint)
+        {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
+            // Deduplicate: get_type_from_type_node may re-resolve type references when
+            // type_parameter_scope changes, causing validate_type_reference_type_arguments
+            // to be called multiple times for the same node.
+            let key = (
+                loc.start,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+            );
+            if self.ctx.emitted_diagnostics.contains(&key) {
+                return;
+            }
+            self.ctx.emitted_diagnostics.insert(key);
+
             let type_str = self.format_type(type_arg);
             let constraint_str = self.format_type(constraint);
             let message = format_message(
@@ -2358,6 +2375,33 @@ impl<'a> CheckerState<'a> {
             );
             self.ctx.diagnostics.push(Diagnostic {
                 code: diagnostic_codes::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                start: loc.start,
+                length: loc.length(),
+                file: self.ctx.file_name.clone(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
+    /// Report TS2352: Conversion of type 'X' to type 'Y' may be a mistake because neither type
+    /// sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+    pub fn error_type_assertion_no_overlap(
+        &mut self,
+        source_type: TypeId,
+        target_type: TypeId,
+        idx: NodeIndex,
+    ) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let source_str = self.format_type(source_type);
+            let target_str = self.format_type(target_type);
+            let message = format_message(
+                diagnostic_messages::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
+                &[&source_str, &target_str],
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,

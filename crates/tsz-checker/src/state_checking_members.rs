@@ -265,6 +265,12 @@ impl<'a> CheckerState<'a> {
                 let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
                     continue;
                 };
+                // Skip private fields (#name) - they are not subject to index signature checks
+                if let Some(name_node) = self.ctx.arena.get(prop.name) {
+                    if name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16 {
+                        continue;
+                    }
+                }
                 let name = self.get_member_name_text(prop.name).unwrap_or_default();
                 (name, prop.name)
             } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
@@ -272,6 +278,12 @@ impl<'a> CheckerState<'a> {
                 let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
                     continue;
                 };
+                // Skip private methods (#name)
+                if let Some(name_node) = self.ctx.arena.get(method.name) {
+                    if name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16 {
+                        continue;
+                    }
+                }
                 let name = self.get_member_name_text(method.name).unwrap_or_default();
                 (name, method.name)
             } else {
@@ -2131,7 +2143,9 @@ impl<'a> CheckerState<'a> {
                         "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
                         diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                     );
-                } else {
+                } else if self.ctx.strict_null_checks() {
+                    // TS2366: Only emit when strictNullChecks is enabled, because
+                    // without it, undefined is implicitly assignable to any type.
                     use crate::types::diagnostics::diagnostic_messages;
                     self.error_at_node(
                         method.type_annotation,
@@ -2416,9 +2430,12 @@ impl<'a> CheckerState<'a> {
                         "A 'get' accessor must return a value.",
                         diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
                     );
-                } else if has_type_annotation && requires_return && falls_through {
-                    // TS2355: For getters with type annotation that requires return, but have
-                    // some return statements but also fall through
+                } else if has_type_annotation
+                    && requires_return
+                    && falls_through
+                    && self.ctx.strict_null_checks()
+                {
+                    // TS2366: Only emit with strictNullChecks
                     use crate::types::diagnostics::diagnostic_messages;
                     self.error_at_node(
                         accessor.type_annotation,
@@ -3005,8 +3022,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // Note: is_derived_property_redeclaration, find_containing_class are in type_checking.rs
-
     /// Check a break statement for validity.
     /// Check a with statement and emit TS2410.
     /// The 'with' statement is not supported in TypeScript.
@@ -3413,6 +3428,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let body_return_type = if is_generator && has_type_annotation {
                 self.get_generator_return_type_argument(return_type)
                     .unwrap_or(return_type)
+            } else if func.is_async && has_type_annotation {
+                // Unwrap Promise<T> to T for async function return type checking.
+                // The function body returns T, which gets auto-wrapped in a Promise.
+                self.unwrap_promise_type(return_type).unwrap_or(return_type)
             } else {
                 return_type
             };
@@ -3462,7 +3481,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
                         diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                     );
-                } else {
+                } else if self.ctx.strict_null_checks() {
+                    // TS2366: Only emit with strictNullChecks
                     use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         func.type_annotation,

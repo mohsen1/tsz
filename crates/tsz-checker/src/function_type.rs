@@ -90,8 +90,18 @@ impl<'a> CheckerState<'a> {
                     Some(method.name),
                     self.property_name_for_error(method.name),
                 )
+            } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                // Support GET_ACCESSOR and SET_ACCESSOR nodes (object literal and class accessors)
+                (
+                    &accessor.type_parameters,
+                    &accessor.parameters,
+                    accessor.type_annotation,
+                    accessor.body,
+                    Some(accessor.name),
+                    self.property_name_for_error(accessor.name),
+                )
             } else {
-                return return_with_cleanup!(TypeId::ERROR); // Missing function/method data - propagate error
+                return return_with_cleanup!(TypeId::ERROR); // Missing function/method/accessor data - propagate error
             };
 
         // Function declarations don't report implicit any for parameters (handled by check_statement)
@@ -249,13 +259,27 @@ impl<'a> CheckerState<'a> {
                 let optional = param.question_token || !param.initializer.is_none();
                 let rest = param.dot_dot_dot_token;
 
+                // Under strictNullChecks, optional parameters (with `?`) get
+                // `undefined` added to their type.  Parameters with a default
+                // value but no `?` do NOT — the default guarantees a value.
+                let effective_type = if param.question_token
+                    && self.ctx.strict_null_checks()
+                    && type_id != TypeId::ANY
+                    && type_id != TypeId::ERROR
+                    && type_id != TypeId::UNDEFINED
+                {
+                    self.ctx.types.union2(type_id, TypeId::UNDEFINED)
+                } else {
+                    type_id
+                };
+
                 params.push(ParamInfo {
                     name,
-                    type_id,
+                    type_id: effective_type,
                     optional,
                     rest,
                 });
-                param_types.push(Some(type_id));
+                param_types.push(Some(effective_type));
                 contextual_index += 1;
             }
         }
@@ -478,7 +502,8 @@ impl<'a> CheckerState<'a> {
                             "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
                             diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                         );
-                    } else {
+                    } else if self.ctx.strict_null_checks() {
+                        // TS2366: Only emit with strictNullChecks
                         self.error_at_node(
                             type_annotation,
                             diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
@@ -945,6 +970,13 @@ impl<'a> CheckerState<'a> {
                     .find_enclosing_heritage_clause(access.name_or_argument)
                     .is_none()
                 {
+                    // Emit TS2708 for namespace member access (e.g., ns.Interface())
+                    // This is "Cannot use namespace as a value"
+                    // Get the namespace name from the left side of the access
+                    if let Some(ns_name) = self.entity_name_text(access.expression) {
+                        self.error_namespace_used_as_value_at(&ns_name, access.expression);
+                    }
+                    // Also emit TS2693 for the type-only member itself
                     self.error_type_only_value_at(property_name, access.name_or_argument);
                 }
                 return TypeId::ERROR;
@@ -988,7 +1020,7 @@ impl<'a> CheckerState<'a> {
                                 "Property '{}' comes from an index signature, so it must be accessed with ['{}'].",
                                 property_name, property_name
                             ),
-                            diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+                            diagnostic_codes::PROPERTY_COMES_FROM_AN_INDEX_SIGNATURE_SO_IT_MUST_BE_ACCESSED_WITH,
                         );
                     }
                     self.apply_flow_narrowing(idx, prop_type)

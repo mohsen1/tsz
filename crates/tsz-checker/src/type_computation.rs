@@ -27,6 +27,27 @@ impl<'a> CheckerState<'a> {
     // Core Type Computation
     // =========================================================================
 
+    /// Evaluate a contextual type that may contain unevaluated mapped/conditional types.
+    ///
+    /// When a generic function's parameter type is instantiated (e.g., `{ [K in keyof P]: P[K] }`
+    /// with P=Props), the result may be a mapped type with `Lazy` references that need a
+    /// full resolver to evaluate. The solver's default `contextual_property_type` uses
+    /// `NoopResolver` and can't resolve these. This method uses the Judge (which has access
+    /// to the TypeEnvironment resolver) to evaluate such types into concrete object types.
+    fn evaluate_contextual_type(&self, type_id: TypeId) -> TypeId {
+        use tsz_solver::TypeKey;
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Mapped(_) | TypeKey::Conditional(_) | TypeKey::Application(_)) => {
+                let evaluated = self.judge_evaluate(type_id);
+                if evaluated != type_id {
+                    return evaluated;
+                }
+                type_id
+            }
+            _ => type_id,
+        }
+    }
+
     /// Get the type of a conditional expression (ternary operator).
     ///
     /// Computes the type of `condition ? whenTrue : whenFalse`.
@@ -129,7 +150,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get types of all elements, applying contextual typing when available.
+        // Track (type, node_index) pairs for excess property checking on array elements.
         let mut element_types = Vec::new();
+        let mut element_nodes = Vec::new();
         let mut tuple_elements = Vec::new();
         for (index, &elem_idx) in array.elements.nodes.iter().enumerate() {
             if elem_idx.is_none() {
@@ -244,6 +267,7 @@ impl<'a> CheckerState<'a> {
                 });
             } else {
                 element_types.push(elem_type);
+                element_nodes.push(elem_idx);
             }
         }
 
@@ -271,12 +295,25 @@ impl<'a> CheckerState<'a> {
         if let Some(ref helper) = ctx_helper
             && let Some(context_element_type) = helper.get_array_element_type()
         {
-            // Check if all elements are assignable to the contextual type
-            // If so, use the contextual type for the array
+            // Check if all elements are structurally compatible with the contextual type.
+            // IMPORTANT: Use is_subtype_of (structural check) instead of is_assignable_to
+            // because is_assignable_to includes excess property checking which would
+            // reject fresh object literals like `{a: 1, b: 2}` against `Foo {a: number}`.
+            // Excess properties should be checked separately, not block contextual typing.
             if element_types
                 .iter()
-                .all(|&elem_type| self.is_assignable_to(elem_type, context_element_type))
+                .all(|&elem_type| self.is_subtype_of(elem_type, context_element_type))
             {
+                // Check excess properties on each element before collapsing to contextual type.
+                // Fresh object literal types would be lost after returning Array<ContextualType>,
+                // so we must check excess properties here while the fresh types are still available.
+                for (elem_type, elem_node) in element_types.iter().zip(element_nodes.iter()) {
+                    self.check_object_literal_excess_properties(
+                        *elem_type,
+                        context_element_type,
+                        *elem_node,
+                    );
+                }
                 return self.ctx.types.array(context_element_type);
             }
         }
@@ -344,6 +381,11 @@ impl<'a> CheckerState<'a> {
             {
                 // TS2588: Cannot assign to 'x' because it is a constant.
                 let is_const = self.check_const_assignment(unary.operand);
+
+                // TS2540: Cannot assign to readonly property (e.g., namespace const export)
+                if !is_const {
+                    self.check_readonly_assignment(unary.operand, idx);
+                }
 
                 // Get operand type for validation
                 let operand_type = self.get_type_of_node(unary.operand);
@@ -927,6 +969,44 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // TS2367: Check for comparisons with no overlap
+            let is_equality_op = matches!(
+                op_kind,
+                k if k == SyntaxKind::EqualsEqualsToken as u16
+                    || k == SyntaxKind::ExclamationEqualsToken as u16
+                    || k == SyntaxKind::EqualsEqualsEqualsToken as u16
+                    || k == SyntaxKind::ExclamationEqualsEqualsToken as u16
+            );
+
+            // For TS2367, get the narrow types (literals) not the widened types
+            let left_narrow = self
+                .literal_type_from_initializer(left_idx)
+                .unwrap_or(left_type);
+            let right_narrow = self
+                .literal_type_from_initializer(right_idx)
+                .unwrap_or(right_type);
+
+            if is_equality_op
+                && left_narrow != TypeId::ERROR
+                && right_narrow != TypeId::ERROR
+                && self.types_have_no_overlap(left_narrow, right_narrow)
+            {
+                use crate::types::diagnostics::{
+                    diagnostic_codes, diagnostic_messages, format_message,
+                };
+                let left_str = self.format_type(left_narrow);
+                let right_str = self.format_type(right_narrow);
+                let message = format_message(
+                    diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
+                    &[&left_str, &right_str],
+                );
+                self.error_at_node(
+                    node_idx,
+                    &message,
+                    diagnostic_codes::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
+                );
+            }
+
             let op_str = match op_kind {
                 k if k == SyntaxKind::PlusToken as u16 => "+",
                 k if k == SyntaxKind::MinusToken as u16 => "-",
@@ -1198,7 +1278,38 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
+        // Type is possibly nullish (e.g., Foo | undefined) - emit TS18048/TS2532
+        // unless optional chaining is used
+        if let Some(cause) = nullish_cause {
+            if !access.question_dot_token {
+                self.report_nullish_object(access.expression, cause, false);
+            }
+        }
+
         let index_type = self.get_type_of_node(access.name_or_argument);
+
+        // TS2538: Type cannot be used as an index type
+        // Check if index_type contains an array type or bigint
+        let contains_array_type = self.type_contains_array_type(index_type);
+        let contains_bigint = self.type_contains_bigint(index_type);
+
+        if contains_array_type || contains_bigint {
+            use crate::types::diagnostics::{
+                diagnostic_codes, diagnostic_messages, format_message,
+            };
+            let index_type_str = self.format_type(index_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                &[&index_type_str],
+            );
+            self.error_at_node(
+                access.name_or_argument,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+            );
+            return TypeId::ERROR;
+        }
+
         let literal_string_is_none = literal_string.is_none();
 
         let mut result_type = None;
@@ -1218,6 +1329,12 @@ impl<'a> CheckerState<'a> {
                     .find_enclosing_heritage_clause(access.name_or_argument)
                     .is_none()
                 {
+                    // Emit TS2708 for namespace member access (e.g., ns.Interface())
+                    // This is "Cannot use namespace as a value"
+                    if let Some(ns_name) = self.entity_name_text(access.expression) {
+                        self.error_namespace_used_as_value_at(&ns_name, access.expression);
+                    }
+                    // Also emit TS2693 for the type-only member itself
                     self.error_type_only_value_at(name, access.name_or_argument);
                 }
                 return TypeId::ERROR;
@@ -1552,8 +1669,13 @@ impl<'a> CheckerState<'a> {
             // Property assignment: { x: value }
             if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
                 if let Some(name) = self.get_property_name(prop.name) {
-                    // Get contextual type for this property
+                    // Get contextual type for this property.
+                    // For mapped/conditional/application types that contain Lazy references
+                    // (e.g. { [K in keyof Props]: Props[K] } after generic inference),
+                    // evaluate them with the full resolver first so the solver can
+                    // extract property types from the resulting concrete object type.
                     let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
+                        let ctx_type = self.evaluate_contextual_type(ctx_type);
                         self.ctx.types.contextual_property_type(ctx_type, &name)
                     } else {
                         None
@@ -1596,7 +1718,11 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property (skip in destructuring targets)
-                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
+                    // TS1117 only applies to ES5 and below; ES2015+ allows duplicate properties
+                    if !skip_duplicate_check
+                        && self.ctx.compiler_options.target.is_es5()
+                        && properties.contains_key(&name_atom)
+                    {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -1677,7 +1803,11 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property (skip in destructuring targets)
-                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
+                    // TS1117 only applies to ES5 and below; ES2015+ allows duplicate properties
+                    if !skip_duplicate_check
+                        && self.ctx.compiler_options.target.is_es5()
+                        && properties.contains_key(&name_atom)
+                    {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -1722,7 +1852,11 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property (skip in destructuring targets)
-                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
+                    // TS1117 only applies to ES5 and below; ES2015+ allows duplicate properties
+                    if !skip_duplicate_check
+                        && self.ctx.compiler_options.target.is_es5()
+                        && properties.contains_key(&name_atom)
+                    {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -1784,7 +1918,12 @@ impl<'a> CheckerState<'a> {
                     let accessor_type = if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
                         self.get_type_of_function(elem_idx)
                     } else {
-                        // Setter: use the first parameter's type annotation
+                        // Setter: type-check the function body to track variable usage
+                        // (especially for noUnusedParameters/noUnusedLocals checking),
+                        // but use the parameter type annotation for the property type
+                        self.get_type_of_function(elem_idx);
+
+                        // Extract setter write type from first parameter
                         accessor
                             .parameters
                             .nodes
@@ -1825,7 +1964,9 @@ impl<'a> CheckerState<'a> {
                     } else {
                         getter_names.contains(&name_atom) && !setter_names.contains(&name_atom)
                     };
+                    // TS1117 only applies to ES5 and below; ES2015+ allows duplicate properties
                     if !skip_duplicate_check
+                        && self.ctx.compiler_options.target.is_es5()
                         && properties.contains_key(&name_atom)
                         && !is_complementary_pair
                     {

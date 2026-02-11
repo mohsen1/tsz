@@ -268,7 +268,7 @@ if [ "$ROOT_CHANGED" = "true" ] || [ "$SOLVER_OR_CHECKER_CHANGED" = "true" ]; th
 fi
 
 if cargo nextest --version >/dev/null 2>&1; then
-    TEST_OUTPUT=$(cargo nextest run --profile precommit --no-tests pass -E "$NEXTEST_FILTER" 2>&1) || {
+    TEST_OUTPUT=$(cargo nextest run --profile precommit --no-tests=pass -E "$NEXTEST_FILTER" 2>&1) || {
         echo "$TEST_OUTPUT" | tail -20
         echo "ERROR: Tests failed. Run 'cargo nextest run' for details."
         exit 1

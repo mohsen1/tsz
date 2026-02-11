@@ -128,20 +128,50 @@ impl<'a> Printer<'a> {
     // Unique Name Generation (mirrors TypeScript's makeUniqueName)
     // =========================================================================
 
+    /// Save the current temp naming state and start a fresh scope.
+    /// Used when entering a function to reset temp names (_a, _b, etc.)
+    /// since each function scope has its own temp naming.
+    pub(super) fn push_temp_scope(&mut self) {
+        let saved_counter = self.ctx.destructuring_state.temp_var_counter;
+        let saved_names = std::mem::take(&mut self.generated_temp_names);
+        let saved_for_of = self.first_for_of_emitted;
+        self.temp_scope_stack
+            .push((saved_counter, saved_names, saved_for_of));
+        self.ctx.destructuring_state.temp_var_counter = 0;
+        self.first_for_of_emitted = false;
+    }
+
+    /// Restore the previous temp naming state when leaving a function scope.
+    pub(super) fn pop_temp_scope(&mut self) {
+        if let Some((counter, names, for_of)) = self.temp_scope_stack.pop() {
+            self.ctx.destructuring_state.temp_var_counter = counter;
+            self.generated_temp_names = names;
+            self.first_for_of_emitted = for_of;
+        }
+    }
+
     /// Generate a unique temp name that doesn't collide with any identifier in the source file
     /// or any previously generated temp name. Uses a single global counter like TypeScript.
     ///
     /// Generates names: _a, _b, _c, ..., _z, _0, _1, ...
-    /// Skips names that appear in `file_identifiers` or `generated_temp_names`.
+    /// Skips counts 8 (_i) and 13 (_n) which TypeScript reserves for dedicated TempFlags.
+    /// Also skips names that appear in `file_identifiers` or `generated_temp_names`.
     pub(super) fn make_unique_name(&mut self) -> String {
         loop {
             let counter = self.ctx.destructuring_state.temp_var_counter;
+            self.ctx.destructuring_state.temp_var_counter += 1;
+
+            // TypeScript skips counts 8 (_i) and 13 (_n) - these are reserved for
+            // dedicated TempFlags._i and TempFlags._n used by specific transforms
+            if counter < 26 && (counter == 8 || counter == 13) {
+                continue;
+            }
+
             let name = if counter < 26 {
                 format!("_{}", (b'a' + counter as u8) as char)
             } else {
                 format!("_{}", counter - 26)
             };
-            self.ctx.destructuring_state.temp_var_counter += 1;
 
             if !self.file_identifiers.contains(&name) && !self.generated_temp_names.contains(&name)
             {
@@ -150,6 +180,14 @@ impl<'a> Printer<'a> {
             }
             // Name collides, try next
         }
+    }
+
+    /// Like make_unique_name but also records the temp for hoisting as a `var` declaration.
+    /// Used for assignment destructuring temps which need `var _a, _b, ...;` at scope top.
+    pub(super) fn make_unique_name_hoisted(&mut self) -> String {
+        let name = self.make_unique_name();
+        self.hoisted_assignment_temps.push(name.clone());
+        name
     }
 
     // =========================================================================

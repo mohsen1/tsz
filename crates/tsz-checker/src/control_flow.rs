@@ -58,13 +58,6 @@ impl<'a> FlowGraph<'a> {
         self.arena.get(id)
     }
 
-    /// Get a mutable reference to a flow node by ID.
-    pub fn get_mut(&mut self, _id: FlowNodeId) -> Option<&mut FlowNode> {
-        // Note: This would require interior mutability or a different API design
-        // For now, we'll return None as FlowGraph is meant for querying, not modifying
-        None
-    }
-
     /// Get the number of flow nodes in the graph.
     pub fn len(&self) -> usize {
         self.arena.len()
@@ -1324,6 +1317,46 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
+    /// Check if an assignment flow node is a variable declaration with a type annotation.
+    ///
+    /// When a variable has an explicit type annotation, the flow analysis should
+    /// use the declared type (not the initializer's structural type) for non-literal
+    /// assignments. This prevents the initializer's type from overriding the declared
+    /// type in the flow graph.
+    fn is_var_decl_with_type_annotation(&self, node: NodeIndex) -> bool {
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+
+        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            if let Some(decl) = self.arena.get_variable_declaration(node_data) {
+                return !decl.type_annotation.is_none();
+            }
+        }
+
+        // Handle VARIABLE_DECLARATION_LIST or VARIABLE_STATEMENT
+        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            || node_data.kind == syntax_kind_ext::VARIABLE_STATEMENT
+        {
+            if let Some(list) = self.arena.get_variable(node_data) {
+                for &decl_idx in &list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                        if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
+                            if !decl.type_annotation.is_none() {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     /// Check if an assignment node represents a destructuring assignment.
     /// Destructuring assignments widen literals to primitives, unlike direct assignments.
     fn is_destructuring_assignment(&self, node: NodeIndex) -> bool {
@@ -1508,6 +1541,30 @@ impl<'a> FlowAnalyzer<'a> {
                 return Some(nullish_type);
             }
             // Fall back to type checker's result for non-literal expressions
+            //
+            // FIX: For variable declarations with type annotations where the RHS is a
+            // structural literal (object/array), the declared type should be preserved —
+            // don't let the initializer's structural type override the annotated type.
+            // Literal and nullish initializers (handled above) still narrow correctly,
+            // but object/array literals produce structural types that lose optional
+            // properties and interface identity.
+            //
+            // Example: `var obj4: I<number,string> = { one: 1 };`
+            //   - Declared type: I<number, string> (includes two?: string)
+            //   - Initializer type: { one: number } (missing the optional property)
+            //   - Without this fix, flow uses { one: number } instead of I<number, string>
+            //
+            // We only apply this for object/array literals. Type assertions like
+            // `{} as any` and other expressions should still use the node_types result.
+            if self.is_var_decl_with_type_annotation(assignment_node) {
+                if let Some(rhs_node) = self.arena.get(rhs) {
+                    if rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    {
+                        return None;
+                    }
+                }
+            }
             if let Some(node_types) = self.node_types
                 && let Some(&rhs_type) = node_types.get(&rhs.0)
             {
@@ -3091,24 +3148,6 @@ impl<'a> FlowAnalyzer<'a> {
                 || k == SyntaxKind::CaretEqualsToken as u16
         )
     }
-}
-
-/// Check whether a function body can fall through to the end.
-/// Returns true if execution can reach the end of the function body without
-/// encountering a return/throw statement.
-pub fn function_body_falls_through(_arena: &NodeArena, _body_idx: NodeIndex) -> bool {
-    // Simplified stub: assume function bodies can fall through
-    // A full implementation would analyze control flow to detect
-    // if all paths have return/throw statements
-    true
-}
-
-/// Check whether a statement can fall through to the next statement.
-/// Returns true if execution can continue past this statement.
-pub fn statement_falls_through(_arena: &NodeArena, _stmt_idx: NodeIndex) -> bool {
-    // Simplified stub: assume statements can fall through
-    // A full implementation would analyze control flow
-    true
 }
 
 #[cfg(test)]

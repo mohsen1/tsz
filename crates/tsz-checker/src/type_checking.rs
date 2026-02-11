@@ -81,6 +81,11 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_module(node)
                 .and_then(|m| m.modifiers.as_ref()),
+            syntax_kind_ext::IMPORT_EQUALS_DECLARATION => self
+                .ctx
+                .arena
+                .get_import_decl(node)
+                .and_then(|i| i.modifiers.as_ref()),
             _ => None,
         }
     }
@@ -132,6 +137,9 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 self.ctx.arena.get_accessor(node).map(|a| a.name)
+            }
+            syntax_kind_ext::PROPERTY_SIGNATURE | syntax_kind_ext::METHOD_SIGNATURE => {
+                self.ctx.arena.get_signature(node).map(|s| s.name)
             }
             _ => None,
         }
@@ -673,9 +681,10 @@ impl<'a> CheckerState<'a> {
                 self.check_type_for_parameter_properties(func_type.type_annotation);
             }
         }
-        // Check type literals (object types) for call/construct signatures
+        // Check type literals (object types) for call/construct signatures and duplicate properties
         else if node.kind == syntax_kind_ext::TYPE_LITERAL {
             if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
+                self.check_type_literal_duplicate_properties(&type_lit.members.nodes);
                 for &member_idx in &type_lit.members.nodes {
                     self.check_type_member_for_parameter_properties(member_idx);
                 }
@@ -698,6 +707,64 @@ impl<'a> CheckerState<'a> {
             && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
         {
             self.check_type_for_parameter_properties(paren.type_node);
+        } else if node.kind == syntax_kind_ext::TYPE_PREDICATE
+            && let Some(pred) = self.ctx.arena.get_type_predicate(node)
+        {
+            if !pred.type_node.is_none() {
+                self.check_type_for_parameter_properties(pred.type_node);
+            }
+        }
+    }
+
+    /// Check for duplicate property names in type literals (TS2300).
+    /// e.g. `{ a: string; a: number; }` has duplicate property `a`.
+    pub(crate) fn check_type_literal_duplicate_properties(&mut self, members: &[NodeIndex]) {
+        use crate::types::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
+
+        let mut seen: rustc_hash::FxHashMap<String, NodeIndex> = rustc_hash::FxHashMap::default();
+
+        for &member_idx in members {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            if member_node.kind != PROPERTY_SIGNATURE && member_node.kind != METHOD_SIGNATURE {
+                continue;
+            }
+
+            let Some(name) = self.get_member_name(member_idx) else {
+                continue;
+            };
+
+            if let Some(&prev_idx) = seen.get(&name) {
+                // Report duplicate on the second occurrence
+                let name_idx = if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                    sig.name
+                } else {
+                    member_idx
+                };
+                self.error_at_node(
+                    name_idx,
+                    &format!("Duplicate identifier '{}'.", name),
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                );
+                // Also mark the first occurrence
+                if let Some(prev_node) = self.ctx.arena.get(prev_idx) {
+                    let prev_name_idx = if let Some(sig) = self.ctx.arena.get_signature(prev_node) {
+                        sig.name
+                    } else {
+                        prev_idx
+                    };
+                    self.error_at_node(
+                        prev_name_idx,
+                        &format!("Duplicate identifier '{}'.", name),
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
+                }
+            } else {
+                seen.insert(name, member_idx);
+            }
         }
     }
 
@@ -730,10 +797,10 @@ impl<'a> CheckerState<'a> {
         // Traverse binding elements
         let pattern_kind = pattern_node.kind;
 
-        // TS2461: Check if array destructuring is applied to a non-array type
-        if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-            self.check_array_destructuring_target_type(pattern_idx, pattern_type);
-        }
+        // Note: Array destructuring iterability (TS2488) is checked by the caller
+        // (state_checking.rs) via check_destructuring_iterability before invoking
+        // check_binding_pattern, so we do NOT call check_array_destructuring_target_type
+        // here to avoid duplicate TS2488 errors.
 
         for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
             self.check_binding_element(element_idx, pattern_kind, i, pattern_type);
@@ -2867,6 +2934,52 @@ impl<'a> CheckerState<'a> {
         // signatures has the same TypeId as the T registered in TypeEnvironment.
         let (array_type, array_type_params) = self.resolve_lib_type_with_params("Array");
 
+        // Pre-compute type parameters for commonly-used generic lib types.
+        // This populates the def_type_params cache so that:
+        // 1. validate_type_reference_type_arguments can check constraints (TS2344)
+        // 2. Application(Lazy(DefId), Args) expansion works in the solver
+        // Without this, cross-arena delegation in get_type_params_for_symbol fails
+        // for lib symbols due to depth guards, causing constraint checks to be skipped.
+        for type_name in &[
+            "ReadonlyArray",
+            "Promise",
+            "PromiseLike",
+            "Awaited",
+            "Map",
+            "Set",
+            "WeakMap",
+            "WeakSet",
+            "WeakRef",
+            "ReadonlyMap",
+            "ReadonlySet",
+            "Iterator",
+            "IterableIterator",
+            "AsyncIterator",
+            "AsyncIterable",
+            "AsyncIterableIterator",
+            "Generator",
+            "AsyncGenerator",
+            "Partial",
+            "Required",
+            "Readonly",
+            "Record",
+            "Pick",
+            "Omit",
+            "Exclude",
+            "Extract",
+            "NonNullable",
+            "ReturnType",
+            "Parameters",
+            "ConstructorParameters",
+            "InstanceType",
+            "ThisParameterType",
+            "OmitThisParameter",
+        ] {
+            // resolve_lib_type_with_params internally caches type params via
+            // insert_def_type_params, making them available for constraint checking
+            let _ = self.resolve_lib_type_with_params(type_name);
+        }
+
         // The Array type from lib.d.ts is a Callable with instance methods as properties
         // We register this type directly so that resolve_array_property can use it
         // No need to extract instance type from construct signatures - the methods
@@ -3189,6 +3302,12 @@ impl<'a> CheckerState<'a> {
                         if !(decl_has_body && other_has_body) {
                             continue;
                         }
+                        // Both have bodies -> duplicate function implementations
+                        // Force-add to conflicts since declarations_conflict returns false
+                        // for FUNCTION vs FUNCTION (they don't exclude each other).
+                        conflicts.insert(decl_idx);
+                        conflicts.insert(other_idx);
+                        continue;
                     }
 
                     // Check for method overloads - multiple method declarations are allowed
@@ -3268,14 +3387,19 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Ambient class + Function merging is allowed
-                    // (declare class provides the type, function provides the value)
+                    // Non-ambient class + Function: emit TS2813 + TS2814
+                    // Note: class & function don't exclude each other in declarations_conflict,
+                    // so we handle this case specially with early continue.
                     if (decl_is_class && other_is_function) || (decl_is_function && other_is_class)
                     {
                         let class_idx = if decl_is_class { decl_idx } else { other_idx };
                         if self.is_ambient_class_declaration(class_idx) {
                             continue;
                         }
+                        // Non-ambient class + function detected — mark both for TS2813/TS2814
+                        conflicts.insert(decl_idx);
+                        conflicts.insert(other_idx);
+                        continue;
                     }
 
                     // In merged namespaces, classes with the same name in different
@@ -3329,6 +3453,100 @@ impl<'a> CheckerState<'a> {
 
             if conflicts.is_empty() {
                 continue;
+            }
+
+            // Handle TS2393: Duplicate function implementation.
+            // When 2+ function declarations with bodies share a name, emit TS2393 on each.
+            // This runs BEFORE TS2813/TS2814 handling since that removes function indices.
+            {
+                let duplicate_func_impls: Vec<NodeIndex> = declarations
+                    .iter()
+                    .filter(|(decl_idx, flags)| {
+                        conflicts.contains(decl_idx)
+                            && (flags & symbol_flags::FUNCTION) != 0
+                            && self.function_has_body(*decl_idx)
+                    })
+                    .map(|(idx, _)| *idx)
+                    .collect();
+
+                if duplicate_func_impls.len() > 1 {
+                    for &idx in &duplicate_func_impls {
+                        let error_node = self.get_declaration_name_node(idx).unwrap_or(idx);
+                        self.error_at_node(
+                            error_node,
+                            diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                            diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                        );
+                        conflicts.remove(&idx);
+                    }
+                    if conflicts.is_empty() {
+                        continue;
+                    }
+                }
+            }
+
+            // Check for class + function conflicts (TS2813 + TS2814)
+            // These get special diagnostics instead of the generic TS2300
+            let has_class_function_conflict = {
+                let has_class = declarations.iter().any(|(decl_idx, flags)| {
+                    conflicts.contains(decl_idx) && (flags & symbol_flags::CLASS) != 0
+                });
+                let has_function = declarations.iter().any(|(decl_idx, flags)| {
+                    conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) != 0
+                });
+                has_class && has_function
+            };
+
+            if has_class_function_conflict {
+                let name = symbol.escaped_name.clone();
+
+                // Emit TS2813 on class declarations
+                for &(decl_idx, flags) in &declarations {
+                    if conflicts.contains(&decl_idx) && (flags & symbol_flags::CLASS) != 0 {
+                        let error_node =
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                        let message = format_message(
+                            diagnostic_messages::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
+                            &[&name],
+                        );
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
+                        );
+                    }
+                }
+
+                // Emit TS2814 on function declarations
+                for &(decl_idx, flags) in &declarations {
+                    if conflicts.contains(&decl_idx) && (flags & symbol_flags::FUNCTION) != 0 {
+                        let error_node =
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                        self.error_at_node(
+                            error_node,
+                            diagnostic_messages::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
+                            diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
+                        );
+                    }
+                }
+
+                // Remove class/function entries from conflicts so they don't also get TS2300
+                let class_function_indices: Vec<NodeIndex> = declarations
+                    .iter()
+                    .filter(|(decl_idx, flags)| {
+                        conflicts.contains(decl_idx)
+                            && ((flags & symbol_flags::CLASS) != 0
+                                || (flags & symbol_flags::FUNCTION) != 0)
+                    })
+                    .map(|(idx, _)| *idx)
+                    .collect();
+                for idx in class_function_indices {
+                    conflicts.remove(&idx);
+                }
+
+                if conflicts.is_empty() {
+                    continue;
+                }
             }
 
             // Check if we have any non-block-scoped declarations (var, function, etc.)

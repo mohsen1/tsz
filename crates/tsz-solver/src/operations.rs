@@ -2102,6 +2102,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         t_fn.return_type,
                         priority,
                     );
+
+                    // Constrain type predicates if both functions have them
+                    // Example: source `(x: any) => x is number` vs target `(value: T) => value is S`
+                    // Should infer S = number from the predicates
+                    if let (Some(s_pred), Some(t_pred)) =
+                        (&s_fn.type_predicate, &t_fn.type_predicate)
+                    {
+                        // Only constrain if both predicates have type annotations
+                        if let (Some(s_pred_type), Some(t_pred_type)) =
+                            (s_pred.type_id, t_pred.type_id)
+                        {
+                            // Type predicates are covariant: source_pred_type <: target_pred_type
+                            self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
+                        }
+                    }
                 } else {
                     // Generic source function - instantiate with fresh inference variables
                     // This allows inferring the source function's type parameters from the target
@@ -2168,6 +2183,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .this_type
                         .map(|t| instantiate_type(self.interner, t, &source_subst));
 
+                    // Instantiate type predicate if present
+                    let instantiated_predicate =
+                        s_fn.type_predicate.as_ref().map(|pred| TypePredicate {
+                            asserts: pred.asserts,
+                            target: pred.target.clone(),
+                            type_id: pred
+                                .type_id
+                                .map(|t| instantiate_type(self.interner, t, &source_subst)),
+                        });
+
                     // Create combined var_map for constraint collection
                     let combined_var_map: FxHashMap<_, _> = var_map
                         .iter()
@@ -2196,6 +2221,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         t_fn.return_type,
                         priority,
                     );
+
+                    // Constrain type predicates if both functions have them
+                    if let (Some(s_pred), Some(t_pred)) =
+                        (&instantiated_predicate, &t_fn.type_predicate)
+                    {
+                        if let (Some(s_pred_type), Some(t_pred_type)) =
+                            (s_pred.type_id, t_pred.type_id)
+                        {
+                            // Type predicates are covariant: source_pred_type <: target_pred_type
+                            self.constrain_types(
+                                ctx,
+                                &combined_var_map,
+                                s_pred_type,
+                                t_pred_type,
+                                priority,
+                            );
+                        }
+                    }
                 }
             }
             (Some(TypeKey::Function(s_fn_id)), Some(TypeKey::Callable(t_callable_id))) => {
@@ -2540,6 +2583,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             target.return_type,
             priority,
         );
+        // Constrain type predicates if both have them
+        if let (Some(s_pred), Some(t_pred)) = (&source.type_predicate, &target.type_predicate) {
+            if let (Some(s_pred_type), Some(t_pred_type)) = (s_pred.type_id, t_pred.type_id) {
+                self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
+            }
+        }
     }
 
     fn constrain_call_signature_to_function(
@@ -2563,6 +2612,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             target.return_type,
             priority,
         );
+        // Constrain type predicates if both have them
+        if let (Some(s_pred), Some(t_pred)) = (&source.type_predicate, &target.type_predicate) {
+            if let (Some(s_pred_type), Some(t_pred_type)) = (s_pred.type_id, t_pred.type_id) {
+                self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
+            }
+        }
     }
 
     fn constrain_call_signature_to_call_signature(
@@ -2586,6 +2641,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             target.return_type,
             priority,
         );
+        // Constrain type predicates if both have them
+        if let (Some(s_pred), Some(t_pred)) = (&source.type_predicate, &target.type_predicate) {
+            if let (Some(s_pred_type), Some(t_pred_type)) = (s_pred.type_id, t_pred.type_id) {
+                self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
+            }
+        }
     }
 
     fn function_type_from_signature(&self, sig: &CallSignature, is_constructor: bool) -> TypeId {

@@ -300,9 +300,12 @@ fn main() -> Result<()> {
         }
 
         let file_start = Instant::now();
-        match process_test_file(&mut client, path, &temp_dir) {
-            Ok(Some((hash, entry))) => {
-                cache.insert(hash, entry);
+        let test_dir_base = Path::new(&args.test_dir)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(&args.test_dir));
+        match process_test_file(&mut client, path, &temp_dir, &test_dir_base) {
+            Ok(Some((key, entry))) => {
+                cache.insert(key, entry);
             }
             Ok(None) => {
                 // Skipped
@@ -571,6 +574,7 @@ fn process_test_file(
     client: &mut TsServerClient,
     path: &Path,
     temp_dir: &Path,
+    test_dir_base: &Path,
 ) -> Result<Option<(String, TscCacheEntry)>> {
     use std::fs;
     use std::sync::atomic::AtomicU64;
@@ -596,8 +600,14 @@ fn process_test_file(
         .as_millis() as u64;
     let size = metadata.len();
 
-    // Calculate hash
-    let hash = tsz_conformance::cache::calculate_test_hash(&content, &parsed.directives.options);
+    // Cache key is relative file path from test directory
+    let key = tsz_conformance::cache::cache_key(path, test_dir_base).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Path {} is not under test dir {}",
+            path.display(),
+            test_dir_base.display()
+        )
+    })?;
 
     // Create unique subdirectory for this test (for multi-file support)
     let unique_id = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -680,7 +690,7 @@ fn process_test_file(
     let _ = fs::remove_dir_all(&test_dir);
 
     Ok(Some((
-        hash,
+        key,
         TscCacheEntry {
             metadata: FileMetadata { mtime_ms, size },
             error_codes,

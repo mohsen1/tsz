@@ -263,8 +263,26 @@ pub struct Printer<'a> {
     /// Tracks ALL generated temp names across destructuring and for-of lowering.
     pub(super) generated_temp_names: FxHashSet<String>,
 
+    /// Stack for saving/restoring temp naming state when entering function scopes.
+    /// Each entry is (temp_var_counter, generated_temp_names, first_for_of_emitted).
+    pub(super) temp_scope_stack: Vec<(u32, FxHashSet<String>, bool)>,
+
     /// Whether the first for-of loop has been emitted (uses special `_i` index name).
     pub(super) first_for_of_emitted: bool,
+
+    /// Whether we're inside a namespace IIFE (strip export/default modifiers from classes).
+    pub(super) in_namespace_iife: bool,
+
+    /// Names of namespaces already declared with `var name;` to avoid duplicates.
+    pub(super) declared_namespace_names: FxHashSet<String>,
+
+    /// Pending class field initializers to inject into constructor body.
+    /// Each entry is (field_name, initializer_node_index).
+    pub(super) pending_class_field_inits: Vec<(String, NodeIndex)>,
+
+    /// Temp variable names that need to be hoisted to the top of the current scope
+    /// as `var _a, _b, ...;`. Used for assignment destructuring in ES5 mode.
+    pub(super) hoisted_assignment_temps: Vec<String>,
 }
 
 impl<'a> Printer<'a> {
@@ -311,7 +329,12 @@ impl<'a> Printer<'a> {
             comment_emit_idx: 0,
             file_identifiers: FxHashSet::default(),
             generated_temp_names: FxHashSet::default(),
+            temp_scope_stack: Vec::new(),
             first_for_of_emitted: false,
+            in_namespace_iife: false,
+            declared_namespace_names: FxHashSet::default(),
+            pending_class_field_inits: Vec::new(),
+            hoisted_assignment_temps: Vec::new(),
         }
     }
 
@@ -623,6 +646,10 @@ impl<'a> Printer<'a> {
                 } else {
                     self.write(&es5_output);
                 }
+                // Skip comments within the class range - the ES5 class emitter
+                // doesn't use the main comment system, so we must advance past them
+                // to prevent them from being dumped at end of file.
+                self.skip_comments_for_erased_node(node);
             }
             EmitDirective::ES5ClassExpression { class_node } => {
                 self.emit_class_expression_es5(class_node);
@@ -641,6 +668,10 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_should_declare_var(should_declare_var);
                 let output = ns_emitter.emit_namespace(namespace_node);
                 self.write(output.trim_end_matches('\n'));
+                // Skip comments within the namespace range - the ES5 namespace emitter
+                // doesn't use the main comment system, so we must advance past them
+                // to prevent them from being dumped at end of file.
+                self.skip_comments_for_erased_node(node);
             }
 
             EmitDirective::ES5Enum { enum_node } => {
@@ -1715,12 +1746,18 @@ impl<'a> Printer<'a> {
                 // Interface declarations are TypeScript-only - emit only in declaration mode (.d.ts)
                 if self.ctx.flags.in_declaration_emit {
                     self.emit_interface_declaration(node);
+                } else {
+                    // Skip comments belonging to erased declarations so they don't
+                    // get emitted later by gap/before-pos comment handling.
+                    self.skip_comments_for_erased_node(node);
                 }
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 // Type alias declarations are TypeScript-only - emit only in declaration mode (.d.ts)
                 if self.ctx.flags.in_declaration_emit {
                     self.emit_type_alias_declaration(node);
+                } else {
+                    self.skip_comments_for_erased_node(node);
                 }
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
@@ -1899,6 +1936,35 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
+        // Filter out comments that are leading trivia for erased declarations
+        // (interfaces, type aliases). These should not appear in JS output.
+        // Node positions in tsz don't include leading trivia (node.pos is at the
+        // actual token start), so we find comments between the previous statement's
+        // end and the erased node's pos.
+        if !self.ctx.flags.in_declaration_emit && !self.all_comments.is_empty() {
+            let mut erased_ranges: Vec<(u32, u32)> = Vec::new();
+            let mut prev_end: u32 = 0;
+            for &stmt_idx in &source.statements.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                        || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    {
+                        // Comments between prev_end and this node's pos are leading
+                        // trivia for this erased declaration
+                        erased_ranges.push((prev_end, stmt_node.pos));
+                    }
+                    prev_end = stmt_node.end;
+                }
+            }
+            if !erased_ranges.is_empty() {
+                self.all_comments.retain(|c| {
+                    !erased_ranges
+                        .iter()
+                        .any(|&(start, end)| c.pos >= start && c.end <= end)
+                });
+            }
+        }
+
         self.comment_emit_idx = 0;
 
         // Emit "use strict" FIRST (before comments and helpers)
@@ -1958,7 +2024,7 @@ impl<'a> Printer<'a> {
                     let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
                     let comment_text =
                         crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                    self.write(comment_text);
+                    self.write_comment(comment_text);
                     if c_trailing {
                         self.write_line();
                     }
@@ -2043,6 +2109,12 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Save position for hoisted temp var declarations (assignment destructuring).
+        // After emitting all statements, we'll insert `var _a, _b, ...;` here if needed.
+        self.hoisted_assignment_temps.clear();
+        let hoisted_var_byte_offset = self.writer.len();
+        let hoisted_var_line = self.writer.current_line();
+
         // Emit statements with their leading comments.
         // In this parser, node.pos includes leading trivia (whitespace + comments).
         // Between-statement comments are part of the next node's leading trivia.
@@ -2050,11 +2122,23 @@ impl<'a> Printer<'a> {
         // trivia, then emit all comments before that position.
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                // For erased declarations (interface, type alias) in JS emit mode,
+                // skip their leading comments entirely - they should not appear in output.
+                let is_erased = !self.ctx.flags.in_declaration_emit
+                    && (stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                        || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION);
+
                 // Find the actual start of the statement's first token by
                 // scanning forward from node.pos past whitespace only.
                 // We preserve comments here - they're handled either as leading
                 // comments (if truly before the statement) or by nested expression emitters.
                 let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
+
+                if is_erased {
+                    // Skip erased declarations. Their leading comments were already
+                    // filtered out of all_comments during initialization.
+                    continue;
+                }
 
                 // Emit comments whose end position is at or before the actual token start.
                 // These are truly "leading" comments for this statement.
@@ -2120,6 +2204,14 @@ impl<'a> Printer<'a> {
                 }
                 self.comment_emit_idx += 1;
             }
+        }
+
+        // Insert hoisted temp var declarations for assignment destructuring.
+        // These are generated during emit and need to be inserted at the saved position.
+        if !self.hoisted_assignment_temps.is_empty() {
+            let var_decl = format!("var {};", self.hoisted_assignment_temps.join(", "));
+            self.writer
+                .insert_line_at(hoisted_var_byte_offset, hoisted_var_line, &var_decl);
         }
 
         // Ensure output ends with a newline (matching tsc behavior)

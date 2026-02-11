@@ -1296,13 +1296,11 @@ mod error_detection_tests {
         assert!(checker.is_assignable(type_b, type_a));
     }
 
-    /// Test function parameter count mismatch detection
+    /// Test function parameter count compatibility.
     ///
-    /// NOTE: Currently ignored - function parameter count mismatch detection is not fully
-    /// implemented. The type checker should reject assignments between functions with
-    /// different parameter counts, but this is not being detected correctly.
+    /// In TypeScript, a function with fewer parameters IS assignable to one with
+    /// more parameters (excess parameters in target are ignored by caller).
     #[test]
-    #[ignore = "Function parameter count mismatch detection not fully implemented"]
     fn test_function_parameter_count_mismatch() {
         let interner = TypeInterner::new();
         let mut checker = CompatChecker::new(&interner);
@@ -1349,11 +1347,11 @@ mod error_detection_tests {
             is_method: false,
         });
 
-        // func_one_param is NOT assignable to func_two_params (missing parameter)
-        assert!(!checker.is_assignable(func_one_param, func_two_params));
+        // func_one_param IS assignable to func_two_params (fewer source params is fine in TS)
+        assert!(checker.is_assignable(func_one_param, func_two_params));
 
-        // func_two_params IS assignable to func_one_param (more specific)
-        assert!(checker.is_assignable(func_two_params, func_one_param));
+        // func_two_params is NOT assignable to func_one_param (too many required params)
+        assert!(!checker.is_assignable(func_two_params, func_one_param));
     }
 
     #[test]
@@ -1400,8 +1398,7 @@ mod unknown_fallback_tests {
     use super::*;
 
     #[test]
-    #[ignore = "Function this parameter fallback to Unknown not fully implemented"]
-    fn test_function_this_parameter_fallback_to_unknown() {
+    fn test_function_this_parameter_compatibility() {
         let interner = TypeInterner::new();
         let mut checker = CompatChecker::new(&interner);
 
@@ -1421,7 +1418,7 @@ mod unknown_fallback_tests {
             is_method: false,
         });
 
-        // Function without this parameter (should fall back to Unknown, not Any)
+        // Function without this parameter
         let func_without_this = interner.function(FunctionShape {
             type_params: vec![],
             params: vec![ParamInfo {
@@ -1430,17 +1427,17 @@ mod unknown_fallback_tests {
                 optional: false,
                 rest: false,
             }],
-            this_type: None, // No this parameter - should fallback to Unknown
+            this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
             is_constructor: false,
             is_method: false,
         });
 
-        // With Unknown fallback, functions should NOT be compatible
-        // when one has explicit this type and the other has None
-        // (Unknown is not assignable to any specific type)
-        assert!(!checker.is_assignable(func_without_this, func_with_this));
+        // TypeScript only checks `this` compatibility when the TARGET declares
+        // an explicit `this` parameter. Since target has `this: string` and source
+        // has no `this`, TypeScript skips the this check → compatible.
+        assert!(checker.is_assignable(func_without_this, func_with_this));
     }
 
     #[test]

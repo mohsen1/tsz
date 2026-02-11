@@ -1,5 +1,3 @@
-#![allow(clippy::print_stderr)]
-
 use super::module_commonjs::*;
 
 #[test]
@@ -57,8 +55,6 @@ fn test_emit_reexport_property_alias() {
 #[test]
 fn test_collect_export_names_with_parsed_ast() {
     use tsz_parser::parser::ParserState;
-    use tsz_parser::parser::syntax_kind_ext;
-    use tsz_scanner::SyntaxKind;
 
     let source = "export class C {}";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -71,48 +67,7 @@ fn test_collect_export_names_with_parsed_ast() {
         panic!("Failed to get source file");
     };
 
-    // Debug: print the statements
-    eprintln!(
-        "Source file has {} statements",
-        source_file.statements.nodes.len()
-    );
-    for (i, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
-        if let Some(node) = parser.arena.get(stmt_idx) {
-            eprintln!(
-                "Statement {}: kind = {} (ClassDecl = {})",
-                i,
-                node.kind,
-                syntax_kind_ext::CLASS_DECLARATION
-            );
-
-            if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                && let Some(class) = parser.arena.get_class(node)
-            {
-                eprintln!("  Found class, modifiers: {:?}", class.modifiers);
-                if let Some(modifiers) = &class.modifiers {
-                    eprintln!("  Modifiers count: {}", modifiers.nodes.len());
-                    for &mod_idx in &modifiers.nodes {
-                        if let Some(mod_node) = parser.arena.get(mod_idx) {
-                            eprintln!(
-                                "    Modifier kind: {} (Export = {})",
-                                mod_node.kind,
-                                SyntaxKind::ExportKeyword as u16
-                            );
-                        }
-                    }
-                }
-                if let Some(name_node) = parser.arena.get(class.name)
-                    && let Some(ident) = parser.arena.get_identifier(name_node)
-                {
-                    eprintln!("  Class name: {}", ident.escaped_text);
-                }
-            }
-        }
-    }
-
     let export_names = collect_export_names(&parser.arena, &source_file.statements.nodes);
-
-    eprintln!("Collected export names: {:?}", export_names);
 
     assert!(
         !export_names.is_empty(),

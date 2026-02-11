@@ -1049,7 +1049,12 @@ impl<'a> CheckerContext<'a> {
             symbol_types: parent.symbol_types.clone(),
             symbol_instance_types: parent.symbol_instance_types.clone(),
             var_decl_types: FxHashMap::default(),
-            node_types: parent.node_types.clone(),
+            // CRITICAL: Do NOT share node_types across arenas. Node indices are arena-specific,
+            // so a cached type for node X in arena A would be incorrect for node X in arena B.
+            // Cross-arena delegation always uses a different arena, making shared node_types
+            // a source of type cache poisoning (e.g., a StringKeyword cache entry could
+            // incorrectly map to a class declaration with the same node index).
+            node_types: FxHashMap::default(),
             relation_cache: parent.relation_cache.clone(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             // Share specialized caches from parent

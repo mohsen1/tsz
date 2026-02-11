@@ -348,21 +348,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Readonly compatibility: source readonly cannot satisfy target mutable
-        // This is required for mapped type modifier tests (readonly_add/remove)
-        if source.readonly && !target.readonly {
-            // Trace: Readonly property cannot satisfy mutable property
-            if let Some(tracer) = &mut self.tracer {
-                if !tracer.on_mismatch_dyn(
-                    crate::diagnostics::SubtypeFailureReason::ReadonlyPropertyMismatch {
-                        property_name: source.name,
-                    },
-                ) {
-                    return SubtypeResult::False;
-                }
-            }
-            return SubtypeResult::False;
-        }
+        // Note: TypeScript does NOT reject readonly source → mutable target for
+        // individual properties. `{ readonly x: number }` IS assignable to `{ x: number }`.
+        // Readonly on properties is a usage constraint, not a structural typing constraint.
+        // This is different from ReadonlyArray vs Array, where structural differences exist.
 
         // Rule #26: Split Accessors (Getter/Setter Variance)
         //

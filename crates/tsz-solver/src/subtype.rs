@@ -1564,13 +1564,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self
     }
 
-    /// Get the query database, if available.
-    #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn query_db(&self) -> Option<&'a dyn QueryDatabase> {
-        self.query_db
-    }
-
     /// Set whether strict null checks are enabled.
     /// When false, null and undefined are assignable to any type.
     pub fn with_strict_null_checks(mut self, strict_null_checks: bool) -> Self {
@@ -2087,30 +2080,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if two object types have overlapping properties.
     ///
     /// Returns false if any common property has non-overlapping types.
-    /// Returns true if all common properties have overlapping types.
-    ///
-    /// This is a simplified check - Phase 2 will use PropertyCollector
-    /// for full intersection-type-aware checking.
-    #[allow(dead_code)]
-    fn do_object_properties_overlap(&self, a_shape: ObjectShapeId, b_shape: ObjectShapeId) -> bool {
-        let a_props = self.interner.object_shape(a_shape);
-        let b_props = self.interner.object_shape(b_shape);
-
-        // Check each common property
-        for a_prop in &a_props.properties {
-            if let Some(b_prop) = b_props.properties.iter().find(|p| p.name == a_prop.name) {
-                // If the common property types don't overlap, the objects don't overlap
-                if !self.are_types_overlapping(a_prop.type_id, b_prop.type_id) {
-                    return false;
-                }
-            }
-        }
-
-        // All common properties have overlapping types
-        // (Note: this allows { a: string } & { b: number } to overlap, which is correct)
-        true
-    }
-
     /// Construct a `RelationCacheKey` for the current checker configuration.
     ///
     /// This packs the Lawyer-layer flags into a compact cache key to ensure that
@@ -3148,39 +3117,59 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let source_is_callable = function_shape_id(self.interner, source).is_some()
             || callable_shape_id(self.interner, source).is_some();
         if source_is_callable {
+            // Build a source ObjectShape from callable properties for structural comparison
+            let source_props = if let Some(callable_id) = callable_shape_id(self.interner, source) {
+                let callable = self.interner.callable_shape(callable_id);
+                Some(ObjectShape {
+                    flags: ObjectFlags::empty(),
+                    properties: callable.properties.clone(),
+                    string_index: callable.string_index.clone(),
+                    number_index: callable.number_index.clone(),
+                    symbol: callable.symbol,
+                })
+            } else {
+                None
+            };
+
             if let Some(t_shape_id) = object_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 if t_shape.properties.is_empty() {
                     return SubtypeResult::True;
-                } else {
-                    // Trace: Callable not assignable to object with non-empty properties
-                    if let Some(tracer) = &mut self.tracer {
-                        if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                            source_type: source,
-                            target_type: target,
-                        }) {
-                            return SubtypeResult::False;
-                        }
-                    }
-                    return SubtypeResult::False;
                 }
+                // If source is a CallableShape with properties, check structural compatibility
+                if let Some(ref s_shape) = source_props {
+                    return self.check_object_subtype(s_shape, None, &t_shape);
+                }
+                // FunctionShape has no properties - not assignable to non-empty object
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    }) {
+                        return SubtypeResult::False;
+                    }
+                }
+                return SubtypeResult::False;
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 if t_shape.properties.is_empty() {
                     return SubtypeResult::True;
-                } else {
-                    // Trace: Callable not assignable to indexed object with non-empty properties
-                    if let Some(tracer) = &mut self.tracer {
-                        if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                            source_type: source,
-                            target_type: target,
-                        }) {
-                            return SubtypeResult::False;
-                        }
-                    }
-                    return SubtypeResult::False;
                 }
+                // If source is a CallableShape with properties, check structural compatibility
+                if let Some(ref s_shape) = source_props {
+                    return self.check_object_subtype(s_shape, None, &t_shape);
+                }
+                // FunctionShape has no properties - not assignable to non-empty indexed object
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    }) {
+                        return SubtypeResult::False;
+                    }
+                }
+                return SubtypeResult::False;
             }
         }
 

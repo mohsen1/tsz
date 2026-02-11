@@ -34,7 +34,7 @@ use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{FlowTypeEvaluator, TypeId};
+use tsz_solver::TypeId;
 
 // =============================================================================
 // Property Key Types
@@ -1706,11 +1706,24 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn should_check_definite_assignment(
         &mut self,
         sym_id: SymbolId,
-        _idx: NodeIndex,
+        idx: NodeIndex,
     ) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::node::NodeAccess;
         use tsz_scanner::SyntaxKind;
+
+        // TS2454 is only emitted under strictNullChecks (matches tsc behavior)
+        if !self.ctx.strict_null_checks() {
+            return false;
+        }
+
+        // Skip definite assignment check if this identifier is a for-in/for-of
+        // initializer — it's an assignment target, not a usage.
+        // e.g., `let x: number; for (x of items) { ... }` — the `x` in `for (x of ...)`
+        // is being written to, not read from.
+        if self.is_for_in_of_initializer(idx) {
+            return false;
+        }
 
         // Get the symbol
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -1832,6 +1845,29 @@ impl<'a> CheckerState<'a> {
 
         // Variable without initializer inside function scope - should be checked
         true
+    }
+
+    /// Check if a node is a for-in/for-of initializer (assignment target).
+    /// For `for (x of items)`, the identifier `x` is the initializer and is
+    /// being assigned to, not read from.
+    fn is_for_in_of_initializer(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::node::NodeAccess;
+
+        let Some(info) = self.ctx.arena.node_info(idx) else {
+            return false;
+        };
+        let parent = info.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        if (parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+            || parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+            && let Some(for_data) = self.ctx.arena.get_for_in_of(parent_node)
+            && for_data.initializer == idx
+        {
+            return true;
+        }
+        false
     }
 
     /// Check if a variable is definitely assigned at a given point.
@@ -2073,6 +2109,20 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Skip check for cross-file symbols (imported from another file).
+        // Position comparison only makes sense within the same file.
+        if symbol.decl_file_idx != u32::MAX || symbol.import_module.is_some() {
+            return false;
+        }
+
+        // In multi-file mode, symbol declarations may reference nodes in another
+        // file's arena.  `self.ctx.arena` only contains the *current* file, so
+        // looking up the declaration index would yield an unrelated node whose
+        // position comparison is meaningless.  Detect this by verifying that the
+        // node found at the declaration index really IS a class / enum / variable
+        // declaration — if it isn't, the index came from a different arena.
+        let is_multi_file = self.ctx.all_arenas.is_some();
+
         // Get the declaration position
         let decl_idx = if !symbol.value_declaration.is_none() {
             symbol.value_declaration
@@ -2088,6 +2138,25 @@ impl<'a> CheckerState<'a> {
         let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
             return false;
         };
+
+        // In multi-file mode, validate the declaration node kind matches the
+        // symbol.  A mismatch means the node index is from a different file's
+        // arena and should not be compared.
+        if is_multi_file {
+            let is_class = symbol.flags & symbol_flags::CLASS != 0;
+            let is_enum = symbol.flags & symbol_flags::REGULAR_ENUM != 0;
+            let is_var = symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0;
+            let kind_ok = (is_class
+                && (decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION))
+                || (is_enum && decl_node.kind == syntax_kind_ext::ENUM_DECLARATION)
+                || (is_var
+                    && (decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                        || decl_node.kind == syntax_kind_ext::PARAMETER));
+            if !kind_ok {
+                return false;
+            }
+        }
 
         // Only flag if usage is before declaration in source order
         if usage_node.pos >= decl_node.pos {
@@ -2121,6 +2190,22 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
                 // IIFE - continue walking up, this function executes immediately
+            }
+            // Non-static class property initializers run during constructor execution,
+            // which is deferred — not a TDZ violation for class declarations.
+            if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                if let Some(prop) = self.ctx.arena.get_property_decl(node) {
+                    if !self.has_static_modifier(&prop.modifiers) {
+                        return false;
+                    }
+                }
+            }
+            // Export assignments (`export = X` / `export default X`) are not TDZ
+            // violations: the compiler reorders them after all declarations, so
+            // the referenced class/variable is initialized by the time the export
+            // binding is created.
+            if node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                return false;
             }
             // Stop at source file
             if node.kind == syntax_kind_ext::SOURCE_FILE {
@@ -2193,18 +2278,5 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
         current
-    }
-
-    // =========================================================================
-    // Integration with Solver's Flow Analysis
-    // =========================================================================
-
-    /// Create a flow type evaluator that uses the solver's type operations.
-    ///
-    /// This provides a bridge between the checker's flow analysis and the
-    /// solver's type narrowing capabilities.
-    #[allow(dead_code)]
-    pub(crate) fn create_flow_evaluator(&self) -> FlowTypeEvaluator<'_> {
-        FlowTypeEvaluator::new(self.ctx.types)
     }
 }
