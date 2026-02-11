@@ -611,11 +611,31 @@ impl<'a> CheckerState<'a> {
                     self.resolve_type_for_property_access_inner(resolved, visited)
                 }
             }
-            PropertyAccessResolutionKind::Application(_) => {
-                // Don't expand Application types for property access resolution
-                // This preserves nominal identity (e.g., D<string>) in error messages
-                // The property access resolver will handle it correctly
-                type_id
+            PropertyAccessResolutionKind::Application(app_id) => {
+                // For property access, we need to resolve type arguments to their constraints
+                // Example: Readonly<P> where P extends Props should resolve to Readonly<Props>
+                let app = self.ctx.types.type_application(app_id);
+                let base = app.base;
+                let args = &app.args;
+
+                // Recursively resolve each type argument
+                let mut resolved_args = Vec::with_capacity(args.len());
+                let mut any_changed = false;
+                for &arg in args {
+                    let resolved_arg = self.resolve_type_for_property_access_inner(arg, visited);
+                    if resolved_arg != arg {
+                        any_changed = true;
+                    }
+                    resolved_args.push(resolved_arg);
+                }
+
+                if any_changed {
+                    // Create new Application with resolved args
+                    self.ctx.types.application(base, resolved_args)
+                } else {
+                    // No changes, return original
+                    type_id
+                }
             }
             PropertyAccessResolutionKind::TypeParameter { constraint } => {
                 if let Some(constraint) = constraint {
