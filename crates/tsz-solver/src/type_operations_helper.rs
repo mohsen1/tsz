@@ -147,6 +147,114 @@ pub fn classify_type_pattern(db: &dyn TypeDatabase, type_id: TypeId) -> TypePatt
     }
 }
 
+// ============================================================================
+// Visitor-Based Type Extraction (Phase 3: Visitor Consolidation)
+// ============================================================================
+
+use crate::type_classification_visitor::TypeClassificationVisitor;
+
+/// Extract array element type if type is an array.
+///
+/// Returns the element type if type is an array, otherwise returns the original type_id.
+///
+/// # Example
+/// ```ignore
+/// // Type is number[]
+/// let elem = extract_array_element(db, array_type);
+/// // elem == number
+/// ```
+///
+/// This replaces the pattern:
+/// ```ignore
+/// match db.lookup(type_id) {
+///     Some(TypeKey::Array(elem)) => elem,
+///     _ => type_id,
+/// }
+/// ```
+pub fn extract_array_element(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let mut visitor = TypeClassificationVisitor::new(db, type_id);
+
+    // Use visitor to check if type is array and extract element
+    let mut result = type_id;
+    visitor.visit_array(|elem| {
+        result = elem;
+    });
+    result
+}
+
+/// Extract tuple elements if type is a tuple.
+///
+/// Returns the tuple elements if type is a tuple, otherwise returns None.
+///
+/// This demonstrates visitor pattern for structured type extraction.
+pub fn extract_tuple_elements(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::types::TupleListId> {
+    let mut visitor = TypeClassificationVisitor::new(db, type_id);
+
+    let mut result = None;
+    visitor.visit_tuple(|elements| {
+        result = Some(elements);
+    });
+    result
+}
+
+/// Check if a type is a union and extract its members if so.
+///
+/// Returns the union member list if type is a union, otherwise returns None.
+///
+/// # Example
+/// ```ignore
+/// // Type is string | number
+/// let members = extract_union_members(db, union_type);
+/// // members == Some(TypeListId for [string, number])
+/// ```
+pub fn extract_union_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::types::TypeListId> {
+    let mut visitor = TypeClassificationVisitor::new(db, type_id);
+
+    let mut result = None;
+    visitor.visit_union(|members| {
+        result = Some(members);
+    });
+    result
+}
+
+/// Check if a type is an intersection and extract its members if so.
+///
+/// Returns the intersection member list if type is an intersection, otherwise returns None.
+pub fn extract_intersection_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::types::TypeListId> {
+    let mut visitor = TypeClassificationVisitor::new(db, type_id);
+
+    let mut result = None;
+    visitor.visit_intersection(|members| {
+        result = Some(members);
+    });
+    result
+}
+
+/// Check if a type is an object and extract its shape if so.
+///
+/// Returns the object shape if type is an object, otherwise returns None.
+pub fn extract_object_shape(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::types::ObjectShapeId> {
+    let mut visitor = TypeClassificationVisitor::new(db, type_id);
+
+    let mut result = None;
+    visitor.visit_object(|shape| {
+        result = Some(shape);
+    });
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
