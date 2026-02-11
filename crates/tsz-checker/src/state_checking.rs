@@ -2117,6 +2117,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Skip check for cross-file symbols (imported from another file).
+        // Position comparison only makes sense within the same file.
+        if symbol.decl_file_idx != u32::MAX || symbol.import_module.is_some() {
+            return;
+        }
+
         // Get the declaration position
         let decl_idx = if !symbol.value_declaration.is_none() {
             symbol.value_declaration
