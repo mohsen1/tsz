@@ -970,6 +970,13 @@ impl<'a> CheckerState<'a> {
                     .find_enclosing_heritage_clause(access.name_or_argument)
                     .is_none()
                 {
+                    // Emit TS2708 for namespace member access (e.g., ns.Interface())
+                    // This is "Cannot use namespace as a value"
+                    // Get the namespace name from the left side of the access
+                    if let Some(ns_name) = self.entity_name_text(access.expression) {
+                        self.error_namespace_used_as_value_at(&ns_name, access.expression);
+                    }
+                    // Also emit TS2693 for the type-only member itself
                     self.error_type_only_value_at(property_name, access.name_or_argument);
                 }
                 return TypeId::ERROR;
