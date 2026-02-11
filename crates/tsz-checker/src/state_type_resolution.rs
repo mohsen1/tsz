@@ -1238,14 +1238,16 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // For ES6 import declarations, defer to check_import_declaration which has
-        // accurate module specifier positions. This function may be called during
-        // type resolution with incorrect position information (or no node at all).
+        // For import declarations, defer to check_import_declaration / check_import_equals_declaration
+        // which have accurate module specifier positions and handle special cases (e.g., TS1147 for
+        // imports in namespaces). This function may be called during type resolution with incorrect
+        // position information (or no node at all).
         if let Some(node) = self.ctx.arena.get(decl_node) {
             match node.kind {
                 syntax_kind_ext::IMPORT_DECLARATION
                 | syntax_kind_ext::IMPORT_SPECIFIER
-                | syntax_kind_ext::NAMESPACE_IMPORT => {
+                | syntax_kind_ext::NAMESPACE_IMPORT
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                     return;
                 }
                 _ => {}
