@@ -3271,14 +3271,19 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Ambient class + Function merging is allowed
-                    // (declare class provides the type, function provides the value)
+                    // Non-ambient class + Function: emit TS2813 + TS2814
+                    // Note: class & function don't exclude each other in declarations_conflict,
+                    // so we handle this case specially with early continue.
                     if (decl_is_class && other_is_function) || (decl_is_function && other_is_class)
                     {
                         let class_idx = if decl_is_class { decl_idx } else { other_idx };
                         if self.is_ambient_class_declaration(class_idx) {
                             continue;
                         }
+                        // Non-ambient class + function detected — mark both for TS2813/TS2814
+                        conflicts.insert(decl_idx);
+                        conflicts.insert(other_idx);
+                        continue;
                     }
 
                     // In merged namespaces, classes with the same name in different
@@ -3332,6 +3337,70 @@ impl<'a> CheckerState<'a> {
 
             if conflicts.is_empty() {
                 continue;
+            }
+
+            // Check for class + function conflicts (TS2813 + TS2814)
+            // These get special diagnostics instead of the generic TS2300
+            let has_class_function_conflict = {
+                let has_class = declarations.iter().any(|(decl_idx, flags)| {
+                    conflicts.contains(decl_idx) && (flags & symbol_flags::CLASS) != 0
+                });
+                let has_function = declarations.iter().any(|(decl_idx, flags)| {
+                    conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) != 0
+                });
+                has_class && has_function
+            };
+
+            if has_class_function_conflict {
+                let name = symbol.escaped_name.clone();
+
+                // Emit TS2813 on class declarations
+                for &(decl_idx, flags) in &declarations {
+                    if conflicts.contains(&decl_idx) && (flags & symbol_flags::CLASS) != 0 {
+                        let error_node =
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                        let message = format_message(
+                            diagnostic_messages::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
+                            &[&name],
+                        );
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
+                        );
+                    }
+                }
+
+                // Emit TS2814 on function declarations
+                for &(decl_idx, flags) in &declarations {
+                    if conflicts.contains(&decl_idx) && (flags & symbol_flags::FUNCTION) != 0 {
+                        let error_node =
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                        self.error_at_node(
+                            error_node,
+                            diagnostic_messages::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
+                            diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
+                        );
+                    }
+                }
+
+                // Remove class/function entries from conflicts so they don't also get TS2300
+                let class_function_indices: Vec<NodeIndex> = declarations
+                    .iter()
+                    .filter(|(decl_idx, flags)| {
+                        conflicts.contains(decl_idx)
+                            && ((flags & symbol_flags::CLASS) != 0
+                                || (flags & symbol_flags::FUNCTION) != 0)
+                    })
+                    .map(|(idx, _)| *idx)
+                    .collect();
+                for idx in class_function_indices {
+                    conflicts.remove(&idx);
+                }
+
+                if conflicts.is_empty() {
+                    continue;
+                }
             }
 
             // Check if we have any non-block-scoped declarations (var, function, etc.)
