@@ -20777,12 +20777,17 @@ function qux() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    // TS2454 requires strictNullChecks
+    let options = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        options,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -20829,12 +20834,17 @@ function foo() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    // TS2454 requires strictNullChecks
+    let options = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        options,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -27789,12 +27799,17 @@ function test() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    // TS2454 requires strictNullChecks
+    let options = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        options,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -27835,12 +27850,17 @@ function test() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    // TS2454 requires strictNullChecks
+    let options = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        options,
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);

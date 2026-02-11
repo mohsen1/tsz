@@ -1712,6 +1712,11 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::node::NodeAccess;
         use tsz_scanner::SyntaxKind;
 
+        // TS2454 is only emitted under strictNullChecks (matches tsc behavior)
+        if !self.ctx.strict_null_checks() {
+            return false;
+        }
+
         // Skip definite assignment check if this identifier is a for-in/for-of
         // initializer — it's an assignment target, not a usage.
         // e.g., `let x: number; for (x of items) { ... }` — the `x` in `for (x of ...)`
