@@ -133,6 +133,9 @@ mod ts6133_unused_type_params_tests;
 mod value_usage_tests;
 // Tests that don't depend on test_fixtures, moved from root crate:
 #[cfg(test)]
+#[path = "tests/conditional_keyof_test.rs"]
+mod conditional_keyof_test;
+#[cfg(test)]
 #[path = "tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]
