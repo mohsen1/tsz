@@ -500,9 +500,9 @@ jobs:
           BASELINE=$(sed -n '/CONFORMANCE_START/,/CONFORMANCE_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | head -1 | tr -d '%')
           echo "README baseline: ${BASELINE}%"
 
-          # Run conformance and capture output
+          # Run conformance using pre-built release binaries
           TMPOUT=$(mktemp)
-          timeout 600 ./scripts/conformance.sh run --no-download --max 500 --workers 4 2>&1 | tee "$TMPOUT" || {
+          timeout 600 ./scripts/conformance.sh run --no-download --profile release --workers 4 2>&1 | tee "$TMPOUT" || {
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
               echo "::warning::Conformance tests timed out"
@@ -511,11 +511,16 @@ jobs:
             fi
           }
 
-          # Extract actual percentage from output
+          # Extract actual percentage from output (matches "N.N%" pattern)
           ACTUAL=$(grep -oE '[0-9]+\.[0-9]+%' "$TMPOUT" | tail -1 | tr -d '%')
           rm -f "$TMPOUT"
 
-          if [ -n "$ACTUAL" ] && [ -n "$BASELINE" ]; then
+          if [ -z "$ACTUAL" ] || [ "$ACTUAL" = "0.0" ]; then
+            echo "::error::Conformance runner produced no results (0.0% or no output)"
+            exit 1
+          fi
+
+          if [ -n "$BASELINE" ]; then
             echo "Actual: ${ACTUAL}% | Baseline: ${BASELINE}%"
             if echo "$ACTUAL $BASELINE" | awk '{exit !($1 < $2)}'; then
               echo "::error::Conformance regression: ${ACTUAL}% < ${BASELINE}% (README baseline)"
@@ -524,7 +529,7 @@ jobs:
               echo "::notice::Conformance OK: ${ACTUAL}% >= ${BASELINE}% baseline"
             fi
           else
-            echo "::warning::Could not extract conformance percentage for comparison"
+            echo "::warning::Could not extract baseline from README, skipping regression check"
           fi
 
   # ─── Summary ───────────────────────────────────────────────────────────────
