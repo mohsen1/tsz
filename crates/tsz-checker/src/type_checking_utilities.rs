@@ -913,6 +913,7 @@ impl<'a> CheckerState<'a> {
         let diag_count = self.ctx.diagnostics.len();
         let emitted_before = self.ctx.emitted_diagnostics.clone();
         let emitted_ts2454_before = self.ctx.emitted_ts2454_errors.clone();
+        let modules_ts2307_before = self.ctx.modules_with_ts2307_emitted.clone();
         let cached_before: std::collections::HashSet<u32> =
             self.ctx.node_types.keys().copied().collect();
 
@@ -921,6 +922,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.diagnostics.truncate(diag_count);
         self.ctx.emitted_diagnostics = emitted_before;
         self.ctx.emitted_ts2454_errors = emitted_ts2454_before;
+        self.ctx.modules_with_ts2307_emitted = modules_ts2307_before;
         self.ctx.node_types.retain(|k, _| cached_before.contains(k));
 
         result
