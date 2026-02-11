@@ -63,6 +63,16 @@ impl<'a> Printer<'a> {
 
         self.write_space();
         self.emit(func.body);
+
+        // Track function name to prevent duplicate var declarations for merged namespaces.
+        // Function declarations provide their own declaration, so if a namespace merges
+        // with this function, the namespace shouldn't emit `var name;`.
+        if !func.name.is_none() {
+            let func_name = self.get_identifier_text_idx(func.name);
+            if !func_name.is_empty() {
+                self.declared_namespace_names.insert(func_name);
+            }
+        }
     }
 
     pub(super) fn emit_variable_declaration_list(&mut self, node: &Node) {
@@ -382,6 +392,16 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+
+        // Track class name to prevent duplicate var declarations for merged namespaces.
+        // When a class and namespace have the same name (declaration merging), the class
+        // provides the declaration, so the namespace shouldn't emit `var name;`.
+        if !class.name.is_none() {
+            let class_name = self.get_identifier_text_idx(class.name);
+            if !class_name.is_empty() {
+                self.declared_namespace_names.insert(class_name);
+            }
+        }
     }
 
     // =========================================================================
@@ -410,6 +430,16 @@ impl<'a> Printer<'a> {
                     printer.set_source_text(source_text);
                 }
                 self.write(&printer.emit(&ir));
+
+                // Track enum name to prevent duplicate var declarations for merged namespaces.
+                // Enums always emit `var name;` so if a namespace merges with this enum,
+                // the namespace shouldn't emit another var declaration.
+                if !enum_decl.name.is_none() {
+                    let enum_name = self.get_identifier_text_idx(enum_decl.name);
+                    if !enum_name.is_empty() {
+                        self.declared_namespace_names.insert(enum_name);
+                    }
+                }
                 return;
             }
             // If transformer returns None (e.g., const enum), emit nothing
