@@ -1233,6 +1233,14 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
+        // Type is possibly nullish (e.g., Foo | undefined) - emit TS18048/TS2532
+        // unless optional chaining is used
+        if let Some(cause) = nullish_cause {
+            if !access.question_dot_token {
+                self.report_nullish_object(access.expression, cause, false);
+            }
+        }
+
         let index_type = self.get_type_of_node(access.name_or_argument);
 
         // TS2538: Type cannot be used as an index type
