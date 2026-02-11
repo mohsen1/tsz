@@ -661,6 +661,8 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                         diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                     );
+                    // Return early - don't check for module resolution when import is invalid
+                    return;
                 }
             }
         }
