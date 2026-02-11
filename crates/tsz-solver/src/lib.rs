@@ -49,6 +49,7 @@ pub mod tracer;
 pub mod type_classifier;
 pub mod type_dispatcher;
 pub mod type_operations_helper;
+pub mod type_operations_matcher;
 pub mod type_predicates;
 pub mod type_queries;
 pub mod type_queries_extended;
