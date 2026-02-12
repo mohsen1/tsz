@@ -9,6 +9,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tsz_common::diagnostics::diagnostic_codes;
 
 struct TempDir {
     path: PathBuf,
@@ -3400,24 +3401,29 @@ fn compile_missing_multiple_files_in_files_array_returns_error() {
 
 #[test]
 fn compile_missing_project_directory_returns_error() {
-    // Test that specifying a non-existent project directory returns an error
+    // Test that specifying a non-existent project directory returns an error diagnostic
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
     let mut args = default_args();
     args.project = Some(PathBuf::from("nonexistent_project"));
 
-    let result = compile(&args, base);
+    let result = compile(&args, base).expect("compile should succeed with error diagnostic");
 
     assert!(
-        result.is_err(),
-        "Should return error for missing project directory"
+        !result.diagnostics.is_empty(),
+        "Should have error diagnostic for missing project directory"
+    );
+    assert_eq!(
+        result.diagnostics[0].code,
+        diagnostic_codes::CANNOT_FIND_A_TSCONFIG_JSON_FILE_AT_THE_SPECIFIED_DIRECTORY,
+        "Should have correct error code"
     );
 }
 
 #[test]
 fn compile_missing_tsconfig_in_project_dir_returns_error() {
-    // Test that a project directory without tsconfig.json returns an error
+    // Test that a project directory without tsconfig.json returns an error diagnostic
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -3428,12 +3434,17 @@ fn compile_missing_tsconfig_in_project_dir_returns_error() {
     let mut args = default_args();
     args.project = Some(PathBuf::from("myproject"));
 
-    let result = compile(&args, base);
+    let result = compile(&args, base).expect("compile should succeed with error diagnostic");
 
-    // Should return error since there's no tsconfig.json
+    // Should have error diagnostic since there's no tsconfig.json
     assert!(
-        result.is_err(),
-        "Should return error when tsconfig.json is missing in project dir"
+        !result.diagnostics.is_empty(),
+        "Should have error diagnostic when tsconfig.json is missing in project dir"
+    );
+    assert_eq!(
+        result.diagnostics[0].code,
+        diagnostic_codes::CANNOT_FIND_A_TSCONFIG_JSON_FILE_AT_THE_SPECIFIED_DIRECTORY,
+        "Should have correct error code"
     );
 }
 
