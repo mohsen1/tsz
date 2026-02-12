@@ -432,7 +432,10 @@ mod tests {
         // Get the directive
         let directive = ctx.get(node);
         assert!(directive.is_some());
-        assert!(matches!(directive.unwrap(), TransformDirective::Identity));
+        assert!(matches!(
+            directive.expect("directive is Some, verified by assertion"),
+            TransformDirective::Identity
+        ));
 
         // Clear
         ctx.clear();
@@ -453,7 +456,7 @@ mod tests {
             },
         );
 
-        let directive = ctx.get(class_node).unwrap();
+        let directive = ctx.get(class_node).expect("directive was just inserted");
         match directive {
             TransformDirective::ES5Class { class_node, .. } => {
                 assert_eq!(*class_node, NodeIndex(10));
@@ -480,7 +483,7 @@ mod tests {
 
         ctx.insert(class_node, directive);
 
-        let retrieved = ctx.get(class_node).unwrap();
+        let retrieved = ctx.get(class_node).expect("directive was just inserted");
         match retrieved {
             TransformDirective::CommonJSExport { names, inner, .. } => {
                 assert_eq!(names.as_ref(), &[name_id]);

@@ -1010,7 +1010,7 @@ impl BinderState {
         // Cache the result (including None for not found)
         self.resolved_export_cache
             .write()
-            .unwrap()
+            .expect("resolved_export_cache RwLock poisoned")
             .insert(cache_key, result);
         result
     }

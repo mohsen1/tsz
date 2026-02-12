@@ -1507,10 +1507,11 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         // Check if this is a destructuring pattern
                         let name_node = self.arena.get(decl.name);
-                        let is_destructuring = name_node.is_some()
-                            && (name_node.unwrap().kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                || name_node.unwrap().kind
-                                    == syntax_kind_ext::ARRAY_BINDING_PATTERN);
+                        let is_destructuring = name_node.is_some() && {
+                            let node = name_node.expect("name_node is Some, checked above");
+                            node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        };
 
                         if is_destructuring {
                             // Flatten destructuring into individual declarations

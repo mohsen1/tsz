@@ -123,7 +123,9 @@ impl<'a> ES5DestructuringTransformer<'a> {
         exprs.push(IRNode::id(&temp_var));
 
         if exprs.len() == 1 {
-            exprs.pop().unwrap()
+            exprs
+                .pop()
+                .expect("exprs has exactly 1 element, checked above")
         } else {
             IRNode::CommaExpr(exprs)
         }
