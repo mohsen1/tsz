@@ -90,8 +90,20 @@ impl<'a> CheckerState<'a> {
 
         let index_info = self.ctx.types.get_index_signatures(iface_type);
 
-        // If there are any index signatures (direct or inherited), check compatibility
-        if index_info.string_index.is_some() || index_info.number_index.is_some() {
+        // Check if there are own index signatures by scanning members
+        let has_own_index_sig = iface.members.nodes.iter().any(|&member_idx| {
+            self.ctx
+                .arena
+                .get(member_idx)
+                .map(|node| node.kind == tsz_parser::parser::syntax_kind_ext::INDEX_SIGNATURE)
+                .unwrap_or(false)
+        });
+
+        // If there are any index signatures (direct, own, or inherited), check compatibility
+        if index_info.string_index.is_some()
+            || index_info.number_index.is_some()
+            || has_own_index_sig
+        {
             self.check_index_signature_compatibility(&iface.members.nodes, iface_type);
         }
 
@@ -276,10 +288,73 @@ impl<'a> CheckerState<'a> {
         use crate::types::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext;
 
-        // Get resolved index signatures from the Solver
-        let index_info = self.ctx.types.get_index_signatures(iface_type);
+        // Get resolved index signatures from the Solver (includes inherited)
+        let mut index_info = self.ctx.types.get_index_signatures(iface_type);
 
-        // If no index signatures, nothing to check
+        // ALSO scan members array directly for own index signatures
+        // The type might not include the interface's own index signatures yet
+        for &member_idx in members {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            if member_node.kind != syntax_kind_ext::INDEX_SIGNATURE {
+                continue;
+            }
+
+            let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
+                continue;
+            };
+
+            // Get the index signature type
+            if index_sig.type_annotation.is_none() {
+                continue;
+            }
+
+            let value_type = self.get_type_from_type_node(index_sig.type_annotation);
+
+            // Determine if this is a string or number index signature
+            let param_idx = index_sig
+                .parameters
+                .nodes
+                .first()
+                .copied()
+                .unwrap_or(NodeIndex::NONE);
+            if param_idx.is_none() {
+                continue;
+            }
+
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            if param.type_annotation.is_none() {
+                continue;
+            }
+
+            let param_type = self.get_type_from_type_node(param.type_annotation);
+
+            // Store the index signature based on parameter type
+            // Own index signatures take priority over inherited ones
+            if param_type == TypeId::NUMBER {
+                index_info.number_index = Some(tsz_solver::types::IndexSignature {
+                    key_type: TypeId::NUMBER,
+                    value_type,
+                    readonly: false,
+                });
+            } else if param_type == TypeId::STRING {
+                index_info.string_index = Some(tsz_solver::types::IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type,
+                    readonly: false,
+                });
+            }
+        }
+
+        // If no index signatures (neither inherited nor own), nothing to check
         if index_info.string_index.is_none() && index_info.number_index.is_none() {
             return;
         }

@@ -33529,3 +33529,160 @@ const list: List<number> = { value: 1, next: { value: 2, next: null } };
     // The test passes if we get here without panicking
     // The diagnostic will show "Lazy(1)<number>" which is a display issue, not a functional issue
 }
+
+// =============================================================================
+// TS2411: Property incompatible with index signature
+// =============================================================================
+
+/// Test that properties are checked against own index signatures (not inherited).
+/// This is the main failing case identified in docs/ts2411-remaining-issues.md
+#[test]
+fn test_ts2411_own_string_index_signature() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+interface Derived {
+    [x: string]: { a: number; b: number };
+    y: { a: number; }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let ts2411_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE)
+        .collect();
+
+    assert!(
+        !ts2411_errors.is_empty(),
+        "Expected at least 1 TS2411 error for property 'y' incompatible with own string index signature, got 0. Diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test that properties are checked against inherited index signatures.
+#[test]
+fn test_ts2411_inherited_index_signature() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+interface Base {
+    [x: string]: { x: number }
+}
+
+interface Derived extends Base {
+    foo: { y: number }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let ts2411_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE)
+        .collect();
+
+    assert!(
+        !ts2411_errors.is_empty(),
+        "Expected at least 1 TS2411 error for property 'foo' incompatible with inherited index signature, got 0. Diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test that compatible properties don't emit TS2411 errors.
+#[test]
+fn test_ts2411_compatible_property_no_error() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+interface Foo {
+    [x: string]: { a: number; b: number };
+    y: { a: number; b: number; };
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let ts2411_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2411_errors.len(),
+        0,
+        "Expected 0 TS2411 errors for compatible property, got {}. Diagnostics: {:?}",
+        ts2411_errors.len(),
+        checker.ctx.diagnostics
+    );
+}
