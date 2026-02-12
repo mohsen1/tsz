@@ -914,13 +914,12 @@ impl ParserState {
                         | SyntaxKind::EndOfFileToken
                 );
 
-                // In static block context with a following expression, but NOT in a generator context
-                // (i.e., directly in the static block, not in a nested generator function),
-                // emit TS1163 and parse as yield expression for correct AST structure
-                if self.in_static_block_context()
-                    && !self.in_generator_context()
-                    && (has_following_expression || has_asterisk)
-                {
+                // Outside a generator context with a following expression or asterisk,
+                // emit TS1163 and parse as yield expression for correct AST structure.
+                // This handles both static block contexts and top-level/function contexts
+                // where `yield foo;` should report "yield is only allowed in a generator body"
+                // rather than falling through to TS1434 "Unexpected keyword or identifier".
+                if !self.in_generator_context() && (has_following_expression || has_asterisk) {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "A 'yield' expression is only allowed in a generator body.",
