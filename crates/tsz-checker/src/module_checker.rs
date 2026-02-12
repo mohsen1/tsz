@@ -350,7 +350,7 @@ impl<'a> CheckerState<'a> {
                 // TS2305: Module has no exported member
                 let message = format_message(
                     diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                    &[&export_name, module_name],
+                    &[module_name, &export_name],
                 );
                 self.error_at_node(
                     specifier_idx,

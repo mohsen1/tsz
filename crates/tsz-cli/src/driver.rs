@@ -3202,6 +3202,19 @@ fn create_cross_file_lookup_binder(
                 .insert(module_name.clone(), exports.clone());
         }
     }
+    // Copy re-export data for cross-file import validation.
+    // Without this, `resolve_import_in_file` can't follow wildcard/named
+    // re-export chains across binder boundaries.
+    if let Some(wildcards) = program.wildcard_reexports.get(&file.file_name) {
+        binder
+            .wildcard_reexports
+            .insert(file.file_name.clone(), wildcards.clone());
+    }
+    if let Some(reexports) = program.reexports.get(&file.file_name) {
+        binder
+            .reexports
+            .insert(file.file_name.clone(), reexports.clone());
+    }
     binder.is_external_module = file.is_external_module;
     binder
 }
