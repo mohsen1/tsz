@@ -568,8 +568,9 @@ impl<'a> CheckerState<'a> {
         import_name: &str,
         module_name: &str,
     ) -> Option<(bool, Option<String>)> {
-        // Check if the symbol exists in the binder's symbol table
-        let symbol_exists = binder.symbols.find_by_name(import_name).is_some();
+        // Check if the symbol exists in the binder's file-level symbol table
+        // (not just the arena, which doesn't include all declarations)
+        let symbol_exists = binder.file_locals.has(import_name);
         tracing::trace!(symbol_exists, "Checked if symbol exists in binder");
 
         if !symbol_exists {

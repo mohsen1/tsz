@@ -631,6 +631,7 @@ impl BinderState {
             resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules,
+            modules_with_export_equals,
             lib_symbols_merged: false,
             break_targets: Vec::new(),
             file_features: FileFeatures::NONE,

@@ -14,6 +14,8 @@ and limitations under the License.
 ***************************************************************************** */
 
 
+/// <reference lib="es2023.collection" />
+
 interface MapConstructor {
     /**
      * Groups members of an iterable according to the return value of the passed callback.

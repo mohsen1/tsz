@@ -1361,7 +1361,7 @@ export { bar } from "./re-export";
     #[test]
     fn test_resolve_type_package_entry_with_exports_map() {
         use std::fs;
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
         let pkg_dir = dir.path().join("node_modules/@types/foo");
         fs::create_dir_all(&pkg_dir).unwrap();
 
@@ -1394,7 +1394,7 @@ export { bar } from "./re-export";
             result.is_some(),
             "Should resolve type package entry via exports map"
         );
-        let resolved = result.unwrap();
+        let resolved = result.expect("resolution should succeed in test");
         assert!(
             resolved.to_string_lossy().contains("index.d.mts"),
             "Should resolve to index.d.mts (import condition), got: {}",
@@ -1405,7 +1405,7 @@ export { bar } from "./re-export";
     #[test]
     fn test_resolve_type_package_entry_node10_restricted_extensions() {
         use std::fs;
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
         let pkg_dir = dir.path().join("node_modules/@types/bar");
         fs::create_dir_all(&pkg_dir).unwrap();
 
@@ -1435,7 +1435,7 @@ export { bar } from "./re-export";
     #[test]
     fn test_resolve_type_package_entry_with_mode_require() {
         use std::fs;
-        let dir = tempfile::TempDir::new().unwrap();
+        let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
         let pkg_dir = dir.path().join("node_modules/@types/foo");
         fs::create_dir_all(&pkg_dir).unwrap();
 
@@ -1462,7 +1462,7 @@ export { bar } from "./re-export";
 
         let result = resolve_type_package_entry_with_mode(&pkg_dir, "require", &options);
         assert!(result.is_some(), "Should resolve with require mode");
-        let resolved = result.unwrap();
+        let resolved = result.expect("resolution should succeed in test");
         assert!(
             resolved.to_string_lossy().contains("index.d.cts"),
             "Should resolve to index.d.cts (require condition), got: {}",

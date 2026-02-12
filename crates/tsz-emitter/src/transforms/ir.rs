@@ -120,7 +120,11 @@ pub enum IRNode {
     SpreadElement(Box<IRNode>),
 
     /// Object literal: `{ key: value, ... }`
-    ObjectLiteral(Vec<IRProperty>),
+    ObjectLiteral {
+        properties: Vec<IRProperty>,
+        /// Source range (pos, end) for single-line vs multiline detection
+        source_range: Option<(u32, u32)>,
+    },
 
     /// Function expression: `function name(params) { body }`
     FunctionExpr {
@@ -660,12 +664,26 @@ impl IRNode {
 
     /// Create an object literal
     pub fn object(props: Vec<IRProperty>) -> Self {
-        IRNode::ObjectLiteral(props)
+        IRNode::ObjectLiteral {
+            properties: props,
+            source_range: None,
+        }
+    }
+
+    /// Create an object literal with source range for formatting
+    pub fn object_with_source(props: Vec<IRProperty>, source_range: (u32, u32)) -> Self {
+        IRNode::ObjectLiteral {
+            properties: props,
+            source_range: Some(source_range),
+        }
     }
 
     /// Create an empty object literal
     pub fn empty_object() -> Self {
-        IRNode::ObjectLiteral(Vec::new())
+        IRNode::ObjectLiteral {
+            properties: Vec::new(),
+            source_range: None,
+        }
     }
 
     /// Create an array literal

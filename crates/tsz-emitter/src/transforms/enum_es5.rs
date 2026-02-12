@@ -98,7 +98,7 @@ impl<'a> EnumES5Transformer<'a> {
             right: Box::new(IRNode::BinaryExpr {
                 left: Box::new(IRNode::Identifier(name.clone())),
                 operator: "=".to_string(),
-                right: Box::new(IRNode::ObjectLiteral(Vec::new())),
+                right: Box::new(IRNode::empty_object()),
             }),
         };
 

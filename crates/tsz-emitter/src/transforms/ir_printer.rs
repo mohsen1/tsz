@@ -243,12 +243,43 @@ impl<'a> IRPrinter<'a> {
                 self.write("...");
                 self.emit_node(expr);
             }
-            IRNode::ObjectLiteral(props) => {
-                if props.is_empty() {
+            IRNode::ObjectLiteral {
+                properties,
+                source_range,
+            } => {
+                if properties.is_empty() {
                     self.write("{}");
+                    return;
+                }
+
+                // Check if the object was multiline in source
+                let is_multiline = if let Some((pos, end)) = source_range {
+                    !self.is_single_line_range(*pos, *end)
                 } else {
+                    // Default to single-line when no source info
+                    false
+                };
+
+                if is_multiline {
+                    // Multiline format
+                    self.write("{");
+                    self.write_line();
+                    self.indent_level += 1;
+                    for (i, prop) in properties.iter().enumerate() {
+                        self.write_indent();
+                        self.emit_property(prop);
+                        if i < properties.len() - 1 {
+                            self.write(",");
+                        }
+                        self.write_line();
+                    }
+                    self.indent_level -= 1;
+                    self.write_indent();
+                    self.write("}");
+                } else {
+                    // Single-line format
                     self.write("{ ");
-                    for (i, prop) in props.iter().enumerate() {
+                    for (i, prop) in properties.iter().enumerate() {
                         if i > 0 {
                             self.write(", ");
                         }
@@ -1244,6 +1275,22 @@ impl<'a> IRPrinter<'a> {
 
     /// Check if a body source range represents a single-line block in the source text.
     /// Uses brace depth counting to find the matching `}` and skips leading trivia.
+    /// Check if a source range is on a single line (for object literals, etc.)
+    fn is_single_line_range(&self, pos: u32, end: u32) -> bool {
+        self.source_text
+            .map(|text| {
+                let start = pos as usize;
+                let end = std::cmp::min(end as usize, text.len());
+                if start < end {
+                    let slice = &text[start..end];
+                    !slice.contains('\n')
+                } else {
+                    true // Empty range is considered single-line
+                }
+            })
+            .unwrap_or(true) // Default to single-line if no source text
+    }
+
     fn is_body_source_single_line(&self, body_source_range: Option<(u32, u32)>) -> bool {
         body_source_range
             .and_then(|(pos, end)| {
