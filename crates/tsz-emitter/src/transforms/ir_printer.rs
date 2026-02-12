@@ -783,6 +783,12 @@ impl<'a> IRPrinter<'a> {
                     self.write(text);
                 }
             }
+            IRNode::TrailingComment(text) => {
+                // When encountered outside the body loop, just emit the text.
+                // Inside the body loop, this is consumed by peek-ahead logic.
+                self.write(" ");
+                self.write(text);
+            }
             IRNode::Sequence(nodes) => {
                 for (i, node) in nodes.iter().enumerate() {
                     self.emit_node(node);
@@ -1105,11 +1111,26 @@ impl<'a> IRPrinter<'a> {
         self.increase_indent();
 
         if is_last {
-            // Emit body
-            for stmt in body {
+            // Emit body with trailing comment peek-ahead
+            let mut i = 0;
+            while i < body.len() {
+                // Skip standalone TrailingComment nodes (consumed by peek-ahead)
+                if matches!(&body[i], IRNode::TrailingComment(_)) {
+                    i += 1;
+                    continue;
+                }
                 self.write_indent();
-                self.emit_node(stmt);
+                self.emit_node(&body[i]);
+                // Peek ahead for trailing comment
+                if i + 1 < body.len() {
+                    if let IRNode::TrailingComment(text) = &body[i + 1] {
+                        self.write(" ");
+                        self.write(text);
+                        i += 1; // consume the trailing comment
+                    }
+                }
                 self.write_line();
+                i += 1;
             }
         } else {
             // Emit var declaration for nested namespace

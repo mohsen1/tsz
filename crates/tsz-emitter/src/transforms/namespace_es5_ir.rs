@@ -81,6 +81,8 @@ use tsz_scanner::SyntaxKind;
 pub struct NamespaceES5Transformer<'a> {
     arena: &'a NodeArena,
     is_commonjs: bool,
+    source_text: Option<&'a str>,
+    comment_ranges: Vec<tsz_common::comments::CommentRange>,
 }
 
 impl<'a> NamespaceES5Transformer<'a> {
@@ -89,17 +91,90 @@ impl<'a> NamespaceES5Transformer<'a> {
         Self {
             arena,
             is_commonjs: false,
+            source_text: None,
+            comment_ranges: Vec::new(),
         }
     }
 
     /// Create a namespace transformer with CommonJS mode enabled
     pub fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
-        Self { arena, is_commonjs }
+        Self {
+            arena,
+            is_commonjs,
+            source_text: None,
+            comment_ranges: Vec::new(),
+        }
+    }
+
+    /// Set source text for comment extraction
+    pub fn set_source_text(&mut self, text: &'a str) {
+        self.comment_ranges = tsz_common::comments::get_comment_ranges(text);
+        self.source_text = Some(text);
     }
 
     /// Set CommonJS mode
     pub fn set_commonjs(&mut self, is_commonjs: bool) {
         self.is_commonjs = is_commonjs;
+    }
+
+    /// Extract leading comments from source text that fall within [from_pos, to_pos) range.
+    /// Returns IRNode::Raw nodes since the text already includes comment delimiters.
+    fn extract_comments_in_range(&self, from_pos: u32, to_pos: u32) -> Vec<IRNode> {
+        let source_text = match self.source_text {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+        let mut result = Vec::new();
+        for c in &self.comment_ranges {
+            if c.pos >= from_pos && c.end <= to_pos {
+                let text = c.get_text(source_text);
+                if !text.is_empty() {
+                    result.push(IRNode::Raw(text.to_string()));
+                }
+            }
+            if c.pos >= to_pos {
+                break; // Comments are sorted by position
+            }
+        }
+        result
+    }
+
+    /// Extract a trailing comment within a statement's span.
+    ///
+    /// In our parser, `node.end` includes trailing trivia, so comments appear
+    /// WITHIN `[stmt_pos, stmt_end)` rather than after `stmt_end`. This method
+    /// finds comments within the span that have code on the same line before them
+    /// (i.e., they're trailing comments, not standalone leading comments).
+    fn extract_trailing_comment_in_stmt(&self, stmt_pos: u32, stmt_end: u32) -> Option<String> {
+        let source_text = match self.source_text {
+            Some(t) => t,
+            None => return None,
+        };
+        let bytes = source_text.as_bytes();
+
+        for c in &self.comment_ranges {
+            if c.pos >= stmt_pos && c.end <= stmt_end {
+                // Check if there's non-whitespace code before this comment on the same line
+                let mut line_start = c.pos as usize;
+                while line_start > 0
+                    && bytes[line_start - 1] != b'\n'
+                    && bytes[line_start - 1] != b'\r'
+                {
+                    line_start -= 1;
+                }
+                let before_comment = &source_text[line_start..c.pos as usize];
+                if !before_comment.trim().is_empty() {
+                    let text = c.get_text(source_text);
+                    if !text.is_empty() {
+                        return Some(text.to_string());
+                    }
+                }
+            }
+            if c.pos >= stmt_end {
+                break;
+            }
+        }
+        None
     }
 
     /// Transform a namespace declaration to IR
@@ -367,7 +442,20 @@ impl<'a> NamespaceES5Transformer<'a> {
         if let Some(block_data) = self.arena.get_module_block(body_node)
             && let Some(ref stmts) = block_data.statements
         {
+            // Track cursor for comment extraction between statements.
+            // Start after the opening brace of the module block.
+            let mut prev_end = body_node.pos + 1; // skip past '{'
+
             for &stmt_idx in &stmts.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    // Extract leading comments between previous end and this statement
+                    let leading_comments = self.extract_comments_in_range(prev_end, stmt_node.pos);
+                    for c in leading_comments {
+                        result.push(c);
+                    }
+                    prev_end = stmt_node.end;
+                }
+
                 if let Some(ir) = self.transform_namespace_member_with_declared(
                     ns_name,
                     stmt_idx,
@@ -380,6 +468,29 @@ impl<'a> NamespaceES5Transformer<'a> {
                         }
                     }
                     result.push(ir);
+
+                    // Check for trailing comment on the same line as this statement.
+                    // Note: node.end includes trailing trivia, so the comment is WITHIN the span.
+                    if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                        if let Some(comment_text) =
+                            self.extract_trailing_comment_in_stmt(stmt_node.pos, stmt_node.end)
+                        {
+                            result.push(IRNode::TrailingComment(comment_text));
+                        }
+                    }
+                }
+            }
+
+            // Extract standalone comments after the last statement but before the closing brace.
+            // Since node.end includes trailing trivia, these are comments NOT part of any
+            // statement's trivia — they appear on their own lines before `}`.
+            if let Some(last_stmt) = stmts.nodes.last()
+                && let Some(last_node) = self.arena.get(*last_stmt)
+            {
+                let standalone_comments =
+                    self.extract_comments_in_range(last_node.end, body_node.end);
+                for c in standalone_comments {
+                    result.push(c);
                 }
             }
         }
@@ -2160,5 +2271,130 @@ mod tests {
                 assert!(attach_to_exports);
             }
         }
+    }
+
+    // =========================================================================
+    // Comment preservation tests
+    // =========================================================================
+
+    /// Helper that sets source text for comment extraction
+    fn transform_and_emit_with_comments(source: &str) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+            && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        {
+            if let Some(info) = find_namespace_info(&parser, stmt_idx) {
+                let mut transformer = NamespaceES5Transformer::new(&parser.arena);
+                transformer.set_source_text(source);
+                let ir = if info.is_exported {
+                    transformer.transform_exported_namespace(info.ns_idx)
+                } else {
+                    transformer.transform_namespace(info.ns_idx)
+                };
+                if let Some(ir) = ir {
+                    return IRPrinter::emit_to_string(&ir);
+                }
+            }
+        }
+        String::new()
+    }
+
+    #[test]
+    fn test_namespace_leading_comment_preserved() {
+        let source = r#"namespace M {
+    // this is a leading comment
+    export function foo() { return 1; }
+}"#;
+        let output = transform_and_emit_with_comments(source);
+        assert!(
+            output.contains("// this is a leading comment"),
+            "Leading comment should be preserved. Got: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_namespace_trailing_comment_preserved() {
+        let source = r#"namespace M {
+    export function foo() { return 1; } //trailing comment
+}"#;
+        let output = transform_and_emit_with_comments(source);
+        assert!(
+            output.contains("//trailing comment"),
+            "Trailing comment should be preserved. Got: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_namespace_trailing_comment_variable() {
+        // Simpler case: variable with trailing comment
+        let source = "namespace M { export var x = 1; //comment\n}";
+        let output = transform_and_emit_with_comments(source);
+        assert!(
+            output.contains("//comment"),
+            "Trailing comment on variable should be preserved. Got: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_trailing_comment_extraction_direct() {
+        // Directly test that comment ranges are found
+        let source = "namespace M { export var x = 1; //comment\n}";
+        let ranges = tsz_common::comments::get_comment_ranges(source);
+        assert!(
+            !ranges.is_empty(),
+            "Should find at least one comment range in: {}",
+            source
+        );
+        let comment_text = ranges[0].get_text(source);
+        assert_eq!(comment_text, "//comment", "Comment text should match");
+    }
+
+    #[test]
+    fn test_trailing_comment_ir_structure() {
+        // Verify the IR body contains TrailingComment nodes
+        let source = "namespace M { export var x = 1; //comment\n}";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+            && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        {
+            if let Some(info) = find_namespace_info(&parser, stmt_idx) {
+                let mut transformer = NamespaceES5Transformer::new(&parser.arena);
+                transformer.set_source_text(source);
+                let ir = transformer.transform_namespace(info.ns_idx);
+                if let Some(IRNode::NamespaceIIFE { body, .. }) = &ir {
+                    let has_trailing = body.iter().any(|n| matches!(n, IRNode::TrailingComment(_)));
+                    assert!(
+                        has_trailing,
+                        "Body should contain TrailingComment node. Body: {:?}",
+                        body
+                    );
+                } else {
+                    panic!("Expected NamespaceIIFE, got: {:?}", ir);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_namespace_inline_block_comment_preserved() {
+        let source = r#"namespace M {
+    /* block comment */
+    export var x = 1;
+}"#;
+        let output = transform_and_emit_with_comments(source);
+        assert!(
+            output.contains("/* block comment */"),
+            "Block comment should be preserved. Got: {}",
+            output
+        );
     }
 }
