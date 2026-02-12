@@ -775,7 +775,7 @@ impl<'a> CheckerState<'a> {
     /// - `export = X` is not used when there are also other exported elements (TS2309)
     /// - There are not multiple `export = X` statements (TS2300)
     pub(crate) fn check_export_assignment(&mut self, statements: &[NodeIndex]) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::types::diagnostics::diagnostic_codes;
 
         let mut export_assignment_indices: Vec<NodeIndex> = Vec::new();
         let mut export_default_indices: Vec<NodeIndex> = Vec::new();
@@ -860,13 +860,14 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS2528: Check for multiple default exports
+        // TS2323: Check for multiple default exports
+        // TypeScript emits TS2323 "Cannot redeclare exported variable 'default'" for duplicate default exports
         if export_default_indices.len() > 1 {
             for &export_idx in &export_default_indices {
                 self.error_at_node(
                     export_idx,
-                    diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                    diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                    "Cannot redeclare exported variable 'default'.",
+                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                 );
             }
         }
@@ -1836,7 +1837,7 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         visited: &mut FxHashSet<String>,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::types::diagnostics::diagnostic_codes;
 
         if visited.contains(module_name) {
             let cycle_path: Vec<&str> = visited
