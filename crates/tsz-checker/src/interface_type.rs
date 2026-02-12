@@ -19,6 +19,8 @@
 //! - Type parameter instantiation for generic bases
 
 use crate::state::CheckerState;
+use rustc_hash::FxHashMap;
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -76,9 +78,15 @@ impl<'a> CheckerState<'a> {
         let (_interface_type_params, interface_type_param_updates) =
             self.push_type_parameters(&interface.type_parameters);
 
+        struct AccessorAggregate {
+            getter: Option<TypeId>,
+            setter: Option<TypeId>,
+        }
+
         let mut call_signatures: Vec<SolverCallSignature> = Vec::new();
         let mut construct_signatures: Vec<SolverCallSignature> = Vec::new();
         let mut properties: Vec<PropertyInfo> = Vec::new();
+        let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
         let mut string_index: Option<IndexSignature> = None;
         let mut number_index: Option<IndexSignature> = None;
 
@@ -178,6 +186,44 @@ impl<'a> CheckerState<'a> {
                         parent_id: None,
                     });
                 }
+            } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
+                    && let Some(name_node) = self.ctx.arena.get(accessor.name)
+                    && let Some(id_data) = self.ctx.arena.get_identifier(name_node)
+                {
+                    let name_atom = self.ctx.types.intern_string(&id_data.escaped_text);
+                    let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
+                        getter: None,
+                        setter: None,
+                    });
+
+                    if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        let getter_type = if !accessor.type_annotation.is_none() {
+                            self.get_type_from_type_node(accessor.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
+                        entry.getter = Some(getter_type);
+                    } else {
+                        let setter_type = accessor
+                            .parameters
+                            .nodes
+                            .first()
+                            .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                            .and_then(|param| {
+                                if !param.type_annotation.is_none() {
+                                    Some(self.get_type_from_type_node(param.type_annotation))
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(TypeId::UNKNOWN);
+                        entry.setter = Some(setter_type);
+                    }
+                }
             } else if let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) {
                 let param_idx = index_sig
                     .parameters
@@ -229,6 +275,26 @@ impl<'a> CheckerState<'a> {
                     Self::merge_index_signature(&mut string_index, info);
                 }
             }
+        }
+
+        // Convert accessors to properties
+        for (name, accessor) in accessors {
+            let read_type = accessor
+                .getter
+                .or(accessor.setter)
+                .unwrap_or(TypeId::UNKNOWN);
+            let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
+            let readonly = accessor.getter.is_some() && accessor.setter.is_none();
+            properties.push(PropertyInfo {
+                name,
+                type_id: read_type,
+                write_type,
+                optional: false,
+                readonly,
+                is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+            });
         }
 
         let result = if !call_signatures.is_empty() || !construct_signatures.is_empty() {

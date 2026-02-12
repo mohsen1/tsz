@@ -805,3 +805,55 @@ class C {
         ts2339_errors[0].1
     );
 }
+
+#[test]
+fn test_interface_accessor_declarations() {
+    // Interface accessor declarations (get/set) should be recognized as properties
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Test {
+    get foo(): string;
+    set foo(s: string | number);
+}
+const t = {} as Test;
+let m: string = t.foo;   // OK - getter returns string
+        "#,
+    );
+
+    let ts2339_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339_errors.len(),
+        0,
+        "Interface accessors should be recognized as properties. Got TS2339 errors: {:#?}",
+        ts2339_errors
+    );
+}
+
+#[test]
+fn test_type_literal_accessor_declarations() {
+    // Type literal accessor declarations (get/set) should be recognized as properties
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Test = {
+    get foo(): string;
+    set foo(s: number);
+};
+const t = {} as Test;
+let m: string = t.foo;   // OK - getter returns string
+        "#,
+    );
+
+    let ts2339_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339_errors.len(),
+        0,
+        "Type literal accessors should be recognized as properties. Got TS2339 errors: {:#?}",
+        ts2339_errors
+    );
+}
