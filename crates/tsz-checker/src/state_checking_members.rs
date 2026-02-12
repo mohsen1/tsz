@@ -4073,6 +4073,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_await_expression(self, expr_idx)
     }
 
+    fn check_for_await_statement(&mut self, stmt_idx: NodeIndex) {
+        CheckerState::check_for_await_statement(self, stmt_idx)
+    }
+
     fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex) {
         CheckerState::check_truthy_or_falsy(self, node_idx)
     }
