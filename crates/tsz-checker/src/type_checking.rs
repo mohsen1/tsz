@@ -809,6 +809,31 @@ impl<'a> CheckerState<'a> {
     // Await Expression Validation
     // =========================================================================
 
+    /// Check if current compiler options support top-level await.
+    ///
+    /// Top-level await is supported when:
+    /// - module is ES2022, ESNext, System, Node16, NodeNext, or Preserve
+    /// - target is ES2017 or higher
+    fn supports_top_level_await(&self) -> bool {
+        use tsz_common::common::{ModuleKind, ScriptTarget};
+
+        // Check module kind supports top-level await
+        let module_ok = matches!(
+            self.ctx.compiler_options.module,
+            ModuleKind::ES2022
+                | ModuleKind::ESNext
+                | ModuleKind::System
+                | ModuleKind::Node16
+                | ModuleKind::NodeNext
+                | ModuleKind::Preserve
+        );
+
+        // Check target is ES2017 or higher
+        let target_ok = self.ctx.compiler_options.target as u32 >= ScriptTarget::ES2017 as u32;
+
+        module_ok && target_ok
+    }
+
     /// Check an await expression for async context.
     ///
     /// Validates that await expressions are only used within async functions,
@@ -851,14 +876,30 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 syntax_kind_ext::AWAIT_EXPRESSION => {
-                    // TS1308: 'await' expressions are only allowed within async functions
+                    // Validate await expression context
                     if !self.ctx.in_async_context() {
                         use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        self.error_at_node(
-                            current_idx,
-                            diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
-                            diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
-                        );
+
+                        // Check if we're at top level of a module
+                        let at_top_level = self.ctx.function_depth == 0;
+
+                        if at_top_level {
+                            // TS1378: Top-level await requires ES2022+/ESNext module and ES2017+ target
+                            if !self.supports_top_level_await() {
+                                self.error_at_node(
+                                    current_idx,
+                                    diagnostic_messages::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS,
+                                    diagnostic_codes::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS,
+                                );
+                            }
+                        } else {
+                            // TS1308: 'await' expressions are only allowed within async functions
+                            self.error_at_node(
+                                current_idx,
+                                diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                                diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                            );
+                        }
                     }
                     if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node) {
                         if !unary_expr.expression.is_none() {
@@ -911,6 +952,44 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
     // Variable Statement Validation
     // =========================================================================
+
+    /// Check a for-await statement for async context and module/target support.
+    ///
+    /// Validates that for-await loops are only used within async functions or at top level
+    /// with appropriate compiler options.
+    ///
+    /// ## Parameters:
+    /// - `stmt_idx`: The for-await statement node index to check
+    ///
+    /// ## Validation:
+    /// - Emits TS1103 if for-await is used outside async function and not at top level
+    /// - Emits TS1432 if for-await is at top level but module/target options don't support it
+    pub(crate) fn check_for_await_statement(&mut self, stmt_idx: NodeIndex) {
+        if !self.ctx.in_async_context() {
+            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+            // Check if we're at top level of a module
+            let at_top_level = self.ctx.function_depth == 0;
+
+            if at_top_level {
+                // TS1432: Top-level for-await requires ES2022+/ESNext module and ES2017+ target
+                if !self.supports_top_level_await() {
+                    self.error_at_node(
+                        stmt_idx,
+                        diagnostic_messages::TOP_LEVEL_FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
+                        diagnostic_codes::TOP_LEVEL_FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
+                    );
+                }
+            } else {
+                // TS1103: 'for await' loops are only allowed within async functions
+                self.error_at_node(
+                    stmt_idx,
+                    diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
+                    diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
+                );
+            }
+        }
+    }
 
     /// Check a variable statement.
     ///
@@ -3788,8 +3867,12 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if !skip_import_ts6133 && !skip_variable_ts6133 {
+                        // Check if write-only (assigned but never read)
+                        let is_write_only = self.ctx.written_symbols.borrow().contains(&sym_id);
+
                         // TS6196 for classes, interfaces, type aliases, enums ("never used")
                         // TS6138 for properties (including parameter properties) ("property value never read")
+                        // TS6198 for write-only variables ("assigned but never used")
                         // TS6133 for variables, functions, imports ("value never read")
                         let is_type_only = (flags & symbol_flags::CLASS) != 0
                             || (flags & symbol_flags::INTERFACE) != 0
@@ -3806,6 +3889,11 @@ impl<'a> CheckerState<'a> {
                                     name
                                 ),
                                 6138,
+                            )
+                        } else if is_write_only {
+                            (
+                                format!("'{}' is assigned a value but never used.", name),
+                                6198,
                             )
                         } else {
                             (

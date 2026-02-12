@@ -594,7 +594,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(node) = self.ctx.arena.get(idx)
             && node.kind == SyntaxKind::Identifier as u16
-            && let Some(sym_id) = self.resolve_identifier_symbol(idx)
+            && let Some(sym_id) = self.resolve_identifier_symbol_for_write(idx)
         {
             if self.alias_resolves_to_type_only(sym_id) {
                 if let Some(ident) = self.ctx.arena.get_identifier(node) {

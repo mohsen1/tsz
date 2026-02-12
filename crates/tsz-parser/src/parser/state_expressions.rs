@@ -284,6 +284,12 @@ impl ParserState {
         // - `async (a = await) => {}` should emit TS1109 (Expression expected)
         // - TSC sets async context for the entire async function scope including parameters
         let saved_flags = self.context_flags;
+
+        // Arrow functions cannot be generators (there's no `*=>` syntax)
+        // Clear generator context to allow 'yield' as an identifier
+        // Example: function * foo(a = yield => yield) {} - both 'yield' are identifiers
+        self.context_flags &= !CONTEXT_FLAG_GENERATOR;
+
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }
@@ -1625,6 +1631,15 @@ impl ParserState {
                     // Emit TS1109 for missing rest binding element: {...missing}
                     self.error_expression_expected();
                 }
+
+                // Check for illegal initializer: {...x = value} - emit TS1186
+                if self.is_token(SyntaxKind::EqualsToken) {
+                    self.parse_error_at_current_token("A rest element cannot have an initializer.", 1186);
+                    // Consume the = token and value to continue parsing
+                    self.next_token();
+                    self.parse_assignment_expression();
+                }
+
                 let elem_end = self.token_end();
                 elements.push(self.arena.add_binding_element(
                     syntax_kind_ext::BINDING_ELEMENT,
@@ -1760,6 +1775,13 @@ impl ParserState {
                     self.error_expression_expected();
                 }
                 init
+            } else if dot_dot_dot && self.is_token(SyntaxKind::EqualsToken) {
+                // Rest element with initializer: [...x = value] - emit TS1186
+                self.parse_error_at_current_token("A rest element cannot have an initializer.", 1186);
+                // Consume the = token and value to continue parsing
+                self.next_token();
+                self.parse_assignment_expression();
+                NodeIndex::NONE
             } else {
                 NodeIndex::NONE
             };
