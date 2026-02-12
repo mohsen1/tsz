@@ -1641,7 +1641,9 @@ pub enum ForOfElementKind {
     Union(Vec<TypeId>),
     /// Readonly wrapper - unwrap and compute
     Readonly(TypeId),
-    /// Other types - return ANY as fallback
+    /// String type - iteration yields string
+    String,
+    /// Other types - resolve via iterator protocol or return ANY as fallback
     Other,
 }
 
@@ -1661,7 +1663,9 @@ pub fn classify_for_of_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> F
             let members = db.type_list(members_id);
             ForOfElementKind::Union(members.to_vec())
         }
-        TypeKey::ReadonlyType(inner) => ForOfElementKind::Readonly(inner),
+        TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => ForOfElementKind::Readonly(inner),
+        // String literals iterate to produce `string`
+        TypeKey::Literal(crate::LiteralValue::String(_)) => ForOfElementKind::String,
         _ => ForOfElementKind::Other,
     }
 }

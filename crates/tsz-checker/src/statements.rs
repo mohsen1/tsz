@@ -93,6 +93,18 @@ pub trait StatementCheckCallbacks {
         await_modifier: bool,
     );
 
+    /// Check assignability for for-in/of expression initializer (non-declaration case).
+    /// For `for (v of expr)` where `v` is a pre-declared variable (not `var v`/`let v`/`const v`),
+    /// this checks:
+    /// - TS2588: Cannot assign to const variable
+    /// - TS2322: Element type not assignable to variable type
+    fn check_for_in_of_expression_initializer(
+        &mut self,
+        initializer: NodeIndex,
+        element_type: TypeId,
+        is_for_of: bool,
+    );
+
     /// Recursively check a nested statement (callback to check_statement).
     fn check_statement(&mut self, stmt_idx: NodeIndex);
 
@@ -381,7 +393,14 @@ impl StatementChecker {
                         );
                         state.check_variable_declaration_list(initializer);
                     } else {
-                        state.get_type_of_node(initializer);
+                        // Non-declaration initializer (e.g., `for (v of expr)` where v is pre-declared)
+                        // Check assignability: element type must be assignable to the variable's type
+                        // Also checks TS2588 (const assignment)
+                        state.check_for_in_of_expression_initializer(
+                            initializer,
+                            loop_var_type,
+                            is_for_of,
+                        );
                     }
                     state.enter_iteration_statement();
                     state.check_declaration_in_statement_position(statement);

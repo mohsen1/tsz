@@ -4108,6 +4108,20 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_for_of_iterability(self, expr_type, expr_idx, await_modifier);
     }
 
+    fn check_for_in_of_expression_initializer(
+        &mut self,
+        initializer: NodeIndex,
+        element_type: TypeId,
+        is_for_of: bool,
+    ) {
+        CheckerState::check_for_in_of_expression_initializer(
+            self,
+            initializer,
+            element_type,
+            is_for_of,
+        );
+    }
+
     fn check_statement(&mut self, stmt_idx: NodeIndex) {
         // This calls back to the main check_statement which will delegate to StatementChecker
         CheckerState::check_statement(self, stmt_idx)
