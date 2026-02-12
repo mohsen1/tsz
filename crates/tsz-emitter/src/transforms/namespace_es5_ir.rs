@@ -413,6 +413,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             should_declare_var,
             parent_name: None,
             param_name,
+            skip_sequence_indent: false,
         })
     }
 
@@ -1013,6 +1014,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             should_declare_var,
             parent_name: Some(parent_ns.to_string()),
             param_name,
+            skip_sequence_indent: true, // Nested namespace IIFEs need to skip indent when in sequence
         })
     }
 
@@ -1070,6 +1072,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             should_declare_var,
             parent_name: Some(parent_ns.to_string()),
             param_name,
+            skip_sequence_indent: true, // Nested namespace IIFEs need to skip indent when in sequence
         })
     }
 }
@@ -1141,6 +1144,7 @@ impl<'a> NamespaceTransformContext<'a> {
             should_declare_var: true,
             parent_name: None,
             param_name,
+            skip_sequence_indent: false,
         })
     }
 
@@ -1530,6 +1534,7 @@ impl<'a> NamespaceTransformContext<'a> {
             should_declare_var: true,
             parent_name: Some(parent_ns.to_string()),
             param_name,
+            skip_sequence_indent: true,
         })
     }
 
@@ -1582,6 +1587,7 @@ impl<'a> NamespaceTransformContext<'a> {
             should_declare_var: true,
             parent_name: Some(parent_ns.to_string()),
             param_name,
+            skip_sequence_indent: true,
         })
     }
 }

@@ -425,6 +425,11 @@ pub enum IRNode {
         /// Only the function parameter and namespace exports use this name;
         /// the var declaration and argument still use the original name.
         param_name: Option<String>,
+        /// Skip automatic indentation when this node is in a Sequence (after the first child).
+        /// Used for nested namespace IIFEs that should align with their siblings rather than
+        /// being indented as regular statements. This prevents double-indentation when a
+        /// namespace IIFE follows a class/enum/function in a parent namespace body.
+        skip_sequence_indent: bool,
     },
 
     /// Namespace export: `NS.foo = ...;`

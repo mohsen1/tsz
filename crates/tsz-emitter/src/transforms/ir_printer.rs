@@ -107,7 +107,17 @@ impl<'a> IRPrinter<'a> {
             for (i, child) in nodes.iter().enumerate() {
                 if i > 0 {
                     self.write_line();
-                    self.write_indent();
+                    // Check if child wants to skip indentation (e.g., nested namespace IIFEs)
+                    let should_indent = match child {
+                        IRNode::NamespaceIIFE {
+                            skip_sequence_indent,
+                            ..
+                        } => !skip_sequence_indent,
+                        _ => true,
+                    };
+                    if should_indent {
+                        self.write_indent();
+                    }
                 }
                 self.emit_node(child);
             }
@@ -1009,6 +1019,7 @@ impl<'a> IRPrinter<'a> {
                 should_declare_var,
                 parent_name,
                 param_name,
+                skip_sequence_indent: _,
             } => {
                 self.emit_namespace_iife(
                     name_parts,
