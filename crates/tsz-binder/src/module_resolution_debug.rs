@@ -199,7 +199,10 @@ impl ModuleResolutionDebugger {
             event.name,
             scope_path.join(" -> "),
             if event.found {
-                format!("FOUND (id={})", result.unwrap().0)
+                format!(
+                    "FOUND (id={})",
+                    result.expect("result is Some when event.found is true").0
+                )
             } else {
                 "NOT FOUND".to_string()
             },

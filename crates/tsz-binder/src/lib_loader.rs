@@ -158,7 +158,10 @@ pub fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>> {
     merged_binder.merge_lib_contexts_into_binder(&lib_contexts);
 
     // Create a single merged LibFile
-    let merged_arena = lib_files.first().map(|lib| Arc::clone(&lib.arena)).unwrap();
+    let merged_arena = lib_files
+        .first()
+        .map(|lib| Arc::clone(&lib.arena))
+        .expect("lib_files is non-empty, guaranteed by caller");
     let merged_binder = Arc::new(merged_binder);
     let merged_file = Arc::new(LibFile::new(
         "merged-libs".to_string(),

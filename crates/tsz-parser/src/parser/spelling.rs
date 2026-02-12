@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn levenshtein_case_difference_is_cheap() {
-        let dist = levenshtein_with_max("Abc", "abc", 5.0).unwrap();
+        let dist = levenshtein_with_max("Abc", "abc", 5.0).expect("distance calculation should succeed");
         // Case-only substitution costs 0.1
         assert!(dist < 1.0, "case-only diff should be < 1.0, got {dist}");
         assert!((dist - 0.1).abs() < f64::EPSILON);
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn levenshtein_single_char_substitution() {
         // "asynd" vs "async": positions 1-4 identical, pos 5: d→c (cost 2.0)
-        let dist = levenshtein_with_max("asynd", "async", 3.0).unwrap();
+        let dist = levenshtein_with_max("asynd", "async", 3.0).expect("distance calculation should succeed");
         assert!(
             (dist - 2.0).abs() < f64::EPSILON,
             "expected 2.0, got {dist}"
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn levenshtein_insertion() {
         // "classs" vs "class": one extra 's' (cost 1.0)
-        let dist = levenshtein_with_max("classs", "class", 3.0).unwrap();
+        let dist = levenshtein_with_max("classs", "class", 3.0).expect("distance calculation should succeed");
         assert!(
             (dist - 1.0).abs() < f64::EPSILON,
             "expected 1.0, got {dist}"
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn levenshtein_deletion() {
         // "clas" vs "class": one missing 's' (cost 1.0)
-        let dist = levenshtein_with_max("clas", "class", 3.0).unwrap();
+        let dist = levenshtein_with_max("clas", "class", 3.0).expect("distance calculation should succeed");
         assert!(
             (dist - 1.0).abs() < f64::EPSILON,
             "expected 1.0, got {dist}"
