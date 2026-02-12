@@ -231,7 +231,7 @@ async function findTestCases(filter: string, maxTests: number): Promise<TestCase
       : 1;
     const module = variant.module ? parseModule(variant.module)
       : directives.module ? parseModule(String(directives.module))
-      : 1;  // TypeScript defaults to CommonJS when no module is specified
+      : 0;  // Baselines without @module were generated with module=none
 
     const alwaysStrict = variant.alwaysstrict !== undefined
       ? variant.alwaysstrict === 'true'
