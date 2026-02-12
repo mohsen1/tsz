@@ -1435,12 +1435,18 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        // Enter a new scope for the loop body to track variable shadowing
+        self.ctx.block_scope_state.enter_scope();
+
         // Emit the value binding: var item = _c.value;
         self.emit_for_of_value_binding_iterator_es5(for_in_of.initializer, &loop_result_name);
         self.write_line();
 
         // Emit the loop body
         self.emit_for_of_body(for_in_of.statement);
+
+        // Exit the loop body scope
+        self.ctx.block_scope_state.exit_scope();
 
         self.decrease_indent();
         self.write("}");
@@ -1594,11 +1600,18 @@ impl<'a> Printer<'a> {
         self.write("{");
         self.write_line();
         self.increase_indent();
+
+        // Enter a new scope for the loop body to track variable shadowing
+        self.ctx.block_scope_state.enter_scope();
+
         self.emit_for_of_value_binding_array_es5(for_in_of.initializer, &array_name, &index_name);
         self.write_line();
 
         // Emit the loop body
         self.emit_for_of_body(for_in_of.statement);
+
+        // Exit the loop body scope
+        self.ctx.block_scope_state.exit_scope();
 
         self.decrease_indent();
         self.write("}");
