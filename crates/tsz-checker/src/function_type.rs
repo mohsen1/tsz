@@ -119,6 +119,8 @@ impl<'a> CheckerState<'a> {
             self.check_duplicate_parameters(parameters);
             // Check for required parameters following optional parameters (TS1016)
             self.check_parameter_ordering(parameters);
+            // Check that rest parameters have array types (TS2370)
+            self.check_rest_parameter_types(&parameters.nodes);
         }
 
         // For nested functions/methods, push enclosing type parameters first so that

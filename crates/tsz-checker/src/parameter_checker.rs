@@ -332,4 +332,52 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    // =========================================================================
+    // Rest Parameter Type Validation
+    // =========================================================================
+
+    /// Check that rest parameters have array types (TS2370).
+    ///
+    /// Rest parameters must be of an array type. This validates that `...rest`
+    /// parameters have types like `T[]`, `Array<T>`, `[T, U]`, etc.
+    ///
+    /// ## Error TS2370:
+    /// "A rest parameter must be of an array type."
+    pub(crate) fn check_rest_parameter_types(&mut self, parameters: &[NodeIndex]) {
+        use crate::types::diagnostics::diagnostic_codes;
+
+        for &param_idx in parameters {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // Only check rest parameters (those with ... token)
+            if !param.dot_dot_dot_token {
+                continue;
+            }
+
+            // If there's no type annotation, skip (implicitly any[])
+            if param.type_annotation.is_none() {
+                continue;
+            }
+
+            // Get the declared type
+            let declared_type = self.get_type_from_type_node(param.type_annotation);
+
+            // Check if the type is an array type
+            // We need to use a Solver query to check this - following architecture rule
+            // that Checker never inspects TypeKey
+            if !self.is_array_like_type(declared_type) {
+                self.error_at_node(
+                    param.type_annotation,
+                    "A rest parameter must be of an array type.",
+                    diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
+                );
+            }
+        }
+    }
 }

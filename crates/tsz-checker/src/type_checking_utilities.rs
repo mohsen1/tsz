@@ -663,7 +663,7 @@ impl<'a> CheckerState<'a> {
     /// // Not array-like:
     /// type E = { [key: string]: number };  // Index signature, not array-like
     /// ```
-    fn is_array_like_type(&self, object_type: TypeId) -> bool {
+    pub(crate) fn is_array_like_type(&self, object_type: TypeId) -> bool {
         use tsz_solver::type_queries::{ArrayLikeKind, classify_array_like};
 
         // Check for array/tuple types directly
