@@ -300,6 +300,16 @@ impl<'a> CheckerState<'a> {
             (TypeId::UNKNOWN, None)
         };
 
+        // Save the annotated return type before evaluation. evaluate_application_type()
+        // expands Application types (like Promise<string>) into concrete object shapes,
+        // which is useful for body checking but destroys type identity needed by callers
+        // (e.g., await unwrapping needs to see Promise<T> as an Application).
+        let annotated_return_type = if has_type_annotation {
+            Some(return_type)
+        } else {
+            None
+        };
+
         // Evaluate Application types in return type to get their structural form
         // This allows proper comparison of return expressions against type alias applications like Reducer<S, A>
         return_type = self.evaluate_application_type(return_type);
@@ -611,11 +621,15 @@ impl<'a> CheckerState<'a> {
         }
 
         // Create function type using TypeInterner
+        // For annotated return types, use the original un-evaluated type so callers see
+        // Promise<T>, Array<T>, etc. as Application types. This preserves type identity
+        // for await unwrapping and generic type parameter extraction.
+        // For inferred return types (no annotation), use the inferred type as-is.
         let shape = FunctionShape {
             type_params,
             params,
             this_type,
-            return_type,
+            return_type: annotated_return_type.unwrap_or(return_type),
             type_predicate,
             is_constructor: false,
             is_method: false,
