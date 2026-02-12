@@ -65,16 +65,13 @@ impl<'a> CheckerState<'a> {
         self.check_duplicate_interface_members(&iface.members.nodes);
 
         // Check that properties are assignable to index signatures (TS2411)
-        // Skip the solver-level check if the AST has no index signatures.
-        let has_index_signature = iface.members.nodes.iter().any(|&member_idx| {
-            self.ctx
-                .arena
-                .get(member_idx)
-                .is_some_and(|node| node.kind == syntax_kind_ext::INDEX_SIGNATURE)
-        });
-        if has_index_signature {
-            // Get the interface type to access resolved index signatures
-            let iface_type = self.get_type_of_node(stmt_idx);
+        // This includes both directly declared and inherited index signatures.
+        // Get the interface type to check for any index signatures (direct or inherited)
+        let iface_type = self.get_type_of_node(stmt_idx);
+        let index_info = self.ctx.types.get_index_signatures(iface_type);
+
+        // If there are any index signatures (direct or inherited), check compatibility
+        if index_info.string_index.is_some() || index_info.number_index.is_some() {
             self.check_index_signature_compatibility(&iface.members.nodes, iface_type);
         }
 
