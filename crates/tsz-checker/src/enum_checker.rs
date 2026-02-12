@@ -176,4 +176,43 @@ impl<'a> CheckerState<'a> {
     pub fn get_enum_member_access_type(&self, enum_type: TypeId) -> TypeId {
         self.get_enum_member_base_type(enum_type)
     }
+
+    // =========================================================================
+    // Boxed Primitive Type Detection
+    // =========================================================================
+
+    /// Check if a type is a boxed primitive type (Number, String, Boolean, BigInt, Symbol).
+    ///
+    /// TypeScript has two representations for primitives:
+    /// - `number`, `string`, `boolean` - primitive types (valid for arithmetic)
+    /// - `Number`, `String`, `Boolean` - interface wrapper types from lib.d.ts (NOT valid for arithmetic)
+    ///
+    /// This method detects the boxed interface types to emit proper TS2362/TS2363/TS2365 errors.
+    pub fn is_boxed_primitive_type(&self, type_id: TypeId) -> bool {
+        // Get the symbol associated with this type
+        let sym_id = match self.ctx.resolve_type_to_symbol_id(type_id) {
+            Some(sym_id) => sym_id,
+            None => return false,
+        };
+
+        // Get the symbol
+        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+            Some(symbol) => symbol,
+            None => return false,
+        };
+
+        // Check if it's an interface (not a class or type alias)
+        if (symbol.flags & symbol_flags::INTERFACE) == 0 {
+            return false;
+        }
+
+        // Get the symbol name
+        let name = &symbol.escaped_name;
+
+        // Check if it's one of the known boxed primitive types
+        matches!(
+            name.as_str(),
+            "Number" | "String" | "Boolean" | "BigInt" | "Symbol"
+        )
+    }
 }
