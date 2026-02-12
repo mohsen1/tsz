@@ -280,7 +280,24 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // When a function expression appears as a statement, it needs wrapping parentheses
+        // to distinguish it from a function declaration. This includes:
+        // - Arrow functions transpiled to ES5 function expressions
+        // - Regular function expressions
+        let needs_parens = if let Some(expr_node) = self.arena.get(expr_stmt.expression) {
+            expr_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || (self.ctx.target_es5 && expr_node.kind == syntax_kind_ext::ARROW_FUNCTION)
+        } else {
+            false
+        };
+
+        if needs_parens {
+            self.write("(");
+        }
         self.emit(expr_stmt.expression);
+        if needs_parens {
+            self.write(")");
+        }
         self.write_semicolon();
         self.emit_trailing_comment_after_semicolon(node);
     }
