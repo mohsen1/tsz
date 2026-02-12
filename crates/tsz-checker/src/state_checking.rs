@@ -411,6 +411,42 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1155: Check if const declarations must be initialized
+        // Skip check for ambient declarations (e.g., declare const x;)
+        if !self.is_ambient_declaration(decl_idx) {
+            // Get the parent node (VARIABLE_DECLARATION_LIST) to check flags
+            if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
+                if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                    use tsz_parser::parser::node_flags;
+                    let is_const = (parent_node.flags & node_flags::CONST as u16) != 0;
+
+                    if is_const && var_decl.initializer.is_none() {
+                        // Check if this is in a for-in or for-of loop (allowed)
+                        let is_in_for_loop =
+                            if let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) {
+                                if let Some(gp_node) = self.ctx.arena.get(parent_ext.parent) {
+                                    gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                                        || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+
+                        if !is_in_for_loop {
+                            self.ctx.error(
+                                node.pos,
+                                node.end - node.pos,
+                                "'const' declarations must be initialized.".to_string(),
+                                1155,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // Check if this is a destructuring pattern (object/array binding)
         let is_destructuring = if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
             name_node.kind != SyntaxKind::Identifier as u16
