@@ -303,14 +303,38 @@ impl<'a> ES5DestructuringTransformer<'a> {
                     continue;
                 }
 
-                // Get property name
-                let prop_name = if binding_elem.property_name.is_none() {
-                    self.get_identifier_text(binding_elem.name)
+                // Check if property name is computed
+                let (is_computed, computed_temp) = if !binding_elem.property_name.is_none() {
+                    if let Some(prop_name_node) = self.arena.get(binding_elem.property_name)
+                        && prop_name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        && let Some(computed) = self.arena.get_computed_property(prop_name_node)
+                    {
+                        // Save computed key to a temporary variable
+                        let temp_var = self.next_temp_var();
+                        if let Some(key_expr) = self.transform_expression(computed.expression) {
+                            result.push(IRNode::var_decl(&temp_var, Some(key_expr)));
+                            (true, Some(temp_var))
+                        } else {
+                            (false, None)
+                        }
+                    } else {
+                        (false, None)
+                    }
                 } else {
-                    self.get_property_name_text(binding_elem.property_name)
+                    (false, None)
                 };
 
-                // Track for rest pattern
+                // Get property name (for non-computed or for rest tracking)
+                let prop_name = if binding_elem.property_name.is_none() {
+                    self.get_identifier_text(binding_elem.name)
+                } else if !is_computed {
+                    self.get_property_name_text(binding_elem.property_name)
+                } else {
+                    // For computed properties, we don't have a static name
+                    String::new()
+                };
+
+                // Track for rest pattern (only for non-computed properties)
                 if !prop_name.is_empty() {
                     rest_excluded.push(prop_name.clone());
                 }
@@ -322,7 +346,14 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 {
                     // Nested pattern - create temp and recurse
                     let nested_temp = self.next_temp_var();
-                    let access = IRNode::prop(IRNode::id(source), &prop_name);
+                    let access = if is_computed && computed_temp.is_some() {
+                        IRNode::elem(
+                            IRNode::id(source),
+                            IRNode::id(computed_temp.as_ref().unwrap()),
+                        )
+                    } else {
+                        IRNode::prop(IRNode::id(source), &prop_name)
+                    };
                     result.push(IRNode::var_decl(&nested_temp, Some(access)));
                     self.emit_destructuring_pattern(&nested_temp, binding_elem.name, result);
                     continue;
@@ -334,7 +365,15 @@ impl<'a> ES5DestructuringTransformer<'a> {
                     continue;
                 }
 
-                let access = IRNode::prop(IRNode::id(source), &prop_name);
+                // Create property access (computed or regular)
+                let access = if is_computed && computed_temp.is_some() {
+                    IRNode::elem(
+                        IRNode::id(source),
+                        IRNode::id(computed_temp.as_ref().unwrap()),
+                    )
+                } else {
+                    IRNode::prop(IRNode::id(source), &prop_name)
+                };
 
                 // Handle default value
                 let value = if binding_elem.initializer.is_none() {
@@ -443,8 +482,31 @@ impl<'a> ES5DestructuringTransformer<'a> {
             match element_node.kind {
                 k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                     if let Some(prop) = self.arena.get_property_assignment(element_node) {
-                        let prop_name = self.get_property_name_text(prop.name);
-                        rest_excluded.push(prop_name.clone());
+                        // Check if property name is computed
+                        let (is_computed, computed_temp) = if let Some(prop_name_node) =
+                            self.arena.get(prop.name)
+                            && prop_name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                            && let Some(computed) = self.arena.get_computed_property(prop_name_node)
+                        {
+                            // Save computed key to a temporary variable
+                            let temp_var = self.next_temp_var();
+                            if let Some(key_expr) = self.transform_expression(computed.expression) {
+                                result.push(IRNode::assign(IRNode::id(&temp_var), key_expr));
+                                (true, Some(temp_var))
+                            } else {
+                                (false, None)
+                            }
+                        } else {
+                            (false, None)
+                        };
+
+                        let prop_name = if !is_computed {
+                            let name = self.get_property_name_text(prop.name);
+                            rest_excluded.push(name.clone());
+                            name
+                        } else {
+                            String::new()
+                        };
 
                         // Check for nested destructuring
                         if let Some(init_node) = self.arena.get(prop.initializer)
@@ -452,7 +514,14 @@ impl<'a> ES5DestructuringTransformer<'a> {
                                 || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
                         {
                             let nested_temp = self.next_temp_var();
-                            let access = IRNode::prop(IRNode::id(source), &prop_name);
+                            let access = if is_computed && computed_temp.is_some() {
+                                IRNode::elem(
+                                    IRNode::id(source),
+                                    IRNode::id(computed_temp.as_ref().unwrap()),
+                                )
+                            } else {
+                                IRNode::prop(IRNode::id(source), &prop_name)
+                            };
                             result.push(IRNode::assign(IRNode::id(&nested_temp), access));
                             self.emit_destructuring_assignments(
                                 &nested_temp,
@@ -463,7 +532,14 @@ impl<'a> ES5DestructuringTransformer<'a> {
                         }
 
                         if let Some(target) = self.transform_expression(prop.initializer) {
-                            let access = IRNode::prop(IRNode::id(source), &prop_name);
+                            let access = if is_computed && computed_temp.is_some() {
+                                IRNode::elem(
+                                    IRNode::id(source),
+                                    IRNode::id(computed_temp.as_ref().unwrap()),
+                                )
+                            } else {
+                                IRNode::prop(IRNode::id(source), &prop_name)
+                            };
                             result.push(IRNode::assign(target, access));
                         }
                     }

@@ -633,6 +633,18 @@ impl<'a> Printer<'a> {
     /// For computed: _a[expr]
     /// For regular: _a.name
     pub(super) fn emit_assignment_target_es5(&mut self, name_idx: NodeIndex, temp_var: &str) {
+        self.emit_assignment_target_es5_with_computed(name_idx, temp_var, None);
+    }
+
+    /// Emit assignment target for ES5 computed property transform with optional computed temp
+    /// For computed: _a[_temp] (if computed_temp is Some)
+    /// For regular: _a.name
+    pub(super) fn emit_assignment_target_es5_with_computed(
+        &mut self,
+        name_idx: NodeIndex,
+        temp_var: &str,
+        computed_temp: Option<&str>,
+    ) {
         self.write(temp_var);
 
         let Some(name_node) = self.arena.get(name_idx) else {
@@ -640,8 +652,12 @@ impl<'a> Printer<'a> {
         };
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            // Computed property: _a[expr]
-            if let Some(computed) = self.arena.get_computed_property(name_node) {
+            // Computed property: use the temp variable if provided, otherwise emit expression
+            if let Some(temp) = computed_temp {
+                self.write("[");
+                self.write(temp);
+                self.write("]");
+            } else if let Some(computed) = self.arena.get_computed_property(name_node) {
                 self.write("[");
                 self.emit(computed.expression);
                 self.write("]");

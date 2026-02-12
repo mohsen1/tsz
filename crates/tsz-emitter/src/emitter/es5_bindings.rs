@@ -574,12 +574,19 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Check if key is computed and save to temp if needed
+        let computed_key_temp = self.emit_computed_key_temp_if_needed(key_idx);
+
         if self.is_binding_pattern(elem.name) {
             let value_name = self.get_temp_var_name();
             self.write(", ");
             self.write(&value_name);
             self.write(" = ");
-            self.emit_assignment_target_es5(key_idx, temp_name);
+            self.emit_assignment_target_es5_with_computed(
+                key_idx,
+                temp_name,
+                computed_key_temp.as_deref(),
+            );
 
             // When there's a default, create a NEW temp for the defaulted value
             let pattern_temp = if !elem.initializer.is_none() {
@@ -610,13 +617,21 @@ impl<'a> Printer<'a> {
             self.write(", ");
             self.write_identifier_text(elem.name);
             self.write(" = ");
-            self.emit_assignment_target_es5(key_idx, temp_name);
+            self.emit_assignment_target_es5_with_computed(
+                key_idx,
+                temp_name,
+                computed_key_temp.as_deref(),
+            );
         } else {
             let value_name = self.get_temp_var_name();
             self.write(", ");
             self.write(&value_name);
             self.write(" = ");
-            self.emit_assignment_target_es5(key_idx, temp_name);
+            self.emit_assignment_target_es5_with_computed(
+                key_idx,
+                temp_name,
+                computed_key_temp.as_deref(),
+            );
             self.write(", ");
             self.write_identifier_text(elem.name);
             self.write(" = ");
@@ -626,6 +641,27 @@ impl<'a> Printer<'a> {
             self.write(" : ");
             self.write(&value_name);
         }
+    }
+
+    /// If key_idx is a computed property, emit a temp variable assignment and return the temp name
+    /// Returns None if not computed
+    fn emit_computed_key_temp_if_needed(&mut self, key_idx: NodeIndex) -> Option<String> {
+        let Some(key_node) = self.arena.get(key_idx) else {
+            return None;
+        };
+
+        if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            if let Some(computed) = self.arena.get_computed_property(key_node) {
+                let temp_name = self.get_temp_var_name();
+                self.write(", ");
+                self.write(&temp_name);
+                self.write(" = ");
+                self.emit(computed.expression);
+                return Some(temp_name);
+            }
+        }
+
+        None
     }
 
     /// Emit a single binding element for ES5 array destructuring
@@ -731,6 +767,9 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Check if key is computed and save to temp if needed
+        let computed_key_temp = self.emit_computed_key_temp_for_direct(key_idx, first);
+
         if self.is_binding_pattern(elem.name) {
             let value_name = self.get_temp_var_name();
             if !*first {
@@ -739,7 +778,11 @@ impl<'a> Printer<'a> {
             *first = false;
             self.write(&value_name);
             self.write(" = ");
-            self.emit_assignment_target_es5(key_idx, temp_name);
+            self.emit_assignment_target_es5_with_computed(
+                key_idx,
+                temp_name,
+                computed_key_temp.as_deref(),
+            );
 
             // When there's a default, create a NEW temp for the defaulted value
             let pattern_temp = if !elem.initializer.is_none() {
@@ -772,7 +815,11 @@ impl<'a> Printer<'a> {
             *first = false;
             self.write_identifier_text(elem.name);
             self.write(" = ");
-            self.emit_assignment_target_es5(key_idx, temp_name);
+            self.emit_assignment_target_es5_with_computed(
+                key_idx,
+                temp_name,
+                computed_key_temp.as_deref(),
+            );
         } else {
             let value_name = self.get_temp_var_name();
             if !*first {
@@ -781,7 +828,11 @@ impl<'a> Printer<'a> {
             *first = false;
             self.write(&value_name);
             self.write(" = ");
-            self.emit_assignment_target_es5(key_idx, temp_name);
+            self.emit_assignment_target_es5_with_computed(
+                key_idx,
+                temp_name,
+                computed_key_temp.as_deref(),
+            );
             self.write(", ");
             self.write_identifier_text(elem.name);
             self.write(" = ");
@@ -791,6 +842,33 @@ impl<'a> Printer<'a> {
             self.write(" : ");
             self.write(&value_name);
         }
+    }
+
+    /// Similar to emit_computed_key_temp_if_needed but handles the first flag for direct destructuring
+    fn emit_computed_key_temp_for_direct(
+        &mut self,
+        key_idx: NodeIndex,
+        first: &mut bool,
+    ) -> Option<String> {
+        let Some(key_node) = self.arena.get(key_idx) else {
+            return None;
+        };
+
+        if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            if let Some(computed) = self.arena.get_computed_property(key_node) {
+                let temp_name = self.get_temp_var_name();
+                if !*first {
+                    self.write(", ");
+                }
+                *first = false;
+                self.write(&temp_name);
+                self.write(" = ");
+                self.emit(computed.expression);
+                return Some(temp_name);
+            }
+        }
+
+        None
     }
 
     /// Like emit_es5_array_binding_element but with first flag for separator control
@@ -1140,12 +1218,19 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Check if key is computed and save to temp if needed
+        let computed_key_temp = self.emit_computed_key_temp_for_param(key_idx, started);
+
         if self.is_binding_pattern(elem.name) {
             let value_name = self.get_temp_var_name();
             self.emit_param_assignment_prefix(started);
             self.write(&value_name);
             self.write(" = ");
-            self.emit_assignment_target_es5(key_idx, temp_name);
+            self.emit_assignment_target_es5_with_computed(
+                key_idx,
+                temp_name,
+                computed_key_temp.as_deref(),
+            );
 
             if !elem.initializer.is_none() {
                 self.write(", ");
@@ -1171,7 +1256,11 @@ impl<'a> Printer<'a> {
             let value_name = self.get_temp_var_name();
             self.write(&value_name);
             self.write(" = ");
-            self.emit_assignment_target_es5(key_idx, temp_name);
+            self.emit_assignment_target_es5_with_computed(
+                key_idx,
+                temp_name,
+                computed_key_temp.as_deref(),
+            );
             self.write(", ");
             self.write_identifier_text(elem.name);
             self.write(" = ");
@@ -1183,8 +1272,36 @@ impl<'a> Printer<'a> {
         } else {
             self.write_identifier_text(elem.name);
             self.write(" = ");
-            self.emit_assignment_target_es5(key_idx, temp_name);
+            self.emit_assignment_target_es5_with_computed(
+                key_idx,
+                temp_name,
+                computed_key_temp.as_deref(),
+            );
         }
+    }
+
+    /// Similar to emit_computed_key_temp_if_needed but handles started flag for param destructuring
+    fn emit_computed_key_temp_for_param(
+        &mut self,
+        key_idx: NodeIndex,
+        started: &mut bool,
+    ) -> Option<String> {
+        let Some(key_node) = self.arena.get(key_idx) else {
+            return None;
+        };
+
+        if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            if let Some(computed) = self.arena.get_computed_property(key_node) {
+                let temp_name = self.get_temp_var_name();
+                self.emit_param_assignment_prefix(started);
+                self.write(&temp_name);
+                self.write(" = ");
+                self.emit(computed.expression);
+                return Some(temp_name);
+            }
+        }
+
+        None
     }
 
     fn emit_param_array_binding_element(
