@@ -541,7 +541,8 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        let result = match classify_for_property_access_resolution(self.ctx.types, type_id) {
+        let classification = classify_for_property_access_resolution(self.ctx.types, type_id);
+        let result = match classification {
             PropertyAccessResolutionKind::Lazy(def_id) => {
                 // Resolve lazy type from definition store
                 if let Some(body) = self.ctx.definition_store.get_body(def_id) {
