@@ -1283,9 +1283,25 @@ impl<'a> CheckerContext<'a> {
         }
 
         // Get symbol info to create DefinitionInfo
-        let Some(symbol) = self.binder.symbols.get(sym_id) else {
-            // Symbol not found - return invalid DefId
-            return DefId::INVALID;
+        // First try the main binder, then check lib binders
+        let symbol = if let Some(sym) = self.binder.symbols.get(sym_id) {
+            sym
+        } else {
+            // Try to find in lib binders
+            let mut found = None;
+            for lib_ctx in &self.lib_contexts {
+                if let Some(lib_symbol) = lib_ctx.binder.symbols.get(sym_id) {
+                    found = Some(lib_symbol);
+                    break;
+                }
+            }
+            match found {
+                Some(s) => s,
+                None => {
+                    // Symbol not found anywhere - return invalid DefId
+                    return DefId::INVALID;
+                }
+            }
         };
         let name = self.types.intern_string(&symbol.escaped_name);
 
