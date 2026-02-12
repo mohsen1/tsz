@@ -138,8 +138,8 @@ impl TsLanguageService {
                         })
                         .collect(),
                     documentation: Vec::new(),
-                    text_span: info.range.map(|r| TextSpanJson {
-                        start: self
+                    text_span: info.range.map(|r| {
+                        let start_offset = self
                             .line_map
                             .position_to_offset(
                                 Position {
@@ -148,8 +148,21 @@ impl TsLanguageService {
                                 },
                                 &self.source_text,
                             )
-                            .unwrap_or(0) as u32,
-                        length: 0, // TODO: calculate actual length
+                            .unwrap_or(0) as u32;
+                        let end_offset = self
+                            .line_map
+                            .position_to_offset(
+                                Position {
+                                    line: r.end.line,
+                                    character: r.end.character,
+                                },
+                                &self.source_text,
+                            )
+                            .unwrap_or(0) as u32;
+                        TextSpanJson {
+                            start: start_offset,
+                            length: end_offset.saturating_sub(start_offset),
+                        }
                     }),
                 };
                 serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string())
